@@ -1,0 +1,10 @@
+{
+  "name": "agent-browser",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "test:ext": "pnpm --filter agent-browser-extension test",
+    "build:ext": "pnpm --filter agent-browser-extension build",
+    "test:fixtures": "node --test tests/fixtures/server.test.mjs"
+  }
+}

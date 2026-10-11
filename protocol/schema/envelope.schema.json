@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-browser/envelope/v1",
+  "oneOf": [
+    { "type": "object", "required": ["v","type","id","method","params"],
+      "properties": { "v": {"const": 1}, "type": {"const": "req"}, "id": {"type": "string", "minLength": 1},
+        "method": {"type": "string"}, "params": {"type": "object"} }, "additionalProperties": false },
+    { "type": "object", "required": ["v","type","id","ok"],
+      "properties": { "v": {"const": 1}, "type": {"const": "res"}, "id": {"type": "string"}, "ok": {"type": "boolean"},
+        "result": {}, "error": {"$ref": "#/$defs/error"} }, "additionalProperties": false },
+    { "type": "object", "required": ["v","type","event","data"],
+      "properties": { "v": {"const": 1}, "type": {"const": "evt"}, "event": {"type": "string"}, "data": {} },
+      "additionalProperties": false }
+  ],
+  "$defs": {
+    "error": { "type": "object", "required": ["code","message","retry"],
+      "properties": { "code": {"type": "string"}, "message": {"type": "string"},
+        "retry": {"enum": ["safe","unsafe","never"]}, "details": {} }, "additionalProperties": false }
+  }
+}
