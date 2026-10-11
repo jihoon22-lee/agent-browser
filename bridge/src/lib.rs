@@ -1,3 +1,4 @@
+pub mod config;
 pub mod rpc;
 
 pub fn init_logging() {
@@ -19,5 +20,10 @@ pub fn run_mcp() -> anyhow::Result<()> {
     anyhow::bail!("mcp is not implemented yet")
 }
 pub fn run_pair() -> anyhow::Result<()> {
-    anyhow::bail!("pair is not implemented yet")
+    let home = config::home_dir()?;
+    let cfg = config::load_or_init(&home)?;
+    // The token is printed only on explicit request so the user can paste it into the extension options page.
+    println!("{}", cfg.token);
+    eprintln!("config: {}", home.join("config.json").display());
+    Ok(())
 }
