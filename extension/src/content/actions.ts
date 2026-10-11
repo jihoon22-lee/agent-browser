@@ -4,6 +4,7 @@ import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
+import { pressKey } from "./keyboard";
 import { cancellationError, cancelCommands, withCommandCancellation, type CommandScope } from "./cancellation";
 
 export function cancelUpTo(generation: number) { cancelCommands({ generation }); }
@@ -12,7 +13,7 @@ type P = Record<string, unknown> & CommandScope;
 const hasLayout = () => document.documentElement.getClientRects().length > 0;
 
 function assertInteractable(el: Element) {
-  if (!isRendered(el, { checkLayout: hasLayout() }) || (el as HTMLButtonElement).disabled || el.closest("[inert]")) {
+  if (!isRendered(el, { checkLayout: hasLayout() }) || el.matches(":disabled") || el.closest("[inert]")) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
   }
   if (!hasLayout()) return;
@@ -50,6 +51,10 @@ function observeChanges(ms: number, signal: AbortSignal): Promise<{ urlChanged: 
   });
 }
 
+function verificationValue(value: string) {
+  return { value: value.slice(0, 512), ...(value.length > 512 ? { valueTruncated: true } : {}) };
+}
+
 function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
@@ -83,13 +88,14 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         el.dispatchEvent(new Event("change", { bubbles: true }));
         const value = el.value;
         const isPassword = el instanceof HTMLInputElement && el.type === "password";
-        return { executed: true, verified: isPassword ? { matches: value === text } : { value, matches: value === text } };
+        return { executed: true, verified: isPassword ? { matches: value === text } : { ...verificationValue(value), matches: value === text } };
       }
       if ((el as HTMLElement).isContentEditable) {
         (el as HTMLElement).focus();
         el.textContent = text;
         el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
-        return { executed: true, verified: { value: el.textContent, matches: el.textContent === text } };
+        const value = el.textContent ?? "";
+        return { executed: true, verified: { ...verificationValue(value), matches: value === text } };
       }
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_fill only works on text inputs, textareas and editable areas.");
     }
@@ -99,47 +105,36 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       if (el instanceof HTMLSelectElement) {
         const want = String(p.option ?? "");
         const opt = [...el.options].find((o) => o.value === want) ?? [...el.options].find((o) => o.text.trim() === want);
-        if (!opt) throw new ProtocolError("ELEMENT_NOT_FOUND", `No option "${want}".`, "never", { options: [...el.options].map((o) => o.text.trim()) });
+        if (!opt) {
+          const labels = [...el.options].slice(0, 20).map(option => option.text.trim());
+          throw new ProtocolError("ELEMENT_NOT_FOUND", `No option "${want.slice(0, 128)}${want.length > 128 ? "…" : ""}".`, "never", {
+            options: labels.map(label => label.slice(0, 128)), optionsTotal: el.options.length,
+            optionsTruncated: el.options.length > labels.length || labels.some(label => label.length > 128),
+          });
+        }
         nativeSet(el, opt.value);
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        return { executed: true, verified: { value: el.value, label: opt.text.trim() } };
+        const label = el.selectedOptions[0]?.text.trim() ?? "";
+        return { executed: true, verified: { ...verificationValue(el.value), label: label.slice(0, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
-        if (el.checked !== want) el.click();
-        return { executed: el.checked === want, verified: { checked: el.checked } };
+        if (typeof want !== "boolean") throw new ProtocolError("INVALID_PARAMS", "checked must be a boolean.");
+        if (el.type === "radio" && el.checked && !want) throw new ProtocolError("INVALID_PARAMS", "A selected radio cannot be cleared by clicking it. Select another radio in the group.");
+        const changed = el.checked !== want;
+        if (changed) el.click();
+        if (el.checked !== want) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The page did not accept the requested checked state.", "never", { executed: changed, checked: el.checked });
+        return { executed: changed, verified: { checked: el.checked, matches: true } };
       }
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_select works on select, checkbox and radio elements.");
     }
-    case "press": return press(p);
+    case "press": return pressKey(p, assertInteractable);
     case "scroll": return scroll(p);
     case "wait": return waitFor(p, signal);
     case "extract": return extract(p);
     default: throw new ProtocolError("INVALID_PARAMS", `Unknown action ${method}`);
   }
-}
-
-const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "url", "tel", "password", "number", "date", "time", "datetime-local", "month", "week"]);
-
-function press(p: P) {
-  const target = (p.ref ? resolveRef(String(p.ref)) : document.activeElement ?? document.body) as HTMLElement;
-  const key = String(p.key);
-  const code = key === "Space" ? " " : key;
-  const init = { key: code, bubbles: true, cancelable: true, composed: true };
-  const down = target.dispatchEvent(new KeyboardEvent("keydown", init));
-  if (key === "Enter" || key === "Space") target.dispatchEvent(new KeyboardEvent("keypress", init));
-  target.dispatchEvent(new KeyboardEvent("keyup", init));
-  let submitted = false;
-  if (key === "Enter" && down && target instanceof HTMLInputElement && target.form && TEXT_INPUT_TYPES.has(target.type)) {
-    target.form.requestSubmit();
-    submitted = true;
-  }
-  if (key === "Tab" && down) {
-    const focusables = [...document.querySelectorAll<HTMLElement>("a[href],button,input,select,textarea,[tabindex]:not([tabindex='-1'])")].filter((e) => !(e as HTMLButtonElement).disabled);
-    focusables[(focusables.indexOf(target) + 1) % focusables.length]?.focus();
-  }
-  return Promise.resolve({ executed: true, verified: { submitted, activeElement: document.activeElement ? accessibleName(document.activeElement) : null } });
 }
 
 function scroll(p: P) {

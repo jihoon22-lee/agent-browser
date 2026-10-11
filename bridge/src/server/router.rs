@@ -1,5 +1,5 @@
 //! `tool.call` → browser command routing and outcome classification.
-use super::{conn::ServerState, now_ms, registry::CommandClass, timeline::TimelineEntry};
+use super::{conn::ServerState, now_ms, registry::{CommandClass, QueuedCommand}, timeline::TimelineEntry};
 use crate::mcp::tools;
 use crate::rpc::{ErrorCode, Retry, RpcError};
 use serde::Serialize;
@@ -205,38 +205,44 @@ fn operation_required(name: &str) -> ToolOutcome {
 
 async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schema: &Value) -> ToolOutcome {
     let Some(op_id) = args["operationId"].as_str() else { return operation_required(name) };
-    let op = match state.ops.check(op_id) {
-        Ok(op) => op,
-        Err(e) => return ToolOutcome::rejected(name, Some(op_id), e),
-    };
     // Forward only what the published schema declares; the gate owns operation, generation and tab.
     let declared = schema["properties"].as_object();
-    let mut params: serde_json::Map<String, Value> = args
+    let params: serde_json::Map<String, Value> = args
         .as_object()
         .into_iter()
         .flatten()
         .filter(|(k, _)| declared.is_some_and(|d| d.contains_key(k.as_str())))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    params.insert("operationId".into(), json!(op.id));
-    params.insert("generation".into(), json!(op.generation));
-    params.insert("tabId".into(), json!(op.current_tab));
     let class = tools::class_of(name, args);
     let method = format!("browser.{}", name.trim_start_matches("browser_"));
-    let result = state.registry.send_command(&method, Value::Object(params), class, timeout_for(name, args)).await;
-    finish(state, name, op_id, class, result)
+    let queued = match queue_operation_tool(state, op_id, &method, params, class) {
+        Ok(queued) => queued,
+        Err(error) => return ToolOutcome::rejected(name, Some(op_id), error),
+    };
+    finish(state, name, op_id, class, queued.wait(timeout_for(name, args)).await)
+}
+
+fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass) -> Result<QueuedCommand<'a>, RpcError> {
+    state.ops.with_checked(op_id, true, |op| {
+        params.insert("operationId".into(), json!(op.id));
+        params.insert("generation".into(), json!(op.generation));
+        params.insert("tabId".into(), json!(op.current_tab));
+        state.registry.queue_command_for(&op.client_id, method, Value::Object(params), class)
+    })
 }
 
 /// Turns the browser's reply into an outcome, re-checking the gate so a stopped operation's late result
 /// is not handed to the model as fresh information.
 fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, result: Result<Value, RpcError>) -> ToolOutcome {
-    let aborted = matches!(state.ops.check(op_id), Err(e) if e.code == ErrorCode::Cancelled);
+    let cancellation = state.ops.check_active(op_id).err().filter(|e| e.code == ErrorCode::Cancelled);
+    let aborted = cancellation.is_some();
     match result {
         _ if aborted && class == CommandClass::Read => ToolOutcome::failure(
             name,
             Some(op_id),
             true,
-            state.ops.check(op_id).err().expect("aborted operation reports CANCELLED"),
+            cancellation.expect("captured cancellation"),
         ),
         Ok(mut data) => {
             let verified = data.as_object_mut().and_then(|o| o.remove("verified")).unwrap_or(Value::Null);
@@ -283,14 +289,18 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 Some(id) => json!({ "tabId": id }),
                 None => json!({}),
             };
-            let tab = match read("browser.tabs.get", params).await {
+            let client = state.registry.selected_client().unwrap_or_default();
+            let queued = match state.registry.queue_command_for(&client, "browser.tabs.get", params, CommandClass::Read) {
+                Ok(queued) => queued,
+                Err(error) => return delivered_failure(None, error),
+            };
+            let tab = match queued.wait(DEFAULT_TIMEOUT).await {
                 Ok(tab) => tab,
                 Err(e) => return delivered_failure(None, e),
             };
             let Some(tab_id) = tab["tabId"].as_i64() else {
                 return ToolOutcome::failure(NAME, None, true, RpcError::new(ErrorCode::Internal, Retry::Never, "browser did not report a tab id"));
             };
-            let client = state.registry.selected_client().unwrap_or_default();
             match state.ops.attach(tab_id, &client) {
                 Ok(op) => ToolOutcome::success(
                     NAME,
@@ -305,12 +315,15 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         }
         "new" => {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
-            let op = match state.ops.check(op_id) {
-                Ok(op) => op,
-                Err(e) => return ToolOutcome::rejected(NAME, Some(op_id), e),
+            let queued = state.ops.with_checked(op_id, true, |op| {
+                let params = json!({ "url": args["url"], "operationId": op.id, "generation": op.generation });
+                state.registry.queue_command_for(&op.client_id, "browser.tabs.create", params, CommandClass::Write)
+            });
+            let queued = match queued {
+                Ok(queued) => queued,
+                Err(error) => return ToolOutcome::rejected(NAME, Some(op_id), error),
             };
-            let params = json!({ "url": args["url"], "operationId": op.id, "generation": op.generation });
-            let created = state.registry.send_command("browser.tabs.create", params, CommandClass::Write, timeout_for(NAME, args)).await;
+            let created = queued.wait(timeout_for(NAME, args)).await;
             let tab = match created {
                 Ok(tab) => tab,
                 Err(e) => return delivered_failure(Some(op_id), e),
@@ -318,10 +331,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let joined = tab["tabId"].as_i64().ok_or_else(|| {
                 RpcError::new(ErrorCode::Internal, Retry::Never, "browser did not report the new tab id").with_details(json!({ "executed": true }))
             });
-            let joined = joined.and_then(|tab_id| {
-                state.ops.add_tab(op_id, tab_id)?;
-                state.ops.switch_tab(op_id, tab_id)
-            });
+            let joined = joined.and_then(|tab_id| state.ops.add_and_switch_tab(op_id, tab_id));
             match joined {
                 Ok(()) => ToolOutcome::success(NAME, Some(op_id), true, Executed::Yes, Value::Null, json!({ "tab": tab })),
                 Err(mut e) => {
@@ -334,24 +344,26 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         "switch" => {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             let tab_id = args["tabId"].as_i64().unwrap_or_default();
-            let op = match state.ops.check_active(op_id) {
-                Ok(op) => op,
-                Err(e) => return ToolOutcome::rejected(NAME, Some(op_id), e),
+            let queued = state.ops.with_checked(op_id, false, |op| {
+                if !op.tabs.contains(&tab_id) {
+                    return Err(RpcError::new(ErrorCode::TabNotFound, Retry::Never,
+                        "That tab is not part of this operation. Use action=new or attach it first.")
+                        .with_details(json!({ "tabId": tab_id, "operationTabs": op.tabs })));
+                }
+                state.registry.queue_command_for(&op.client_id, "browser.tabs.get", json!({ "tabId": tab_id }), CommandClass::Read)
+            });
+            let queued = match queued {
+                Ok(queued) => queued,
+                Err(error) => return ToolOutcome::rejected(NAME, Some(op_id), error),
             };
-            if !op.tabs.contains(&tab_id) {
-                let e = RpcError::new(ErrorCode::TabNotFound, Retry::Never,
-                    "That tab is not part of this operation. Use action=new or attach it first.")
-                    .with_details(json!({ "tabId": tab_id, "operationTabs": op.tabs }));
-                return ToolOutcome::rejected(NAME, Some(op_id), e);
-            }
-            match read("browser.tabs.get", json!({ "tabId": tab_id })).await {
+            match queued.wait(DEFAULT_TIMEOUT).await {
                 Ok(tab) => match state.ops.switch_tab(op_id, tab_id) {
                     Ok(()) => ToolOutcome::success(NAME, Some(op_id), true, Executed::No, Value::Null, json!({ "tab": tab })),
                     Err(e) => ToolOutcome::failure(NAME, Some(op_id), true, e),
                 },
                 Err(e) => {
                     if e.code == ErrorCode::TabNotFound {
-                        state.ops.remove_tab(tab_id);
+                        state.ops.remove_tab_for_operation(op_id, tab_id);
                     }
                     delivered_failure(Some(op_id), e)
                 }
@@ -371,6 +383,109 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn operation_dispatch_uses_its_owner_even_if_registry_selection_changed() {
+        use std::sync::Arc;
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
+        for client in ["A", "B"] {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            state.registry.register(client, tx);
+            let state = state.clone();
+            tokio::spawn(async move {
+                while let Some(text) = rx.recv().await {
+                    if let Ok(Envelope::Req { id, method, params, .. }) = parse_envelope(&text) {
+                        let value = match method.as_str() {
+                            "browser.tabs.create" => json!({"tabId": 2, "owner": client}),
+                            "browser.tabs.get" => json!({"tabId": params["tabId"], "owner": client}),
+                            _ => json!({"owner": client, "tabId": params["tabId"]}),
+                        };
+                        state.registry.handle_response(Envelope::ok(id, value));
+                    }
+                }
+            });
+        }
+        let op = state.ops.attach(1, "A").unwrap();
+        // A captured operation must never inherit a later profile selection.
+        state.registry.use_browser("B");
+        let filled = call_tool(&state, "browser_fill", json!({"operationId": op.id, "ref":"s1f0e1", "text":"x"})).await;
+        assert_eq!(filled.data["owner"], "A");
+        let created = call_tool(&state, "browser_tabs", json!({"action":"new", "operationId":op.id, "url":"http://127.0.0.1/"})).await;
+        assert_eq!(created.data["tab"]["owner"], "A");
+        let switched = call_tool(&state, "browser_tabs", json!({"action":"switch", "operationId":op.id, "tabId":1})).await;
+        assert_eq!(switched.data["tab"]["owner"], "A");
+    }
+
+    #[test]
+    fn prepared_command_is_not_enqueued_after_abort_or_release() {
+        for abort in [true, false] {
+            let home = tempfile::tempdir().unwrap();
+            let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+            let (a, mut from_a) = tokio::sync::mpsc::unbounded_channel();
+            let (b, mut from_b) = tokio::sync::mpsc::unbounded_channel();
+            state.registry.register("A", a);
+            state.registry.register("B", b);
+            let old = state.ops.attach(1, "A").unwrap();
+            // Preparation may have observed A before another connection stops it and attaches B.
+            let captured = state.ops.check(&old.id).unwrap();
+            let params = json!({"text":"prepared", "ref":"s1f0e1", "tabId":captured.current_tab}).as_object().unwrap().clone();
+            if abort { state.ops.abort(Some(&old.id)); } else { state.ops.release(&old.id).unwrap(); }
+            state.registry.use_browser("B");
+            let new = state.ops.attach(1, "B").unwrap();
+            let error = queue_operation_tool(&state, &old.id, "browser.fill", params, CommandClass::Write).err().expect("stale work must be rejected before enqueue");
+            assert_eq!(error.code, if abort { ErrorCode::Cancelled } else { ErrorCode::OperationInvalid });
+            assert!(from_a.try_recv().is_err(), "binding to old owner is insufficient: no stale command may be sent");
+            assert!(from_b.try_recv().is_err(), "the replacement profile must not receive old work");
+            assert_eq!(state.ops.current().unwrap().id, new.id);
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_pending_commands_keep_the_tab_captured_at_each_enqueue() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        state.registry.register("A", tx);
+        let op = state.ops.attach(1, "A").unwrap();
+        state.ops.add_tab(&op.id, 2).unwrap();
+        let first = queue_operation_tool(&state, &op.id, "browser.scroll", serde_json::Map::new(), CommandClass::Write).unwrap();
+        state.ops.switch_tab(&op.id, 2).unwrap();
+        let second = queue_operation_tool(&state, &op.id, "browser.scroll", serde_json::Map::new(), CommandClass::Write).unwrap();
+        let Envelope::Req { id: first_id, params: first_params, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
+        let Envelope::Req { id: second_id, params: second_params, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
+        assert_eq!(first_params["tabId"], 1);
+        assert_eq!(second_params["tabId"], 2);
+        state.registry.handle_response(Envelope::ok(second_id, json!({"tabId":2})));
+        state.registry.handle_response(Envelope::ok(first_id, json!({"tabId":1})));
+        assert_eq!(first.wait(DEFAULT_TIMEOUT).await.unwrap()["tabId"], 1);
+        assert_eq!(second.wait(DEFAULT_TIMEOUT).await.unwrap()["tabId"], 2);
+    }
+
+    #[tokio::test]
+    async fn late_missing_tab_reply_cannot_remove_a_replacement_operations_tab() {
+        use std::sync::Arc;
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        state.registry.register("A", tx);
+        let old = state.ops.attach(1, "A").unwrap();
+        state.ops.add_tab(&old.id, 2).unwrap();
+        let task = {
+            let state = state.clone();
+            let id = old.id.clone();
+            tokio::spawn(async move { call_tool(&state, "browser_tabs", json!({"action":"switch", "operationId":id, "tabId":2})).await })
+        };
+        let Envelope::Req { id, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
+        state.ops.release(&old.id).unwrap();
+        let replacement = state.ops.attach(2, "B").unwrap();
+        state.registry.handle_response(Envelope::err(id, RpcError::new(ErrorCode::TabNotFound, Retry::Never, "closed")));
+        assert_eq!(task.await.unwrap().error.unwrap().code, ErrorCode::TabNotFound);
+        assert_eq!(state.ops.check(&replacement.id).unwrap().tabs, vec![2]);
+    }
 
     #[test]
     fn navigation_budget_includes_extension_load_and_response_time() {

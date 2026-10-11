@@ -52,6 +52,12 @@ pnpm --filter agent-browser-e2e exec playwright install chromium
 | R18 | 추가 회귀 | 취소 → Bridge 재시작 → 새 작업 허용 |
 | R19 | 추가 회귀 | 다른 탭/이동한 문서에서 옛 ref 거부 |
 | R20 | 추가 회귀 | 현재 탭 종료 후 다른 탭으로 전환/작업 해제 |
+| R21 | 검토 회귀 | 새 작업의 snapshot 이전 쓰기와 옛 작업 ref 거부 |
+| R22 | 검토 회귀 | Enter/Backspace/Space의 실제 상태 변화, radio 해제 거부 |
+| R23 | 검토 회귀 | 150개 이후 요소 cursor, 두 번째 일반 표, rowspan 열 정렬 |
+| R24 | 검토 회귀 | 큰 값·표 응답 제한과 다음 행 읽기 |
+| R25 | 검토 회귀 | 동일 토큰으로 재페어링 |
+| R26 | 검토 회귀 | 실제 SW를 쓰기 진행 중 종료, in-flight 표식으로 중복 실행 거부 |
 
 ## 브라우저에서 확인한 사항
 
@@ -73,3 +79,28 @@ DOM 이벤트는 trusted 사용자 입력과 동일하지 않다. OS 대화상�
 전체 페이지·백그라운드 캡처는 지원을 주장하지 않는다. snapshot 본문은 문자 수 제한이며 토큰 수가 아니다.
 완료 요청 캐시는 10분/최근 200개이며 in-flight tombstone은 브라우저 세션 동안 보존한다.
 프로세스 재시작을 가로지르는 무제한 exactly-once 보장은 아니다.
+
+## 검토 후 읽기/조작 계약
+
+- 새 operation의 쓰기는 그 operation으로 현재 문서의 snapshot을 먼저 읽어야 한다.
+- snapshot의 `offset`은 본문 문자, `elementOffset`은 요소, `frameOffset`은 프레임 cursor다.
+  각 frame의 `elementsNextOffset`과 최상위 `framesNextOffset`으로 남은 부분을 읽는다.
+- 단일 frame JSON은 32768자, 여러 frame 합계는 약 60000자 예산으로 제한한다. 긴 필드 잘림은 limits에 표시한다.
+- `extract(kind=table)`의 `offset`은 header를 제외한 데이터 행 번호다. `nextOffset`, `truncated`, limits를 확인한다.
+  너무 큰 단일 셀/열은 명시적으로 잘리고, 과도한 확장 grid는 구조화된 오류로 거부한다.
+- press는 synthetic 키이며 native 기본 동작을 구현한 경우 `defaultApplied`로 알린다.
+  지원하지 않는 기본 동작은 event-only 표시 또는 명시적 오류다. 체크된 radio의 false 설정은 실행 전 거부한다.
+
+## Windows 검증 실행 준비
+
+```bash
+bash scripts/test-windows.sh -- --grep 'S01 '
+bash scripts/test-windows.sh
+```
+
+스크립트는 이미 설치된 고정 테스트 패키지를 Windows 사용자 영역의 AgentBrowser-dev/testing에 복사한다.
+Windows Node가 실제 설치된 Google Chrome과 MSVC exe를 실행하며, Linux 프로세스를 Windows 증거로 기록하지 않는다.
+테스트용 확장 로드는 Chrome의 [공식 Extensions.loadUnpacked](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/)를 사용한다.
+개발용 debugging pipe/확장 디버깅 플래그는 테스트 프로필에만 적용되며 제품 권한/통신 구조에 추가되지 않는다.
+정책이 거부하면 실패로 기록하며 정책을 변경하지 않는다. 사용자 기존 Chrome 프로필/프로세스를 종료하지 않는다.
+실행 결과를 status.md에 기록하기 전까지 위 명령의 준비·빌드 성공을 Windows 통과로 해석하지 않는다.

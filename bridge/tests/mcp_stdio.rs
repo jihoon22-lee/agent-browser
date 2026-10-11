@@ -1,7 +1,7 @@
 mod common;
 use serde_json::{json, Value};
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 fn bin() -> &'static str { env!("CARGO_BIN_EXE_browser-bridge") }
 
@@ -76,9 +76,13 @@ async fn starts_serve_when_missing_and_serve_outlives_mcp() {
     let cfg = agent_browser_bridge::config::load_or_init(home.path()).unwrap();
     assert!(log.contains("serve listening"), "{log}");
     assert!(!log.contains(&cfg.token), "token leaked into serve.log");
+    let mut diagnostics = String::new();
+    m.child.stderr.take().unwrap().read_to_string(&mut diagnostics).await.unwrap();
     // serve writes its PID to home/serve.pid; Linux-only cleanup.
     let pid: u32 = std::fs::read_to_string(home.path().join("serve.pid")).unwrap().trim().parse().unwrap();
     let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+    assert!(diagnostics.contains("serve_spawn") && diagnostics.contains("unix-process-group"), "Missing detached launch diagnostic: {diagnostics}");
+    assert!(!diagnostics.contains(&cfg.token), "token leaked into launch diagnostics");
 }
 
 #[tokio::test]

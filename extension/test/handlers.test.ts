@@ -38,6 +38,7 @@ it('lists tabs with attachability and returns flat tab metadata', async () => {
     const w = world(), h = createHandlers(w.api, memorySessionStore());
     expect(await h(request('browser.tabs.list'))).toMatchObject({ tabs: [{ tabId: 1, attachable: true }, { tabId: 2, attachable: true }, { tabId: 3, attachable: false }] });
     expect(await h(request('browser.tabs.get', { tabId: undefined }))).toMatchObject({ tabId: 1 });
+    await firstRef(h);
     expect(await h(request('browser.tabs.create', { url: 'https://example.test/new' }))).toMatchObject({ tabId: 9, active: false });
 });
 it('rejects missing tabs and unsupported pages before injecting', async () => {
@@ -114,6 +115,7 @@ it('cancels pending wait immediately and permits a new operation after bridge re
     await h(request('browser.cancel', { operationId: 'op-1', generation: 2 }));
     await failure;
     await expect(h(request('browser.scroll', { direction: 'down' }))).rejects.toMatchObject({ code: 'CANCELLED' });
+    await h(request('browser.snapshot',{operationId:'op-new-server',generation:1}));
     await expect(h(request('browser.scroll', { operationId: 'op-new-server', generation: 1, direction: 'down' }))).resolves.toMatchObject({ executed: true });
     expect(w.sent.some(x => x.msg.kind === 'cancel')).toBe(true);
 });
@@ -150,6 +152,7 @@ it('navigation waits for completion and records the resulting page', async () =>
     const w = world();
     w.api.tabsUpdate = async (id, p) => { Object.assign(w.tabs.get(id)!, p, { status: 'loading' }); return { ...w.tabs.get(id)! }; };
     const h = createHandlers(w.api, memorySessionStore());
+    await firstRef(h);
     const work = h(request('browser.navigate', { url: 'https://example.test/new' }));
     await vi.waitFor(() => expect(w.tabs.get(1)!.status).toBe('loading'));
     Object.assign(w.tabs.get(1)!, { status: 'complete', title: 'Arrived' });
@@ -191,6 +194,7 @@ it('refGone succeeds after same-tab document replacement but rejects refs from a
 });
 it('navigation API uncertainty is never reported as definitely unexecuted', async () => {
     const w = world(), h = createHandlers(w.api, memorySessionStore());
+    await firstRef(h);
     w.api.tabsUpdate = async () => { throw Error('transport lost'); };
     await expect(h(request('browser.navigate', { url: 'https://example.test/new' }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe' });
 });
@@ -203,11 +207,29 @@ it('URL-only wait works while the old document cannot be injected',async()=>{
  await outcome;
 });
 it('cancelling a navigation with an unresolved Chrome API call removes its listeners',async()=>{
- const w=world(),h=createHandlers(w.api,memorySessionStore());let called=false;
+ const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);let called=false;
  w.api.tabsUpdate=async()=>{called=true;return new Promise(()=>{});};
  const work=h(request('browser.navigate',{url:'https://example.test/new'},'hanging-nav'));
  const failure=expect(work).rejects.toMatchObject({code:'EXECUTION_UNKNOWN'});
  await vi.waitFor(()=>expect(called).toBe(true));
  await h(request('browser.cancel',{requestId:'hanging-nav',operationId:undefined,generation:undefined}));await failure;
  expect(w.updates.size).toBe(0);
+});
+it('a new operation requires its own snapshot for old refs and ref-less writes',async()=>{
+ const w=world(),h=createHandlers(w.api,memorySessionStore());const old=await firstRef(h);
+ await h(request('browser.cancel',{operationId:'op-1',generation:2}));
+ await expect(h(request('browser.click',{operationId:'op-2',ref:old}))).rejects.toMatchObject({code:'STALE_ELEMENT'});
+ await expect(h(request('browser.scroll',{operationId:'op-2',direction:'down'}))).rejects.toMatchObject({code:'STALE_ELEMENT'});
+ await h(request('browser.snapshot',{operationId:'op-2'}));
+ await expect(h(request('browser.scroll',{operationId:'op-2',direction:'down'}))).resolves.toMatchObject({executed:true});
+});
+it('snapshot frame pagination bounds aggregate output and exposes all remaining frames',async()=>{
+ const w=world();w.frames.set(1,Array.from({length:6},(_,frameId)=>({frameId,documentId:`d${frameId}`,url:`https://example.test/${frameId}`})));
+ const original=w.api.sendToFrame;w.api.sendToFrame=async(t,f,m:any)=>{const r=await original(t,f,m);if(m.method==='snapshot')r.result.text={content:'x'.repeat(30000)};return r;};
+ const h=createHandlers(w.api,memorySessionStore());const one:any=await h(request('browser.snapshot',{elementOffset:150}));
+ expect(JSON.stringify(one).length).toBeLessThan(65536);
+ expect(one.framesNextOffset).toBeGreaterThan(0);
+ expect(w.sent[0]!.msg.params.elementOffset).toBe(150);
+ const two:any=await h(request('browser.snapshot',{frameOffset:one.framesNextOffset}));
+ expect(two.frames[0].frameId).toBe(one.framesNextOffset);
 });

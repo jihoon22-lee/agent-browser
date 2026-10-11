@@ -18,6 +18,13 @@ pub struct Operation {
     pub current_tab_closed: bool,
 }
 
+#[derive(Debug)]
+pub struct AbortedOperation {
+    pub id: String,
+    pub generation: u64,
+    pub client_id: String,
+}
+
 #[derive(Default)]
 pub struct OperationGate {
     inner: Mutex<GateInner>,
@@ -59,13 +66,30 @@ impl OperationGate {
     }
 
     pub fn check(&self, id: &str) -> Result<Operation, RpcError> {
-        let op = self.check_active(id)?;
-        if op.current_tab_closed {
+        self.with_checked(id, true, |op| Ok(op.clone()))
+    }
+
+    /// The callback is synchronous: validation and command enqueue share this lock with
+    /// abort/release/switch. Never wait for a browser response while holding the gate.
+    pub fn with_checked<T>(&self, id: &str, require_open_tab: bool, f: impl FnOnce(&Operation) -> Result<T, RpcError>) -> Result<T, RpcError> {
+        let g = self.inner.lock().unwrap();
+        let op = Self::active(&g, id)?;
+        if require_open_tab && op.current_tab_closed {
             return Err(RpcError::new(ErrorCode::TabClosed, Retry::Never,
                 "The operation's current tab was closed. Use browser_tabs action=switch or release.")
                 .with_details(json!({ "tabId": op.current_tab })));
         }
-        Ok(op)
+        f(op)
+    }
+
+    pub fn select_browser<T>(&self, client_id: &str, select: impl FnOnce() -> T) -> Result<T, RpcError> {
+        let g = self.inner.lock().unwrap();
+        if let Some(op) = g.current.as_ref().filter(|op| op.client_id != client_id) {
+            return Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
+                "Finish or stop the current operation before selecting another browser.")
+                .with_details(json!({ "operationId": op.id })));
+        }
+        Ok(select())
     }
 
     fn active<'a>(g: &'a GateInner, id: &str) -> Result<&'a Operation, RpcError> {
@@ -92,6 +116,15 @@ impl OperationGate {
         self.with_active(id, |op| { if !op.tabs.contains(&tab) { op.tabs.push(tab); } Ok(()) })
     }
 
+    pub fn add_and_switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
+        self.with_active(id, |op| {
+            if !op.tabs.contains(&tab) { op.tabs.push(tab); }
+            op.current_tab = tab;
+            op.current_tab_closed = false;
+            Ok(())
+        })
+    }
+
     pub fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         self.with_active(id, |op| {
             if !op.tabs.contains(&tab) {
@@ -108,6 +141,14 @@ impl OperationGate {
     pub fn remove_tab(&self, tab: i64) {
         let mut g = self.inner.lock().unwrap();
         if let Some(op) = g.current.as_mut() {
+            op.tabs.retain(|t| *t != tab);
+            if op.current_tab == tab { op.current_tab_closed = true; }
+        }
+    }
+
+    pub fn remove_tab_for_operation(&self, id: &str, tab: i64) {
+        let mut g = self.inner.lock().unwrap();
+        if let Some(op) = g.current.as_mut().filter(|op| op.id == id) {
             op.tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
         }
@@ -138,13 +179,13 @@ impl OperationGate {
     }
 
     /// Closes the gate first: any later call for this operation gets CANCELLED.
-    pub fn abort(&self, id: Option<&str>) -> Option<(String, u64)> {
+    pub fn abort(&self, id: Option<&str>) -> Option<AbortedOperation> {
         let mut g = self.inner.lock().unwrap();
         let matches = g.current.as_ref().is_some_and(|o| id.is_none_or(|i| i == o.id));
         if !matches { return None; }
         g.generation += 1;
         let generation = g.generation;
-        Self::finish(&mut g, OpState::Aborted).map(|op| (op.id, generation))
+        Self::finish(&mut g, OpState::Aborted).map(|op| AbortedOperation { id: op.id, generation, client_id: op.client_id })
     }
 
     pub fn current(&self) -> Option<Operation> {
@@ -170,8 +211,9 @@ mod tests {
     fn abort_bumps_generation_and_cancels_further_calls() {
         let g = OperationGate::default();
         let op = g.attach(1, "cli").unwrap();
-        let (_, generation) = g.abort(None).unwrap();
-        assert!(generation > op.generation);
+        let aborted = g.abort(None).unwrap();
+        assert!(aborted.generation > op.generation);
+        assert_eq!(aborted.client_id, "cli");
         assert_eq!(g.check(&op.id).unwrap_err().code, ErrorCode::Cancelled);
         // after abort a new attach is allowed
         assert!(g.attach(1, "cli").is_ok());
@@ -226,6 +268,34 @@ mod tests {
         assert_eq!(g.release(&old.id).unwrap_err().code, ErrorCode::Cancelled);
         assert_eq!(g.current().unwrap().id, new.id);
         assert_eq!(g.current().unwrap().tabs, vec![2]);
+    }
+
+    #[test]
+    fn abort_cannot_pass_the_validation_enqueue_boundary() {
+        use std::sync::{Arc, mpsc};
+        let gate = Arc::new(OperationGate::default());
+        let op = gate.attach(1, "A").unwrap();
+        let (entered, wait_entered) = mpsc::sync_channel(0);
+        let (proceed, wait_proceed) = mpsc::sync_channel(0);
+        let dispatcher = {
+            let gate = gate.clone();
+            let id = op.id.clone();
+            std::thread::spawn(move || gate.with_checked(&id, true, |_| {
+                entered.send(()).unwrap();
+                wait_proceed.recv().unwrap();
+                Ok(()) // The real router enqueues synchronously at this boundary.
+            }))
+        };
+        wait_entered.recv().unwrap();
+        assert!(matches!(gate.inner.try_lock(), Err(std::sync::TryLockError::WouldBlock)), "abort/release share the held gate lock");
+        proceed.send(()).unwrap();
+        dispatcher.join().unwrap().unwrap();
+        let aborted = gate.abort(Some(&op.id)).unwrap();
+        assert_eq!(aborted.client_id, "A");
+        let mut sent = false;
+        let error = gate.with_checked(&op.id, true, |_| { sent = true; Ok(()) }).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Cancelled);
+        assert!(!sent);
     }
 
     #[test]

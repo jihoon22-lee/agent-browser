@@ -32,6 +32,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
+  if (msg?.kind === "reconnect") { conn.stop(); conn.start(); sendResponse({ ok: true }); return; }
   if (msg?.kind === "get-conn-status") { sendResponse(lastStatus); return; }
   if (msg?.kind === "bridge" && ["status.get", "operation.abort", "browser.use"].includes(msg.method)) {
     conn.request(msg.method, msg.params ?? {}).then((r) => sendResponse({ ok: true, result: r }), (e) => sendResponse({ ok: false, error: e instanceof ProtocolError ? e.toRpc() : { code: "INTERNAL", message: String(e), retry: "never" } }));

@@ -29,24 +29,61 @@ fn new_token() -> String {
     format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple())
 }
 
-pub fn load_or_init(home: &Path) -> anyhow::Result<Config> {
-    let path = home.join(FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).with_context(|| format!("invalid config at {}", path.display())),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let cfg = Config { version: 1, token: new_token(), port: DEFAULT_PORT, paired_extension_id: None, selected_client_id: None };
-            save(home, &cfg)?;
-            Ok(cfg)
-        }
+const INIT_LOCK: &str = "config.init.lock";
+const INIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn read_config(path: &Path) -> anyhow::Result<Option<Config>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).map(Some).with_context(|| format!("invalid config at {}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
     }
 }
 
+struct InitLock(PathBuf);
+impl Drop for InitLock {
+    fn drop(&mut self) { let _ = std::fs::remove_dir(&self.0); }
+}
+
+pub fn load_or_init(home: &Path) -> anyhow::Result<Config> {
+    let path = home.join(FILE);
+    if let Some(cfg) = read_config(&path)? { return Ok(cfg); }
+    std::fs::create_dir_all(home).with_context(|| format!("cannot create {}", home.display()))?;
+    let lock_path = home.join(INIT_LOCK);
+    let deadline = std::time::Instant::now() + INIT_WAIT;
+    loop {
+        match std::fs::create_dir(&lock_path) {
+            Ok(()) => {
+                let _lock = InitLock(lock_path);
+                // A previous initializer may have published between our first read and lock acquisition.
+                if let Some(cfg) = read_config(&path)? { return Ok(cfg); }
+                let cfg = Config { version: 1, token: new_token(), port: DEFAULT_PORT, paired_extension_id: None, selected_client_id: None };
+                save(home, &cfg)?;
+                return Ok(cfg);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Publication uses rename: readers never see an incomplete config.
+                if let Some(cfg) = read_config(&path)? { return Ok(cfg); }
+                if std::time::Instant::now() >= deadline {
+                    anyhow::bail!("config initialization lock {} remained held for two seconds; verify no bridge or pair process is initializing before removing a stale lock", lock_path.display());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => return Err(e).with_context(|| format!("cannot acquire config initialization lock {}", lock_path.display())),
+        }
+    }
+}
+
+struct TempConfig(PathBuf);
+impl Drop for TempConfig {
+    fn drop(&mut self) { let _ = std::fs::remove_file(&self.0); }
+}
+
 pub fn save(home: &Path, cfg: &Config) -> anyhow::Result<()> {
     std::fs::create_dir_all(home).with_context(|| format!("cannot create {}", home.display()))?;
-    let tmp = home.join(format!("{FILE}.tmp-{}", std::process::id()));
-    write_private(&tmp, &serde_json::to_vec_pretty(cfg)?)?;
-    std::fs::rename(&tmp, home.join(FILE))?;
+    let tmp = TempConfig(home.join(format!("{FILE}.tmp-{}", uuid::Uuid::new_v4().simple())));
+    write_private(&tmp.0, &serde_json::to_vec_pretty(cfg)?)?;
+    std::fs::rename(&tmp.0, home.join(FILE))?;
     Ok(())
 }
 
@@ -55,13 +92,15 @@ pub fn save(home: &Path, cfg: &Config) -> anyhow::Result<()> {
 fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
+    opts.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    opts.open(path)?.write_all(bytes)
+    let mut file = opts.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 pub fn tokens_equal(a: &str, b: &str) -> bool {
@@ -104,6 +143,39 @@ mod tests {
         let c = load_or_init(&home).unwrap();
         assert!(home.join("config.json").exists());
         assert!(!c.token.is_empty());
+    }
+
+    #[test]
+    fn concurrent_first_initializers_all_observe_the_published_token() {
+        use std::sync::{Arc, Barrier};
+        let dir = tempfile::tempdir().unwrap();
+        let start = Arc::new(Barrier::new(16));
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16).map(|_| {
+                let start = start.clone();
+                let home = dir.path();
+                scope.spawn(move || { start.wait(); load_or_init(home) })
+            }).collect();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect::<Vec<_>>()
+        });
+        let published = load_or_init(dir.path()).unwrap();
+        for result in results {
+            let config = result.expect("concurrent initialization must not fail");
+            assert!(tokens_equal(&config.token, &published.token), "initializers returned different tokens");
+        }
+    }
+
+    #[test]
+    fn abandoned_initialization_lock_fails_with_a_bounded_diagnostic() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(INIT_LOCK)).unwrap();
+        let started = std::time::Instant::now();
+        let error = load_or_init(dir.path()).unwrap_err().to_string();
+        assert!(error.contains("config initialization lock"));
+        assert!(error.contains("stale lock"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+        assert!(!dir.path().join(FILE).exists(), "a contender must not invent a second token");
+        assert!(dir.path().join(INIT_LOCK).exists(), "never remove another process's lock");
     }
 
     #[test]

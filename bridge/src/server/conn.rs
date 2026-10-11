@@ -426,11 +426,11 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
         "operation.abort" => {
             let operation_id = params.get("operationId").and_then(Value::as_str);
             match state.ops.abort(operation_id) {
-                Some((op_id, generation)) => {
-                    // The gate is already closed; tell the selected browser to stop whatever it is running.
-                    state.registry.notify_selected("browser.cancel", json!({ "operationId": op_id, "generation": generation }));
+                Some(op) => {
+                    // The closed operation's owner receives cancellation, never a later selection.
+                    state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation }));
                     state.broadcast_status();
-                    Envelope::ok(id, json!({ "aborted": true, "operationId": op_id }))
+                    Envelope::ok(id, json!({ "aborted": true, "operationId": op.id }))
                 }
                 None => Envelope::ok(id, json!({ "aborted": false, "operationId": Value::Null })),
             }
@@ -442,12 +442,9 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
                     return Envelope::err(id, RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
                         "A browser operation is being attached. Wait for it to finish before selecting a browser."));
                 };
-                if let Some(op) = state.ops.current().filter(|op| op.client_id != client_id) {
-                    return Envelope::err(id, RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
-                        "Finish or stop the current operation before selecting another browser.")
-                        .with_details(json!({ "operationId": op.id })));
+                if let Err(error) = state.ops.select_browser(client_id, || state.registry.use_browser(client_id)) {
+                    return Envelope::err(id, error);
                 }
-                state.registry.use_browser(client_id);
                 state.persist_selection().await;
                 state.broadcast_status();
                 Envelope::ok(id, json!({ "selected": client_id }))
@@ -458,3 +455,27 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn abort_notifies_the_operation_owner_after_selection_has_changed() {
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), config::load_or_init(home.path()).unwrap());
+        let (a, mut from_a) = tokio::sync::mpsc::unbounded_channel();
+        let (b, mut from_b) = tokio::sync::mpsc::unbounded_channel();
+        state.registry.register("A", a);
+        state.registry.register("B", b);
+        let op = state.ops.attach(1, "A").unwrap();
+        state.registry.use_browser("B");
+        let reply = extension_request(&state, "stop".into(), "operation.abort", &json!({"operationId":op.id})).await;
+        assert!(matches!(reply, Envelope::Res { ok: true, .. }));
+        let cancel = parse_envelope(&from_a.recv().await.unwrap()).unwrap();
+        assert!(matches!(cancel, Envelope::Req { ref method, ref params, .. } if method == "browser.cancel" && params["operationId"] == op.id));
+        while let Ok(text) = from_b.try_recv() {
+            assert!(matches!(parse_envelope(&text).unwrap(), Envelope::Evt { .. }), "B may receive status, but never A's cancellation");
+        }
+    }
+}

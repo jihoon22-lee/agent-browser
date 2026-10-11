@@ -33,6 +33,7 @@ export function App() {
       next.repairPending = true;
     }
     await chrome.storage.local.set(next);
+    await chrome.runtime.sendMessage({ kind: "reconnect" });
     setToken("");
     setSaved(true);
   }

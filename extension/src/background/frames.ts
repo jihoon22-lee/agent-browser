@@ -29,7 +29,7 @@ export function frameRouter(api: ChromeApi, store: SessionStore) {
             throw new ProtocolError('FRAME_UNAVAILABLE', 'This frame could not be accessed.');
         }
     }
-    async function resolve(tabId: number, ref?: string): Promise<FrameInfo> {
+    async function resolve(tabId: number, ref?: string, operationId?: string): Promise<FrameInfo> {
         const frames = await list(tabId);
         if (ref) {
             const parsed = RefTable.parse(ref);
@@ -37,7 +37,7 @@ export function frameRouter(api: ChromeApi, store: SessionStore) {
                 throw new ProtocolError('ELEMENT_NOT_FOUND', 'Use an element ref returned by browser_snapshot.');
             const binding = await store.binding(parsed.snapshotId, parsed.frameId);
             const current = frames.find(f => f.frameId === parsed.frameId);
-            if (!binding || binding.tabId !== tabId || !current || binding.documentId !== current.documentId)
+            if (!binding || binding.operationId !== operationId || binding.tabId !== tabId || !current || binding.documentId !== current.documentId)
                 throw new ProtocolError('STALE_ELEMENT', 'The element belongs to another tab or an old document. Take a new snapshot.');
             return current;
         }

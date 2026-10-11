@@ -47,6 +47,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         }
         return response.result;
     }
+    async function requireSnapshot(p:Record<string,unknown>, tabId?:number, documentId?:string) {
+        if (!(await store.hasSnapshot(String(p.operationId),tabId,documentId)))
+            throw new ProtocolError('STALE_ELEMENT','Take a fresh browser_snapshot for this operation before writing.');
+    }
     async function dispatch(run: Running): Promise<unknown> {
         const { req, controller } = run, p = req.params, signal = controller.signal;
         await check(req, signal);
@@ -60,6 +64,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         if (req.method === 'browser.tabs.create') {
             const url = String(p.url ?? '');
             requireWeb(url);
+            await requireSnapshot(p);
             await check(req, signal);
             run.started = true;
             const created = await api.tabsCreate({ url, active: false });
@@ -74,24 +79,35 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         const tabId = tab.id!;
         if (req.method === 'browser.snapshot') {
             const snapshotId = await store.nextSnapshotId(), results: unknown[] = [], errors: FrameError[] = [], bindings: FrameInfo[] = [];
-            for (const f of await frames.list(tabId)) {
-                await check(req, signal);
+            const allFrames = (await frames.list(tabId)).sort((a,b)=>a.frameId-b.frameId);
+            const frameOffset = Math.max(0,Number(p.frameOffset??0));
+            let used=0, framesNextOffset:number|null=null;
+            for(let index=frameOffset;index<allFrames.length;index++) {
+                const f=allFrames[index]!;
+                if(index-frameOffset>=20){framesNextOffset=index;break;}
+                await check(req,signal);
                 try {
-                    await frames.inject(tabId, f);
-                    const result = await send(tabId, f, 'snapshot', { ...p, snapshotId, frameId: f.frameId, maxChars: f.frameId === 0 ? (p.maxChars ?? 4000) : 1000, offset: f.frameId === 0 ? (p.offset ?? 0) : 0 }, run);
-                    results.push({ ...result, documentId: f.documentId });
-                    bindings.push(f);
-                }
-                catch (e) {
-                    if (signal.aborted || asError(e).code === 'CANCELLED')
-                        throw e;
-                    errors.push({ frameId: f.frameId, url: f.url, code: 'FRAME_UNAVAILABLE', message: asError(e).message });
+                    await frames.inject(tabId,f);
+                    const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:f.frameId===0?(p.maxChars??4000):1000,offset:f.frameId===0?(p.offset??0):0,elementOffset:p.elementOffset??0},run);
+                    const withDocument={...result,documentId:f.documentId};
+                    const length=JSON.stringify(withDocument).length;
+                    if(length>60_000)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
+                    if(used+length>60_000){framesNextOffset=index;break;}
+                    results.push(withDocument);bindings.push(f);used+=length;
+                }catch(e){
+                    if(signal.aborted||asError(e).code==='CANCELLED')throw e;
+                    const error:FrameError={frameId:f.frameId,url:f.url.slice(0,2048),code:'FRAME_UNAVAILABLE',message:asError(e).message.slice(0,500)};
+                    const errorSize=JSON.stringify(error).length;
+                    if(used+errorSize>60_000){framesNextOffset=index;break;}
+                    errors.push(error);used+=errorSize;
                 }
             }
-            if (!bindings.some(f => f.frameId === 0))
-                throw new ProtocolError('FRAME_UNAVAILABLE', 'The top document could not be read.', 'safe', { frameErrors: errors });
-            await store.bind(snapshotId, bindings.map(f => ({ ...f, tabId })));
-            return { snapshotId, url: tab.url, title: tab.title, tabId, frames: results, frameErrors: errors, note: 'Element list is built from the DOM, not the browser accessibility tree.' };
+            if(frameOffset===0&&!bindings.some(f=>f.frameId===0))throw new ProtocolError('FRAME_UNAVAILABLE','The top document could not be read.','safe',{frameErrors:errors});
+            await store.bind(snapshotId,bindings.map(f=>({...f,tabId,operationId:String(p.operationId)})));
+            return {snapshotId,url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
+                framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
+                limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
+                note:'DOM element list, not the accessibility tree. Use frameOffset, elementOffset, or text offset to continue truncated results.'};
         }
         if (req.method === 'browser.navigate') {
             const action = p.action ?? 'goto';
@@ -101,6 +117,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             const act = actions[String(action)];
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
+            const document = (await frames.list(tabId)).find(f=>f.frameId===0);
+            await requireSnapshot(p,tabId,document?.documentId);
             const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal);
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
@@ -130,14 +148,15 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             if (typeof p.refGone === 'string') {
                 const parsed = RefTable.parse(p.refGone);
                 const binding = parsed ? await store.binding(parsed.snapshotId, parsed.frameId) : undefined;
-                if (!binding || binding.tabId !== tabId)
+                if (!binding || binding.operationId !== p.operationId || binding.tabId !== tabId)
                     throw new ProtocolError('STALE_ELEMENT', 'The ref does not belong to this tab.');
                 const live = await frames.list(tabId);
                 if (!live.some(f => f.frameId === binding.frameId && f.documentId === binding.documentId))
                     return { executed: false, verified: { met: 'refGone' } };
             }
             const prepare = async () => {
-                const frame = await frames.resolve(tabId, ref);
+                const frame = await frames.resolve(tabId, ref, String(p.operationId));
+                if(WRITE.has(req.method))await requireSnapshot(p,tabId,frame.documentId);
                 await frames.inject(tabId, frame);
                 await check(req, signal);
                 return frame;

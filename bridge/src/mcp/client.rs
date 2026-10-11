@@ -69,17 +69,18 @@ pub fn spawn_detached_serve(exe: &Path, port: u16) -> std::io::Result<()> {
         // WSL interop and some terminals run us inside a job object; try to leave it so
         // serve survives OpenCode exiting. Fall back when the job forbids breakaway.
         cmd.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
-        if cmd.spawn().is_ok() {
+        if let Ok(child) = cmd.spawn() {
+            tracing::info!(serve_spawn = true, launch_method = "windows-breakaway", pid = child.id(), "detached bridge started");
             return Ok(());
         }
         cmd.creation_flags(base);
-        return cmd.spawn().map(|_| ());
+        return cmd.spawn().map(|child| tracing::info!(serve_spawn = true, launch_method = "windows-detached-fallback", pid = child.id(), "detached bridge started"));
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
-        cmd.spawn().map(|_| ())
+        cmd.spawn().map(|child| tracing::info!(serve_spawn = true, launch_method = "unix-process-group", pid = child.id(), "detached bridge started"))
     }
 }
 

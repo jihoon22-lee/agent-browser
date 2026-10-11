@@ -15,6 +15,7 @@ export type Entry = {
     outcome: Outcome;
 };
 export type Binding = {
+    operationId: string;
     tabId: number;
     frameId: number;
     documentId: string;
@@ -27,6 +28,7 @@ export interface SessionStore {
     cancel(params: Record<string, unknown>): Promise<void>;
     isCancelled(id: string, params: Record<string, unknown>): Promise<boolean>;
     nextSnapshotId(): Promise<number>;
+    hasSnapshot(operationId:string, tabId?:number, documentId?:string):Promise<boolean>;
     bind(snapshotId: number, frames: Binding[]): Promise<void>;
     binding(snapshotId: number, frameId: number): Promise<Binding | undefined>;
 }
@@ -90,6 +92,7 @@ function storeOver(read: () => Promise<State | undefined>, write: (s: State) => 
                 s.legacyGeneration = Math.max(s.legacyGeneration, p.generation);
         }),
         isCancelled: (id, p) => transaction(s => !!s.cancelled['req:' + id] || !!s.cancelled['op:' + p.operationId] || (!p.operationId && typeof p.generation === 'number' && p.generation <= s.legacyGeneration)),
+        hasSnapshot: (operationId,tabId,documentId) => transaction(s => Object.values(s.bindings).some(b => b.frames.some(f => f.operationId === operationId && (tabId === undefined || f.tabId === tabId) && (documentId === undefined || f.documentId === documentId)))),
         nextSnapshotId: () => transaction(s => { s.sequence = Math.max(s.sequence + 1, Date.now() * 1000); return s.sequence; }),
         bind: (id, frames) => transaction(s => { s.bindings[id] = { at: Date.now(), frames }; }),
         binding: (id, frameId) => transaction(s => s.bindings[id]?.frames.find(f => f.frameId === frameId)),

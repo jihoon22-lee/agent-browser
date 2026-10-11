@@ -20,7 +20,11 @@ async function setup(path: string): Promise<{ page: Page; operationId: string; s
   return { page, operationId, snap: await snapshot(operationId) };
 }
 
-test.beforeAll(async () => { world = await startWorld(); });
+test.beforeAll(async ({}, testInfo) => {
+  world = await startWorld();
+  await testInfo.attach("runtime", { body: JSON.stringify(world.runtime, null, 2), contentType: "application/json" });
+  console.log(`E2E runtime: ${JSON.stringify(world.runtime)}`);
+});
 test.beforeEach(async () => { await fetch(`${world.fixture.base}/__reset`, { method: "POST" }); });
 test.afterEach(async () => {
   world.relay.clearHolds();
@@ -250,4 +254,73 @@ test("R20 closed current tab can switch to a remaining tab and release", async (
   await page.close();
   await expect.poll(async () => (await world.admin("status.get")).operation.currentTabClosed).toBe(true);
   await world.ok("browser_tabs", { action: "release", operationId });
+});
+
+test('R25 saving the same correct pairing token repairs a halted connection',async()=>{
+  await world.adminPage.reload();
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  await world.killBridge();
+  const path=join(world.bridge.home,'config.json');
+  const config=JSON.parse(await readFile(path,'utf8'));config.pairedExtensionId='a'.repeat(32);
+  await writeFile(path,JSON.stringify(config));await world.startBridge();
+  await expect.poll(()=>world.adminPage.evaluate(()=> (globalThis as any).chrome.runtime.sendMessage({kind:'get-conn-status'}))).toMatchObject({state:'not_paired'});
+  await world.adminPage.locator('input[type=password]').fill(world.bridge.token);
+  await world.adminPage.getByRole('button',{name:'저장 후 연결'}).click();
+  await expect.poll(()=>world.adminPage.evaluate(()=> (globalThis as any).chrome.runtime.sendMessage({kind:'get-conn-status'}))).toMatchObject({state:'connected'});
+  const listed=await world.mcp.call('browser_tabs',{action:'list'});
+  if(!listed.ok){expect(listed.error?.code).toBe('BROWSER_DISCONNECTED');await world.ok('browser_tabs',{action:'list'});}
+});
+
+test('R21 resuming requires a new operation snapshot before writes',async()=>{
+ const {page,operationId,snap}=await setup('search.html');const old=ref(snap,'검색어');
+ await world.admin('operation.abort',{operationId});const next=await world.attach(page);
+ expect((await world.mcp.call('browser_fill',{operationId:next,ref:old,text:'must not type'})).error?.code).toBe('STALE_ELEMENT');
+ expect((await world.mcp.call('browser_press',{operationId:next,key:'Enter'})).error?.code).toBe('STALE_ELEMENT');
+ const fresh=await snapshot(next);await world.ok('browser_fill',{operationId:next,ref:ref(fresh,'검색어'),text:'fresh'});
+ await expect(page.locator('#q')).toHaveValue('fresh');expect((await world.log()).events).toEqual([]);
+});
+test('R22 native keyboard defaults change actual controls and radio deselection is explicit',async()=>{
+ const {page,operationId}=await setup('index.html');
+ await page.evaluate(()=>{document.body.innerHTML='<button id="key-button">Key button</button><input id="text" aria-label="Text" value="abc"><input type="checkbox" id="check" aria-label="Check"><input type="radio" id="radio" aria-label="Radio" checked>'; (window as any).clicks=0;document.querySelector('#key-button')!.addEventListener('click',()=>{(window as any).clicks++;});});
+ const snap=await snapshot(operationId);
+ await world.ok('browser_press',{operationId,ref:ref(snap,'Key button'),key:'Enter'});
+ expect(await page.evaluate(()=>(window as any).clicks)).toBe(1);
+ await page.locator('#text').focus();await page.locator('#text').evaluate((el:HTMLInputElement)=>el.setSelectionRange(3,3));
+ await world.ok('browser_press',{operationId,ref:ref(snap,'Text'),key:'Backspace'});await expect(page.locator('#text')).toHaveValue('ab');
+ await world.ok('browser_press',{operationId,ref:ref(snap,'Check'),key:'Space'});await expect(page.locator('#check')).toBeChecked();
+ const radio=await world.mcp.call('browser_select',{operationId,ref:ref(snap,'Radio'),checked:false});expect(radio.ok).toBe(false);await expect(page.locator('#radio')).toBeChecked();
+});
+test('R23 element cursor reaches late controls and plain tables retain logical columns',async()=>{
+ const {page,operationId}=await setup('index.html');
+ await page.evaluate(()=>{document.body.innerHTML=Array.from({length:151},(_,i)=>`<button>B${i+1}</button>`).join('')+'<table><tr><th>Name</th><th>Value</th></tr><tr><td rowspan="2">Shared</td><td>One</td></tr><tr><td>Two</td></tr></table><table><tr><td>Second</td></tr></table>';(window as any).lastClicks=0;document.querySelectorAll('button')[150].onclick=()=>{(window as any).lastClicks++;};});
+ const first=await world.ok('browser_snapshot',{operationId});expect(first.data.frames[0].elementsNextOffset).toBe(150);
+ const second=await world.ok('browser_snapshot',{operationId,elementOffset:150});
+ await world.ok('browser_click',{operationId,ref:ref(second.data,'B151')});expect(await page.evaluate(()=>(window as any).lastClicks)).toBe(1);
+ const tables=elements(second.data).filter(e=>e.role==='table');expect(tables).toHaveLength(2);
+ expect((await world.ok('browser_extract',{operationId,kind:'table',ref:tables[0].ref})).data.rows).toEqual([['Shared','One'],['Shared','Two']]);
+ expect((await world.ok('browser_extract',{operationId,kind:'table',ref:tables[1].ref})).data.rows).toEqual([['Second']]);
+});
+test('R24 large values and tables stay bounded with usable continuations',async()=>{
+ const {page,operationId}=await setup('index.html');
+ await page.evaluate(()=>{document.body.innerHTML='<textarea aria-label="Large"></textarea><table>'+Array.from({length:200},(_,i)=>`<tr><td>Row ${i}</td><td>${'x'.repeat(100)}</td></tr>`).join('')+'</table>';document.querySelector('textarea')!.value='x'.repeat(500_000);});
+ const snap=await world.ok('browser_snapshot',{operationId,maxChars:200});expect(JSON.stringify(snap).length).toBeLessThan(35_000);
+ expect(snap.data.frames[0].limits).toContain('element-fields-truncated');
+ const table=elements(snap.data).find(e=>e.role==='table')!;expect(table).toBeTruthy();
+ const first=await world.ok('browser_extract',{operationId,kind:'table',ref:table.ref,maxChars:500});expect(JSON.stringify(first).length).toBeLessThan(1800);expect(first.data.nextOffset).toBeGreaterThan(0);
+ const next=await world.ok('browser_extract',{operationId,kind:'table',ref:table.ref,maxChars:500,offset:first.data.nextOffset});expect(next.data.rows[0][0]).toBe(`Row ${first.data.nextOffset}`);
+});
+test('R26 actual worker termination during a write preserves its in-flight tombstone',async()=>{
+ const {operationId,snap}=await setup('submit-once.html');
+ await world.context.serviceWorkers()[0].evaluate(()=>{
+  const api=(globalThis as any).chrome.tabs;const original=api.sendMessage.bind(api);
+  api.sendMessage=(...args:any[])=>{const result=original(...args);return args[1]?.method==='click'?result.then(()=>new Promise(()=>{})):result;};
+ });
+ const commandSeen=world.relay.nextCommand('browser.click');
+ const work=world.mcp.call('browser_click',{operationId,ref:ref(snap,'제출')});const command=await commandSeen;
+ await expect.poll(async()=>Object.values((await world.log()).submitCounts)).toEqual([1]);
+ await expect.poll(()=>world.adminPage.evaluate(async id=>((await (globalThis as any).chrome.storage.session.get('commandSession')).commandSession.requests[id!]?.state),command.id)).toBe('inflight');
+ await world.restartWorker();expect((await work).error?.code).toBe('EXECUTION_UNKNOWN');
+ const replay:any=await world.relay.replay(command);expect(replay.ok).toBe(false);expect(replay.error.code).toBe('EXECUTION_UNKNOWN');
+ expect(Object.values((await world.log()).submitCounts)).toEqual([1]);
 });

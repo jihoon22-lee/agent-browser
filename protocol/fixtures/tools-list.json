@@ -35,7 +35,7 @@
     "name": "browser_tabs"
   },
   {
-    "description": "Read the operation tab: URL, title, visible text and interactive elements with refs. Use refs with other tools. Text is limited by maxChars; use offset to read more.",
+    "description": "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach before writing. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -53,6 +53,16 @@
         "operationId": {
           "description": "operationId returned by browser_tabs action=attach",
           "type": "string"
+        },
+        "elementOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "frameOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
         }
       },
       "required": [
@@ -269,7 +279,7 @@
     "name": "browser_wait"
   },
   {
-    "description": "Extract page text, the user's selected text, or a table (by ref, or the first table) as rows of cells.",
+    "description": "Extract text, selection, or a table by snapshot ref (first table by default). maxChars bounds output. offset is a character index for text/selection, a data-row index for tables; follow nextOffset.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

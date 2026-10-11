@@ -3,7 +3,7 @@
 ## 현재 단계
 
 **M1 브라우저 제어 구현 — 진행 중**(브랜치 `feat/m1-browser-control`).
-M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현·Linux 검증 완료, 전체 브랜치 검토 및 Task 14–15 Windows 검증 남음.
+M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현·Linux 검증 완료, 전체 브랜치 검토·수정 완료, Task 14–15 Windows 검증 진행 중.
 **이어서 작업하려면 [m1-resume.md](./m1-resume.md)를 먼저 읽는다.**
 
 ## 실측 환경 (2026-10-11, main)
@@ -49,6 +49,7 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현
 | 2026-10-11 | M1 Task 12: 한국어 최소 패널(연결·작업 탭·최근 20개 기록·중단·브라우저 선택) | reducer 7 + React 통합 6 통과(Extension 111개 실행에 포함). 오류/재연결 복구, 오래된 초기 응답 경합, 다른 프로필 tabId 혼동 방지, React 텍스트 렌더링 검증. TypeScript/Vite 빌드 성공 |
 | 2026-10-11 | M1 Task 13: `pnpm --filter agent-browser-e2e exec playwright test`, fixture 서버 테스트 | 실제 Linux Bridge + 확장 + Chromium 156.0.8078.4에서 20/20 통과, fixture 3/3 통과. S12 초기 관찰 방식 실패는 CDP stopped/timeOrigin 검증으로 수정. S13 제출 응답 보류→Bridge/SW 재시작→동일 ID replay에도 제출 1회. [테스트 문서](./testing.md) |
 | 2026-10-11 | Task 11 이후 `cargo xwin build --offline --locked -p agent-browser-bridge --release --target x86_64-pc-windows-msvc` | HMAC 포함 Windows exe 빌드 성공. 이 행은 Windows 실행 증거가 아님 |
+| 2026-10-11 | 전체 브랜치 독립 검토와 회귀 수정 | Critical 프로필 전송 경합, Important 9개(새 스냅샷·키·페이지 이동/출력 제한·표·radio·동시 초기화·재페어링) 수정. 준비된 명령의 검사/owner enqueue를 원자화. 실제 SW 쓰기 중 종료(R26) 추가. Extension 147/147, Rust 90/90(자식 실행용 helper 1개 기본 ignored), Node fixture/runner/runtime 20/20, Linux 실제 확장 E2E 26/26 통과. TypeScript·빌드 통과 |
 
 ## 미검증
 
@@ -74,6 +75,6 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현
 
 ## 다음 작업
 
-1. [재개 검토](./m1-resume.md#재개-검토-2026-10-11)의 회귀 항목을 반영해 [M1 계획](./plans/2026-10-11-m1-browser-control.md) 남은 과제를 순서대로 구현.
-2. Task 12 최소 패널 → Task 13 결정적 E2E → 전체 브랜치 검토 → Task 14 Windows Chrome/WSL OpenCode → Task 15 Windows 네이티브 OpenCode 검증.
-3. 이번 재개 검토는 구현 착수 전 준비다. Task 11–15 완료 상태는 바뀌지 않았으며 Windows 실행·Chrome·LLM 검증을 추가로 수행하지 않았다.
+1. Task 14 실제 Windows Chrome/WSL OpenCode 검증을 진행한다. Windows Node로 설치된 Chrome을 별도 프로필에서 실행하는 도구와 격리 무료 모델 검증 스크립트를 준비했다.
+2. WSL 시연 후 Task 15 Windows 네이티브 OpenCode 1.18.29를 검증한다.
+3. 최신 검증 전까지 Windows 실행·Chrome 정책·사내 환경·실제 LLM 판단 성공은 미검증으로 유지한다.
