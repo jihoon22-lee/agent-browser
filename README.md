@@ -9,7 +9,7 @@ Windows 네이티브와 WSL OpenCode 모두 같은 Windows Bridge를 사용합�
 zip은 다운로드 폴더 등 **아무 임시 폴더에 압축 해제**하고 `setup.ps1`을 실행합니다.
 설치 프로그램이 고정 설치 경로에 파일을 복사합니다. 그 경로에 직접 압축을 풀 필요는 없습니다.
 
-이미 설치했다면 다시 설치하지 말고 **Chrome 확장 로드 → 토큰 페어링 → 패널의 실행 환경 선택 → 새 세션** 순서로 진행합니다.
+설치만 마쳤다면 **Chrome 확장 로드 → 토큰 페어링 → 패널의 실행 환경 선택 → 새 세션** 순서로 진행합니다.
 실행할 버튼과 명령은 [설치·첫 연결 안내](README-install.md)와 [사용 안내](docs/user-guide.md)에 있습니다.
 기존 OpenCode v1 설치는 필요하지만 Node.js·Rust·Python은 제품 실행에 필요하지 않습니다.
 
@@ -36,7 +36,7 @@ zip은 다운로드 폴더 등 **아무 임시 폴더에 압축 해제**하고 `
 ## 개발·검증·배포
 
 [개발 안내](CONTRIBUTING.md)에서 시작하세요. 요구사항은 [handoff](docs/handoff.md), 작업 규칙은 [AGENTS.md](AGENTS.md)입니다.
-[아키텍처](docs/architecture.md), [프로토콜](docs/protocol.md), [테스트](docs/testing.md),
+[아키텍처](docs/architecture.md), [프로토콜](docs/protocol.md), [화면·테마 설계](docs/ui-design.md), [테스트](docs/testing.md),
 [패키징·PR·CI·Release 절차](docs/installation.md)를 따릅니다.
 
 `extension/`은 Chrome 확장, `bridge/`는 Windows exe, `protocol/`은 내부 계약,

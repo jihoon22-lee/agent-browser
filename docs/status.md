@@ -118,7 +118,7 @@ zip/SHA256/고정 의존성 고지. 상세 지원 경계는 [호환성 문서](.
 - 전역 OpenCode 설정에는 기존 MCP(playwright 등)가 있다. 수정하지 않고 테스트는 별도 설정으로 격리한다.
 - 검증용 Chrome/fixture/Bridge/OpenCode 프로세스는 종료했다. 아래 실제 사용자 설치의 Bridge는 사용을 위해 실행 상태로 유지한다. 전역 OpenCode 설정은 변경하지 않았다.
 
-## v0.1.0 설치·배포물
+## v0.1.0 설치·배포 당시 기록
 
 - 비공개 GitHub [v0.1.0 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.0) 게시 완료(prerelease, draft 아님).
 - 소스 태그 `v0.1.0` → `9e84210`, 작업 브랜치 `feat/m2-m4-usable-release` push 완료. main 병합과 PR 생성은 하지 않았다.
@@ -135,7 +135,7 @@ zip/SHA256/고정 의존성 고지. 상세 지원 경계는 [호환성 문서](.
 - 사용자 Chrome의 최초 수동 로드·페어링은 아직 하지 않았다. 진단은 Extension 미연결, OpenCode stopped,
   MCP/모델 미검증으로 정확히 표시한다. 페어링 후 패널에서 자동 ensure가 시작된다.
 
-## 사용자에게 남은 최초 사용 절차
+## v0.1.0 최초 연결 안내(이후 사용자 연결 완료)
 
 1. `chrome://extensions`에서 개발자 모드를 켜고 `%LOCALAPPDATA%\AgentBrowser\extension`을 압축해제 로드한다.
 2. 설치 폴더 `show-pairing.ps1`로 로컬 토큰을 확인해 Options에 붙여넣고 연결한다.
@@ -159,3 +159,44 @@ CI 구성, PR 검토·main 머지와 Release 결과는 이 절에 실제 확인 
 필수 문서 복사·manifest 요구사항을 구현해 패키징 3/3 및 관리 런타임 정리 3/3 통과.
 문서 링크 검사 helper 3/3, 전체 Markdown 22개와 ZIP 포함 문서 상대 링크 검토 통과.
 독립 검토에서 중요 지적 없음. MSVC 0.1.1 빌드·Extension 빌드 성공, Cargo metadata의 MIT 상속 확인.
+
+
+## 0.1.1 실제 사용 피드백 수정 — 진행 중
+
+사용자가 Chrome 로드·페어링을 마치고 실제 대화를 실행했다. 아래 진단은 최초 연결 대기 기록 이후이며,
+실제 대화·웹페이지 원문·자격증명은 fixture나 배포물에 포함하지 않았다.
+
+- 응답 표시 지연: 당시 서버에는 약 8초 안에 완료 기록이 있었으나 사용자는 10–30초 동안 응답을 보지 못했다.
+  `UNSUPPORTED_PAGE`는 Chrome 내부 페이지 차단으로, 표시 지연의 원인으로 단정하지 않는다.
+- 부가 todo/children/diff 조회가 메시지와 SSE 처리를 막는 회귀를 재현하고 분리했다.
+  `session.updated` 메타데이터로 빈 assistant 카드가 생성되는 별도 문제도 실패 테스트 후 수정했다.
+- 격리된 실제 OpenCode 1.18.29와 로컬 합성 provider의 스트리밍 검사: Linux와 실제 Windows 모두
+  첫 텍스트가 생성 완료 전에 표시되었으며 제품 reducer와 서버의 assistant 메시지 수가 1개로 일치했다.
+  Linux 첫 텍스트 1,246ms/완료 2,144ms, Windows 1,525ms/2,749ms. 중단·강제 재동기화 없이 확인.
+  각 실행 합성 provider 요청 1회, 실제 외부 LLM 요청 0회. 사용자 증상의 정확한 단일 원인을 확정한 것은 아니다.
+- 새 탭: target=_blank/noopener/window.open/about:blank 지연 이동, 새로운 요소 ref, 원래 탭 복귀,
+  무관한 탭·중단 후 늦은 응답·닫힌 탭 배제를 검증했다. Linux Chromium 8/8, 실제 Windows Chrome 8/8,
+  영향받는 기존 M1 시나리오 6/6 통과. 사용자 Chrome과 설치 Bridge는 중단하지 않았다.
+- Catppuccin palette 1.8.0의 고정 소스·MIT 원문·해시를 고지 생성기에 추가했다. 제3자 항목은 163개.
+- 첫 원격 CI의 Windows 초기화 잠금 경합 수정. 두 번째 Linux CI는 자식 프로세스의 exec 전 이미지 경로를
+  기록한 것이 소유권 불일치 원인임을 로그로 확인하고 수정했다. 원격 CI 전체 통과·main 머지·0.1.1 발행은 아직 하지 않았다.
+
+- 원격 Windows 두 번째 CI는 Rust·Chrome 32개·JSONC를 통과한 뒤 한글 Startup 경로 저장에 실패했다.
+  WScript.Shell의 파일명 ANSI 변환을 로컬 이모지 경로로 재현했고 IShellLinkW/IPersistFile로 수정했다.
+  실제 Windows PowerShell 5.1 설치 통합 13/13(WSL fragment 포함) 통과. 이모지 경로 바로가기에서 실제 Bridge 시작과
+  소유 프로세스 제거도 확인했다. 로그인 후 자동 실행 자체를 검증한 것은 아니다.
+
+- Unix post-exec 소유권 경합: 실패 재현 후 회귀 5/5, runtime_management 10/10, 동시 시작 10회 반복 통과.
+  이후 전체 Rust 117/117(부모가 실행하는 helper 1개 기본 ignored), Extension 30파일 242/242,
+  Node 28/28(기존 25 + 문서 helper 3), Extension 빌드·E2E TypeScript·actionlint 통과.
+- 독립 검토에서 동일 프레임의 실제 사용자 클릭을 에이전트 클릭으로 오인하는 새 탭 경합을 재현했다.
+  실제 입력 epoch를 확인해 자동 편입을 보류하도록 수정했고, 관련 단위 30개와 Linux Chrome 9개 통과.
+  Startup Unicode, 하위 세션, 상태 복구, 테마·고지 추가 검토에서 남은 중요 지적 없음.
+
+- 최종 Linux Chromium 전체 47/47, 실제 Windows Chrome 전체 47/47 통과(새 탭 9 + 기존 브라우저 26 + 작업 UI 12).
+  Windows Node 24.18.1, Chrome 154.0.8037.99, 최신 MSVC exe와 확장, 별도 headless 임시 프로필을 사용했다.
+  누락된 최종/초기 이벤트의 HTTP 복구, 부모 아래 105개 하위 세션, 4테마×3너비와 독립 스크롤을 포함한다.
+  실제 Windows 12개 렌더링 조합의 텍스트 대비 위반 0, 최소 UI 경계 3.54:1·포커스 4.79:1·placeholder 5.53:1.
+  Clippy도 완료했으며 기존 스타일/복잡도 경고가 남아 있다. 실제 모델 호출은 하지 않았다.
+
+- 최종 UI 포함 0.1.1 패키징 3/3 통과. Windows에서 WSL 공유 폴더의 기존 SHA256SUMS를 File.Replace로 교체하지 못하는 빌드 wrapper 문제는 새 임시 출력 후 WSL rename으로 처리했다.
