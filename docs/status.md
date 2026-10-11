@@ -2,7 +2,7 @@
 
 ## 현재 단계
 
-**M2–M4 구현·검증·Windows 설치 완료**(브랜치 `feat/m2-m4-usable-release`).
+**M2–M4 구현·검증·Windows 설치·v0.1.0 시험 배포 완료**(브랜치 `feat/m2-m4-usable-release`).
 M0 환경 실측·OpenCode v1 명세 확보 완료. M1 Task 1–13 구현과 전체 브랜치 검토·수정 완료.
 Task 14의 실제 Windows Chrome 회귀 26/26과 Task 15 네이티브 OpenCode API 검증은 통과했다.
 **사용자 결정(2026-10-11)**: 실제 OpenCode 모델 테스트는 배포 후 사용자가 수행한다. 기존 HTTP 403·도구 0건 결과는 유지하며, 이 항목을 다음 단계 진행/배포의 차단 조건에서 제외한다. M2–M4 구현과 모델 호출 없는 검증을 완료했고 v0.1.0 설치 패키지를 생성했다.
@@ -119,6 +119,10 @@ zip/SHA256/고정 의존성 고지. 상세 지원 경계는 [호환성 문서](.
 - 검증용 Chrome/fixture/Bridge/OpenCode 프로세스는 종료했다. 아래 실제 사용자 설치의 Bridge는 사용을 위해 실행 상태로 유지한다. 전역 OpenCode 설정은 변경하지 않았다.
 
 ## v0.1.0 설치·배포물
+
+- 비공개 GitHub [v0.1.0 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.0) 게시 완료(prerelease, draft 아님).
+- 소스 태그 `v0.1.0` → `9e84210`, 작업 브랜치 `feat/m2-m4-usable-release` push 완료. main 병합과 PR 생성은 하지 않았다.
+- GitHub가 반환한 zip asset digest가 아래 로컬 SHA-256과 일치함을 확인했다.
 
 - Windows x64 zip: `agent-browser-0.1.0-windows-x64.zip` (26개 파일, 제3자 패키지 162개 고지).
 - zip SHA-256: `909021621dbf3c578496f760524c233f5a51556ec480adbfb1ccee16cd57ac0f`.
