@@ -38,9 +38,9 @@
 
 | 범위 | 결과 |
 |---|---|
-| Extension Vitest | 30파일 251/251 통과(신규·변경: 하위 세션 화살표, 제자리 삭제, 인라인 이름 변경, 이벤트 반영, 응답 종료 시 diff·최종 메시지 재조회, `session.diff` 반영, 메시지 정리, `--bubble` 대비). TypeScript/Vite 빌드 통과 |
-| Linux Chromium 실제 확장 E2E | 전체 48/48 통과(W13 세션 삭제 신규, W06·W11 갱신). 응답 종료 재조회 수정 후 작업 UI 13/13 재실행 통과 |
-| 실제 Windows Chrome E2E | `scripts/test-windows.sh` 전체 48/48 통과(1.1분), 최종 패널 코드 기준. Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필 |
+| Extension Vitest | 30파일 253/253 통과(세션별 **응답 중단** 범위 회귀 포함. 전체 실행 중 기존 snapshot 경계 테스트가 1회 7.5초 시간 초과, 단독·전체 재실행 통과. 신규·변경: 하위 세션 화살표, 제자리 삭제, 인라인 이름 변경, 이벤트 반영, 응답 종료 시 diff·최종 메시지 재조회, `session.diff` 반영, 메시지 정리, `--bubble` 대비). TypeScript/Vite 빌드 통과 |
+| Linux Chromium 실제 확장 E2E | 전체 48/48 통과(W13 세션 삭제 신규, W06·W11 갱신). 응답 종료 재조회와 응답 중단 범위 수정 후 작업 UI 13/13 재실행 통과 |
+| 실제 Windows Chrome E2E | `scripts/test-windows.sh` 전체 48/48 통과(1.2분), 응답 중단 범위 수정 포함 최종 코드 기준. Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필 |
 | Node fixture/runner/interop/문서 helper | 28/28 통과 |
 | Linux Chromium 실제 확장 E2E | 47/47 통과(새 탭 9 + 브라우저 26 + 작업 UI 12) |
 | 실제 Windows Chrome E2E | 47/47 통과. Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필 |

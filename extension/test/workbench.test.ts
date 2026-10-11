@@ -199,15 +199,12 @@ it("retains new edits made while sending within the same session", async () => {
   await draftValue("보낼 내용"); await act(async () => button("보내기").click()); await draftValue("새 초안");
   await act(async () => pending.resolve(true)); expect(composerValue().value).toBe("새 초안");
 });
-it("stops selected B even when A owns the browser operation and selection changes during gate closure", async () => {
+it("stops selected B without closing the browser operation that session A owns", async () => {
   secondSession(); messages.push({ info: { ...info, id: "msg-tool", role: "assistant" }, parts: [{ id: "prt-tool", type: "tool", tool: "browser_browser_tabs", state: { status: "completed", input: { action: "attach" }, output: JSON.stringify({ ok: true, tool: "browser_tabs", operationId: "op-known" }) } }] });
   await render(); await selectOtherSession(); await act(async () => test.stream({ type: "session.status", properties: { sessionID: "ses-two", status: { type: "busy" } } }));
-  const pending = deferred<any>(), runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
-  runtime.mockImplementation(message => { if (message.method === "operation.abort") { test.calls.push("bridge-gate"); return pending.promise; } return original(message); });
   await act(async () => button("응답 중단").click());
-  await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(el => el.querySelector("strong")?.textContent === "기존 대화")!.click());
-  await act(async () => pending.resolve({ ok: true, result: { aborted: true } }));
-  expect(test.calls).toEqual(["bridge-gate", "/session/ses-two/abort"]);
+  // op-known is bound to ses-one by its browser_tabs attach result; B's stop must leave it running.
+  expect(test.calls).toEqual(["/session/ses-two/abort"]);
 });
 
 it.each(["/todo", "/children", "/diff"])("keeps messages and live updates visible while optional session metadata %s is pending", async endpoint => {
@@ -422,4 +419,17 @@ it("applies a session.diff event to the selected session's file changes", async 
   await render();
   await act(async () => test.stream({ id: "evt-diff", type: "session.diff", properties: { sessionID: "ses-one", diff: [{ file: "src/이벤트-변경.ts", additions: 3, deletions: 1 }] } }));
   expect(host.textContent).toContain("src/이벤트-변경.ts");
+});
+
+it("closes the gate of the browser operation the selected session owns before aborting it", async () => {
+  messages.push({ info: { ...info, id: "msg-tool", role: "assistant" }, parts: [{ id: "prt-tool", type: "tool", tool: "browser_browser_tabs", state: { status: "completed", input: { action: "attach" }, output: JSON.stringify({ ok: true, tool: "browser_tabs", operationId: "op-known" }) } }] });
+  await render(); await act(async () => test.stream({ type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } }));
+  await act(async () => button("응답 중단").click());
+  expect(test.calls).toEqual(["bridge-gate", "/session/ses-one/abort"]);
+});
+it("leaves an unattributed browser operation alone when another session is also running", async () => {
+  secondSession(); await render();
+  await act(async () => { test.stream({ type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } }); test.stream({ type: "session.status", properties: { sessionID: "ses-two", status: { type: "busy" } } }); });
+  await act(async () => button("응답 중단").click());
+  expect(test.calls).toEqual(["/session/ses-one/abort"]);
 });

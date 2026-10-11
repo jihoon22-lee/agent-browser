@@ -247,9 +247,14 @@ export function useWorkbench() {
     chrome.runtime.onMessage.addListener(listener);
     return () => { active = false; epoch.current++; stream.current?.abort(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); chrome.runtime.onMessage.removeListener(listener); };
   }, [connect]);
+  // Which panel session owns a browser operation: its session ID, "other" for a different runtime, or undefined if unproven.
+  const operationOwner = useCallback((operationId: string): string | undefined => {
+    const binding = bindings.current.get(operationId); if (!binding) return undefined;
+    return binding.client === client.current ? binding.sessionID : "other";
+  }, []);
   const abortKnown = useCallback(async (operationId: string) => {
     const binding = bindings.current.get(operationId); if (!binding) return false;
     await binding.client.post(`/session/${encodeURIComponent(binding.sessionID)}/abort`); return true;
   }, []);
-  return { state, dispatch, profiles, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, setError, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown };
+  return { state, dispatch, profiles, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, setError, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown, operationOwner };
 }
