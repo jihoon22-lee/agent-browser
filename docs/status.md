@@ -2,7 +2,7 @@
 
 ## 현재 단계
 
-**v0.1.1 배포 완료(main `4cfae595230db2f359973ef5c2f98c07c550be00`). 다음 단계는 사용성·성능 개선(M5)이다.**
+**v0.1.1 배포 완료(main `4cfae595230db2f359973ef5c2f98c07c550be00`). M5 사용성·성능 개선 1차 구현·검증 완료(미병합, 미배포).**
 진행 중 계획: [M5 사용성·성능 개선](./plans/2026-10-11-m5-usability-polish.md).
 
 **사용자 확인(2026-10-11)**: 사용자가 개인 PC의 WSL OpenCode로 실제 대화와 브라우저 제어가 동작함을 확인했다.
@@ -34,7 +34,17 @@
 | OpenCode v1 API | 실제 Windows/WSL 1.18.29에서 모델 호출 없이 세션·첨부·SSE·분기·revert 계약 확인 |
 | 원격 CI | [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38126797768), [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38127471889) Linux·Windows 성공 |
 
-M5 작업의 검증 결과는 아래 절에 추가한다.
+## M5 사용성·성능 개선 검증 (2026-10-11, 브랜치 `feat/m5-usability-polish`)
+
+| 범위 | 결과 |
+|---|---|
+| Extension Vitest | 30파일 249/249 통과(신규·변경: 하위 세션 화살표, 제자리 삭제, 인라인 이름 변경, 이벤트 반영, 메시지 정리, `--bubble` 대비). TypeScript/Vite 빌드 통과 |
+| Linux Chromium 실제 확장 E2E | 전체 48/48 통과(W13 세션 삭제 신규, W06·W11 갱신). 이후 이름 변경 상태 초기화 수정 뒤 작업 UI 13/13 재실행 통과 |
+| 실제 Windows Chrome E2E | `scripts/test-windows.sh` 전체 48/48 통과(1.0분). Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필. 커밋 `fbee2cf` 기준이며 이후의 한 줄 수정(세션 전환 시 이름 변경 상태 초기화)은 Linux에서만 재실행 |
+| Node fixture/runner/interop/문서 helper | 28/28 통과. 문서 링크 검사 통과 |
+| Rust | 변경 없음, 재실행하지 않음 |
+
+실제 모델 호출은 하지 않았다. 합성 HTTP/SSE fixture만 사용했다.
 
 ## 배포
 

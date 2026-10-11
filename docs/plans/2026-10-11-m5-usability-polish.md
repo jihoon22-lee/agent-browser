@@ -22,7 +22,7 @@
       - 메시지 카드를 memo해 입력할 때마다 전체 Markdown을 다시 파싱하지 않게 한다. 도구 카드에는 한 줄 입력 요약을 붙인다.
 - [x] 6. 세션 이름: 항상 보이던 입력창을 없앤다. 세션 행과 대화 제목의 작업 메뉴에서 **이름 변경**을 고르면 그 자리에서 편집한다
       (Enter 저장, Esc 취소, IME 조합 보호). 분기·내보내기·삭제도 같은 메뉴로 옮긴다.
-- [ ] 7. 문서(user-guide·ui-design·CHANGELOG Unreleased)와 검증. Linux 영향 테스트 → 전체 → 실제 Windows Chrome E2E를 실행하고 결과를 status.md에 기록한다.
+- [x] 7. 문서(user-guide·ui-design·CHANGELOG Unreleased)와 검증. Linux 영향 테스트 → 전체 → 실제 Windows Chrome E2E를 실행하고 결과를 status.md에 기록한다.
 
 ## 검토 결과: 다음 개선 후보(우선순위순)
 

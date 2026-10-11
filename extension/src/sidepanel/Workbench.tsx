@@ -50,7 +50,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
   useEffect(() => { if (view === "chat" && drawer === null && followMessages.current && messageViewport.current) messageViewport.current.scrollTop = messageViewport.current.scrollHeight; }, [messages, wb.state.questions, wb.state.permissions, view, drawer]);
-  useEffect(() => { followMessages.current = true; }, [wb.sessionId]);
+  useEffect(() => { followMessages.current = true; setRenaming(null); }, [wb.sessionId]);
   useEffect(() => {
     const key = `${wb.profileId}:${wb.sessionId}`;
     if (selectedControls.current.key !== key) selectedControls.current = { key, dirty: false };
