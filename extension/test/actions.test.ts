@@ -98,7 +98,7 @@ it("commands from a cancelled generation do not run", async () => {
 
 it("scroll moves the page and rejects unknown directions", async () => {
   document.body.innerHTML = `<p>본문</p>`;
-  const el = document.scrollingElement as HTMLElement;
+  const el = document.documentElement; // jsdom has no document.scrollingElement; the action falls back to this
   const calls: Array<{ top?: number }> = [];
   // jsdom has no scrolling; record what the action asks for
   (el as unknown as { scrollBy: (o: { top?: number }) => void }).scrollBy = (o) => { calls.push(o); };
