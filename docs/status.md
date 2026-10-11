@@ -2,7 +2,8 @@
 
 ## 현재 단계
 
-**v0.1.2 배포 완료(main `1b8f0123cf65556a7a386f01a9a5e33731041fd0`), 이 PC 설치 업데이트 완료.**
+**v0.1.3 리뷰 수정·검증 완료, [PR #3](https://github.com/jihoon22-lee/agent-browser/pull/3)에서 최종 CI·코드·보안 리뷰를 확인한다.**
+이 PC 설치본은 v0.1.2 그대로다. 사용자 승인 범위는 PR 후속 수정·병합·patch 태그·Release 게시까지이며, 실제 설치본 업데이트·운영 배포는 포함하지 않는다.
 다음 개선 후보(검토 backlog): [M5 계획](./plans/2026-10-11-m5-usability-polish.md)의 "다음 개선 후보".
 
 **사용자 확인(2026-10-11)**: 사용자가 개인 PC의 WSL OpenCode로 실제 대화와 브라우저 제어가 동작함을 확인했다.
@@ -10,6 +11,29 @@
 실제 사용 중 발견한 문제는 이슈로 받아 처리한다. 이 결정은 이전 Zen 무료 모델 파일럿(HTTP 403, 도구 0건)을 통과로 바꾸지 않는다.
 
 이전 단계의 계획·재개 기록은 git 이력에 있다(M1 계획, M2–M4 계획, 배포 준비 계획, `m1-resume.md`).
+
+## PR #3 3차 리뷰 수정 · v0.1.3
+
+기준 head는 `55d17987316823323660217e3891ac6b7d11953b`다. 세 P2 모두 수정 전 회귀 테스트 실패를 확인했다. 버전은 Cargo workspace·lockfile·Extension manifest를 함께 0.1.3으로 갱신했다.
+
+| 리뷰 | 확인·결과 |
+|---|---|
+| [삭제 후 페이지 탐색](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4242062801) | 원래 서버 페이지 길이로 더 보기 여부를 판단한다. 삭제 항목은 숨기면서 다음 페이지의 나머지 69개 루트를 모두 탐색하는 회귀가 실패 → 통과했다. |
+| [상태 조회 잠금](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4242062805) | 조회 전체에 메모리 잠금과 프로필 파일 잠금을 유지한다. HTTP 조회를 중간에 멈춰 같은 manager의 Stop 잠금과 다른 manager의 프로필 수정이 차단되고, 조회 후 다시 수정 가능한지 검증했다. 잠금 획득 후 프로필도 다시 읽는다. |
+| [전송 전 취소](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4242062810) | sink가 메시지를 받았는지 기록한다. send 분기 첫 poll 전 취소는 `CANCELLED`, delivered=false, executed=no이며 소켓에 call/cancel을 보내지 않는다. 같은 연결의 다음 요청은 성공한다. 이미 큐에 들어간 쓰기의 `EXECUTION_UNKNOWN` 정책은 유지한다. |
+| [attach 완료 취소 P1](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4242062800) | 오탐. FuturesUnordered는 router를 백그라운드 task로 실행하지 않는다. 마지막 reply await 뒤 ops.attach부터 결과·attached 기록까지 suspension이 없다. 실제 router를 poll하는 테스트에서 reply 준비만으로 작업이 생성되지 않음, poll 전 abort는 생성 안 함, 생성 poll에서는 outcome까지 즉시 반환함을 고정했다. 기존 응답 후 취소·대체 작업 보호 통합 테스트도 통과했다. |
+
+검증:
+
+- `cargo test --offline --locked -p agent-browser-bridge`: 131 통과, 자식 프로세스 helper 1 기본 제외.
+- `cargo clippy --offline --locked -p agent-browser-bridge --all-targets`: 통과, 기존 경고 7건. 새 테스트의 `unused_io_amount` 오류는 `read_exact`로 수정 후 재검증했다.
+- `pnpm --filter agent-browser-extension test`: 280/280. workbench 단독 65/65.
+- Extension build, E2E `tsc --noEmit`, `node scripts/ci-checks.mjs`(문서 20개), `git diff --check`: 통과.
+- 최종 소스의 실제 Windows Rust lib exe: 51 통과, 로컬 WSL 전용 1 기본 제외. 해당 WSL 실패 복구 테스트를 `--ignored --exact`로 명시 실행해 1/1 통과했다.
+- 추가 검증은 PR 최신 head의 Linux·Windows CI에서 실행한다. CI의 Chrome/Chromium·설치·패키지 검증과 코드·보안 리뷰가 완료된 head만 병합한다. main CI 산출물의 버전·체크섬을 확인한 뒤 기존 관례대로 Windows x64 prerelease를 게시한다.
+
+코드·테스트 diff 식별: `git diff --binary 55d1798 -- bridge/src extension/src extension/test | sha256sum` = `d572e1be0a44a3bf292d930e13d9621ba78e0bad2737648d61ff382633323bc7`.
+처음 구현 중 Rust `Cell<bool>`의 Send 제약 컴파일 실패는 지역 bool로 수정했다. 최종 테스트 실패는 없다. 실제 모델 호출·전역 OpenCode 설정 변경·운영 설치 업데이트는 수행하지 않았다. 아래 과거 절의 승인 제한은 해당 시점 기록이며, 현재 승인 범위는 위에 적었다.
 
 ## PR #3 2차 리뷰 수정 — 로컬 검증 완료
 
