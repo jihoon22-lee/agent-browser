@@ -35,6 +35,8 @@ struct GateInner {
     generation: u64,
     current: Option<Operation>,
     finished: Vec<(String, OpState)>, // last 50 ended operations, to answer CANCELLED vs OPERATION_INVALID
+    owned_tabs: std::collections::HashSet<i64>,
+    closed_tabs: std::collections::HashSet<i64>,
 }
 
 impl OperationGate {
@@ -46,6 +48,7 @@ impl OperationGate {
                 .with_details(json!({ "operationId": op.id })));
         }
         g.generation += 1;
+        g.owned_tabs.clear(); g.owned_tabs.insert(tab_id); g.closed_tabs.clear();
         let op = Operation {
             id: format!("op-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
             generation: g.generation,
@@ -113,16 +116,37 @@ impl OperationGate {
     }
 
     pub fn add_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
-        self.with_active(id, |op| { if !op.tabs.contains(&tab) { op.tabs.push(tab); } Ok(()) })
+        let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
+        if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
+        g.owned_tabs.insert(tab);
+        let op = g.current.as_mut().unwrap(); if !op.tabs.contains(&tab) { op.tabs.push(tab); } Ok(())
     }
 
     pub fn add_and_switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
-        self.with_active(id, |op| {
+        let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
+        if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
+        g.owned_tabs.insert(tab);
+        let op = g.current.as_mut().unwrap();
             if !op.tabs.contains(&tab) { op.tabs.push(tab); }
             op.current_tab = tab;
             op.current_tab_closed = false;
-            Ok(())
-        })
+        Ok(())
+    }
+
+    /// The source was captured under the same gate lock as command enqueue. Only
+    /// that operation/generation/profile may adopt Chrome-confirmed child tabs.
+    pub fn adopt_children(&self,id: &str,generation: u64,client: &str,source: i64,tabs: &[i64]) -> Result<Operation,RpcError> {
+        let mut g = self.inner.lock().unwrap(); let op = Self::active(&g,id)?;
+        if op.generation != generation || op.client_id != client || !g.owned_tabs.contains(&source) {
+            return Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"New-tab source does not belong to this operation generation"));
+        }
+        let tabs: Vec<_> = tabs.iter().copied().filter(|tab| *tab > 0 && *tab != source && !g.closed_tabs.contains(tab)).collect();
+        g.owned_tabs.extend(tabs.iter().copied());
+        let op = g.current.as_mut().unwrap();
+        for tab in &tabs { if !op.tabs.contains(tab) { op.tabs.push(*tab); } }
+        // A concurrent explicit switch wins over an older click's new-tab result.
+        if op.current_tab == source { if let Some(tab) = tabs.first() { op.current_tab = *tab; op.current_tab_closed = false; } }
+        Ok(op.clone())
     }
 
     pub fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
@@ -140,6 +164,7 @@ impl OperationGate {
 
     pub fn remove_tab(&self, tab: i64) {
         let mut g = self.inner.lock().unwrap();
+        if g.current.is_some() { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut() {
             op.tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
@@ -148,6 +173,7 @@ impl OperationGate {
 
     pub fn remove_tab_for_operation(&self, id: &str, tab: i64) {
         let mut g = self.inner.lock().unwrap();
+        if g.current.as_ref().is_some_and(|op| op.id == id) { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut().filter(|op| op.id == id) {
             op.tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
@@ -157,6 +183,7 @@ impl OperationGate {
     /// The event's profile must still own the operation if selection changed concurrently.
     pub fn remove_tab_for_client(&self, client_id: &str, tab: i64) {
         let mut g = self.inner.lock().unwrap();
+        if g.current.as_ref().is_some_and(|op| op.client_id == client_id) { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut().filter(|op| op.client_id == client_id) {
             op.tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
@@ -302,5 +329,35 @@ mod tests {
     fn unknown_operation_is_invalid() {
         let g = OperationGate::default();
         assert_eq!(g.check("op-nope").unwrap_err().code, ErrorCode::OperationInvalid);
+    }
+
+    #[test]
+    fn child_adoption_keeps_original_tab_and_rejects_other_owner_or_generation() {
+        let gate = OperationGate::default(); let op = gate.attach(1,"A").unwrap();
+        assert!(gate.adopt_children(&op.id,op.generation,"B",1,&[2]).is_err());
+        assert!(gate.adopt_children(&op.id,op.generation+1,"A",1,&[2]).is_err());
+        assert!(gate.adopt_children(&op.id,op.generation,"A",99,&[2]).is_err());
+        let adopted = gate.adopt_children(&op.id,op.generation,"A",1,&[2]).unwrap();
+        assert_eq!(adopted.tabs,vec![1,2]); assert_eq!(adopted.current_tab,2);
+        gate.switch_tab(&op.id,1).unwrap(); assert_eq!(gate.check(&op.id).unwrap().current_tab,1);
+    }
+
+    #[test]
+    fn closed_children_and_late_aborted_results_cannot_be_resurrected() {
+        let gate = OperationGate::default(); let old = gate.attach(1,"A").unwrap();
+        gate.remove_tab_for_client("A",2);
+        let op = gate.adopt_children(&old.id,old.generation,"A",1,&[2]).unwrap();
+        assert_eq!(op.tabs,vec![1]); assert_eq!(op.current_tab,1);
+        gate.abort(Some(&old.id)); let new = gate.attach(1,"A").unwrap();
+        assert_eq!(gate.adopt_children(&old.id,old.generation,"A",1,&[3]).unwrap_err().code,ErrorCode::Cancelled);
+        assert_eq!(gate.current().unwrap().id,new.id); assert_eq!(gate.current().unwrap().tabs,vec![1]);
+    }
+
+    #[test]
+    fn child_adoption_does_not_override_an_explicit_concurrent_tab_switch() {
+        let gate = OperationGate::default(); let op = gate.attach(1,"A").unwrap();
+        gate.add_tab(&op.id,7).unwrap(); gate.switch_tab(&op.id,7).unwrap();
+        let result = gate.adopt_children(&op.id,op.generation,"A",1,&[2]).unwrap();
+        assert_eq!(result.tabs,vec![1,7,2]); assert_eq!(result.current_tab,7);
     }
 }

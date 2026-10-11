@@ -27,6 +27,7 @@ function world() {
         sendToFrame: async (tabId, frame, msg: any) => { sent.push({ tabId, frame, msg }); return { ok: true, result: msg.method === 'snapshot' ? { frameId: frame.frameId, elements: [{ ref: `s${msg.params.snapshotId}f${frame.frameId}e1`, name: 'Button' }], text: { content: 'fixture' } } : { executed: true, verified: { clicked: true } } }; },
         onTabUpdated: fn => { updates.add(fn); return () => { updates.delete(fn); }; },
         onTabActivated: fn => { activations.add(fn); return () => { activations.delete(fn); }; },
+        onTabRemoved: () => () => {}, onCreatedNavigationTarget: () => () => {},
     };
     return { api, tabs, frames, sent, updates, activations };
 }
@@ -81,7 +82,7 @@ it('deduplicates concurrent writes as well as later replay', async () => {
     const w = world(), store = memorySessionStore(), h = createHandlers(w.api, store);
     const ref = await firstRef(h);
     const gate = deferred<any>();
-    w.api.sendToFrame = async (tabId, frame, msg: any) => { w.sent.push({ tabId, frame, msg }); return gate.promise; };
+    w.api.sendToFrame = async (tabId, frame, msg: any) => { w.sent.push({ tabId, frame, msg }); return msg.kind === 'input-state' ? {document:'doc1',epoch:0} : gate.promise; };
     const r = request('browser.click', { ref }, 'same-id');
     const a = h(r), b = h(r);
     await vi.waitFor(() => expect(w.sent.filter(x => x.msg.method === 'click')).toHaveLength(1));
@@ -176,7 +177,7 @@ it('disconnect cancels outstanding writes and does not execute queued effects', 
     const w = world(), h = createHandlers(w.api, memorySessionStore());
     const ref = await firstRef(h);
     const gate = deferred<any>();
-    w.api.sendToFrame = async (_t, _f, m: any) => m.kind === 'cancel' ? { ok: true } : gate.promise;
+    w.api.sendToFrame = async (_t, _f, m: any) => m.kind === 'cancel' ? { ok: true } : m.kind === 'input-state' ? {document:'doc1',epoch:0} : gate.promise;
     const work = h(request('browser.click', { ref }, 'disconnected'));
     const failed = expect(work).rejects.toBeInstanceOf(ProtocolError);
     await new Promise(r => setTimeout(r, 10));
@@ -232,4 +233,34 @@ it('snapshot frame pagination bounds aggregate output and exposes all remaining 
  expect(w.sent[0]!.msg.params.elementOffset).toBe(150);
  const two:any=await h(request('browser.snapshot',{frameOffset:one.framesNextOffset}));
  expect(two.frames[0].frameId).toBe(one.framesNextOffset);
+});
+
+it('does not trust content-provided opened-tab metadata without a Chrome target event',async()=>{
+ const w=world(),h=createHandlers(w.api,memorySessionStore());const ref=await firstRef(h);
+ w.api.sendToFrame=async()=>({ok:true,result:{executed:true,openedTabs:[{tabId:99,sourceTabId:1,sourceFrameId:0,url:'https://other.test/'}]}});
+ expect(await h(request('browser.click',{ref}))).toEqual({executed:true});
+});
+
+it.each(['unchanged','user-intervention','source-unavailable'] as const)('checks source input after a delayed child finishes loading: %s',async(mode)=>{
+ const w=world(),h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+ let target!: Parameters<ChromeApi['onCreatedNavigationTarget']>[0];
+ w.api.onCreatedNavigationTarget=fn=>{target=fn;return()=>{};};
+ let epoch=0,unavailable=false;
+ w.api.sendToFrame=async(_t,_f,msg:any)=>{
+   if(msg.kind==='input-state'){if(unavailable)throw Error('source gone');return {document:'doc1',epoch};}
+   target({tabId:9,sourceTabId:1,sourceFrameId:0,sourceProcessId:1,timeStamp:Date.now(),url:'about:blank'});
+   return {ok:true,result:{executed:true}};
+ };
+ w.tabs.set(9,{id:9,windowId:10,active:false,status:'loading',url:'about:blank'} as chrome.tabs.Tab);
+ const work=h(request('browser.click',{ref}));
+ // The action has replied and the 100 ms target-event window has closed;
+ // intervention during child loading must still prevent automatic adoption.
+ await vi.waitFor(()=>expect(w.updates.size).toBe(1));
+ if(mode==='user-intervention')epoch++;
+ if(mode==='source-unavailable')unavailable=true;
+ const child={...w.tabs.get(9)!,status:'complete',url:'https://example.test/child'} as chrome.tabs.Tab;
+ for(const update of w.updates)update(9,{status:'complete'},child);
+ const result:any=await work;
+ if(mode==='unchanged')expect(result.openedTabs).toMatchObject([{tabId:9}]);
+ else {expect(result.openedTabs).toBeUndefined();expect(result.openedTabWarnings).toEqual([{tabId:9,reason:mode}]);}
 });

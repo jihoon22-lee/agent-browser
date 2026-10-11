@@ -4,6 +4,7 @@ import type { ChromeApi, FrameInfo } from './chrome-api';
 import { frameRouter, type FrameError } from './frames';
 import { RefTable } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
+import { trackCreatedTabs } from './tab-routing';
 const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create']);
 const CONTENT = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
@@ -26,13 +27,25 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
     }
     async function send(tabId: number, frame: FrameInfo, method: string, params: Record<string, unknown>, run: Running) {
         await check(run.req, run.controller.signal);
+        const tracksTabs = ['browser.click','browser.press'].includes(run.req.method);
+        const inputState = async () => {
+            try {
+                const value: any = await interruptible(api.sendToFrame(tabId,frame,{kind:'input-state'}),run.controller.signal);
+                return typeof value?.document === 'string' && Number.isSafeInteger(value?.epoch)
+                    ? `${value.document}:${value.epoch}` : null;
+            } catch { aborted(run.controller.signal); return null; }
+        };
+        const inputBefore = tracksTabs ? await inputState() : null;
+        await check(run.req, run.controller.signal);
         if (WRITE.has(run.req.method))
             run.started = true;
+        const tabs = tracksTabs ? trackCreatedTabs(api,tabId,frame.frameId,run.controller.signal) : undefined;
         let response: any;
         try {
             response = await interruptible(api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } }), run.controller.signal);
         }
         catch (e) {
+            tabs?.dispose();
             if (e instanceof ProtocolError)
                 throw e;
             if (WRITE.has(run.req.method))
@@ -40,10 +53,28 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             throw new ProtocolError('STALE_ELEMENT', 'The frame stopped replying. Take a fresh snapshot.');
         }
         if (!response?.ok) {
+            tabs?.dispose();
             const e = response?.error as RpcError | undefined;
             if (e)
                 throw new ProtocolError(e.code, e.message, e.retry, e.details);
             throw new ProtocolError('INTERNAL', 'Invalid content response.');
+        }
+        if (tabs) {
+            // Only Chrome lifecycle metadata may claim a new tab; content replies
+            // cannot nominate arbitrary user tabs as an action's descendants.
+            const {openedTabs:_ignored,openedTabWarnings:_warnings,...result} = response.result ?? {};
+            const children = await tabs.finish();
+            if (children.openedTabs?.length) {
+                // Check through the entire observation/load interval, even after
+                // the action response. A user action in this frame is ambiguous.
+                const inputAfter = await inputState();
+                aborted(run.controller.signal);
+                if (!inputBefore || inputBefore !== inputAfter) return {...result,openedTabWarnings:[
+                    ...(children.openedTabWarnings ?? []),
+                    ...children.openedTabs.map(tab => ({tabId:tab.tabId,reason:inputBefore && inputAfter ? 'user-intervention' : 'source-unavailable'})),
+                ]};
+            }
+            return {...result,...children};
         }
         return response.result;
     }

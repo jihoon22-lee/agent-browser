@@ -220,21 +220,26 @@ async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schem
         Ok(queued) => queued,
         Err(error) => return ToolOutcome::rejected(name, Some(op_id), error),
     };
-    finish(state, name, op_id, class, queued.wait(timeout_for(name, args)).await)
+    let origin = queued.origin.clone();
+    finish(state, name, op_id, class, &origin, queued.wait(timeout_for(name, args)).await)
 }
 
-fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass) -> Result<QueuedCommand<'a>, RpcError> {
+struct OperationCommand<'a> { queued: QueuedCommand<'a>, origin: super::operation::Operation }
+impl OperationCommand<'_> { async fn wait(self, timeout: Duration) -> Result<Value,RpcError> { self.queued.wait(timeout).await } }
+
+fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass) -> Result<OperationCommand<'a>, RpcError> {
     state.ops.with_checked(op_id, true, |op| {
         params.insert("operationId".into(), json!(op.id));
         params.insert("generation".into(), json!(op.generation));
         params.insert("tabId".into(), json!(op.current_tab));
-        state.registry.queue_command_for(&op.client_id, method, Value::Object(params), class)
+        let queued = state.registry.queue_command_for(&op.client_id, method, Value::Object(params), class)?;
+        Ok(OperationCommand {queued,origin:op.clone()})
     })
 }
 
 /// Turns the browser's reply into an outcome, re-checking the gate so a stopped operation's late result
 /// is not handed to the model as fresh information.
-fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, result: Result<Value, RpcError>) -> ToolOutcome {
+fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, origin: &super::operation::Operation, result: Result<Value, RpcError>) -> ToolOutcome {
     let cancellation = state.ops.check_active(op_id).err().filter(|e| e.code == ErrorCode::Cancelled);
     let aborted = cancellation.is_some();
     match result {
@@ -245,6 +250,15 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, res
             cancellation.expect("captured cancellation"),
         ),
         Ok(mut data) => {
+            if matches!(name,"browser_click"|"browser_press") {
+                let mut adopted = None;
+                if let Some(children) = data.get_mut("openedTabs").and_then(Value::as_array_mut) {
+                    let ids: Vec<_> = children.iter().take(16).filter(|tab| tab["sourceTabId"].as_i64() == Some(origin.current_tab) && tab["sourceFrameId"].as_i64().is_some_and(|frame| frame >= 0) && tab["url"].as_str().is_some_and(|url| check_url(url).is_ok())).filter_map(|tab| tab["tabId"].as_i64()).collect();
+                    if !aborted { adopted = state.ops.adopt_children(op_id,origin.generation,&origin.client_id,origin.current_tab,&ids).ok(); }
+                    for child in children { if child.is_object() { child["adopted"] = json!(adopted.as_ref().is_some_and(|op| child["tabId"].as_i64().is_some_and(|id| ids.contains(&id) && op.tabs.contains(&id)))); } }
+                }
+                if let Some(op) = adopted { data["currentTab"] = json!(op.current_tab); data["operationTabs"] = json!(op.tabs); data["nextStep"] = json!("Take a fresh browser_snapshot in the current tab before acting; previous-tab refs do not transfer."); }
+            }
             let verified = data.as_object_mut().and_then(|o| o.remove("verified")).unwrap_or(Value::Null);
             if aborted {
                 data = match data {

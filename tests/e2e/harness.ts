@@ -11,7 +11,7 @@ import { ROOT, runtimeConfig } from "./runtime";
 export { ROOT } from "./runtime";
 
 declare const chrome: any;
-type Envelope = { type: string; id?: string; method?: string; params?: any; result?: any; ok?: boolean };
+type Envelope = { type: string; id?: string; method?: string; params?: any; result?: any; ok?: boolean; event?:string; data?:any };
 
 async function killOwned(child: ChildProcess | undefined) {
   if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -46,6 +46,7 @@ export class ExtensionRelay {
   private methods = new Map<string, string>();
   private heldMethods = new Set<string>();
   private held = new Map<string, Envelope>();
+  private heldRoutes = new Map<string, WebSocket>();
   readonly commands: Envelope[] = [];
   port = 0;
 
@@ -67,11 +68,13 @@ export class ExtensionRelay {
         const method = message.id && this.methods.get(message.id);
         if (message.type === "res" && method && this.heldMethods.has(method)) {
           this.held.set(message.id!, message);
+          this.heldRoutes.set(message.id!,upstream);
           this.events.emit("held", message);
           return;
         }
         if (upstream.readyState === WebSocket.OPEN) upstream.send(text);
         else queued.push(text);
+        if (message.type === 'evt') this.events.emit('event',message);
       });
       upstream.on("open", () => { for (const text of queued.splice(0)) upstream.send(text); });
       upstream.on("message", (data) => {
@@ -89,7 +92,12 @@ export class ExtensionRelay {
     });
     return this;
   }
-  clearHolds() { this.heldMethods.clear(); this.held.clear(); }
+  clearHolds() { this.heldMethods.clear(); this.held.clear(); this.heldRoutes.clear(); }
+  releaseHeld(id: string) {
+    const message = this.held.get(id), upstream = this.heldRoutes.get(id);
+    if (!message || !upstream || upstream.readyState !== WebSocket.OPEN) throw new Error('No held response on its original Bridge connection');
+    this.held.delete(id); this.heldRoutes.delete(id); upstream.send(JSON.stringify(message));
+  }
   holdReplies(method: string) { this.heldMethods.add(method); }
   async nextCommand(method: string): Promise<Envelope> {
     return new Promise((resolve, reject) => {
@@ -99,6 +107,13 @@ export class ExtensionRelay {
         clearTimeout(timer); this.events.off("command", listen); resolve(message);
       };
       this.events.on("command", listen);
+    });
+  }
+  async nextEvent(event: string, matches: (data:any)=>boolean): Promise<Envelope> {
+    return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{this.events.off('event',listen);reject(new Error(`No event ${event}`));},10_000);
+      const listen=(message:Envelope)=>{if(message.event!==event||!matches(message.data))return;clearTimeout(timer);this.events.off('event',listen);resolve(message);};
+      this.events.on('event',listen);
     });
   }
   async waitHeld(id: string) {
