@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "AgentBrowser",
+  "version": "0.1.0",
+  "description": "Lets your OpenCode agent read and operate this Chrome through a local bridge.",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApfLvlVz/yajiQYE/0gqaw10LGAQ3drZ8eV6hwv3ylOedOga7SJjIr6Y8LozBL4ZXIZzvhDiCH4+FhySXXTJZkvKWaQWEMlWLs8gPs0H05AqpB8MnxJGWyqsrUI88wqC0pKp3G7Lm7TrDPTx5kQtYIQoLKchNHtf7s1AVaU7KmComKWgMoTl0w9Xto21ePyhRu+mVXh6WurwCHskVb/Xiw9g4rim+ZCG9R9TxGZ6/OaxkPKM0wOed/H0F3U3GdoJpBlX7W6v73oZoJQXfgXOxZYDza1HzVr1EkCxaU5iOejLhQ6YrM+awSukZ9E4PUB4ckcuGNVdKGcYhObZkn1+/ZQIDAQAB",
+  "permissions": [
+    "tabs",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "alarms"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/index.html"
+  },
+  "options_page": "src/options/index.html",
+  "action": {
+    "default_title": "AgentBrowser"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

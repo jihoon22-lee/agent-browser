@@ -34,3 +34,4 @@ Bridge는 LLM을 직접 호출하지 않는다. Chrome은 MCP 서버를 자동 �
 | 2026-10-11 | Windows exe는 WSL에서 cargo-xwin(msvc)으로 크로스 빌드 | main Windows에 Rust 없음, interop 실행 검증 완료(status.md) |
 | 2026-10-11 | 개발 중 확장은 Windows Chrome의 별도 개발용 프로필에 로드 | 사용자 결정 |
 | 2026-10-11 | main의 Windows 네이티브 OpenCode는 M1 WSL 시연 후 v1.18.29로 설치 | 사용자 결정, 그 전까지 Windows 경로는 미검증 |
+| 2026-10-11 | 개발용 고정 확장 ID `icgmjjcpnaenpfjfoggnaodeaidbnihl` (manifest `key`, 개인키는 보관하지 않음) | Bridge가 `chrome-extension://<id>` Origin을 페어링 대상으로 고정하려면 압축해제 로드에서도 ID가 안정적이어야 함 |
