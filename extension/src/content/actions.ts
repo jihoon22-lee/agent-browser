@@ -112,6 +112,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
             optionsTruncated: el.options.length > labels.length || labels.some(label => label.length > 128),
           });
         }
+        if (opt.disabled || (opt.parentElement instanceof HTMLOptGroupElement && opt.parentElement.disabled)) {
+          throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The requested option is disabled.");
+        }
         nativeSet(el, opt.value);
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));

@@ -109,3 +109,11 @@ it("scroll moves the page and rejects unknown directions", async () => {
   expect(calls).toEqual([{ top: 800 }]);
   await expect(runAction("scroll", { direction: "sideways", generation: 10 })).rejects.toMatchObject({ code: "INVALID_PARAMS" });
 });
+
+it.each(['<option disabled value="bad">Blocked</option>', '<optgroup disabled><option value="bad">Blocked</option></optgroup>'])('R08 refuses an unavailable option before value or events change: %s', async markup => {
+  document.body.innerHTML = `<select aria-label="Choice"><option value="good">Good</option>${markup}</select>`;
+  const select = document.querySelector('select')!, changed = vi.fn();
+  select.addEventListener('input', changed); select.addEventListener('change', changed);
+  await expect(runAction('select', {ref: refOf('Choice'), option: 'bad', generation: 10})).rejects.toMatchObject({code: 'ELEMENT_NOT_INTERACTABLE'});
+  expect(select.value).toBe('good'); expect(changed).not.toHaveBeenCalled();
+});
