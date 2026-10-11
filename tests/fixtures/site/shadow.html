@@ -1,0 +1,8 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>그림자</title></head>
+<body><div id="open-host"></div><div id="closed-host"></div><p id="out"></p>
+<script>
+const open = document.getElementById("open-host").attachShadow({ mode: "open" });
+open.innerHTML = '<button>그림자 버튼</button>';
+open.querySelector("button").addEventListener("click", () => { document.getElementById("out").textContent = "그림자 눌림"; });
+document.getElementById("closed-host").attachShadow({ mode: "closed" }).innerHTML = '<button>닫힌 버튼</button>';
+</script></body></html>

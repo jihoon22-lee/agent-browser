@@ -1,0 +1,17 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>폼 테스트</title></head>
+<body>
+<label for="name">이름</label><input id="name">
+<label><input type="checkbox" id="agree"> 약관 동의</label>
+<label for="size">크기</label><select id="size"><option value="s">작게</option><option value="m">보통</option><option value="l">크게</option></select>
+<button id="save">저장</button>
+<pre id="saved"></pre>
+<script type="module">
+import { controlledInput } from "./app.js";
+window.__app = { name: "", agree: false, size: "s" };
+controlledInput(document.getElementById("name"), (v) => { window.__app.name = v; });
+document.getElementById("agree").addEventListener("change", (e) => { window.__app.agree = e.target.checked; });
+document.getElementById("size").addEventListener("change", (e) => { window.__app.size = e.target.value; });
+document.getElementById("save").addEventListener("click", () => {
+  document.getElementById("saved").textContent = JSON.stringify(window.__app);
+});
+</script></body></html>

@@ -1,0 +1,17 @@
+{
+  "name": "agent-browser-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "check": "tsc --noEmit",
+    "check:runtime": "node --test runtime.test.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@types/node": "26.6.5",
+    "@types/ws": "8.18.1",
+    "ws": "8.22.0",
+    "typescript": "6.0.3"
+  }
+}

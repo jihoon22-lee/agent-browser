@@ -1,0 +1,26 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>검색 테스트</title></head>
+<body>
+<h1>검색 테스트</h1>
+<form id="f">
+  <label for="q">검색어</label> <input id="q" name="q" placeholder="검색어 입력">
+  <label for="category">분류</label>
+  <select id="category"><option>전체</option><option>도서</option><option>음반</option></select>
+  <button type="submit">검색</button>
+</form>
+<div id="results" aria-live="polite"></div>
+<script type="module">
+import { postJson } from "./app.js";
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = document.getElementById("q").value;
+  const category = document.getElementById("category").value;
+  const { results } = await postJson("/api/search", { q, category });
+  const box = document.getElementById("results");
+  box.replaceChildren(...results.map((r) => {
+    const a = document.createElement("a");
+    a.href = `detail.html?id=${r.id}`; a.target = "_blank"; a.textContent = r.title;
+    const li = document.createElement("p"); li.append(a); return li;
+  }));
+  box.dataset.count = String(results.length);
+});
+</script></body></html>

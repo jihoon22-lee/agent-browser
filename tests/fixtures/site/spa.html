@@ -1,0 +1,13 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>SPA</title></head>
+<body><nav><a href="#" id="next">다음 화면</a></nav><main id="view"><button>확인</button><p>첫 화면</p></main>
+<script>
+document.getElementById("next").addEventListener("click", (e) => {
+  e.preventDefault();
+  history.pushState({}, "", "?view=2");
+  const view = document.getElementById("view");
+  const b = document.createElement("button"); b.textContent = "확인";
+  b.addEventListener("click", () => { document.title = "SPA 확인됨"; });
+  const p = document.createElement("p"); p.textContent = "두 번째 화면";
+  view.replaceChildren(b, p);
+});
+</script></body></html>

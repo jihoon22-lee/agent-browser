@@ -1,0 +1,8 @@
+{
+  "rmcp@3.5.1": {
+    "file": "rmcp-3.5.1-LICENSE",
+    "sha256": "0382b0057770ca05e9c350a50aa3b1c1fea84da0bc81d723bf00b9aa841be58a",
+    "source": "https://raw.githubusercontent.com/modelcontextprotocol/rust-sdk/79437f291b2c44053d00dcd5db969fd0cca7c887/LICENSE",
+    "reason": "The published crate omits a license file. This is the repository LICENSE at the exact .cargo_vcs_info.json commit."
+  }
+}

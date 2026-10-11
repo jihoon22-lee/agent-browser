@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: 'true'
+  RUSTUP_TOOLCHAIN: '1.98.1'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target x86_64-pc-windows-msvc
+      - name: Cache locked Rust build dependencies
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          cache-on-failure: true
+      - name: Install locked build and test dependencies
+        run: |
+          pnpm install --frozen-lockfile
+          cargo fetch --locked
+      - name: Validate workflow with pinned actionlint
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$RUNNER_TEMP/actionlint.tar.gz"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color
+      - name: Documentation links and helper regression tests
+        run: |
+          node --test scripts/ci-checks.test.mjs
+          node scripts/ci-checks.mjs
+          git diff --check
+      - name: Rust unit and integration tests (Linux)
+        run: cargo test --offline --locked -p agent-browser-bridge
+      - name: Rust lint (existing style warnings remain visible)
+        run: cargo clippy --offline --locked -p agent-browser-bridge --all-targets
+      - name: Build Linux test Bridge
+        run: cargo build --offline --locked -p agent-browser-bridge
+      - name: Extension unit tests
+        run: pnpm --filter agent-browser-extension test
+      - name: Build extension and check E2E types
+        run: |
+          pnpm --filter agent-browser-extension build
+          pnpm --filter agent-browser-e2e check
+      - name: Synthetic Node regressions (no real OpenCode or model requests)
+        run: |
+          node --test tests/fixtures/server.test.mjs tests/fixtures/opencode.test.mjs \
+            tests/agent/runner.test.mjs tests/agent/runner-process.test.mjs \
+            tests/e2e/interop-check.test.mjs tests/e2e/runtime.test.ts
+      - name: Install locked Playwright Chromium and system libraries
+        run: pnpm --filter agent-browser-e2e exec playwright install --with-deps chromium
+      - name: Linux Chromium extension E2E with synthetic APIs
+        run: pnpm --filter agent-browser-e2e exec playwright test
+      - name: Upload synthetic E2E failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-e2e-failure-${{ github.run_id }}
+          path: tests/e2e/.artifacts/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7
+
+  windows:
+    name: Windows checks
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 9.15.9
+          run_install: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target x86_64-pc-windows-msvc
+      - name: Cache locked Rust build dependencies
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
+        with:
+          cache-on-failure: true
+      - name: Install locked JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Fetch locked Rust dependencies for offline builds and notices
+        run: cargo fetch --locked
+      - name: Native Windows Rust unit and portable integration tests
+        # mcp_stdio has a Unix-only cleanup command; Windows MCP lifecycle is covered by native Chrome E2E below.
+        run: cargo test --offline --locked -p agent-browser-bridge --target x86_64-pc-windows-msvc --lib --test protocol_contract --test config_concurrent --test runtime_management --test serve_auth --test serve_port_conflict --test tool_router
+      - name: Build native Windows release Bridge
+        run: cargo build --offline --locked --release -p agent-browser-bridge --target x86_64-pc-windows-msvc
+      - name: Build extension
+        run: pnpm --filter agent-browser-extension build
+      - name: Native Windows installed Chrome E2E with synthetic APIs
+        # Uses the runner's installed Google Chrome, isolated temporary profiles, and native Windows Node/exe.
+        # The harness records the exact browser/Node versions. WSL and real OpenCode are separate manual checks.
+        run: node tests/e2e/windows-run.ts --exe "$env:GITHUB_WORKSPACE\target\x86_64-pc-windows-msvc\release\browser-bridge.exe" --extension "$env:GITHUB_WORKSPACE\extension\dist"
+      - name: PowerShell 5.1 JSONC preservation
+        shell: powershell
+        run: .\tests\install\jsonc.tests.ps1
+      - name: PowerShell 5.1 install, upgrade, rollback and uninstall
+        shell: powershell
+        # No -WslDistribution: a hosted Windows runner is not evidence of WSL interop.
+        run: .\tests\install\install.tests.ps1 -BridgeExe .\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+      - name: PowerShell 5.1 managed-runtime ownership cleanup
+        shell: powershell
+        run: .\tests\install\runtime-cleanup.tests.ps1 -BridgeExe .\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+      - name: Generate locked third-party notices
+        run: node scripts/generate-third-party-notices.mjs
+      - name: PowerShell 5.1 package allowlist, checksums and reproducibility
+        shell: powershell
+        run: .\tests\install\package.tests.ps1 -BridgeExe .\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+      - name: Build reviewable Windows package (does not publish a Release)
+        shell: powershell
+        run: .\scripts\build-release.ps1 -SkipBuild
+      - name: Upload Windows package and checksum
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-x64-package-${{ github.sha }}
+          path: |
+            release/agent-browser-*-windows-x64.zip
+            release/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload synthetic E2E failure evidence
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-e2e-failure-${{ github.run_id }}
+          path: tests/e2e/.artifacts/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 7

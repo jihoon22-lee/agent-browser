@@ -1,0 +1,339 @@
+[
+  {
+    "description": "List Chrome tabs, attach a tab to start an operation (returns operationId), open a new tab in the operation, switch between the operation's tabs, or release the operation. The operation tab stays fixed even if the user looks at another tab.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "enum": [
+            "list",
+            "attach",
+            "new",
+            "switch",
+            "release"
+          ],
+          "type": "string"
+        },
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "tabId": {
+          "description": "For attach (omit to use the user's current tab) and switch",
+          "type": "integer"
+        },
+        "url": {
+          "description": "For new: http(s) URL to open",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    "name": "browser_tabs"
+  },
+  {
+    "description": "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach before writing. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "maxChars": {
+          "default": 4000,
+          "maximum": 20000,
+          "minimum": 200,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "elementOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "frameOffset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "name": "browser_snapshot"
+  },
+  {
+    "description": "Go to an http(s) URL, or go back, forward, or reload, in the operation tab. Waits for the page to load.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "default": "goto",
+          "enum": [
+            "goto",
+            "back",
+            "forward",
+            "reload"
+          ],
+          "type": "string"
+        },
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "name": "browser_navigate"
+  },
+  {
+    "description": "Click an element by ref. Returns whether the URL or page content changed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "ref": {
+          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "name": "browser_click"
+  },
+  {
+    "description": "Replace the value of a text input or textarea by ref. Returns the value read back from the page.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "ref": {
+          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "ref",
+        "text"
+      ],
+      "type": "object"
+    },
+    "name": "browser_fill"
+  },
+  {
+    "description": "Choose an option in a select (by option value or visible label) or set a checkbox/radio checked state, by ref.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "checked": {
+          "type": "boolean"
+        },
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "option": {
+          "type": "string"
+        },
+        "ref": {
+          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "ref"
+      ],
+      "type": "object"
+    },
+    "name": "browser_select"
+  },
+  {
+    "description": "Press a key on the focused element or on ref. Enter in a form field submits the form.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "enum": [
+            "Enter",
+            "Tab",
+            "Escape",
+            "Space",
+            "Backspace",
+            "ArrowUp",
+            "ArrowDown"
+          ],
+          "type": "string"
+        },
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "ref": {
+          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "key"
+      ],
+      "type": "object"
+    },
+    "name": "browser_press"
+  },
+  {
+    "description": "Scroll the page or a scrollable element (ref).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "enum": [
+            "up",
+            "down",
+            "top",
+            "bottom"
+          ],
+          "type": "string"
+        },
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "ref": {
+          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "direction"
+      ],
+      "type": "object"
+    },
+    "name": "browser_scroll"
+  },
+  {
+    "description": "Wait until text appears, text disappears, an element ref disappears, or the URL contains a string. Fails with TIMEOUT.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "refGone": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textGone": {
+          "type": "string"
+        },
+        "timeoutMs": {
+          "default": 5000,
+          "maximum": 30000,
+          "minimum": 100,
+          "type": "integer"
+        },
+        "urlIncludes": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "name": "browser_wait"
+  },
+  {
+    "description": "Extract text, selection, or a table by snapshot ref (first table by default). maxChars bounds output. offset is a character index for text/selection, a data-row index for tables; follow nextOffset.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "text",
+            "selection",
+            "table"
+          ],
+          "type": "string"
+        },
+        "maxChars": {
+          "default": 8000,
+          "maximum": 50000,
+          "minimum": 200,
+          "type": "integer"
+        },
+        "offset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        },
+        "ref": {
+          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "name": "browser_extract"
+  },
+  {
+    "description": "Capture the visible part of the operation tab as PNG. Only works while that tab is the active tab of its window; otherwise returns NEEDS_TAB_ACTIVATION.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "description": "operationId returned by browser_tabs action=attach",
+          "type": "string"
+        }
+      },
+      "required": [
+        "operationId"
+      ],
+      "type": "object"
+    },
+    "name": "browser_screenshot"
+  }
+]

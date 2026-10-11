@@ -1,0 +1,1 @@
+{"v":1,"type":"res","id":"req-0002","ok":false,"error":{"code":"STALE_ELEMENT","message":"Element ref s3f0e12 is no longer in the page. Take a new browser_snapshot.","retry":"never","details":{"ref":"s3f0e12"}}}

@@ -1,0 +1,6 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>새 탭 연결 원본</title></head><body>
+<h1>원래 작업 탭</h1><label>원본 메모 <input id="original-note"></label>
+<a href="/new-tab-child.html?kind=blank" target="_blank" rel="noopener">새 탭 링크</a>
+<button id="script-open" onclick="window.open('/new-tab-child.html?kind=script','_blank','noopener')">스크립트 새 탭</button>
+<button id="blank-open" onclick="const child=window.open('about:blank','_blank');setTimeout(()=>{if(child&&!child.closed)child.location.href='/new-tab-child.html?kind=delayed'},120)">주소가 늦게 정해지는 새 탭</button>
+</body></html>

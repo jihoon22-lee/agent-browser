@@ -1,0 +1,33 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "__MODEL__",
+  "small_model": "__MODEL__",
+  "enabled_providers": ["opencode"],
+  "provider": { "opencode": { "whitelist": ["__MODEL_NAME__"] } },
+  "default_agent": "browser-test",
+  "subagent_depth": 0,
+  "share": "disabled",
+  "autoupdate": false,
+  "snapshot": false,
+  "plugin": [],
+  "instructions": [],
+  "formatter": false,
+  "lsp": false,
+  "compaction": { "auto": false, "prune": false },
+  "tools": { "*": false, "browser_*": true },
+  "permission": { "*": "deny", "browser_*": "allow" },
+  "mcp": {
+    "browser": {
+      "type": "local",
+      "command": ["__EXE__", "mcp"],
+      "environment": {
+        "AGENT_BROWSER_HOME": "__BRIDGE_HOME__",
+        "AGENT_BROWSER_PORT": "__BRIDGE_PORT__",
+        "WSLENV": "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w"
+      },
+      "enabled": true,
+      "timeout": 65000
+    }
+  },
+  "agent": {}
+}

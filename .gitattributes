@@ -2,3 +2,4 @@
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
 *.png binary
+scripts/licenses/catppuccin-palette-1.8.0-LICENSE -text

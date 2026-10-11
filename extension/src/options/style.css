@@ -1,0 +1,31 @@
+:root { font-family: "Segoe UI", system-ui, sans-serif; background: var(--canvas, #e6e9ef); color: var(--text, #4c4f69); --surface: #eff1f5; --canvas: #e6e9ef; --text: #4c4f69; --line: #bcc0cc; --muted: #5c5f77; --control-border: #74788e; --accent: #245ac8; --danger: #b51c3e; --focus: #8839ef; --hover: #dce0e8; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+.options { max-width: 880px; margin: 28px auto; padding: 0 24px 48px; }
+.options-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.options-header > label { min-width: 170px; }
+.options h1 { font-size: 25px; letter-spacing: -.5px; }
+.options h2 { font-size: 18px; margin: 0 0 12px; }
+.options h3 { font-size: 15px; }
+.options section { padding: 22px; margin-top: 22px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; }
+.options label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0; }
+.options input:not([type=checkbox]), .options select, .options textarea { display: block; width: 100%; min-width: 0; font: inherit; font-weight: 400; margin-top: 6px; padding: 9px; border: 1px solid var(--control-border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.options input::placeholder, .options textarea::placeholder { color: var(--muted); opacity: 1; }
+.options textarea { min-height: 100px; }
+.options button { font: inherit; min-height: 34px; padding: 8px 12px; border: 1px solid var(--control-border); border-radius: 8px; background: var(--surface); color: inherit; cursor: pointer; }
+.options button:hover:not(:disabled) { background: var(--hover); }
+.options button:disabled { opacity: .5; cursor: default; }
+.options :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.options p, .options small { color: var(--muted); line-height: 1.65; }
+.options .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.options .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.options .profiles { padding: 0; list-style: none; }
+.options .profiles li { border-top: 1px solid var(--line); padding: 16px 0; }
+.options small { display: block; overflow-wrap: anywhere; }
+.options .check { display: flex; gap: 8px; align-items: center; }
+.options .error, .options .notice { border: 1px solid var(--line); border-left: 3px solid var(--accent); background: var(--surface); color: var(--text); padding: 12px; border-radius: 8px; overflow-wrap: anywhere; }
+.options .error { border-left-color: var(--danger); color: var(--danger); }
+.options pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.options details { padding: 10px 0; }
+.options summary { cursor: pointer; }
+@media (max-width: 600px) { .options { padding: 0 12px; } .options .grid { grid-template-columns: 1fr; } .options-header { display: block; } }

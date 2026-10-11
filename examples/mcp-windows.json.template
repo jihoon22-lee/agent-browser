@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "browser": {
+      "type": "local",
+      "command": ["<installed browser-bridge.exe path>", "mcp"],
+      "enabled": true,
+      "environment": { "AGENT_BROWSER_HOME": "<installed data path>", "AGENT_BROWSER_PORT": "4317" }
+    }
+  }
+}

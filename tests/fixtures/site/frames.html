@@ -1,0 +1,9 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>프레임</title></head>
+<body><h1>프레임 테스트</h1>
+<iframe id="same" src="frame-child.html" title="같은 출처"></iframe>
+<iframe id="cross" title="교차 출처"></iframe>
+<iframe id="sandboxed" sandbox="" srcdoc="<button>샌드박스 버튼</button>" title="샌드박스"></iframe>
+<script>
+const alt = new URLSearchParams(location.search).get("alt");
+if (alt) document.getElementById("cross").src = `http://localhost:${alt}/frame-child.html`;
+</script></body></html>
