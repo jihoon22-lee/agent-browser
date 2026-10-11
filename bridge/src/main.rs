@@ -22,7 +22,11 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    agent_browser_bridge::init_logging();
+    let log_file = match cli.command {
+        Command::Serve { .. } => agent_browser_bridge::config::home_dir().ok().map(|h| h.join("logs").join("serve.log")),
+        _ => None,
+    };
+    agent_browser_bridge::init_logging(log_file);
     match cli.command {
         Command::Serve { port } => agent_browser_bridge::run_serve(port),
         Command::Mcp => agent_browser_bridge::run_mcp(),
