@@ -275,7 +275,9 @@ impl Manager {
     pub async fn status(&self, id: &str) -> Result<Value, RpcError> {
         let profile = self.profile(id)?;
         let lock = self.lock(id);
-        if lock.try_lock().is_err() { return Ok(json!({"profileId":id,"state":"starting","directory":profile.directory,"owned":false})); }
+        let Ok(_guard) = lock.try_lock() else { return Ok(json!({"profileId":id,"state":"starting","directory":profile.directory,"owned":false})); };
+        let _operation = self.operation_lock(id)?;
+        let profile = self.profile(id)?; // Re-read under the cross-process lock before persisting ownership.
         if profile.kind == Kind::External {
             let url = profile.external_url()?.to_string();
             return Ok(match health(&url, profile.username.as_deref(), profile.password.as_deref(), false).await {
@@ -557,6 +559,37 @@ async fn limited_json(mut response: reqwest::Response, limit: usize) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn review_status_holds_profile_locks_until_inspection_finishes() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let home = tempfile::tempdir().unwrap();
+        let manager = Arc::new(Manager::new(home.path().into(),4317));
+        let other = Manager::new(home.path().into(),4317);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"external","directory":"/fixture","baseUrl":format!("http://{}",listener.local_addr().unwrap())})).unwrap();
+        manager.save(profile.clone(),false).unwrap();
+        let (entered, inspecting) = tokio::sync::oneshot::channel();
+        let (release, resume) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream,_) = listener.accept().await.unwrap();
+            let mut request = [0;4]; stream.read_exact(&mut request).await.unwrap();
+            assert_eq!(&request,b"GET ");
+            entered.send(()).unwrap(); resume.await.unwrap();
+            stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+        });
+        let inspecting_manager = manager.clone();
+        let status = tokio::spawn(async move { inspecting_manager.status("fixture").await });
+        tokio::time::timeout(Duration::from_secs(2),inspecting).await.unwrap().unwrap();
+        let local_blocked = manager.lock("fixture").try_lock().is_err();
+        let other_manager_blocked = other.save(profile.clone(),false).is_err();
+        release.send(()).unwrap();
+        assert_eq!(status.await.unwrap().unwrap()["state"],"error"); server.await.unwrap();
+        assert!(local_blocked,"Stop must not race an in-flight status inspection");
+        assert!(other_manager_blocked,"Profile edits from another manager must not race status either");
+        assert!(manager.lock("fixture").try_lock().is_ok());
+        other.save(profile,false).unwrap();
+    }
+
     #[test]
     fn overlay_preserves_settings_and_uses_actual_bridge_port() {
         let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),54321);
