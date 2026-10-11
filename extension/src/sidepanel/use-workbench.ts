@@ -62,7 +62,7 @@ export function useWorkbench() {
       }).catch(() => {
         if (revision === epoch.current && generation === childGeneration.current) childRequested.current.delete(id);
       }).finally(() => {
-        if (revision !== epoch.current || generation !== childGeneration.current) return;
+        // Old generations still occupy a slot until their HTTP requests settle.
         childActive.current--; pumpChildren();
       });
     }
@@ -73,7 +73,7 @@ export function useWorkbench() {
     pumpChildren();
   }, [pumpChildren, childFreshness]);
   const invalidateChildren = useCallback(() => {
-    childGeneration.current++; childQueue.current = []; childRequested.current.clear(); childActive.current = 0;
+    childGeneration.current++; childQueue.current = []; childRequested.current.clear();
     setChildIndex({}); setChildFreshness(value => value + 1);
   }, []);
   const isSelectedOrAncestor = (id: string) => {
@@ -88,7 +88,7 @@ export function useWorkbench() {
     if (info.parentID) setChildIndex(previous => previous[info.parentID] ? { ...previous, [info.parentID]: previous[info.parentID]!.map(child => child.id === info.id ? info : child) } : previous);
   }, []);
   const removeSession = useCallback((id: string) => {
-    deletedSessions.current.add(id); sessionListRevision.current++; setSessionsLoading(false);
+    deletedSessions.current.add(id);
     if (recentSessions.current.get(currentProfile.current) === id) recentSessions.current.delete(currentProfile.current);
     const clearSelection = isSelectedOrAncestor(id);
     setSessions(previous => previous.filter(session => session.id !== id));
@@ -241,7 +241,7 @@ export function useWorkbench() {
       if (revision !== epoch.current) return;
       const setters = [setCatalog, setAgents, setCommands, setSkills, setMcp] as Array<(value: any) => void>;
       results.forEach((result, index) => { if (result.status === "fulfilled") setters[index]!(result.value); else fail(result.reason); });
-      await chrome.storage.local.set({ lastProfileId: id, [`recentSession:${id}`]: restored });
+      await chrome.storage.local.set({ lastProfileId: id, [`recentSession:${id}`]: selected.current });
       await resync();
     } catch (value) { if (revision === epoch.current) fail(value); }
     finally { if (revision === epoch.current) setLoading(false); }

@@ -488,3 +488,65 @@ it.each([404, 500])('R02 clears a deleted saved session but does not hide a rest
     expect(host.textContent).toContain('OpenCode HTTP 500');
   }
 });
+
+
+it.each(['initial', 'search', 'load more'])('review list deletion retains an in-flight %s result', async mode => {
+  sessions = Array.from({length: 70}, (_, i) => ({...sessions[0], id: i ? `ses-root-${i}` : 'ses-one', title: `페이지 결과 ${i}`}));
+  const original = test.get.getMockImplementation()!, pending = deferred<any[]>();
+  let hold = mode === 'initial', response: any[] = [];
+  test.get.mockImplementation((path: string, query: any) => {
+    if (path !== '/session') return original(path, query);
+    const result = sessions.filter(session => !query?.search || session.title.includes(query.search)).slice(0, query?.limit ?? 50);
+    if (hold) { response = result; return pending.promise; }
+    return Promise.resolve(result);
+  });
+  await render();
+  if (mode !== 'initial') {
+    hold = true;
+    if (mode === 'search') {
+      const input = host.querySelector<HTMLInputElement>('input[aria-label="세션 검색"]')!;
+      await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '페이지 결과 6'); input.dispatchEvent(new Event('input', {bubbles:true})); });
+      await act(async () => button('검색').click());
+    } else await act(async () => button('더 보기').click());
+  }
+  expect(response.length).toBeGreaterThan(0);
+  await act(async () => test.stream({type:'session.deleted', properties:{info:{id:'ses-unlisted-child',parentID:'ses-one'}}}));
+  await act(async () => pending.resolve(response));
+  expect([...host.querySelectorAll('.session-tree > li strong')].map(element => element.textContent)).toEqual(response.map(session => session.title));
+});
+
+it.each(['select', 'delete'])('review connect completion preserves the current selection after %s', async action => {
+  secondSession(); const original = test.get.getMockImplementation()!, catalog = deferred<any>();
+  test.get.mockImplementation((path: string, query: any) => path === '/provider' ? catalog.promise : original(path, query));
+  await render();
+  if (action === 'select') await selectOtherSession();
+  else await act(async () => test.stream({type:'session.deleted', properties:{info:sessions[0]}}));
+  const expected = action === 'select' ? 'ses-two' : '';
+  expect((await chrome.storage.local.get('recentSession:native'))['recentSession:native']).toBe(expected);
+  await act(async () => catalog.resolve(await original('/provider')));
+  expect((await chrome.storage.local.get('recentSession:native'))['recentSession:native']).toBe(expected);
+});
+
+it.each(['reconnect', 'profile change'])('review child discovery stays capped across %s with old requests pending', async mode => {
+  sessions = Array.from({length: 8}, (_, i) => ({...sessions[0], id:`ses-root-${i}`, title:`대화 ${i}`}));
+  await chrome.storage.local.set({'recentSession:native':''}); twoProfiles();
+  const original = test.get.getMockImplementation()!, pending: Array<ReturnType<typeof deferred<any[]>>> = [];
+  let active = 0, peak = 0;
+  test.get.mockImplementation((path: string, query: any) => {
+    if (!path.endsWith('/children')) return original(path, query);
+    const request = deferred<any[]>(); pending.push(request); active++; peak = Math.max(peak, active);
+    return request.promise.finally(() => active--);
+  });
+  await render(); expect(active).toBe(4);
+  if (mode === 'profile change') await selectProfile('second');
+  else for (let i=0; i<3; i++) await act(async () => {test.online(false);test.online(true);});
+  const peakBeforeRelease = peak;
+  await act(async () => { for (const request of pending.slice(0,4)) request.resolve([{...sessions[0],id:'ses-stale-child',parentID:'ses-root-0',title:'stale child'}]); });
+  expect(host.querySelector('button[aria-label="대화 0 하위 세션 펼치기"]')).toBeNull();
+  expect(active).toBe(4);
+  // Drain every synthetic request, including the replacement generation's queued rows.
+  for (let i=0; i<8 && active; i++) await act(async () => {for (const request of [...pending]) request.resolve([]);});
+  expect(peakBeforeRelease).toBeLessThanOrEqual(4);
+  expect(peak).toBeLessThanOrEqual(4);
+  expect(active).toBe(0);
+});
