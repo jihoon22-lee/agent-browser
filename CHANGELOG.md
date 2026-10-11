@@ -5,7 +5,7 @@
 시험 배포는 prerelease로 표시하며, 이미 게시한 버전의 zip·태그를 새 내용으로 교체하지 않습니다.
 
 
-## Unreleased
+## [0.1.2] - 2026-10-11
 
 ### 변경
 
@@ -21,6 +21,11 @@
 
 - 세션·할 일 이벤트를 받을 때마다 대화 전체와 세션 목록을 다시 받던 동작을 이벤트 내용의 직접 반영으로 바꿈.
 - 응답 중 주기 재조회는 스트림이 조용할 때만 실행. 내용이 같은 메시지는 다시 그리지 않음. 입력할 때 전체 메시지를 다시 렌더링하지 않음.
+- 응답이 끝나면 최종 메시지·할 일·파일 변경을 한 번 다시 확인하고, `session.diff` 이벤트를 바로 반영.
+
+### 호환성
+
+- Extension만 변경. Bridge·프로토콜·설치 구성은 0.1.1과 같음. 업데이트 후 `chrome://extensions`에서 AgentBrowser를 새로고침.
 
 ## [0.1.1] - 2026-10-11
 
@@ -76,5 +81,6 @@
 - 사내 모델·정책·WSL Ubuntu 24 미검증. OS 대화상자, 닫힌 Shadow DOM, canvas 내부, 백그라운드 전체 페이지 캡처는 지원 대상이 아님.
 - 0.1.0 zip에는 설치 안내만 포함되었습니다. 종합 사용법·문제 해결·제품 LICENSE·이 변경 기록의 zip 포함은 0.1.1부터입니다.
 
+[0.1.2]: https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.0
