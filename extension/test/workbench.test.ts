@@ -1,16 +1,17 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { OpenCodeApiError } from "../src/agents/opencode-v1/client";
 import { App } from "../src/sidepanel/App";
-const test = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), stream: undefined as any, online: undefined as any, calls: [] as string[] }));
-vi.mock("../src/agents/opencode-v1/client", () => ({ OpenCodeV1Client: class {
+const test = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), stream: undefined as any, online: undefined as any, calls: [] as string[], scopes: [] as [string, string][], streamDirectories: [] as string[] }));
+vi.mock("../src/agents/opencode-v1/client", async importOriginal => ({ ...(await importOriginal<typeof import("../src/agents/opencode-v1/client")>()), OpenCodeV1Client: class {
   directory: string; constructor(value: any) { this.directory = value.directory; }
-  get = (path: string, query?: any) => test.get(path, query);
+  get = (path: string, query?: any) => { test.scopes.push([path, this.directory]); return test.get(path, query); };
   findFiles = (query: string, limit = 12) => test.get("/find/file", { query, limit });
   post = (path: string, body?: any) => { test.calls.push(path); return test.post(path, body); };
   patch = (path: string, body?: any) => test.post(path, body);
   delete = (path: string) => test.post(path);
   request = (method: string, path: string, options?: any) => test.request(method, path, options);
-  events(event: any, online: any, signal: AbortSignal) { test.stream = event; test.online = online; online(true); return new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); }
+  events(event: any, online: any, signal: AbortSignal) { test.streamDirectories.push(this.directory); test.stream = event; test.online = online; online(true); return new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); }
 } }));
 let host: HTMLDivElement, root: Root;
 let questions: any[], messages: any[], sessions: any[];
@@ -18,13 +19,14 @@ const listeners = new Set<(message: any) => void>();
 const info = { id: "msg-one", sessionID: "ses-one", role: "user", time: { created: 1 }, agent: "build", model: { providerID: "internal", modelID: "company" } };
 const model = { id: "company", providerID: "internal", name: "사내 모델", status: "active", limit: { context: 10000 }, variants: { careful: {} } };
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); test.calls = []; listeners.clear();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); test.calls = []; test.scopes = []; test.streamDirectories = []; listeners.clear();
   sessions = [{ id: "ses-one", title: "기존 대화", directory: "/fixture", time: { updated: 1 }, agent: "build" }];
   messages = [{ info, parts: [{ id: "prt-one", type: "text", text: "기존 질문" }] }]; questions = [];
   test.get.mockReset().mockImplementation(async (path: string) => {
     if (path === "/provider") return { all: [{ id: "internal", name: "업무", models: { company: model } }], connected: ["internal"], default: { internal: "company" } };
     if (path === "/agent") return [{ name: "build", mode: "primary" }];
     if (path === "/session") return sessions;
+    if (sessions.some(session => path === `/session/${session.id}`)) return sessions.find(session => path === `/session/${session.id}`);
     if (path === "/session/status") return { "ses-one": { type: "idle" } };
     if (path === "/question") return questions;
     if (path.endsWith("/message")) return messages;
@@ -432,4 +434,57 @@ it("leaves an unattributed browser operation alone when another session is also 
   await act(async () => { test.stream({ type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } }); test.stream({ type: "session.status", properties: { sessionID: "ses-two", status: { type: "busy" } } }); });
   await act(async () => button("응답 중단").click());
   expect(test.calls).toEqual(["/session/ses-one/abort"]);
+});
+
+it.each(['panel reopen', 'profile return'])('R02 restores the saved session directory for all instance APIs and SSE: %s', async mode => {
+  sessions[0].directory = '/project-b'; twoProfiles();
+  await render();
+  if (mode === 'profile return') { await selectProfile('second'); test.scopes = []; test.streamDirectories = []; await selectProfile('native'); }
+  expect(test.streamDirectories.at(-1)).toBe('/project-b');
+  for (const path of ['/session/status','/question','/permission','/provider']) {
+    expect(test.scopes.filter(([p]) => p === path).at(-1)).toEqual([path, '/project-b']);
+  }
+});
+it('R09 ignores a root list begun before a session deletion event', async () => {
+  secondSession(); await render();
+  const stale = deferred<any[]>(), before = [...sessions], original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === '/session' ? stale.promise : original(path,query));
+  await act(async () => { test.online(false); test.online(true); });
+  await act(async () => test.stream({type:'session.deleted', properties:{info:sessions[1]}}));
+  expect(host.querySelector('.session-tree')!.textContent).not.toContain('둘째 대화');
+  await act(async () => stale.resolve(before));
+  expect(host.querySelector('.session-tree')!.textContent).not.toContain('둘째 대화');
+});
+it.each([false, true])('R10 refreshes offscreen child discovery on reconnect after an empty or failed check: %s', async failed => {
+  secondSession(); const original = test.get.getMockImplementation()!;
+  if (failed) test.get.mockImplementation((path: string, query: any) => path === '/session/ses-two/children' ? Promise.reject(Error('offline')) : original(path,query));
+  await render();
+  expect(host.querySelector('button[aria-label="둘째 대화 하위 세션 펼치기"]')).toBeNull();
+  test.get.mockImplementation((path: string, query: any) => path === '/session/ses-two/children' ? Promise.resolve([{...sessions[1], id:'ses-new-child',parentID:'ses-two',title:'Offline child'}]) : original(path,query));
+  await act(async () => { test.online(false); test.online(true); });
+  expect(host.querySelector('button[aria-label="둘째 대화 하위 세션 펼치기"]')).not.toBeNull();
+});
+it.each([false,true])('R11 refreshes final details on a successful absent status, never on a failed snapshot: %s', async failed => {
+  await render();
+  await act(async () => test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  const original = test.get.getMockImplementation()!, count = (path: string) => test.get.mock.calls.filter(([p]) => p === path).length;
+  const paths = ['/todo','/children','/diff'].map(path => '/session/ses-one'+path), before = paths.map(count);
+  test.get.mockImplementation((path: string, query: any) => path === '/session/status' ? (failed ? Promise.reject(Error('fixture unavailable')) : Promise.resolve({})) : original(path,query));
+  await act(async () => window.dispatchEvent(new Event('focus')));
+  await act(async () => new Promise(resolve => setTimeout(resolve, 150)));
+  expect(paths.map(count)).toEqual(before.map(value => value + (failed ? 0 : 1)));
+});
+
+it.each([404, 500])('R02 clears a deleted saved session but does not hide a restore server failure: %s', async status => {
+  const original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === '/session/ses-one' ? Promise.reject(new OpenCodeApiError(status, 'fixture')) : original(path, query));
+  await render();
+  if (status === 404) {
+    expect(test.streamDirectories).toEqual(['/fixture']);
+    expect(host.textContent).toContain('사내 모델');
+    expect((await chrome.storage.local.get('recentSession:native'))['recentSession:native']).toBe('');
+  } else {
+    expect(test.streamDirectories).toEqual([]);
+    expect(host.textContent).toContain('OpenCode HTTP 500');
+  }
 });
