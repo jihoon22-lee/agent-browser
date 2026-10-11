@@ -28,7 +28,7 @@ export class McpDriver {
   constructor(exe: string, home: string, port: number) {
     this.child = spawn(exe, ["mcp"], {
       env: { ...process.env, AGENT_BROWSER_HOME: home, AGENT_BROWSER_PORT: String(port), AGENT_BROWSER_LOG: "debug" },
-      stdio: "pipe",
+      stdio: "pipe", windowsHide: true,
     });
     this.child.stderr.on("data", (data) => { this.stderr += data.toString(); });
     const lines = createInterface({ input: this.child.stdout });

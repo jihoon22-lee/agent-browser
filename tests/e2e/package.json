@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "playwright test",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "check:runtime": "node --test runtime.test.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.64.0",

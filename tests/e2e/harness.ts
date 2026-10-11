@@ -2,18 +2,15 @@ import { chromium, expect, type BrowserContext, type Page } from "@playwright/te
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer, connect } from "node:net";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 import { once, EventEmitter } from "node:events";
 import WebSocket, { WebSocketServer } from "ws";
 import { McpDriver, type ToolOutcome } from "./mcp-driver";
+import { ROOT, runtimeConfig } from "./runtime";
+export { ROOT } from "./runtime";
 
 declare const chrome: any;
-export const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
-const BIN = join(ROOT, "target/debug/browser-bridge");
-const DIST = join(ROOT, "extension/dist");
 type Envelope = { type: string; id?: string; method?: string; params?: any; result?: any; ok?: boolean };
 
 async function killOwned(child: ChildProcess | undefined) {
@@ -123,6 +120,8 @@ export class ExtensionRelay {
 }
 
 export class World {
+  readonly config = runtimeConfig();
+  runtime!: { platform: string; nodeVersion: string; browserVersion: string; browserProduct: string; userAgent: string; browserExecutable: string; bridgeExecutable: string; extensionDir: string; headless: boolean };
   fixture!: { base: string; alt: number };
   bridge!: { port: number; home: string; token: string };
   context!: BrowserContext;
@@ -138,26 +137,57 @@ export class World {
   private output = "";
 
   async start() {
-    this.dir = await mkdtemp(join(tmpdir(), "agent-browser-e2e-"));
+    await mkdir(this.config.workRoot, { recursive: true });
+    this.dir = await mkdtemp(join(this.config.workRoot, "AgentBrowser-dev-e2e-"));
     try {
-      this.fixtureProcess = spawn(process.execPath, [join(ROOT, "tests/fixtures/server.mjs"), "--port", "0", "--alt-port", "0"], { stdio: ["ignore", "pipe", "pipe"] });
-      this.fixtureProcess.stderr!.on("data", (data) => { this.output += data; });
-      const lines = createInterface({ input: this.fixtureProcess.stdout! });
-      const [line] = await once(lines, "line");
-      lines.close();
-      const ready = JSON.parse(line);
-      this.fixture = { base: `http://127.0.0.1:${ready.port}`, alt: ready.altPort };
+      if (this.config.externalFixture) {
+        this.fixture = this.config.externalFixture;
+        const response = await fetch(`${this.fixture.base}/__log`, { signal: AbortSignal.timeout(5_000) });
+        if (!response.ok) throw new Error(`External fixture returned HTTP ${response.status}`);
+      } else {
+        this.fixtureProcess = spawn(process.execPath, [join(ROOT, "tests/fixtures/server.mjs"), "--port", "0", "--alt-port", "0"], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+        this.fixtureProcess.stderr!.on("data", (data) => { this.output += data; });
+        const lines = createInterface({ input: this.fixtureProcess.stdout! });
+        const [line] = await once(lines, "line");
+        lines.close();
+        const ready = JSON.parse(line);
+        this.fixture = { base: `http://127.0.0.1:${ready.port}`, alt: ready.altPort };
+      }
       this.bridge = { port: await freePort(), home: join(this.dir, "home"), token: "" };
       await this.startBridge();
       this.bridge.token = JSON.parse(await readFile(join(this.bridge.home, "config.json"), "utf8")).token;
       this.relay = await new ExtensionRelay(this.bridge.port).start();
+      const customBrowser = !!this.config.browserExecutable;
       this.context = await chromium.launchPersistentContext(join(this.dir, "profile"), {
-        channel: "chromium", headless: true,
-        args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`],
+        ...(customBrowser ? { executablePath: this.config.browserExecutable } : { channel: "chromium" }),
+        headless: this.config.headless,
+        // Playwright uses a debugging pipe. Branded Chrome loads unpacked extensions through CDP.
+        ...(customBrowser ? { ignoreDefaultArgs: ["--disable-extensions"] } : {}),
+        args: customBrowser ? ["--enable-unsafe-extension-debugging"]
+          : [`--disable-extensions-except=${this.config.extensionDir}`, `--load-extension=${this.config.extensionDir}`],
       });
-      const worker = this.context.serviceWorkers()[0] ?? await this.context.waitForEvent("serviceworker");
+      const browser = this.context.browser();
+      if (!browser) throw new Error("The launched browser does not expose a root CDP session");
+      const browserCdp = await browser.newBrowserCDPSession();
+      try {
+        if (customBrowser) {
+          // This official API still enforces enterprise policy. A rejection fails the test as-is.
+          const loaded = await browserCdp.send("Extensions.loadUnpacked", { path: this.config.extensionDir });
+          this.extensionId = loaded.id;
+        }
+        const version = await browserCdp.send("Browser.getVersion");
+        this.runtime = {
+          platform: process.platform, nodeVersion: process.version, browserVersion: browser.version(),
+          browserProduct: version.product, userAgent: version.userAgent,
+          browserExecutable: this.config.browserExecutable ?? chromium.executablePath(),
+          bridgeExecutable: this.config.bridgeExe, extensionDir: this.config.extensionDir, headless: this.config.headless,
+        };
+      } finally { await browserCdp.detach(); }
+      const matches = (worker: { url(): string }) => !this.extensionId || new URL(worker.url()).host === this.extensionId;
+      const worker = this.context.serviceWorkers().find(matches)
+        ?? await this.context.waitForEvent("serviceworker", { predicate: matches, timeout: 15_000 });
       this.extensionId = new URL(worker.url()).host;
-      this.manifest = JSON.parse(await readFile(join(DIST, "manifest.json"), "utf8"));
+      this.manifest = JSON.parse(await readFile(join(this.config.extensionDir, "manifest.json"), "utf8"));
       this.adminPage = await this.context.newPage();
       await this.adminPage.goto(`chrome-extension://${this.extensionId}/${this.manifest.options_page}`);
       await this.adminPage.evaluate(({ token, port }) => chrome.storage.local.set({ pairingToken: token, bridgeUrl: `ws://127.0.0.1:${port}/extension` }), { token: this.bridge.token, port: this.relay.port });
@@ -167,17 +197,17 @@ export class World {
     } catch (error) { await this.stop(); throw error; }
   }
   async newMcp() {
-    const driver = new McpDriver(BIN, this.bridge.home, this.bridge.port);
+    const driver = new McpDriver(this.config.bridgeExe, this.bridge.home, this.bridge.port);
     this.drivers.push(driver);
     return driver.initialize();
   }
   async startBridge() {
-    this.bridgeProcess = spawn(BIN, ["serve", "--port", String(this.bridge.port)], {
-      env: { ...process.env, AGENT_BROWSER_HOME: this.bridge.home }, stdio: ["ignore", "pipe", "pipe"],
+    this.bridgeProcess = spawn(this.config.bridgeExe, ["serve", "--port", String(this.bridge.port)], {
+      env: { ...process.env, AGENT_BROWSER_HOME: this.bridge.home }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
     });
     this.bridgeProcess.stdout!.on("data", (data) => { this.output += data; });
     this.bridgeProcess.stderr!.on("data", (data) => { this.output += data; });
-    await expect.poll(() => tcpReady(this.bridge.port), { message: "isolated Linux bridge startup", timeout: 10_000 }).toBe(true);
+    await expect.poll(() => tcpReady(this.bridge.port), { message: `isolated ${process.platform} bridge startup`, timeout: 10_000 }).toBe(true);
   }
   async killBridge() { await killOwned(this.bridgeProcess); }
   async restartBridge() {
@@ -255,7 +285,7 @@ export class World {
       this.context?.close(), this.relay?.stop(),
       killOwned(this.bridgeProcess), killOwned(this.fixtureProcess),
     ]);
-    if (this.dir) await rm(this.dir, { recursive: true, force: true });
+    if (this.dir) await rm(this.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 }
 

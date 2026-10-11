@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: "scenarios.spec.ts",
+  testMatch: process.env.AB_E2E_DEMO === "1" ? "windows-demo.spec.ts" : "scenarios.spec.ts",
   fullyParallel: false,
   workers: 1,
   timeout: 90_000,
