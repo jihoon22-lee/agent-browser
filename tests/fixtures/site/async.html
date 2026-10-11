@@ -1,0 +1,7 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>비동기</title></head>
+<body><button id="load">불러오기</button><div id="slot"></div>
+<script>
+document.getElementById("load").addEventListener("click", () => {
+  setTimeout(() => { const d = document.createElement("p"); d.id = "late"; d.textContent = "로딩 완료"; document.getElementById("slot").append(d); }, 1500);
+});
+</script></body></html>

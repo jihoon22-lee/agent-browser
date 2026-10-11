@@ -2,8 +2,8 @@
 
 ## 현재 단계
 
-**M0 환경·계약 확인 — 진행 중.** 저장소 생성, 환경 실측, OpenCode v1 명세 확보 완료.
-M1 계획서 작성 완료, 사용자 검토 대기.
+**M1 브라우저 제어 구현 — 진행 중**(브랜치 `feat/m1-browser-control`).
+M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 순서대로 구현하며, 아래 검증 표에 과제별 실행 결과를 남긴다.
 
 ## 실측 환경 (2026-10-11, main)
 
@@ -28,6 +28,8 @@ M1 계획서 작성 완료, 사용자 검토 대기.
 | 2026-10-11 | `OPENCODE_SERVER_PASSWORD` Basic 인증(401/200) | 통과 |
 | 2026-10-11 | `chrome-extension://` Origin CORS preflight | Allow-Origin 없음(기록만) |
 | 2026-10-11 | cargo-xwin으로 msvc exe 크로스 빌드 → `C:\...\ab 한글 probe\`(공백·한글 경로)에 복사 → WSL interop 실행 | 통과, `current_exe`가 Windows 경로로 출력 |
+| 2026-10-11 | M1 Task 1: `cargo test -p agent-browser-bridge --test protocol_contract`(Linux), `vitest run test/protocol-contract.test.ts` | 4/4, 4/4 통과 |
+| 2026-10-11 | M1 Task 2: `node --test tests/fixtures/server.test.mjs`(Linux) | 3/3 통과 |
 
 ## 미검증
 
@@ -44,5 +46,4 @@ M1 계획서 작성 완료, 사용자 검토 대기.
 
 ## 다음 작업
 
-1. [M0 마무리–M1 계획](./plans/2026-10-11-m1-browser-control.md) 사용자 검토.
-2. 승인 후 Task 1(내부 RPC 계약)부터 구현.
+1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 3(Bridge 설정·페어링 토큰)부터 순서대로 구현.

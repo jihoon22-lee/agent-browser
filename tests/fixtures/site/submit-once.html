@@ -1,0 +1,11 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>제출</title></head>
+<body><button id="send">제출</button><p id="state">대기</p>
+<script type="module">
+import { postJson } from "./app.js";
+const requestId = crypto.randomUUID();
+document.getElementById("send").addEventListener("click", async () => {
+  document.getElementById("state").textContent = "전송 중";
+  const r = await postJson("/api/submit", { requestId, fields: {} });
+  document.getElementById("state").textContent = r.duplicate ? "중복" : "완료";
+});
+</script></body></html>
