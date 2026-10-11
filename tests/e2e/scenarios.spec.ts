@@ -265,7 +265,7 @@ test('R25 saving the same correct pairing token repairs a halted connection',asy
   const config=JSON.parse(await readFile(path,'utf8'));config.pairedExtensionId='a'.repeat(32);
   await writeFile(path,JSON.stringify(config));await world.startBridge();
   await expect.poll(()=>world.adminPage.evaluate(()=> (globalThis as any).chrome.runtime.sendMessage({kind:'get-conn-status'}))).toMatchObject({state:'not_paired'});
-  await world.adminPage.locator('input[type=password]').fill(world.bridge.token);
+  await world.adminPage.getByLabel('페어링 토큰', { exact: true }).fill(world.bridge.token);
   await world.adminPage.getByRole('button',{name:'저장 후 연결'}).click();
   await expect.poll(()=>world.adminPage.evaluate(()=> (globalThis as any).chrome.runtime.sendMessage({kind:'get-conn-status'}))).toMatchObject({state:'connected'});
   const listed=await world.mcp.call('browser_tabs',{action:'list'});
