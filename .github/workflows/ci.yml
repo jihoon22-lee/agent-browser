@@ -41,6 +41,8 @@ jobs:
           cache: pnpm
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target x86_64-pc-windows-msvc
+      - name: Cache locked Rust build dependencies
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - name: Install locked build and test dependencies
         run: |
           pnpm install --frozen-lockfile
@@ -110,6 +112,8 @@ jobs:
           cache: pnpm
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target x86_64-pc-windows-msvc
+      - name: Cache locked Rust build dependencies
+        uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
       - name: Install locked JavaScript dependencies
         run: pnpm install --frozen-lockfile
       - name: Fetch locked Rust dependencies for offline builds and notices
