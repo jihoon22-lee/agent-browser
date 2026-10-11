@@ -2,8 +2,8 @@
 
 ## 현재 단계
 
-**v0.1.1 배포 완료(main `4cfae595230db2f359973ef5c2f98c07c550be00`). M5 사용성·성능 개선 1차 구현·검증 완료(미병합, 미배포).**
-진행 중 계획: [M5 사용성·성능 개선](./plans/2026-10-11-m5-usability-polish.md).
+**v0.1.2 배포 완료(main `1b8f0123cf65556a7a386f01a9a5e33731041fd0`), 이 PC 설치 업데이트 완료.**
+다음 개선 후보(검토 backlog): [M5 계획](./plans/2026-10-11-m5-usability-polish.md)의 "다음 개선 후보".
 
 **사용자 확인(2026-10-11)**: 사용자가 개인 PC의 WSL OpenCode로 실제 대화와 브라우저 제어가 동작함을 확인했다.
 이후 실제 사용 검증(실제 모델 반복 시연, 사내·다른 PC 환경, 로그인 후 자동 실행 등)은 별도의 남은 항목으로 두지 않는다.
@@ -21,53 +21,32 @@
 | OpenCode | WSL `~/.opencode/bin/opencode` 1.18.29. Windows 검증용 portable 1.18.29는 `AgentBrowser-dev/opencode/1.18.29` |
 | WSL 툴체인 | node 24.18.0, pnpm 9.15.9, rustc 1.98.1/1.97.1, cargo-xwin, target `x86_64-pc-windows-msvc` |
 
-## 최신 검증 기준선 (v0.1.1, main `4cfae59`)
+## 최신 검증 기준선 (v0.1.2, main `1b8f012`)
 
 | 범위 | 결과 |
 |---|---|
-| Rust 전체(Linux) | 117/117 통과(부모 테스트가 실행하는 helper 1개 기본 ignored) |
-| Extension Vitest | 30파일 242/242 통과, TypeScript/Vite 빌드 통과 |
+| Extension Vitest | 30파일 253/253 통과. TypeScript/Vite 빌드 통과. 전체 실행 중 기존 snapshot 경계 테스트가 1회 7.5초 시간 초과했고, 단독·전체 재실행에서 통과 |
+| Linux Chromium 실제 확장 E2E | 48/48 통과(새 탭 9 + 브라우저 26 + 작업 UI 13). 최종 수정 후 작업 UI 13/13 재실행 |
+| 실제 Windows Chrome E2E | `scripts/test-windows.sh` 48/48 통과(최종 코드). Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필 |
 | Node fixture/runner/interop/문서 helper | 28/28 통과 |
-| Linux Chromium 실제 확장 E2E | 47/47 통과(새 탭 9 + 브라우저 26 + 작업 UI 12) |
-| 실제 Windows Chrome E2E | 47/47 통과. Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필 |
-| Windows 설치·런타임 정리·패키징 | 설치 13, 런타임 정리 3, 패키징 3 통과 |
-| OpenCode v1 API | 실제 Windows/WSL 1.18.29에서 모델 호출 없이 세션·첨부·SSE·분기·revert 계약 확인 |
-| 원격 CI | [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38126797768), [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38127471889) Linux·Windows 성공 |
-
-## M5 사용성·성능 개선 검증 (2026-10-11, 브랜치 `feat/m5-usability-polish`)
-
-| 범위 | 결과 |
-|---|---|
-| Extension Vitest | 30파일 253/253 통과(세션별 **응답 중단** 범위 회귀 포함. 전체 실행 중 기존 snapshot 경계 테스트가 1회 7.5초 시간 초과, 단독·전체 재실행 통과. 신규·변경: 하위 세션 화살표, 제자리 삭제, 인라인 이름 변경, 이벤트 반영, 응답 종료 시 diff·최종 메시지 재조회, `session.diff` 반영, 메시지 정리, `--bubble` 대비). TypeScript/Vite 빌드 통과 |
-| Linux Chromium 실제 확장 E2E | 전체 48/48 통과(W13 세션 삭제 신규, W06·W11 갱신). 응답 종료 재조회와 응답 중단 범위 수정 후 작업 UI 13/13 재실행 통과 |
-| 실제 Windows Chrome E2E | `scripts/test-windows.sh` 전체 48/48 통과(1.2분), 응답 중단 범위 수정 포함 최종 코드 기준. Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필 |
-| Node fixture/runner/interop/문서 helper | 28/28 통과 |
-| Linux Chromium 실제 확장 E2E | 47/47 통과(새 탭 9 + 브라우저 26 + 작업 UI 12) |
-| 실제 Windows Chrome E2E | 47/47 통과. Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필 |
-| Windows 설치·런타임 정리·패키징 | 설치 13, 런타임 정리 3, 패키징 3 통과 |
-| OpenCode v1 API | 실제 Windows/WSL 1.18.29에서 모델 호출 없이 세션·첨부·SSE·분기·revert 계약 확인 |
-| 원격 CI | [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38126797768), [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38127471889) Linux·Windows 성공 |
-
-## M5 사용성·성능 개선 검증 (2026-10-11, 브랜치 `feat/m5-usability-polish`)
-
-| 범위 | 결과 |
-|---|---|
-| Extension Vitest | 30파일 249/249 통과(신규·변경: 하위 세션 화살표, 제자리 삭제, 인라인 이름 변경, 이벤트 반영, 메시지 정리, `--bubble` 대비). TypeScript/Vite 빌드 통과 |
-| Linux Chromium 실제 확장 E2E | 전체 48/48 통과(W13 세션 삭제 신규, W06·W11 갱신). 이후 이름 변경 상태 초기화 수정 뒤 작업 UI 13/13 재실행 통과 |
-| 실제 Windows Chrome E2E | `scripts/test-windows.sh` 전체 48/48 통과(1.0분). Windows Node 24.18.1, Chrome 154.0.8037.99, MSVC release exe, 격리 headless 프로필. 커밋 `fbee2cf` 기준이며 이후의 한 줄 수정(세션 전환 시 이름 변경 상태 초기화)은 Linux에서만 재실행 |
-| Node fixture/runner/interop/문서 helper | 28/28 통과. 문서 링크 검사 통과 |
-| Rust | 변경 없음, 재실행하지 않음 |
+| Windows 런타임 정리·패키징 | 0.1.2 exe로 런타임 정리 3/3, 패키징 3/3 통과 |
+| Rust 전체(Linux) | 0.1.2에서 로직 변경 없음, 로컬 재실행 안 함(0.1.1 기준 117/117). PR·main CI에서 실행 |
+| 원격 CI | [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38132152869), [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38132545391) Linux·Windows 성공 |
 
 실제 모델 호출은 하지 않았다. 합성 HTTP/SSE fixture만 사용했다.
 
 ## 배포
 
-- [v0.1.1 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.1)(비공개 저장소 prerelease). 태그는 main 병합 커밋.
-  ZIP `agent-browser-0.1.1-windows-x64.zip` 3,410,517 bytes, 파일 31개, 제3자 고지 163개,
-  SHA-256 `11eb24028a265fa24d0a76d60bc725f32c195e20100d3e4c7ff0127da7304efd`. exe SHA-256 `055f81a58681f6418a9ae3bfa3262fd316d9270face30c71d81712654dbf3d8a`.
-- [v0.1.0 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.0)는 변경하지 않았다. ZIP SHA-256 `909021621dbf3c578496f760524c233f5a51556ec480adbfb1ccee16cd57ac0f`.
-- 이 PC 설치: `%LOCALAPPDATA%\AgentBrowser`를 0.1.1로 업데이트. 프로필 `wsl-main` / Ubuntu / `/home/jihoon/.opencode/bin/opencode` 1.18.29 /
-  작업 디렉터리 `/home/jihoon/projects/agent-browser`. Bridge 포트 4317. 페어링 토큰·프로필·전역 OpenCode 설정 보존.
+- [v0.1.2 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.2)(비공개 저장소 prerelease, [PR #2](https://github.com/jihoon22-lee/agent-browser/pull/2)). 태그는 main 병합 커밋 `1b8f012`.
+  ZIP `agent-browser-0.1.2-windows-x64.zip` 3,414,050 bytes, 파일 31개,
+  SHA-256 `5628213c31ad3154de89591636377adbbfa1ce2a38bb5c06745f67be8af2260b`(GitHub asset digest 일치). exe SHA-256 `0cfaec2978cb29a59873d50c412ca303c3706ae671848c944ab64a8d069fb9f1`.
+  ZIP의 exe·Extension 파일이 실제 Windows 48개 검사에 사용한 파일과 같음을 확인.
+- v0.1.1·v0.1.0 태그와 ZIP은 변경하지 않았다. v0.1.1 ZIP SHA-256 `11eb24028a265fa24d0a76d60bc725f32c195e20100d3e4c7ff0127da7304efd`, v0.1.0 `909021621dbf3c578496f760524c233f5a51556ec480adbfb1ccee16cd57ac0f`.
+- 이 PC 설치: 관리 OpenCode의 실행 중 세션이 없음을 두 번 확인한 뒤, `%LOCALAPPDATA%\AgentBrowser`를 0.1.2로 업데이트했다(`Downloads\AgentBrowser-0.1.2\setup.ps1`).
+  - 첫 실행은 원인 미확인 `GetFullPath` 경로 형식 오류로 변경 없이 중단됐다(설치 상태 0.1.1 유지 확인). 같은 인수로 다시 실행해 성공했다.
+  - 새 Bridge PID 45552, 포트 4317. 관리 OpenCode 서버(127.0.0.1:4096)는 유지됐다.
+  - 업데이트 후 doctor 결과: Bridge 0.1.2 인증, OpenCode 1.18.29 ready, browser MCP 연결 정상. 모델 추론 검사는 하지 않았다.
+  - 프로필 `wsl-main`(Ubuntu, `/home/jihoon/projects/agent-browser`), 페어링 토큰, 전역 OpenCode 설정은 보존됐다.
 
 ## 알려진 제한
 
