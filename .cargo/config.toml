@@ -1,0 +1,4 @@
+# The user-level cargo config points build.target-dir at another project's cache.
+# Keep this repository's build output inside the repository instead.
+[build]
+target-dir = "target"

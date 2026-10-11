@@ -1,0 +1,16 @@
+# Rust
+/target/
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+# Test / runtime output
+/tests/e2e/.artifacts/
+/test-results/
+/playwright-report/
+*.log
+# Local-only config and secrets
+.env
+.env.*
+*.local.json
+/release/
