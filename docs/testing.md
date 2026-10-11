@@ -185,3 +185,18 @@ attach는 fixture wrapper의 argv/env 및 실제 backend 인증까지 검사하�
 패키징은 `bash scripts/build-release-wsl.sh` 또는 Windows의 `scripts/build-release.ps1`로 수행한다.
 출력은 ignored `release/`에 있고 배포 zip/manifest/SHA256/제3자 고지를 검사한다.
 실행 시 개발 도구·패키지 다운로드를 요구하지 않는다. 수동 Chrome 확장 로딩은 사용자 최초 1회 절차다.
+
+
+## GitHub Actions CI
+
+[CI workflow](../.github/workflows/ci.yml)는 main 대상 PR과 main push에서 Linux/Windows를 따로 실행한다.
+Linux는 전체 Rust·Extension·합성 Node·Chromium E2E, 문서 링크와 workflow 구문을 검사한다.
+Windows는 네이티브 MSVC 빌드·실행, 설치된 Chrome의 합성 E2E, PowerShell 5.1 설치·정리·패키징을 검사한다.
+호스팅 runner에 WSL이나 실제 OpenCode를 설치해 모델을 호출하지 않는다. 그 항목은 앞의 별도 실제 환경 검증과 구분한다.
+
+Actions는 커밋 SHA, 도구는 명시한 버전, 의존성은 lockfile로 고정한다. Chrome 버전은 runner 제공값을 매 실행 기록한다.
+clippy의 기존 스타일/복잡도 경고는 숨기지 않으며 현재 CI는 경고를 오류로 바꾸지 않는다.
+문서 링크 검사는 로컬 파일 존재를 검사하며 원격 URL 응답과 heading anchor까지 검증한 것으로 주장하지 않는다.
+
+CI 패키지 artifact는 설치할 수 있는 검토 산출물이지만 Release 게시가 아니다. artifact에는 zip/체크섬만,
+실패 증거에는 합성 E2E 자료만 올린다. 모델 실행 원시 기록, 설치 데이터, 토큰, 실제 페이지는 업로드하지 않는다.

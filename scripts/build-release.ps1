@@ -65,7 +65,14 @@ try {
         }
     }
     foreach ($name in @('setup.ps1','uninstall.ps1','installer-common.ps1','start-bridge.ps1','start-bridge.cmd','show-pairing.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $stage $name) }
-    Copy-Item -LiteralPath (Join-Path $repo 'README-install.md') -Destination (Join-Path $stage 'README-install.md')
+    foreach ($name in @('README-install.md','CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md')) {
+        $source=Join-SafePath $repo $name
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw ('Required release documentation missing: ' + $name) }
+        $destination=Join-SafePath $stage $name
+        $parent=[IO.Path]::GetDirectoryName($destination)
+        if (-not (Test-Path -LiteralPath $parent)) { $null=New-Item -ItemType Directory -Path $parent -Force }
+        Copy-Item -LiteralPath $source -Destination $destination
+    }
     foreach ($name in @('THIRD_PARTY_NOTICES','third-party-inventory.json')) { Copy-Item -LiteralPath (Join-Path $NoticesDir $name) -Destination (Join-Path $stage $name) }
     $null=New-Item -ItemType Directory -Path (Join-Path $stage 'examples')
     foreach ($name in @('profile-windows.json.template','profile-wsl.json.template','mcp-windows.json.template','mcp-wsl.json.template')) { Copy-Item -LiteralPath (Join-Path $repo ('examples\' + $name)) -Destination (Join-Path $stage ('examples\' + $name)) }

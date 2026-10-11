@@ -1,0 +1,189 @@
+# AgentBrowser 문제 해결
+
+사용 절차는 [사용 설명서](./user-guide.md), 설치·업데이트·제거는 [설치 안내](../README-install.md), 배포별 변경은 [변경 기록](../CHANGELOG.md)을 참고하세요.
+
+문제를 확인할 때는 **Chrome 확장 → Bridge → OpenCode 실행 환경 → 브라우저 MCP → 모델** 순서로 구분합니다. 패널 상단의 **연결됨**은 Bridge 연결 상태입니다. 이것만으로 OpenCode나 모델이 준비됐다는 뜻은 아닙니다.
+
+## 1. 우선 확인할 것
+
+1. 패널의 **현재 작업**과 **최근 작업 기록**을 확인합니다. 원하지 않는 작업이 진행 중이면 **중단**을 누릅니다.
+2. **설정 → Bridge 페어링**의 연결 상태와 사이드 패널 **작업 공간**의 OpenCode 연결 상태를 각각 확인합니다.
+3. 설정의 **연결 진단 → 진단 실행**을 누릅니다. 진단은 모델 요청을 보내지 않습니다. Bridge에 연결되지 않으면 먼저 아래 Bridge 연결 문제를 해결합니다.
+4. 오류 메시지, 발생 시각, 선택한 실행 환경과 대화, 실패한 도구 이름을 확인합니다.
+
+`EXECUTION_UNKNOWN`이나 제출 직후 연결 끊김이 있었다면 같은 지시를 바로 다시 보내지 마세요. 실행 여부가 불명확하므로 페이지·처리 내역부터 확인해야 합니다.
+
+## 2. 확장이 없거나 패널이 열리지 않음
+
+| 증상 | 확인·조치 |
+|---|---|
+| 확장 아이콘이 없음 | Chrome 확장 프로그램 메뉴에서 AgentBrowser를 고정합니다. `chrome://extensions`에서 설치·사용 상태도 확인합니다. |
+| 확장을 로드할 수 없음 | ZIP 전체를 압축 해제하고 설치를 마친 뒤, 설치 폴더의 `extension`을 선택했는지 확인합니다. `manifest.json`이 그 폴더 바로 아래 있어야 합니다. |
+| 업데이트했는데 이전 화면이 표시됨 | `chrome://extensions`에서 AgentBrowser를 새로고침한 뒤 패널을 다시 엽니다. 진행 중인 작업은 먼저 중단합니다. |
+| 다른 Chrome 프로필에 설치됨 | 실제 작업할 Chrome 프로필에서 확장을 로드합니다. 여러 프로필이 연결되어 있으면 패널의 **이 브라우저 사용** 선택도 확인합니다. |
+| 개발자 모드·로컬 확장 로드가 차단됨 | 조직 정책을 확인합니다. AgentBrowser에서 정책을 우회하지 않으며 담당자에게 승인된 배포 방식을 확인해야 합니다. |
+
+지원 기준은 Chrome 116 이상입니다. 패널을 닫아도 서버 작업과 브라우저 제어는 계속될 수 있으므로, 패널을 닫는 것을 중단 방법으로 사용하지 마세요.
+
+## 3. Bridge 연결·페어링 문제
+
+### 연결 끊김 또는 계속 재시도
+
+설치 폴더의 `start-bridge.cmd`를 실행하고 설정의 **Bridge 주소**를 확인합니다. 기본값은 `ws://127.0.0.1:4317/extension`입니다. 포트는 설치 출력과 같아야 하고 끝의 `/extension`도 필요합니다. OpenCode 서버 주소인 `http://127.0.0.1:4096`을 넣으면 안 됩니다.
+
+사용자 지정 설치 경로가 `D:\Tools\AgentBrowser`라면 Windows PowerShell에서 다음처럼 실행합니다. 실제 설치 경로로 바꾸세요.
+
+```powershell
+$agentBrowserInstall = 'D:\Tools\AgentBrowser'
+powershell -NoProfile -ExecutionPolicy Bypass -File "$agentBrowserInstall\start-bridge.ps1" -InstallDir $agentBrowserInstall
+powershell -NoProfile -ExecutionPolicy Bypass -File "$agentBrowserInstall\show-pairing.ps1" -InstallDir $agentBrowserInstall
+```
+
+기본 설치라면 첫 줄 대신 다음을 사용합니다.
+
+```powershell
+$agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser'
+```
+
+이 명령은 지정한 설치의 상태 파일을 사용합니다. 다른 폴더의 `browser-bridge.exe`를 임의로 실행하면 별도 데이터·포트 설정을 볼 수 있습니다. 설치 위치를 옮기려고 파일만 이동하지 마세요.
+
+### 상호 인증 실패·페어링 필요
+
+**페어링 인증 실패**, **상호 인증에 실패했습니다**, **다른 확장과 페어링되어 있습니다**가 표시되면 다음을 확인합니다.
+
+1. 같은 배포 버전의 Bridge와 확장을 사용 중인지 확인합니다. 업데이트 후 확장도 새로고침합니다.
+2. 해당 설치의 `show-pairing.ps1`을 실행해 주소와 토큰을 확인합니다.
+3. **Bridge 주소**와 **페어링 토큰**을 입력하고 **저장 후 연결**을 누릅니다. 토큰은 출력된 64자리 소문자 16진수 값 그대로 사용합니다.
+4. 실제 작업할 Chrome 프로필인지 확인합니다. 다른 확장 설치와 다시 페어링하면 기존 연결에 영향을 줄 수 있습니다.
+
+토큰을 주소의 쿼리 문자열에 붙이지 마세요. 기존 토큰을 유지하면서 주소만 수정할 때는 토큰 입력란을 비워둘 수 있습니다. 토큰을 입력하지 않았는데 새로 페어링된 것으로 간주하지 않습니다.
+
+### PowerShell이 스크립트 실행을 차단함
+
+[설치 안내](../README-install.md)의 `powershell -NoProfile -ExecutionPolicy Bypass -File ...` 형태를 사용합니다. 이 명령은 해당 프로세스에 실행 정책을 지정하며 전역 정책을 변경하지 않습니다. 조직 정책에 의해 실행 자체가 차단되면 정책을 우회하는 다른 실행기를 만들지 말고 담당자에게 확인하세요.
+
+## 4. Bridge는 연결되지만 OpenCode가 준비되지 않음
+
+설정에서 해당 프로필의 **편집**으로 값을 확인하고 **프로필 저장 → 시작·연결 확인**을 실행합니다. 사이드 패널의 **실행 환경**과 다른 프로필을 점검하고 있지 않은지도 확인하세요.
+
+### 실행 파일·작업 디렉터리 오류
+
+**OpenCode 실행 파일의 절대 경로**에는 OpenCode 파일을 넣어야 합니다. AgentBrowser의 `browser-bridge.exe`나 `opencode serve`라는 명령 문자열을 넣지 않습니다. 파일·폴더가 실제로 존재해야 하며 로그인 시 PATH가 터미널과 같다고 가정하지 않습니다.
+
+Windows 네이티브 예시:
+
+```powershell
+Get-Command opencode -All | Select-Object CommandType, Source
+Test-Path -LiteralPath 'C:\Tools\OpenCode\opencode.exe'
+Test-Path -LiteralPath 'C:\Work\project'
+& 'C:\Tools\OpenCode\opencode.exe' --version
+```
+
+예시 경로를 실제 설치 경로로 바꿉니다. 명령 검색 결과가 함수나 별칭이라면 그것을 실행 파일 경로로 사용하지 않습니다. `.cmd` 실행기는 지원하지만 경로에 `%`, `!`, `&` 등 명령 해석 문자가 있으면 사용할 수 없습니다. 이 경우 실제 OpenCode `.exe` 경로를 확인하세요.
+
+WSL 예시:
+
+```powershell
+wsl.exe --list --verbose
+wsl.exe --distribution Ubuntu --exec /bin/sh -lc 'command -v opencode'
+wsl.exe --distribution Ubuntu --exec /home/user/.opencode/bin/opencode --version
+wsl.exe --distribution Ubuntu --exec /usr/bin/test -d /home/user/project
+```
+
+배포판 이름과 Linux 경로를 실제 값으로 바꿉니다. 특정 Linux 사용자가 필요하면 해당 프로필의 **WSL 사용자(선택)**를 맞춥니다. 셸에서 검색된 경로를 기록한 뒤 **절대 경로**로 실행되는지도 확인합니다. WSL 프로필에는 `C:\...`가 아닌 `/home/...` 같은 Linux 경로가 필요합니다.
+
+WSL interop이 막혀 있거나 Windows에서 WSL localhost로 접근할 수 없으면 자동 실행·브라우저 MCP가 실패할 수 있습니다. 이를 해결하려고 서버를 임의로 `0.0.0.0`에 열거나 방화벽·TLS 검증을 끄지 마세요. 해당 환경의 WSL·네트워크 정책을 확인합니다.
+
+### 포트·환경변수·인증 오류
+
+관리 서버의 **포트(선택)**를 비우면 자동 선택합니다. 고정 포트가 필요하면 다른 프로그램이 사용하지 않는 포트를 지정합니다. 다른 프로그램의 프로세스를 임의로 종료하지 않습니다. 기존 프로필의 실행 설정을 바꿨다면 진행 중인 작업을 마친 후 **서버 중지 → 시작·연결 확인**으로 반영합니다.
+
+터미널에서만 동작한다면 OpenCode가 필요로 하는 환경변수·프록시·인증서 설정을 확인합니다. **추가 환경변수(JSON)**는 `{"NAME":"value"}`처럼 문자열 값이어야 합니다. 비밀번호·환경변수 필드를 비워 저장하면 기존 값을 유지하므로 이를 비밀값 삭제 방법으로 사용하지 마세요.
+
+**이미 실행 중인 서버**는 서버 관리자가 먼저 실행해야 합니다. 주소는 서버 루트의 HTTP(S) 주소를 사용하고 `/api` 등 경로 접두사, 쿼리 문자열, 주소 안의 인증정보를 넣지 않습니다. 401 또는 403이 나면 오류가 OpenCode 서버 인증에서 나온 것인지 모델 공급자에서 나온 것인지 먼저 구분합니다.
+
+## 5. 브라우저 MCP·Bridge 포트 변경 문제
+
+대화는 가능하지만 브라우저 도구가 없거나 **browser MCP is unavailable or not connected**가 나오면 **커맨드·스킬·MCP**와 연결 진단을 확인합니다.
+
+- Windows·WSL 관리 프로필: 해당 서버에 Bridge의 MCP 설정이 제공되어야 합니다. 실행 파일·배포판·interop 상태와 진단 오류를 확인합니다.
+- 외부 서버·독립 CLI: 해당 OpenCode 설정에 브라우저 MCP를 별도로 등록해야 합니다. [설치 안내](../README-install.md)의 `examples\mcp-windows.json` 또는 배포판을 지정해 생성한 WSL 조각을 사용합니다. 사용자 전체 설정을 덮어쓰지 않습니다.
+- **different Bridge port or a removed Bridge executable** 오류: 관리 서버가 이전 Bridge 주소나 사라진 실행 파일을 계속 사용 중입니다. 해당 프로필의 **서버 중지 → 시작·연결 확인**을 실행해 새 MCP 설정을 적용합니다.
+
+설치 후 Bridge 포트를 바꾸려면 ZIP을 풀어둔 배포 폴더에서 같은 설치 경로를 지정합니다. 아래는 포트를 `4321`로 바꾸는 예시입니다.
+
+```powershell
+# 압축 해제한 새 배포 폴더에서 실행합니다.
+$agentBrowserInstall = 'D:\Tools\AgentBrowser'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir $agentBrowserInstall -Port 4321
+```
+
+변경 전 진행 중인 브라우저·OpenCode 작업을 중단합니다. 변경 후 해당 설치의 `show-pairing.ps1`로 확인한 주소를 확장 설정에 저장하고, 관리 프로필마다 **서버 중지 → 시작·연결 확인**을 실행합니다. 외부 서버·CLI의 MCP 설정은 해당 서버 관리 방식에 따라 주소를 반영하고 다시 연결해야 합니다.
+
+정상 업데이트는 기존 관리 서버가 참조하는 버전별 Bridge 실행 파일을 보존합니다. 설치 폴더의 `app` 안에서 이전 버전 exe를 임의로 삭제하지 마세요.
+
+## 6. 모델이 없거나 실제 요청이 실패함
+
+### 모델 목록이 비어 있음
+
+먼저 **실행 환경**이 맞는지 확인합니다. 모델 목록은 선택한 OpenCode에 연결된 provider 설정을 사용합니다. AgentBrowser 설정에 API 키를 새로 넣거나 외부 모델을 자동 추가하지 않습니다. 기존 OpenCode에서 provider·모델·인증 설정을 점검하세요.
+
+이전 대화에 저장된 모델이 현재 환경에 없으면 **모델·에이전트 → 모델**에서 직접 선택합니다. 사용 가능한 다른 모델로 조용히 바뀌었다고 가정하지 않습니다.
+
+### HTTP 403 `FreeTierError`
+
+Zen 무료 모델 목록 조회가 성공해도 실제 요청이 허용되는 것은 아닙니다. 이 프로젝트의 기존 무료 모델 파일럿은 HTTP 403 `FreeTierError`로 종료되어 브라우저 도구 호출에 도달하지 못했습니다. 이후 실제 모델 작업 검증은 사용자가 배포 환경에서 수행합니다.
+
+이는 Bridge 페어링 토큰을 다시 입력해서 해결할 오류가 아닙니다. 현재 계정의 OpenCode·Zen 이용 조건과 요청 허용 여부를 확인하고 오류가 지속되면 멈춥니다. 제한을 우회하거나 유료 모델로 자동 전환하지 않습니다. 개인 무료 검증에서는 주 모델뿐 아니라 제목 생성 등 보조 작업의 모델 설정도 확인해야 합니다.
+
+### 서버는 정상인데 답변·도구 수행만 실패함
+
+연결 진단은 모델 요청을 보내지 않습니다. 진단 통과와 실제 모델의 도구 수행 성공은 별개입니다. 선택한 모델·에이전트와 오류 원문, 도구 카드가 생겼는지를 확인합니다. 공급자 인증·한도·모델 미지원 오류와 도구의 페이지 접근 오류를 구분하세요.
+
+응답이 멈춘 것처럼 보이면 **답변이 필요합니다**, **권한 확인** 카드가 있는지도 확인합니다. 완료되지 않은 요청을 CLI에서 처리했다면 패널을 다시 열어 서버 상태를 조회할 수 있습니다.
+
+## 7. 페이지 읽기·조작 오류
+
+| 오류·증상 | 다음 조치 |
+|---|---|
+| `UNSUPPORTED_PAGE` | `chrome://`, Chrome Web Store 등 제한 페이지인지 확인합니다. 일반 HTTP/HTTPS 페이지로 이동합니다. |
+| `TAB_NOT_FOUND`, `TAB_CLOSED` | 대상 탭이 닫혔는지 확인하고 새 탭 목록에서 다시 연결하도록 지시합니다. |
+| `STALE_ELEMENT` | 페이지 이동·재렌더링 뒤 예전 요소 참조가 남았습니다. 새 스냅샷을 읽고 대상을 다시 확인합니다. |
+| `FRAME_UNAVAILABLE` | iframe의 접근 권한·sandbox·로딩 상태를 확인합니다. 접근할 수 없는 프레임을 읽었다고 간주하지 않습니다. |
+| `ELEMENT_NOT_INTERACTABLE` | 요소가 보이는지, 비활성·가려짐·다른 화면 상태인지 확인합니다. 비슷한 다른 요소를 임의로 누르지 않습니다. |
+| `NEEDS_TAB_ACTIVATION` | 화면 캡처할 작업 탭을 활성화한 뒤 다시 읽도록 지시합니다. |
+| `BROWSER_BUSY` | 기존 작업이 끝나거나 중단된 뒤 새 작업·브라우저 선택을 진행합니다. |
+| `BROWSER_DISCONNECTED` | Bridge와 확장 연결을 복구한 뒤 작업 탭·페이지 상태를 다시 확인합니다. |
+| `TIMEOUT`, `CANCELLED` | 대기 조건·작업 상태를 확인합니다. 클릭·제출이 포함됐다면 실행 여부부터 확인합니다. |
+| `EXECUTION_UNKNOWN` | 실행됐을 수도 있고 아닐 수도 있습니다. 페이지·서버 처리 내역을 확인하기 전 같은 클릭·제출·삭제를 반복하지 않습니다. |
+
+페이지가 요구하는 실제 사용자 입력, closed Shadow DOM, canvas 기반 화면, OS 대화상자는 자동화에 제한이 있습니다. **현재 탭** 첨부는 최대 16,000자의 본문 텍스트이며 페이지 전체의 실시간 상태가 아닙니다. 필요한 영역을 브라우저 도구로 다시 읽도록 지시하세요.
+
+## 8. 중단했는데 화면이나 결과가 바뀜
+
+**현재 작업 → 중단**은 이후 브라우저 조작을 차단합니다. 이미 웹사이트에 제출한 요청의 처리나 완료된 결과는 취소하지 않습니다. 화면이 늦게 바뀌었다면 이전 요청의 결과인지 확인하세요.
+
+입력란의 **응답 중단**은 선택한 OpenCode 대화의 응답을 멈춥니다. 브라우저 작업의 소유 세션과 선택한 대화가 다를 수 있습니다. 외부 CLI에서 시작한 작업의 세션을 패널이 식별하지 못하면 **현재 작업 → 중단**은 해당 CLI 대화를 임의로 종료하지 않습니다. 필요한 경우 원래 CLI에서 응답을 중단합니다.
+
+**이전으로 되돌리기**도 웹사이트에서 이미 완료한 작업을 되돌리는 기능이 아닙니다. 사이트 자체의 취소·복구 기능이 필요한지는 실제 처리 상태를 보고 결정하세요.
+
+## 9. 진단 수집과 문의
+
+설정의 **진단 실행** 결과에서 실패한 항목과 오류 메시지만 먼저 확인합니다. Bridge에 연결되지 않아 UI 진단을 못 쓰면 설치 상태 파일로 현재 exe와 데이터 경로를 읽어 직접 진단할 수 있습니다.
+
+```powershell
+$agentBrowserInstall = 'D:\Tools\AgentBrowser'
+$agentBrowserState = Get-Content -LiteralPath (Join-Path $agentBrowserInstall '.agent-browser-install.json') -Raw | ConvertFrom-Json
+& $agentBrowserState.CurrentExe --home $agentBrowserState.DataDir doctor --json
+```
+
+기본 설치는 `$agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser'`로 바꿉니다. `doctor`는 모델 요청을 보내지 않습니다. 현재 exe 경로를 사용하므로 설치 후 루트에 `browser-bridge.exe`가 없더라도 정상입니다. 로그는 기본적으로 설치 폴더의 `data\logs` 아래에 있습니다.
+
+문의에는 다음을 포함하면 원인을 좁히기 쉽습니다.
+
+- AgentBrowser 배포 버전, Chrome 버전, OpenCode 버전.
+- Windows 네이티브·WSL·외부 서버 중 실행 방식. WSL이면 배포판 이름.
+- 실패한 단계와 시각, 오류 코드, 재현할 수 있는 최소 절차.
+- 연결 진단의 실패 항목, 모델 요청 이전인지 이후인지, 브라우저 도구가 실제 실행됐는지.
+
+페어링 토큰, 비밀번호, 인증 헤더, API 키, 환경변수 값, 실제 대화·웹페이지 원문을 포함하지 마세요. 로그·진단에 비밀값이 숨겨져 있어도 경로·서버 주소·프로젝트명은 조직 정보를 담을 수 있으므로 공유 전에 확인합니다. 설치 데이터 폴더 전체나 OpenCode 전체 설정을 그대로 첨부하지 않습니다.

@@ -1,5 +1,7 @@
 # M0 마무리 + M1 브라우저 제어 수직 구현 계획
 
+> **역사 기록**: 이 문서는 당시 계획이다. M1 구현·결정적 검증은 후속 작업에서 완료했고 실제 모델 검증은 사용자에게 이관했다. 아래 초기 설계·체크박스를 현재 미완료 원장으로 사용하지 않는다. 최신 상태와 활성 계획은 [status.md](../status.md)를 따른다.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 채팅 UI 없이 기존 OpenCode CLI(WSL v1.18.29)에서 MCP `browser_*` 도구로 사용자의 Windows Chrome 작업 탭을 읽고·입력·이동·표 추출까지 다단계로 수행하고, 작업 탭 고정·중단·구조화된 오류를 실제 실행 증거로 남긴다.

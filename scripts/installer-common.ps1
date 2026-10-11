@@ -201,7 +201,7 @@ function Read-VerifiedPackage([string]$Root) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Package file missing: $($entry.Path)" }
         if ((Get-FileSha256 $path) -ne $entry.Sha256.ToLowerInvariant()) { throw "Package checksum mismatch: $($entry.Path)" }
     }
-    foreach ($required in @('browser-bridge.exe','extension/manifest.json','setup.ps1','uninstall.ps1','installer-common.ps1','start-bridge.ps1','start-bridge.cmd','show-pairing.ps1','README-install.md','THIRD_PARTY_NOTICES')) {
+    foreach ($required in @('browser-bridge.exe','extension/manifest.json','setup.ps1','uninstall.ps1','installer-common.ps1','start-bridge.ps1','start-bridge.cmd','show-pairing.ps1','README-install.md','CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md','THIRD_PARTY_NOTICES')) {
         if (-not $seen.Contains($required)) { throw "Package manifest must include $required" }
     }
     $bytes = [IO.File]::ReadAllBytes((Join-Path $Root 'browser-bridge.exe'))

@@ -19,6 +19,7 @@ try {
     Copy-Item -LiteralPath $BridgeExe -Destination (Join-Path $package 'browser-bridge.exe')
     Write-Utf8Atomic (Join-Path $package 'extension\manifest.json') '{"manifest_version":3,"name":"Synthetic runtime cleanup test","version":"0.1.0","key":"synthetic-test-key"}'
     Write-Utf8Atomic (Join-Path $package 'README-install.md') 'Synthetic fixture'
+    foreach ($name in @('CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md')) { Write-Utf8Atomic (Join-Path $package $name) 'Synthetic release documentation.' }
     Write-Utf8Atomic (Join-Path $package 'THIRD_PARTY_NOTICES') 'Synthetic fixture'
     $files=@(Get-ChildItem -LiteralPath $package -Recurse -File | ForEach-Object { @{Path=$_.FullName.Substring($package.Length+1).Replace('\','/');Sha256=(Get-FileSha256 $_.FullName)} })
     Write-Utf8Atomic (Join-Path $package 'package-manifest.json') (ConvertTo-Json @{Product='agent-browser';Platform='windows-x64';Version='0.1.0';Files=$files} -Depth 10)

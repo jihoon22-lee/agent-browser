@@ -41,7 +41,7 @@ Windows 개발 환경에서는 다음을 실행할 수 있다.
 .\scripts\build-release.ps1 -SkipBuild
 ```
 
-GitHub Actions 없이 실행 가능하다. `release/agent-browser-<version>-windows-x64.zip`, `release/SHA256SUMS`를 생성하며 publish는 하지 않는다. zip에는 Windows exe, 확장 빌드, 설치·제거·시작 스크립트, 설치 안내, 공개 예제, 제3자 고지와 해시 manifest만 포함한다. 모델 테스트 결과·실제 대화·로그·전역 설정·환경변수·node_modules는 포함하지 않는다.
+GitHub Actions 없이 실행 가능하다. `release/agent-browser-<version>-windows-x64.zip`, `release/SHA256SUMS`를 생성하며 publish는 하지 않는다. 0.1.1부터 zip에는 Windows exe, 확장 빌드, 설치·제거·시작 스크립트, 설치 안내·사용법·문제 해결·CHANGELOG·LICENSE·보안 안내, 공개 예제, 제3자 고지와 해시 manifest를 포함한다. 모델 테스트 결과·실제 대화·로그·전역 설정·환경변수·node_modules는 포함하지 않는다.
 
 패키징은 exe의 버전, lockfile과 제3자 inventory의 해시, 확장 산출물 경로를 확인한다. manifest에는 포함 파일별 SHA-256을 기록하고, zip 엔트리 순서와 시각을 고정해 같은 입력에서 동일한 zip을 만든다. 설치도 manifest 해시를 검증한 뒤 파일을 변경한다.
 
@@ -62,3 +62,28 @@ Bridge 포트를 변경했거나 관리 서버가 사용하던 Bridge exe를 별
 기존 OpenCode의 MCP 설정과 현재 Bridge가 맞지 않을 수 있습니다. 이때 준비 완료로 표시하지 않고
 오류를 표시합니다. Options에서 해당 프로필의 **서버 중지** 후 다시 시작하면 새 MCP 설정이 적용됩니다.
 일반 업데이트는 이전 exe 경로를 보존하므로 실행 중 관리 서버를 유지할 수 있습니다.
+
+
+## PR·CI·Release 순서
+
+1. 기능 브랜치에서 요구사항과 테스트를 마무리하고 PR을 생성한다. 실제 동작을 바꾼 경우 관련 테스트부터 실행한다.
+2. 버전을 `Cargo.toml` workspace, `Cargo.lock`의 `agent-browser-bridge`, `extension/public/manifest.json`에 동일하게 반영한다.
+   제품 라이선스는 루트 `LICENSE`와 Cargo package의 workspace 상속을 유지한다.
+3. `CHANGELOG.md`에 사용자 변경·호환성과 미검증 범위를 적고 설치·사용·문제 해결 문서를 실제 UI와 대조한다.
+4. PR의 `Linux checks`와 `Windows checks` 결과를 확인한다. 실패를 숨기거나 실행하지 않은 검사를 통과로 표시하지 않는다.
+   CI가 만든 Windows zip은 검토용 artifact이며 자동으로 GitHub Release를 게시하지 않는다.
+5. 독립 검토의 중요한 결함을 수정하고 최종 PR 커밋의 CI가 성공한 뒤 main에 머지한다.
+6. main의 정확한 커밋을 체크아웃한 상태에서 패키징하고, 그 커밋에 `v<version>` 태그를 만든다.
+   CI의 main 실행도 확인한다. 이미 게시한 태그/동일 이름 zip을 강제로 바꾸지 않는다.
+7. `package.tests.ps1`로 필수 문서·zip 내부 링크·allowlist·manifest·체크섬·재현성을 검사한다.
+   `SHA256SUMS`와 zip을 같은 Release에 게시하고 GitHub asset digest와 로컬 해시가 같은지 확인한다.
+8. Release 안내에는 설치 시작점, CHANGELOG, 검증 환경, 미검증 모델/사내 환경을 적는다.
+   `docs/status.md`에 실제 명령·결과·태그/PR/CI 링크를 기록한다. 실행 로그나 사용자 데이터는 게시하지 않는다.
+
+`README-install.md`, `CHANGELOG.md`, `LICENSE`, `SECURITY.md`, `docs/user-guide.md`,
+`docs/troubleshooting.md`는 배포 필수 문서다. zip 안의 상대 링크는 함께 포함된 파일만 가리킨다.
+`README.md`, `CONTRIBUTING.md`, 개발 계획·상태·테스트 문서는 저장소에서 제공한다.
+
+Windows 사용자에게 업데이트 설치를 실행하면 사용 중인 Bridge가 교체될 수 있다.
+배포 문서를 보완했다는 이유만으로 사용자 설치를 자동으로 재시작하지 않는다. 사용자는 작업을 마친 뒤 업데이트하며,
+최초 Chrome 로드·페어링 절차는 [사용 안내](user-guide.md)에 있다.

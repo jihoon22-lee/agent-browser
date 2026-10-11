@@ -19,11 +19,20 @@ try {
     $archive=[IO.Compression.ZipFile]::OpenRead($second.Package)
     try {
         $names=@($archive.Entries | ForEach-Object { $_.FullName })
-        foreach ($required in @('browser-bridge.exe','setup.ps1','uninstall.ps1','start-bridge.cmd','extension/manifest.json','README-install.md','THIRD_PARTY_NOTICES','third-party-inventory.json','package-manifest.json')) { Assert ($names -contains $required) ('Missing release file: ' + $required) }
+        foreach ($required in @('browser-bridge.exe','setup.ps1','uninstall.ps1','start-bridge.cmd','extension/manifest.json','README-install.md','CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md','THIRD_PARTY_NOTICES','third-party-inventory.json','package-manifest.json')) { Assert ($names -contains $required) ('Missing release file: ' + $required) }
         Assert (@($names | Where-Object { $_ -match '(?:node_modules|\.env|\.log$|(^|/)data/|tests/|status\.md|opencode\.json$)' }).Count -eq 0) 'Release contains development/runtime/private files'
     } finally { $archive.Dispose() }
     $extract=Join-Path $root 'extracted'; [IO.Compression.ZipFile]::ExtractToDirectory($second.Package,$extract)
     $null=Read-VerifiedPackage $extract
+    foreach ($document in Get-ChildItem -LiteralPath $extract -Recurse -Filter '*.md') {
+        foreach ($match in [regex]::Matches((Read-Utf8Text $document.FullName), '\]\(([^)]+)\)')) {
+            $link=$match.Groups[1].Value
+            if ($link -match '^(?:https?://|mailto:|#)') { continue }
+            $relative=($link -split '#',2)[0]
+            $target=[IO.Path]::GetFullPath((Join-Path $document.DirectoryName $relative))
+            Assert ($target.StartsWith($extract + '\',[StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $target -PathType Leaf)) ('Broken packaged documentation link: ' + $document.Name + ' -> ' + $link)
+        }
+    }
     Assert ((Read-Utf8Text (Join-Path $out 'SHA256SUMS')).StartsWith($hash)) 'SHA256SUMS does not match zip'
     Write-Output 'PASS release allowlist, checksums, manifest and deterministic zip'
     $badExtension=Join-Path $root 'bad extension'; Copy-Item -LiteralPath (Join-Path $repo 'extension\dist') -Destination $badExtension -Recurse
@@ -31,6 +40,11 @@ try {
     Assert-Throws { & (Join-Path $Scripts 'build-release.ps1') -SkipBuild -BridgeExe $BridgeExe -ExtensionDir $badExtension -OutDir (Join-Path $root 'bad-output') } 'Unexpected JSON artifact entered release'
     Assert-Throws { & (Join-Path $Scripts 'build-release.ps1') -SkipBuild -BridgeExe $BridgeExe -Version '99.99.99' -OutDir (Join-Path $root 'wrong-version') } 'Wrong executable version accepted'
     Write-Output 'PASS unexpected artifacts and mismatched version are rejected'
+    $partialManifest=Read-Utf8Text (Join-Path $extract 'package-manifest.json') | ConvertFrom-Json
+    $partialManifest.Files=@($partialManifest.Files | Where-Object { $_.Path -ne 'CHANGELOG.md' })
+    Write-Utf8Atomic (Join-Path $extract 'package-manifest.json') (ConvertTo-Json $partialManifest -Depth 10)
+    Assert-Throws { Read-VerifiedPackage $extract } 'A manifest missing required release documentation was accepted'
+    Write-Output 'PASS missing required release documentation is rejected'
     $done=$true
 } finally {
     if ($done) { Remove-Item -LiteralPath $root -Recurse -Force }

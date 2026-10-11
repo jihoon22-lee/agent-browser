@@ -25,6 +25,7 @@ function New-TestPackage([string]$Name, [string]$Version) {
     Write-Utf8Atomic (Join-Path $package 'extension\manifest.json') (ConvertTo-Json @{manifest_version=3;version=$Version;key='synthetic-test-key';name='Synthetic installer fixture'})
     Write-Utf8Atomic (Join-Path $package 'extension\background.js') ('// synthetic version ' + $Version)
     Write-Utf8Atomic (Join-Path $package 'README-install.md') 'Synthetic installation fixture, not a release package.'
+    foreach ($name in @('CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md')) { Write-Utf8Atomic (Join-Path $package $name) 'Synthetic release documentation.' }
     Write-Utf8Atomic (Join-Path $package 'THIRD_PARTY_NOTICES') 'Synthetic installer test only.'
     $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | ForEach-Object { [pscustomobject]@{ Path=$_.FullName.Substring($package.Length+1).Replace('\','/'); Sha256=(Get-FileSha256 $_.FullName) } })
     Write-Utf8Atomic (Join-Path $package 'package-manifest.json') (ConvertTo-Json @{Product='agent-browser';Platform='windows-x64';Version=$Version;Files=$files} -Depth 10)
@@ -46,6 +47,8 @@ try {
         $result = & (Join-Path $package1 'setup.ps1') -InstallDir $install -StartupDir $startup -OpenCodeConfig $settings -NoStart -Quiet
         Assert $result.Installed 'Install result missing'
         Assert (Test-Path -LiteralPath (Join-Path $install 'extension\manifest.json')) 'Stable extension missing'
+        Assert (Test-Path -LiteralPath (Join-Path $install 'docs\user-guide.md')) 'Installed user guide missing'
+        Assert (Test-Path -LiteralPath (Join-Path $install 'CHANGELOG.md')) 'Installed changelog missing'
         Assert (Test-Path -LiteralPath (Join-Path $startup 'AgentBrowser.lnk')) 'Startup shortcut missing'
         $state = Read-InstallState $install
         Assert ($state.CurrentExe.Contains('\app\')) 'Executable should be versioned'

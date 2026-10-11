@@ -6,7 +6,7 @@
 M0 환경 실측·OpenCode v1 명세 확보 완료. M1 Task 1–13 구현과 전체 브랜치 검토·수정 완료.
 Task 14의 실제 Windows Chrome 회귀 26/26과 Task 15 네이티브 OpenCode API 검증은 통과했다.
 **사용자 결정(2026-10-11)**: 실제 OpenCode 모델 테스트는 배포 후 사용자가 수행한다. 기존 HTTP 403·도구 0건 결과는 유지하며, 이 항목을 다음 단계 진행/배포의 차단 조건에서 제외한다. M2–M4 구현과 모델 호출 없는 검증을 완료했고 v0.1.0 설치 패키지를 생성했다.
-현재 작업 원장은 [M2–M4 계획](./plans/2026-10-11-m2-m4-usable-release.md)이다. [m1-resume.md](./m1-resume.md)는 이전 단계의 역사 기록이다.
+M2–M4의 완료 기록은 [해당 계획](./plans/2026-10-11-m2-m4-usable-release.md)에 있다. 현재 후속 작업은 [배포 문서·PR·CI 계획](./plans/2026-10-11-release-readiness.md)을 따른다. [m1-resume.md](./m1-resume.md)는 이전 단계의 역사 기록이다.
 
 ## 실측 환경 (2026-10-11)
 
@@ -109,7 +109,7 @@ zip/SHA256/고정 의존성 고지. 상세 지원 경계는 [호환성 문서](.
   클라이언트 증명을 보낸다. 가짜 서버, 증명 반사/재생, 인증 전 명령 거부와 Rust/TS 공유 벡터를 테스트했다.
 - 기존 저장 토큰은 유지된다. 구형 인증 클라이언트와는 호환되지 않으므로 Bridge와 Extension을 함께 갱신한다.
 - `webNavigation` 권한을 추가해 프레임·documentId를 식별한다. 요소 ref는 다른 탭/문서에서 사용할 수 없다.
-- 이 PC의 기본 부모 상속 ACL과 Windows 자동 시작·프로세스 수명은 위 실제 테스트로 확인했다.
+- 이 PC의 기본 부모 상속 ACL, Startup 바로가기 등록·명시적 실행, 프로세스 수명은 위 실제 테스트로 확인했다. Windows 로그인 후 자동 실행 자체는 미검증이다.
   지정한 `AGENT_BROWSER_HOME`의 ACL은 부모에 따라 달라진다. 다른 PC의 ACL·breakaway 금지 시 fallback·기업 Chrome 정책은 미검증이다.
 
 ## 참고 사항
@@ -143,3 +143,19 @@ zip/SHA256/고정 의존성 고지. 상세 지원 경계는 [호환성 문서](.
 
 실제 모델의 작업 수행과 사내 환경 검증은 사용자에게 이관했다. 기존 Zen 403 결과를 성공으로 변경하지 않는다.
 사용 안내는 [README-install.md](../README-install.md), 구현/API 경계는 [호환성](./opencode-v1-compatibility.md)을 따른다.
+
+
+## 0.1.1 배포 문서·CI 보완
+
+사용자 요청에 따라 설치 안내에 더해 사용법·문제 해결·CHANGELOG·LICENSE·보안·개발 안내를 보완한다.
+기존 0.1.0 zip과 태그는 유지하며 새 문서는 0.1.1 zip에 포함한다. 이미 설치된 사용자 Bridge와 Chrome 작업은 중단하지 않는다.
+CI 구성, PR 검토·main 머지와 Release 결과는 이 절에 실제 확인 후 기록한다.
+
+2026-10-11 현재 사용자 설치 확인: 0.1.0 Bridge 인증 정상, 기본 WSL 프로필의 OpenCode 1.18.29 실행 파일 정상.
+당시 Extension 연결 대기, OpenCode stopped로 확인했다. 모델 호출은 하지 않았다.
+
+
+0.1.1 문서/패키징 대상 검증: 누락 CHANGELOG를 검사하는 Windows 패키징 테스트가 먼저 실패한 뒤,
+필수 문서 복사·manifest 요구사항을 구현해 패키징 3/3 및 관리 런타임 정리 3/3 통과.
+문서 링크 검사 helper 3/3, 전체 Markdown 22개와 ZIP 포함 문서 상대 링크 검토 통과.
+독립 검토에서 중요 지적 없음. MSVC 0.1.1 빌드·Extension 빌드 성공, Cargo metadata의 MIT 상속 확인.
