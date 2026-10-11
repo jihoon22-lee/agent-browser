@@ -245,3 +245,38 @@ Catppuccin 4개 테마 × 320/400/600px, 시스템 테마와 Options 동기화�
 부모/하위 세션·페이지당 루트 세션 수, 이벤트 연결은 살아 있으나 완료 이벤트가 누락된 경우,
 전송 직후 이벤트가 전혀 없는 경우에도 상태와 최종 텍스트가 복구되는지 합성 서버로 확인한다.
 이는 실제 LLM 작업이나 전체 WCAG 준수 검증을 뜻하지 않는다. 최종 플랫폼별 결과는 [상태](./status.md)에 기록한다.
+
+
+## R01–R11/D01 리뷰 회귀
+
+새 테스트는 기존 Rust/Vitest/Windows runtime harness에 추가했다. 전체 결과와 실제 실패 이력은 [상태](./status.md)의 리뷰 후속 수정에 기록한다.
+
+```bash
+cargo test --offline --locked -p agent-browser-bridge
+pnpm --filter agent-browser-extension test
+cargo xwin test --offline --locked --target x86_64-pc-windows-msvc --no-run --lib --test mcp_stdio --test tool_router
+```
+
+교차 빌드한 lib/mcp_stdio/tool_router 테스트 exe를 Windows의 별도 작업 폴더에 복사한다.
+`AGENT_BROWSER_TEST_EXE`는 같은 최종 코드의 로컬 Windows `browser-bridge.exe`로 지정한다.
+lib와 tool_router는 전체 실행, mcp_stdio는 `--skip starts_serve_when_missing_and_serve_outlives_mcp`로 실행한다.
+그 기존 테스트는 Unix `kill` 및 `unix-process-group` 진단을 요구하므로 WSL 전체 실행으로 검증한다.
+
+아래 Windows 합성 런타임 모드는 실제 OpenCode나 모델을 실행하지 않는다. Node/WSL Node/Bridge 경로는 검증된 로컬 파일을 지정한다.
+
+```powershell
+$env:AGENT_BROWSER_TEST_EXE = '<final-windows-bridge.exe>'
+$env:AGENT_BROWSER_TEST_OPENCODE_EXE = 'C:\Program Files\nodejs\node.exe'
+$env:AGENT_BROWSER_TEST_MODULE_ROOT = '<isolated-windows-verification>\package.json'
+$env:AGENT_BROWSER_TEST_WSL_EXE = '/bin/true'
+$env:AGENT_BROWSER_TEST_WSL_NODE = '<existing-wsl-node>'
+$env:RUNTIME_KIND = 'cmd'
+$env:RUNTIME_SCENARIO = 'health-failure'
+node .\bridge\tests\windows-runtime.mjs
+```
+
+7가지 조합을 각각 실행한다. `cmd/health-failure`, `wsl/wsl-start-failure`, `wsl/wsl-unknown-marker`, `cmd/doctor-env`, `wsl/doctor-env`, `cmd/healthy-fixture`, `wsl/healthy-fixture`.
+WSL 배포 이름은 기본 Ubuntu이며 다른 이름은 `AGENT_BROWSER_TEST_WSL_DISTRO`로 지정한다.
+각 실행은 고유 임시 home, 포트, 자식 서버만 사용한다. health-failure는 제품의 60초 health timeout을 실제로 기다린다.
+`healthy-fixture`는 ready·status·Bridge 재시작 재사용·Stop·프로필 삭제를 검사한다.
+`RUNTIME_SCENARIO`를 생략한 기존 모드는 실제 OpenCode를 사용하므로 위 합성 검증과 구분한다.
