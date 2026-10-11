@@ -101,16 +101,30 @@ pub fn validate(schema: &Value, args: &Value) -> Result<(), RpcError> {
     Ok(())
 }
 
+/// Only http(s) pages are operated on. The extension enforces this too; checking here keeps
+/// `javascript:`, `file:` and browser-internal URLs from ever being sent.
+fn check_url(url: &str) -> Result<(), RpcError> {
+    let lower = url.trim().to_ascii_lowercase();
+    if (lower.starts_with("http://") || lower.starts_with("https://")) && !url.chars().any(char::is_control) {
+        return Ok(());
+    }
+    Err(RpcError::new(
+        ErrorCode::UnsupportedPage,
+        Retry::Never,
+        "Only http: and https: URLs can be opened. chrome:, file:, javascript: and other schemes are not supported.",
+    ))
+}
+
 /// Checks that depend on which action was asked for.
 fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
     match name {
         "browser_tabs" => match args["action"].as_str() {
-            Some("new") if args["url"].as_str().is_none() => Err(invalid("action=new requires `url`")),
+            Some("new") => check_url(args["url"].as_str().ok_or_else(|| invalid("action=new requires `url`"))?),
             Some("switch") if args["tabId"].as_i64().is_none() => Err(invalid("action=switch requires `tabId`")),
             _ => Ok(()),
         },
-        "browser_navigate" if args["action"].as_str().unwrap_or("goto") == "goto" && args["url"].as_str().is_none() => {
-            Err(invalid("action=goto requires `url`"))
+        "browser_navigate" if args["action"].as_str().unwrap_or("goto") == "goto" => {
+            check_url(args["url"].as_str().ok_or_else(|| invalid("action=goto requires `url`"))?)
         }
         _ => Ok(()),
     }
@@ -176,7 +190,7 @@ async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
     if name == "browser_tabs" {
         run_tabs(state, args).await
     } else {
-        run_operation_tool(state, name, args).await
+        run_operation_tool(state, name, args, &def.schema).await
     }
 }
 
@@ -188,13 +202,21 @@ fn operation_required(name: &str) -> ToolOutcome {
     )
 }
 
-async fn run_operation_tool(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
+async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schema: &Value) -> ToolOutcome {
     let Some(op_id) = args["operationId"].as_str() else { return operation_required(name) };
     let op = match state.ops.check(op_id) {
         Ok(op) => op,
         Err(e) => return ToolOutcome::rejected(name, Some(op_id), e),
     };
-    let mut params = args.as_object().cloned().unwrap_or_default();
+    // Forward only what the published schema declares; the gate owns operation, generation and tab.
+    let declared = schema["properties"].as_object();
+    let mut params: serde_json::Map<String, Value> = args
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(k, _)| declared.is_some_and(|d| d.contains_key(k.as_str())))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     params.insert("operationId".into(), json!(op.id));
     params.insert("generation".into(), json!(op.generation));
     params.insert("tabId".into(), json!(op.current_tab));

@@ -36,6 +36,7 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 �
 | 2026-10-11 | M1 Task 5: `cargo test -p agent-browser-bridge`(Linux): 작업 게이트·레지스트리·타임라인 단위 테스트, 연결 루프 통합 테스트 | lib 19, protocol_contract 4, serve_auth 18, serve_port_conflict 2 모두 통과 |
 | 2026-10-11 | M1 Task 6: `cargo test -p agent-browser-bridge`(Linux, 가짜 Extension을 실제 WebSocket으로 연결) | lib 21(도구 계약 fixture 2 포함), protocol_contract 4, serve_auth 18, serve_port_conflict 2, tool_router 11 통과. tool_router는 5회 반복 모두 통과. 실제 Extension·MCP 클라이언트와의 연동은 아직 미검증 |
 | 2026-10-11 | M1 Task 7: `cargo test -p agent-browser-bridge --test mcp_stdio`(Linux, 실제 `browser-bridge mcp` 자식 프로세스에 원시 JSON-RPC) | 5/5 통과(initialize·tools/list·오류 매핑·serve 자동 시작과 생존·stdin 종료·serve 불가 시 BROWSER_DISCONNECTED). `cargo xwin build --release --target x86_64-pc-windows-msvc`로 `browser-bridge.exe` 생성만 확인 — **Windows 실행은 미검증**(Task 14) |
+| 2026-10-11 | M1 Task 6 후속(보안 리뷰 반영, 입력 검증): `--test tool_router`(Linux) | 13/13 통과 — 스키마에 선언되지 않은 인수는 브라우저로 전달하지 않고, http(s) 이외 URL은 `UNSUPPORTED_PAGE`로 브리지에서 거부 |
 
 ## 미검증
 

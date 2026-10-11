@@ -235,3 +235,46 @@ async fn write_result_arriving_after_abort_is_kept_and_flagged() {
     assert_eq!(c["executed"], "yes", "the click really ran: {c}");
     assert_eq!(c["data"]["abortedAfter"], true, "{c}");
 }
+
+#[tokio::test]
+async fn undeclared_arguments_are_not_forwarded_to_the_browser() {
+    fn echo(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+        match method {
+            "browser.click" => Ok(json!({ "params": p })),
+            _ => default_reply(method, p),
+        }
+    }
+    let (_h, serve, cfg) = start_test_serve().await;
+    let _ext = fake_extension(serve.port, cfg.token.clone(), echo).await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let a = tool(&mut mcp, "browser_tabs", json!({"action": "attach"})).await;
+    let c = tool(
+        &mut mcp,
+        "browser_click",
+        json!({"operationId": a["operationId"], "ref": "s1f0e1", "frameId": 5, "tabId": 999, "generation": 0}),
+    )
+    .await;
+    let forwarded = c["data"]["params"].as_object().unwrap();
+    assert!(!forwarded.contains_key("frameId"), "{forwarded:?}");
+    assert_eq!(forwarded["tabId"], 42, "the gate decides the tab, never the model");
+    assert_ne!(forwarded["generation"], 0);
+    assert_eq!(forwarded["ref"], "s1f0e1");
+}
+
+#[tokio::test]
+async fn non_http_urls_are_rejected_before_reaching_the_browser() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let seen = fake_extension(serve.port, cfg.token.clone(), default_reply).await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let a = tool(&mut mcp, "browser_tabs", json!({"action": "attach"})).await;
+    let op = a["operationId"].clone();
+    for url in ["javascript:alert(1)", "file:///etc/passwd", "chrome://settings", "data:text/html,x", "  JAVASCRIPT:1"] {
+        let n = tool(&mut mcp, "browser_navigate", json!({"operationId": op, "url": url})).await;
+        assert_eq!(n["error"]["code"], "UNSUPPORTED_PAGE", "{url}: {n}");
+        assert_eq!(n["delivered"], false);
+        let t = tool(&mut mcp, "browser_tabs", json!({"action": "new", "operationId": op, "url": url})).await;
+        assert_eq!(t["error"]["code"], "UNSUPPORTED_PAGE", "{url}: {t}");
+    }
+    let methods = seen.lock().unwrap().clone();
+    assert!(!methods.iter().any(|m| m == "browser.navigate" || m == "browser.tabs.create"), "{methods:?}");
+}
