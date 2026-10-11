@@ -66,10 +66,61 @@ Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 
 
 | 방향 | 메서드 |
 |---|---|
-| Extension → serve | `heartbeat`, `status.get`, `operation.abort`, `browser.use` |
+| Extension → serve | `heartbeat`, `status.get`, `operation.abort`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
 | Mcp → serve | `tool.call` |
 | serve → Extension | `browser.*` 명령(`browser.click` 등) |
 | 그 밖 | `FORBIDDEN_METHOD` |
+
+MCP 연결은 동일한 토큰으로 인증했더라도 프로필과 런타임 관리 메서드를 호출할 수 없다. Extension SW는 확장 내부 페이지에서 온 관리 요청만 전달한다. 관리 작업은 연결의 브라우저 응답 처리를 막지 않도록 비동기로 실행된다.
+
+## 프로필 관리
+
+아래는 일반 `req` 봉투의 `method`와 `params`다. 성공 결과는 `res.result`에 담긴다. 프로필과 실행 상태의 파일 형식은 Bridge 내부 저장 형식이며 RPC 봉투 버전과 별도로 관리한다.
+
+| 메서드 | params | 성공 result |
+|---|---|---|
+| `profile.list` | `{}` | `{profiles:[프로필 요약...], defaultProfileId}` |
+| `profile.save` | `{profile:프로필, makeDefault?:boolean}` | `{profile:프로필 요약}` |
+| `profile.delete` | `{profileId:string}` | `{deleted:true}` |
+
+프로필은 `id`, `name`, `kind`, `directory`가 필수다. `id`는 영문·숫자·`_`·`-`로 된 1–64자이며 `kind`는 `windows`, `wsl`, `external` 중 하나다.
+
+| 필드 | 의미 |
+|---|---|
+| `executable` | 관리 Windows/WSL OpenCode의 절대 경로. Windows는 `.cmd` 런처도 지원 |
+| `distribution`, `user` | WSL 배포판과 선택적 사용자. WSL은 배포판을 명시 |
+| `directory` | 서버에 전달할 작업 경로. 관리 프로필은 해당 OS의 절대 경로 |
+| `env` | 관리 프로세스에 전달할 환경변수 객체. 소유권·서버 인증·WSLENV 예약 키는 거부 |
+| `port` | 관리 OpenCode 포트 1–65535. 생략하면 자동 선택 |
+| `baseUrl` | 외부 OpenCode의 HTTP(S) origin. 원격 HTTP와 URL 내 인증정보는 거부 |
+| `username`, `password` | 외부 서버의 선택적 Basic 인증정보 |
+
+목록과 저장 응답은 `password`, `env` 값을 제외하고 `hasPassword`, `envKeys`로 저장 여부를 나타낸다. 기존 프로필 저장 시 `password` 또는 `env`를 생략하면 해당 저장값을 유지한다. 관리 런타임 기록이 있으면 먼저 `runtime.stop`을 수행해야 프로필을 수정할 수 있다. 프로필 삭제는 관리 런타임 종료에 성공한 뒤 저장된 프로필을 지우며 외부 서버를 종료하지 않는다.
+
+## 런타임과 진단
+
+| 메서드 | params | 동작 |
+|---|---|---|
+| `runtime.ensure` | `{profileId:string}` | 소유권·인증·v1 API를 확인해 재사용하거나 관리 서버 시작. 외부 서버는 연결만 확인 |
+| `runtime.status` | `{profileId:string}` | 서버를 시작하지 않고 현재 상태 확인 |
+| `runtime.stop` | `{profileId:string}` | 소유권이 확인된 관리 서버만 종료. `{stopped:boolean}` 반환 |
+| `doctor.run` | `{profileId?:string}` | 지정 프로필 또는 모든 프로필의 실행 파일·연결·MCP·모델 메타데이터 진단 |
+
+런타임 결과의 공통 필드는 `profileId`, `directory`, `state`, `owned`다. `state`는 `ready`, `stopped`, `starting`, `error`이고 연결 가능하면 `baseUrl`, `version`, `attachCommand`가 추가된다. 관리 서버 실패에는 `error` 설명이 추가된다. `runtime.ensure`는 정상 RPC 응답(`ok:true`) 안에 `state:"error"`를 반환할 수 있으므로 호출자는 두 상태를 구분해야 한다.
+
+`runtime.ensure`의 `ready` 결과에는 HTTP 클라이언트가 사용할 `username`, `password`가 포함될 수 있다. 이는 인증된 Extension에만 전달하며 URL·화면·로그·클립보드·브라우저 영구 저장에 넣지 않는다. `runtime.status`, 프로필 요약, 진단에는 비밀번호를 넣지 않는다. `attachCommand`는 비밀번호 대신 Bridge의 `--home ... attach --profile ...` 호출을 표시한다. CLI는 저장된 인증정보를 자식 OpenCode의 환경변수로 전달한다.
+
+관리 서버는 인증 없는 health 요청이 401이고 인증된 `/global/health`가 v1 정상 상태이며 `/doc`에 필요한 v1 경로가 있을 때 사용한다. 프로세스가 남아 있지만 listener 소유권을 검증할 수 없으면 중복 서버를 시작하지 않고 오류를 반환한다. 관리 작업은 프로필별 프로세스 잠금으로 중복 실행을 막는다. 종료 확인 실패 시 소유권 기록을 유지한다.
+
+`doctor.run` 결과는 `{ok:boolean, checks:[...]}`다. 각 check는 `id`, `status`(`ok`/`warning`/`error`), `message`와 필요하면 `profileId`를 가진다. `ok`는 오류가 없다는 뜻이며 경고까지 모두 해소되었다는 뜻은 아니다. 진단은 OpenCode 서버를 새로 시작하거나 모델 요청을 보내지 않는다. 모델 목록 조회와 추론 성공을 구분하며 `inferenceTested:false`를 표시한다.
+
+제품 제거용 `runtime stop-all --json`과 복구용 `runtime start --profile`은 로컬 CLI 명령이며 WebSocket 메서드가 아니다. 전자는 `stoppedProfiles`, `skippedExternal`, `errors`를 출력하고 실패 항목이 있으면 비정상 종료한다. 설치 스크립트는 실제 중지된 프로필만 rollback 대상으로 사용한다.
+
+## OpenCode HTTP/SSE와의 구분
+
+대화 API는 이 WebSocket 봉투에 싣지 않는다. Side Panel이 선택한 OpenCode v1 origin에 직접 HTTP/SSE로 연결하고 `directory` query와 필요한 Basic 인증을 전달한다. 권한·질문 응답, 세션·메시지·모델 데이터의 계약은 [저장된 OpenAPI 명세](./reference/opencode-1.18.29-openapi.json)를 따른다.
+
+SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권한을 다시 조회한다. 이벤트 replay는 가정하지 않고, 제공된 이벤트 ID는 제한된 캐시로 중복을 제거한다. 변경 HTTP 요청은 자동 재전송하지 않는다. 프로필·세션 전환은 기존 스트림을 중단하고 이전 연결의 늦은 결과가 새 상태를 덮어쓰지 않도록 분리한다.
 
 ## 오류
 

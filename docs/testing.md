@@ -8,7 +8,7 @@ Linux 테스트 통과, Windows용 빌드 성공, 실제 Windows 프로세스 �
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-extension test
-node --test tests/fixtures/server.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.test.ts tests/e2e/interop-check.test.mjs
+node --test tests/fixtures/*.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.test.ts tests/e2e/interop-check.test.mjs
 pnpm --filter agent-browser-extension build
 cargo build --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-e2e exec playwright test
@@ -103,7 +103,7 @@ Windows Node가 실제 설치된 Google Chrome과 MSVC exe를 실행하며, Linu
 테스트용 확장 로드는 Chrome의 [공식 Extensions.loadUnpacked](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/)를 사용한다.
 개발용 debugging pipe/확장 디버깅 플래그는 테스트 프로필에만 적용되며 제품 권한/통신 구조에 추가되지 않는다.
 정책이 거부하면 실패로 기록하며 정책을 변경하지 않는다. 사용자 기존 Chrome 프로필/프로세스를 종료하지 않는다.
-2026-10-11 Windows Node 24.18.1 + 설치된 Chrome 154.0.8037.99 + MSVC release로 26/26 통과했다.
+2026-10-11 Windows Node 24.18.1 + 설치된 Chrome 154.0.8037.99 + 최종 MSVC release로 32/32 통과했다.
 시험별 최신 실행 결과와 미검증 범위는 status.md에 기록한다.
 
 ## 실제 OpenCode 검증
@@ -153,3 +153,35 @@ WSL에서 일반 경로와 공백·한글 경로의 Windows exe 사본을 실행
 
 Windows detached 시작은 `CreateProcessW(bInheritHandles=FALSE)`로 WSL 채널 상속을 막는다.
 이 PC에서는 `windows-breakaway`로 성공했다. breakaway가 거부될 때의 fallback은 아직 실측하지 않았다.
+
+
+## M2–M4 추가 검증
+
+`workbench.spec.ts` W01–W06은 모델을 부르지 않는 합성 v1 HTTP/SSE 서버와 실제 확장을 연결한다.
+프로필·세션·스트리밍·서버 모델 필터, typed 첨부/IME, 질문·권한 복원, SSE 재연결/세션 격리,
+현재 탭 관찰·커맨드 경로, 내보내기·분기·revert를 검사한다. 실제 설치된 OpenCode 계약은 별도 검사한다.
+
+```bash
+node --experimental-transform-types tests/integration/opencode-v1-api.mjs
+'/mnt/c/Program Files/nodejs/node.exe' --experimental-transform-types \
+  '\\wsl.localhost\Ubuntu\home\jihoon\projects\agent-browser\tests\integration\opencode-v1-api.mjs' \
+  --opencode 'C:\Users\USER\AppData\Local\AgentBrowser-dev\opencode\1.18.29\opencode.exe'
+```
+
+Bridge 런타임은 `bridge/tests/windows-runtime.mjs`를 **Windows Node**로 실행한다.
+파일 상단에 명시된 exe/WSL 경로 환경변수와 RUNTIME_KIND(native/cmd/wsl)를 사용한다.
+서버와 설정을 격리하고 ensure 동시성·Bridge 재시작 복구·인증·overlay 보존·소유 프로세스 종료를 검사한다.
+attach는 fixture wrapper의 argv/env 및 실제 backend 인증까지 검사하며 대화형 TUI/모델 실행은 하지 않는다.
+
+설치 검증은 Windows PowerShell 5.1에서 수행한다. 각 테스트는 고유 임시 설치/Startup/설정 위치를 사용한다.
+
+```powershell
+.\tests\install\jsonc.tests.ps1
+.\tests\install\install.tests.ps1 -BridgeExe <built-windows-exe> -WslDistribution Ubuntu
+.\tests\install\runtime-cleanup.tests.ps1 -BridgeExe <built-windows-exe>
+.\tests\install\package.tests.ps1 -BridgeExe <built-windows-exe>
+```
+
+패키징은 `bash scripts/build-release-wsl.sh` 또는 Windows의 `scripts/build-release.ps1`로 수행한다.
+출력은 ignored `release/`에 있고 배포 zip/manifest/SHA256/제3자 고지를 검사한다.
+실행 시 개발 도구·패키지 다운로드를 요구하지 않는다. 수동 Chrome 확장 로딩은 사용자 최초 1회 절차다.

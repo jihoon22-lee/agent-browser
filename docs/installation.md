@@ -57,3 +57,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\install\package.test
 ```
 
 테스트는 고유한 임시 설치 위치·임시 Startup 디렉터리·합성 OpenCode 설정을 사용한다. 실제 사용자 Startup 및 전역 OpenCode 설정은 테스트 대상이 아니다. 설치·중복 실행·업데이트·제거·주석과 Unicode 경로·충돌·누락 파일·실패 rollback을 검증한다. 실행 결과는 상태 문서에서 별도로 기록한다.
+
+Bridge 포트를 변경했거나 관리 서버가 사용하던 Bridge exe를 별도로 삭제한 경우,
+기존 OpenCode의 MCP 설정과 현재 Bridge가 맞지 않을 수 있습니다. 이때 준비 완료로 표시하지 않고
+오류를 표시합니다. Options에서 해당 프로필의 **서버 중지** 후 다시 시작하면 새 MCP 설정이 적용됩니다.
+일반 업데이트는 이전 exe 경로를 보존하므로 실행 중 관리 서버를 유지할 수 있습니다.

@@ -2,11 +2,11 @@
 
 ## 현재 단계
 
-**M2–M4 실사용·배포 구현 — 진행 중**(브랜치 `feat/m2-m4-usable-release`).
+**M2–M4 구현·검증·Windows 설치 완료**(브랜치 `feat/m2-m4-usable-release`).
 M0 환경 실측·OpenCode v1 명세 확보 완료. M1 Task 1–13 구현과 전체 브랜치 검토·수정 완료.
 Task 14의 실제 Windows Chrome 회귀 26/26과 Task 15 네이티브 OpenCode API 검증은 통과했다.
-**사용자 결정(2026-10-11)**: 실제 OpenCode 모델 테스트는 배포 후 사용자가 수행한다. 기존 HTTP 403·도구 0건 결과는 유지하며, 이 항목을 다음 단계 진행/배포의 차단 조건에서 제외한다. 나머지 M2–M4 전체 작업을 이어서 구현한다.
-**이어서 작업하려면 [m1-resume.md](./m1-resume.md)를 먼저 읽는다.**
+**사용자 결정(2026-10-11)**: 실제 OpenCode 모델 테스트는 배포 후 사용자가 수행한다. 기존 HTTP 403·도구 0건 결과는 유지하며, 이 항목을 다음 단계 진행/배포의 차단 조건에서 제외한다. M2–M4 구현과 모델 호출 없는 검증을 완료했고 v0.1.0 설치 패키지를 생성했다.
+현재 작업 원장은 [M2–M4 계획](./plans/2026-10-11-m2-m4-usable-release.md)이다. [m1-resume.md](./m1-resume.md)는 이전 단계의 역사 기록이다.
 
 ## 실측 환경 (2026-10-11)
 
@@ -62,6 +62,27 @@ Task 14의 실제 Windows Chrome 회귀 26/26과 Task 15 네이티브 OpenCode A
 | 2026-10-11 | interop 검증기 실패 정리 회귀 | 독립 검토에서 PID 파일 누락/손상·디렉터리 삭제 실패 시 정리/증거 보존 문제 확인 후 수정. 소유 PID 재검증은 유지. Node fixture/runner/runtime/interop 24/24 통과 |
 | 2026-10-11 | Windows config ACL | 기본 home과 같은 `%LOCALAPPDATA%` 부모 아래 고유 테스트 home에서 config 상속 ACL 확인: 현재 사용자·SYSTEM·Administrators FullControl만 존재. `%TEMP%`의 별도 테스트 home은 환경의 추가 ACL을 상속했으며 기본 부모 ACL과 구분했다. ACL 변경 없음 |
 
+## M2–M4 검증 기록 (모델 요청 0회)
+
+| 검증 | 실제 결과 |
+|---|---|
+| 최종 Rust 전체(Linux) | **107/107** 통과, 자식 실행용 helper 1개 기본 ignored(부모 테스트가 실행). 테스트 fixture의 env→node 이미지 전환을 직접 node shebang으로 바로잡음. fork된 descriptor의 lock 보존 경합은 명시적 unlock guard/실패 회귀로 수정. 전체 재실행 통과 |
+| 최종 Extension 전체 | **27파일 212/212** 통과, TypeScript/Vite 빌드 및 E2E TypeScript 검사 통과 |
+| 최종 Node fixture/runner/interop | **25/25** 통과 |
+| 최종 Windows release + 실제 Chrome E2E | **32/32** 통과(40.7초). Chrome 154.0.8037.99, Windows Node 24.18.1, 최종 exe SHA-256 `efcea098efc8d09030d24fe2f2de282ab1bc74939df32320485c109bcdbaddd4` |
+| Linux 전체 실제 확장 E2E | **32/32** 통과(36.2초), 이전 테스트의 중복 password selector와 비동기 세션/첨부 준비 대기를 수정한 뒤 재실행 |
+| OpenCode v1 제품 클라이언트·사용량 | 실패 테스트 후 구현. 인증·UTF-8·fetch receiver·SSE·재연결·세션 격리·토큰 중복·파일 목록 fallback 13개 통과 |
+| 실제 Windows/WSL OpenCode 1.18.29 API | 두 환경 모두 성공. noReply 텍스트/PNG 첨부, 세션 CRUD/검색/분기/revert, 인증 SSE, 목록·파일 API. 합성 provider 요청 **0회** |
+| 새 작업 UI Chrome E2E | Linux 실제 확장 + 합성 v1 HTTP/SSE의 W01–W06 **6/6** 통과. 질문/권한은 합성 pending이며 LLM 발생 요청이 아님 |
+| Bridge 실제 Windows 런타임 | native exe / 한글·공백 cmd / WSL Ubuntu **3/3** 통과. 동시 ensure·Bridge 재시작 재사용·소유 프로세스 종료·설정 보존·인증 attach fixture·stop-all. 모델 0회 |
+| Windows PowerShell 5.1 설치 | JSONC 병합/보존/충돌 통과, 설치 **12개**, 관리 런타임 정리 **3개**, 패키징 **2개** 통과. debug와 release exe 양쪽으로 확인. Startup 바로가기 생성/대상과 즉시 실행을 검사했으며 Windows 로그아웃·재로그인은 실행하지 않음 |
+| Windows 관리 런타임 후속 | CLI 첫 start의 실제 서버는 ready이나 상속 pipe로 호출자가 EOF를 받지 못하는 문제 재현 → CreateProcessW의 핸들 상속을 끄고 native/cmd/WSL **3/3** 통과. 명시적 환경·한글/공백·인수 보존·사용자 포트·종료 확인. 독립 소스 검토와 quoting 회귀 통과 |
+| 독립 전체 검토 | 중요 결함 5개 재현: 비동기 UI의 다른 환경 오염, 선택 세션 중단 누락, 서로 다른 프로필 자동 포트 충돌, 사용자 포트/오래된 overlay 불일치, 외부 URL prefix 검증 불일치. 각 항목 실패 회귀 후 수정 완료, 독립 재검토에서 원래 재현 해결 확인. UI 28개와 런타임 4개 독립 재실행 통과 |
+
+구현: Windows/WSL 자동 실행 프로필, 인증된 v1 HTTP/SSE 작업 UI, 모델·에이전트·variant,
+질문·권한·사용량·첨부·@/명령·diff/revert/내보내기, 사용자 영역 설치/Startup/업데이트/제거,
+zip/SHA256/고정 의존성 고지. 상세 지원 경계는 [호환성 문서](./opencode-v1-compatibility.md)를 따른다.
+
 ## 무료 모델 실행 결과와 남은 검증
 
 - 2026-10-11, OpenCode 1.18.29 + `opencode/big-pickle`: 기본 격리 runner의 WSL 파일럿 1회, Windows 네이티브 파일럿 1회.
@@ -95,10 +116,26 @@ Task 14의 실제 Windows Chrome 회귀 26/26과 Task 15 네이티브 OpenCode A
 
 - 전역 `~/.cargo/config.toml`의 `build.target-dir`이 다른 프로젝트 캐시를 가리킨다. 이 저장소는 `.cargo/config.toml`로 `target/`을 쓴다.
 - 전역 OpenCode 설정에는 기존 MCP(playwright 등)가 있다. 수정하지 않고 테스트는 별도 설정으로 격리한다.
-- 이번 검증에서 만든 Chrome/fixture/Bridge/OpenCode 프로세스는 종료했다. 로컬 커밋만 생성했으며 push·PR·Release는 수행하지 않았다.
+- 검증용 Chrome/fixture/Bridge/OpenCode 프로세스는 종료했다. 아래 실제 사용자 설치의 Bridge는 사용을 위해 실행 상태로 유지한다. 전역 OpenCode 설정은 변경하지 않았다.
 
-## 다음 작업
+## v0.1.0 설치·배포물
 
-1. [M2–M4 계획](./plans/2026-10-11-m2-m4-usable-release.md)에 따라 자동 실행·전체 작업 UI·Windows 설치와 배포물을 완성한다.
-2. 실제 모델 호출을 제외한 결정적 테스트와 Windows 설치·사용 흐름을 검증한다.
-3. 실제 모델 판단과 기업 환경 검증은 배포 후 사용자 테스트로 이관한다.
+- Windows x64 zip: `agent-browser-0.1.0-windows-x64.zip` (26개 파일, 제3자 패키지 162개 고지).
+- zip SHA-256: `909021621dbf3c578496f760524c233f5a51556ec480adbfb1ccee16cd57ac0f`.
+- 최종 exe로 런타임 제거 3/3·패키징 2/2 재검증, manifest 모든 파일 해시와 zip allowlist 독립 확인.
+- 실제 사용자 영역 `%LOCALAPPDATA%\AgentBrowser`에 이 zip을 설치했다. Startup `AgentBrowser.lnk` 등록,
+  Bridge PID 58304 / `127.0.0.1:4317` 실행 및 인증 진단 확인. 로그인 재실행 자체는 테스트하지 않았다.
+- 실제 설치 프로필: `wsl-main` / Ubuntu / `/home/jihoon/.opencode/bin/opencode` 1.18.29 /
+  작업 디렉터리 `/home/jihoon/projects/agent-browser`. 전역 모델·인증·MCP 설정 수정 없음.
+- 다운로드 폴더에 zip, `AgentBrowser-0.1.0-SHA256SUMS`, 압축 해제 폴더 `AgentBrowser-0.1.0` 준비.
+- 사용자 Chrome의 최초 수동 로드·페어링은 아직 하지 않았다. 진단은 Extension 미연결, OpenCode stopped,
+  MCP/모델 미검증으로 정확히 표시한다. 페어링 후 패널에서 자동 ensure가 시작된다.
+
+## 사용자에게 남은 최초 사용 절차
+
+1. `chrome://extensions`에서 개발자 모드를 켜고 `%LOCALAPPDATA%\AgentBrowser\extension`을 압축해제 로드한다.
+2. 설치 폴더 `show-pairing.ps1`로 로컬 토큰을 확인해 Options에 붙여넣고 연결한다.
+3. 사이드 패널의 준비된 `WSL Ubuntu` 환경에서 세션을 만들고 사용할 모델을 선택한다.
+
+실제 모델의 작업 수행과 사내 환경 검증은 사용자에게 이관했다. 기존 Zen 403 결과를 성공으로 변경하지 않는다.
+사용 안내는 [README-install.md](../README-install.md), 구현/API 경계는 [호환성](./opencode-v1-compatibility.md)을 따른다.

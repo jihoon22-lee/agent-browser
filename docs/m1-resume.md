@@ -1,4 +1,6 @@
-# M1 재개 안내 (2026-10-11)
+# M1 당시 재개 기록 (2026-10-11)
+
+> 이 문서는 M1 종료 시점의 기록이다. 이후 사용자가 실제 모델 검증을 배포 후 직접 수행하기로 결정하여 M2–M4를 진행했다. 현재 작업은 [status.md](./status.md)와 [M2–M4 계획](./plans/2026-10-11-m2-m4-usable-release.md)을 따른다. 아래 당시의 브랜치·배포 상태를 현재 상태로 해석하지 않는다.
 
 현재 원장은 [status.md](./status.md), 요구사항은 [handoff.md](./handoff.md), 미완료 계획은
 [2026-10-11-m1-browser-control.md](./plans/2026-10-11-m1-browser-control.md)다.
