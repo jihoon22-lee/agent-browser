@@ -32,6 +32,30 @@ pub fn identity(pid: u32) -> Option<Identity> {
 
 pub fn matches(owner: &Identity) -> bool { identity(owner.pid).is_some_and(|now| now.created == owner.created && now.image == owner.image) }
 
+#[cfg(unix)]
+fn capture_spawn_identity(
+    pid: u32,
+    parent_image: &str,
+    executable_is_parent: bool,
+    mut inspect: impl FnMut(u32) -> Option<Identity>,
+    mut pause: impl FnMut(),
+) -> std::io::Result<Identity> {
+    let mut created = None;
+    for attempt in 0..200 {
+        let current = inspect(pid).ok_or_else(|| std::io::Error::other("Started process exited before ownership could be recorded"))?;
+        let birth = *created.get_or_insert(current.created);
+        if current.pid != pid || current.created != birth {
+            return Err(std::io::Error::other("Started process identity changed before exec completed"));
+        }
+        // A /proc snapshot immediately after spawn can still expose the fork's
+        // inherited parent image. Never persist that transient identity. An
+        // intentional self-exec has the same image before and after exec.
+        if executable_is_parent || current.image != parent_image { return Ok(current); }
+        if attempt < 199 { pause(); }
+    }
+    Err(std::io::Error::other("Started process did not publish its post-exec identity"))
+}
+
 #[cfg(windows)]
 pub fn terminate(owner: &Identity) -> bool {
     use windows_sys::Win32::{Foundation::{CloseHandle, FILETIME}, System::Threading::*};
@@ -56,11 +80,26 @@ pub fn spawn(executable: &str, args: &[String], directory: Option<&str>, env: &B
     #[cfg(windows)] { spawn_windows(executable,args,directory,env) }
     #[cfg(unix)] {
         use std::os::unix::process::CommandExt;
+        let parent = identity(std::process::id()).ok_or_else(|| std::io::Error::other("Cannot inspect the parent process identity"))?;
+        let executable_is_parent = std::fs::canonicalize(executable).ok().is_some_and(|path| path.to_string_lossy() == parent.image);
         let mut command = Command::new(executable);
         command.args(args).envs(env).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
         if let Some(directory) = directory { command.current_dir(directory); }
-        let child = command.spawn()?;
-        identity(child.id()).ok_or_else(|| std::io::Error::other("Started process exited before ownership could be recorded"))
+        let mut child = command.spawn()?;
+        let mut birth = None;
+        let result = capture_spawn_identity(child.id(), &parent.image, executable_is_parent, |pid| {
+            let current = identity(pid);
+            if birth.is_none() { birth = current.clone(); }
+            current
+        }, || std::thread::sleep(std::time::Duration::from_millis(5)));
+        if result.is_err() {
+            // Only our original child can be cleaned up. terminate() re-checks
+            // the current PID, birth time, and image immediately before acting.
+            if let (Some(birth),Some(current)) = (birth,identity(child.id()))
+                && birth.created == current.created { terminate(&current); }
+            let _ = child.try_wait();
+        }
+        result
     }
 }
 
@@ -166,5 +205,48 @@ mod quoting_tests {
         assert_eq!(windows_quote("한글 space\\"),"\"한글 space\\\\\"");
         assert_eq!(windows_quote("a\"b"),"\"a\\\"b\"");
         assert_eq!(windows_quote("a\\\" b"),"\"a\\\\\\\" b\"");
+    }
+}
+
+#[cfg(all(test,unix))]
+mod spawn_identity_tests {
+    use super::{Identity,capture_spawn_identity};
+
+    fn snapshot(created: u64, image: &str) -> Identity { Identity { pid: 42, created, image: image.into() } }
+
+    #[test]
+    fn waits_for_child_exec_instead_of_recording_the_inherited_parent_image() {
+        let mut samples = [Some(snapshot(100,"/test-parent")),Some(snapshot(100,"/test-parent")),Some(snapshot(100,"/node"))].into_iter();
+        let mut pauses = 0;
+        let result = capture_spawn_identity(42,"/test-parent",false, |_| samples.next().flatten(), || pauses += 1).unwrap();
+        assert_eq!(result.image,"/node");
+        assert_eq!(result.created,100);
+        assert_eq!(pauses,2);
+    }
+
+    #[test]
+    fn changed_start_identity_is_never_adopted_during_exec_wait() {
+        let mut samples = [Some(snapshot(100,"/test-parent")),Some(snapshot(101,"/node"))].into_iter();
+        assert!(capture_spawn_identity(42,"/test-parent",false, |_| samples.next().flatten(), || {}).is_err());
+    }
+
+    #[test]
+    fn intentionally_launching_the_same_executable_keeps_its_stable_identity() {
+        let result = capture_spawn_identity(42,"/test-parent",true, |_| Some(snapshot(100,"/test-parent")), || panic!("same executable needs no image transition")).unwrap();
+        assert_eq!(result.image,"/test-parent");
+    }
+
+    #[test]
+    fn an_exited_child_is_not_replaced_by_a_later_snapshot() {
+        let mut samples = [Some(snapshot(100,"/test-parent")),None,Some(snapshot(101,"/node"))].into_iter();
+        assert!(capture_spawn_identity(42,"/test-parent",false, |_| samples.next().flatten(), || {}).is_err());
+    }
+
+    #[test]
+    fn a_parent_image_that_never_transitions_fails_with_bounded_probes() {
+        let mut probes = 0;
+        let result = capture_spawn_identity(42,"/test-parent",false, |_| { probes += 1; Some(snapshot(100,"/test-parent")) }, || {});
+        assert!(result.is_err());
+        assert_eq!(probes,200);
     }
 }
