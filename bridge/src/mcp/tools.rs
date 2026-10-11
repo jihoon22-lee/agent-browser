@@ -73,8 +73,10 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../protocol/fixtures/tools-list.json");
         if std::env::var_os("UPDATE_FIXTURES").is_some() {
             std::fs::write(&path, serde_json::to_string_pretty(&ours).unwrap() + "\n").unwrap();
+            return;
         }
-        let fixture: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // The test executable can run on Windows after a WSL cross build.
+        let fixture: Vec<serde_json::Value> = serde_json::from_str(include_str!("../../../protocol/fixtures/tools-list.json")).unwrap();
         assert_eq!(ours, fixture, "tool contract changed; review and rerun with UPDATE_FIXTURES=1");
     }
 

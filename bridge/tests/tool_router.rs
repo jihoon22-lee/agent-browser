@@ -373,3 +373,20 @@ async fn profile_switch_during_attach_returns_busy_without_blocking_browser_repl
     send_raw(&mut ext, &Envelope::ok(request_id, json!({"tabId":42,"url":"http://127.0.0.1/x"})).to_text()).await;
     assert_eq!(attaching.await.unwrap()["ok"], true);
 }
+
+#[tokio::test]
+async fn r01_cancel_crossing_attach_response_releases_only_that_operation() {
+    let (_h,serve,cfg) = start_test_serve().await;
+    let _ext = fake_extension(serve.port,cfg.token.clone(),default_reply).await;
+    let mut mcp = mcp_client(serve.port,&cfg.token,"cancel-crossing").await;
+    let request = Envelope::req("tool.call",json!({"name":"browser_tabs","arguments":{"action":"attach"}}));
+    send_raw(&mut mcp,&request.to_text()).await;
+    let Envelope::Res {result:Some(result),..} = recv(&mut mcp).await else {panic!("expected attach");};
+    assert_eq!(result["ok"],true);
+    call(&mut mcp,"tool.cancel",json!({"requestId":request.id()})).await;
+    let next = tool(&mut mcp,"browser_tabs",json!({"action":"attach"})).await;
+    assert_eq!(next["ok"],true);
+    call(&mut mcp,"tool.cancel",json!({"requestId":request.id()})).await;
+    let snapshot = tool(&mut mcp,"browser_snapshot",json!({"operationId":next["operationId"]})).await;
+    assert_eq!(snapshot["ok"],true,"late cancellation must not stop a replacement operation");
+}

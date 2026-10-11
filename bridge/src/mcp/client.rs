@@ -236,19 +236,60 @@ impl ServeClient {
         })
     }
 
+    fn cancelled(&self, name: &str, args: &Value, delivered: bool) -> Value {
+        let uncertain = delivered && tools::class_of(name, args) == CommandClass::Write;
+        self.failure(name, args, delivered, if uncertain { "unknown" } else { "no" }, RpcError::new(
+            if uncertain { ErrorCode::ExecutionUnknown } else { ErrorCode::Cancelled },
+            if uncertain { Retry::Unsafe } else { Retry::Never },
+            "The request was cancelled. A delivered action may already have happened; inspect before retrying.",
+        ))
+    }
+
+    async fn cancel_request(conn: &mut Option<Ws>, id: &str) {
+        // send() flushes any partially queued request before its cancellation. Keep this
+        // socket alive so unrelated requests on the persistent MCP connection can proceed.
+        if let Some(ws) = conn.as_mut() {
+            let cancel = Envelope::req("tool.cancel", json!({"requestId": id}));
+            if !matches!(tokio::time::timeout(Duration::from_secs(2), ws.send(Message::text(cancel.to_text()))).await, Ok(Ok(()))) {
+                *conn = None; // Transport failure: serve drops its outstanding request futures.
+            }
+        }
+    }
+
     /// Returns the `ToolOutcome` JSON produced by serve, or one built locally when serve cannot be reached.
     pub async fn call_tool(&self, name: &str, args: Value) -> anyhow::Result<Value> {
+        self.call_tool_cancellable(name, args, std::future::pending()).await
+    }
+
+    pub async fn call_tool_cancellable(&self, name: &str, args: Value, cancel: impl std::future::Future<Output = ()> + Send) -> anyhow::Result<Value> {
+        tokio::pin!(cancel);
         let class = tools::class_of(name, &args);
-        let mut conn = self.conn.lock().await;
+        let mut conn = tokio::select! {
+            biased;
+            _ = &mut cancel => return Ok(self.cancelled(name, &args, false)),
+            conn = self.conn.lock() => conn,
+        };
         let req = Envelope::req("tool.call", json!({ "name": name, "arguments": args }));
         let req_text = req.to_text();
 
         // Before sending, a dead connection is simply replaced: nothing can have been executed yet.
         let mut sent = false;
         for _ in 0..2 {
-            self.ensure_connected(&mut conn).await;
+            tokio::select! {
+                biased;
+                _ = &mut cancel => return Ok(self.cancelled(name, &args, false)),
+                _ = self.ensure_connected(&mut conn) => {},
+            }
             let Some(ws) = conn.as_mut() else { break };
-            match ws.send(Message::text(req_text.clone())).await {
+            let send = tokio::select! {
+                biased;
+                _ = &mut cancel => {
+                    Self::cancel_request(&mut conn, req.id().unwrap()).await;
+                    return Ok(self.cancelled(name, &args, true));
+                },
+                sent = ws.send(Message::text(req_text.clone())) => sent,
+            };
+            match send {
                 Ok(()) => {
                     sent = true;
                     break;
@@ -267,7 +308,13 @@ impl ServeClient {
         }
 
         let ws = conn.as_mut().expect("connection exists after a successful send");
-        let reply = tokio::time::timeout(REPLY_WAIT, async {
+        let reply = tokio::select! {
+            biased;
+            _ = &mut cancel => {
+                Self::cancel_request(&mut conn, req.id().unwrap()).await;
+                return Ok(self.cancelled(name, &args, true));
+            },
+            reply = tokio::time::timeout(REPLY_WAIT, async {
             loop {
                 match ws.next().await {
                     Some(Ok(Message::Text(t))) => match parse_envelope(&t) {
@@ -281,8 +328,8 @@ impl ServeClient {
                     None => return Err("connection closed".to_string()),
                 }
             }
-        })
-        .await;
+            }) => reply,
+        };
         let cause = match reply {
             Ok(Ok(outcome)) if outcome.get("rpcError").is_none() => return Ok(outcome),
             Ok(Ok(rpc_failure)) => {
@@ -316,6 +363,24 @@ impl ServeClient {
 mod auth_tests {
     use super::*;
 
+
+    #[tokio::test]
+    async fn r01_cancellation_interrupts_connection_authentication() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (started, cancel) = tokio::sync::oneshot::channel();
+        let fake = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            ws.next().await.unwrap().unwrap(); let _ = started.send(());
+            // The client must drop auth instead of waiting for its five-second timeout.
+            assert!(tokio::time::timeout(Duration::from_secs(1),ws.next()).await.is_ok());
+        });
+        let client = ServeClient {port,exe:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
+        let outcome = tokio::time::timeout(Duration::from_secs(1), client.call_tool_cancellable("browser_tabs",json!({"action":"list"}),async {let _ = cancel.await;})).await.unwrap().unwrap();
+        assert_eq!(outcome["error"]["code"],"CANCELLED"); assert_eq!(outcome["delivered"],false);
+        fake.await.unwrap();
+    }
     #[tokio::test]
     async fn fake_server_cannot_obtain_token_or_client_proof() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
