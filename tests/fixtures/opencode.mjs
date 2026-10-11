@@ -20,7 +20,7 @@ export async function startOpenCodeFixture() {
   const status = (id, type) => { state.statuses[id] = { type }; emit('session.status', { sessionID: id, status: { type } }); };
   const schedule = fn => { const timer = setTimeout(() => { timers.delete(timer); fn(); }, 30); timers.add(timer); };
   function session(body = {}, dir = directory) {
-    const value = { id: next('ses'), slug: 'synthetic', projectID: 'synthetic', directory: dir, title: body.title || '새 합성 세션', version: '1.18.29', time: { created: Date.now(), updated: Date.now() }, ...(body.model ? { model: body.model } : {}), ...(body.agent ? { agent: body.agent } : {}) };
+    const value = { id: next('ses'), slug: 'synthetic', projectID: 'synthetic', directory: dir, title: body.title || '새 합성 세션', version: '1.18.29', time: { created: Date.now(), updated: Date.now() }, ...(body.model ? { model: body.model } : {}), ...(body.agent ? { agent: body.agent } : {}), ...(body.parentID ? { parentID: body.parentID } : {}) };
     state.sessions.push(value); state.messages.set(value.id, []); emit('session.created', { info: value }); return value;
   }
   function saveMessage(record) {
@@ -84,7 +84,7 @@ export async function startOpenCodeFixture() {
       if (path === '/session/status') return send(state.statuses);
       if (path === '/session') {
         if (req.method === 'POST') return send(session(body, url.searchParams.get('directory') || directory));
-        const search = url.searchParams.get('search') || ''; return send(state.sessions.filter(value => value.title.includes(search)));
+        const search = url.searchParams.get('search') || '', roots = url.searchParams.get('roots') === 'true', limit = Number(url.searchParams.get('limit') || 100); return send(state.sessions.filter(value => value.title.includes(search) && (!roots || !value.parentID)).sort((a, b) => b.time.updated - a.time.updated).slice(0, limit));
       }
       if (path === '/find/file') return send(['합성 파일.txt', 'README.md'].filter(value => value.includes(url.searchParams.get('query') || '')));
       if (path === '/file/content') return send({ type: 'text', content: '서버 파일 합성 내용', mimeType: 'text/plain' });
@@ -100,7 +100,7 @@ export async function startOpenCodeFixture() {
       }
       if (action === 'message') return send(state.messages.get(id));
       if (action === 'todo') return send([{ id: 'todo_1', content: '합성 작업 확인', status: 'completed', priority: 'medium' }]);
-      if (action === 'children') return send([]);
+      if (action === 'children') return send(state.sessions.filter(value => value.parentID === id));
       if (action === 'diff') return send([{ file: 'fixture.txt', before: '이전 내용', after: '변경 내용', additions: 1, deletions: 1 }]);
       if (action === 'abort') { status(id, 'idle'); return send(true); }
       if (action === 'fork') { const branch = session({ title: current.title + ' (fork #1)' }, current.directory); const records = state.messages.get(id); const end = body.messageID ? records.findIndex(record => record.info.id === body.messageID) : records.length; state.messages.set(branch.id, records.slice(0, end < 0 ? records.length : end).map(record => ({ info: { ...record.info, id: next('msg'), sessionID: branch.id }, parts: [] }))); return send(branch); }
