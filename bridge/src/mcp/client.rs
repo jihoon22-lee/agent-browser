@@ -1,10 +1,14 @@
-/// Returns true when an agent-browser serve that accepts `token` answers on `port`.
-pub async fn probe(port: u16, token: &str) -> bool {
+/// Returns true when an agent-browser serve answers on `port`.
+///
+/// The probe never sends the pairing token: whatever program owns the port could be
+/// something else entirely. It sends a hello with an empty token and recognizes serve by
+/// the `serverName` it puts into the AUTH_FAILED details.
+pub async fn probe(port: u16) -> bool {
     let Ok(Ok((mut ws, _))) = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}/mcp-proxy")),
     ).await else { return false };
-    let hello = crate::rpc::Envelope::req("auth.hello", serde_json::json!({"role":"mcp","token":token,"clientId":"probe","clientVersion":env!("CARGO_PKG_VERSION")}));
+    let hello = crate::rpc::Envelope::req("auth.hello", serde_json::json!({"role":"mcp","token":"","clientId":"probe","clientVersion":env!("CARGO_PKG_VERSION")}));
     use futures_util::{SinkExt, StreamExt};
     if ws.send(tokio_tungstenite::tungstenite::Message::text(hello.to_text())).await.is_err() { return false; }
     matches!(

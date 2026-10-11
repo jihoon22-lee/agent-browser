@@ -21,6 +21,7 @@ use tokio_tungstenite::{
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
 const EXTENSION_PATH: &str = "/extension";
 const MCP_PATH: &str = "/mcp-proxy";
+pub const SERVER_NAME: &str = "agent-browser";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Role {
@@ -173,7 +174,11 @@ async fn authenticate(
     };
     let expected_token = state.cfg.lock().await.token.clone();
     if hello.role != role.name() || !config::tokens_equal(&hello.token, &expected_token) {
-        send_err_and_close(ws, &id, ErrorCode::AuthFailed, "authentication failed").await;
+        // serverName lets `serve` startup recognize a running instance without ever sending it the token.
+        let error = RpcError::new(ErrorCode::AuthFailed, Retry::Never, "authentication failed")
+            .with_details(json!({ "serverName": SERVER_NAME }));
+        let _ = send(ws, &Envelope::err(&id, error)).await;
+        let _ = ws.close(None).await;
         return false;
     }
     if let Some(ext_id) = extension_id {
@@ -206,7 +211,7 @@ async fn authenticate(
         }
     }
     let result = json!({
-        "serverName": "agent-browser",
+        "serverName": SERVER_NAME,
         "serverVersion": env!("CARGO_PKG_VERSION"),
         "protocolVersion": PROTOCOL_VERSION,
         "connectionId": connection_id,

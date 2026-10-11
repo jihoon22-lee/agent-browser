@@ -26,7 +26,7 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<ServeHandle> {
     let listener = match TcpListener::bind(("127.0.0.1", opts.port)).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
-            if crate::mcp::client::probe(opts.port, &cfg.token).await {
+            if crate::mcp::client::probe(opts.port).await {
                 return Err(ServeError::AlreadyRunning { port: opts.port }.into());
             }
             return Err(ServeError::PortInUse { port: opts.port, source: e }.into());
