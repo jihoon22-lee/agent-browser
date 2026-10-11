@@ -104,7 +104,7 @@ Windows Node가 실제 설치된 Google Chrome과 MSVC exe를 실행하며, Linu
 개발용 debugging pipe/확장 디버깅 플래그는 테스트 프로필에만 적용되며 제품 권한/통신 구조에 추가되지 않는다.
 정책이 거부하면 실패로 기록하며 정책을 변경하지 않는다. 사용자 기존 Chrome 프로필/프로세스를 종료하지 않는다.
 2026-10-11 Windows Node 24.18.1 + 설치된 Chrome 154.0.8037.99 + 최종 MSVC release로 32/32 통과했다.
-시험별 최신 실행 결과와 미검증 범위는 status.md에 기록한다.
+시험별 최신 실행 결과는 status.md에 기록한다.
 
 ## 실제 OpenCode 검증
 
@@ -128,8 +128,8 @@ Windows 네이티브 실행은 같은 runner를 **Windows node.exe**로 실행�
 원시 합성 실행 기록은 ignored `tests/agent/results/`에만 저장한다.
 MCP preflight, 실제 도구 결과, fixture 검색 body·표·복귀·요약을 각각 채점한다.
 공급자 오류·비무료 비용·확인할 수 없는 가격에서 반복 실행을 중단하고 유료 fallback을 하지 않는다.
-2026-10-11의 WSL/Windows 파일럿은 Zen HTTP 403으로 실제 도구 호출 전에 종료됐다.
-따라서 5회 시연·실제 모델 실행 중 중단은 아직 검증되지 않았다.
+2026-10-11의 WSL/Windows 파일럿은 Zen HTTP 403으로 실제 도구 호출 전에 종료됐다(통과로 기록하지 않는다).
+이후 사용자가 개인 PC의 WSL OpenCode로 실제 동작을 확인했으며, 실제 모델 반복 시연은 남은 검증 항목으로 두지 않는다.
 
 네이티브 API만 검증할 때는 LLM 없이 다음 스크립트를 Windows Node로 실행한다:
 

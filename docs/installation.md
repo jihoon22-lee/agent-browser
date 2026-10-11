@@ -69,7 +69,7 @@ Bridge 포트를 변경했거나 관리 서버가 사용하던 Bridge exe를 별
 1. 기능 브랜치에서 요구사항과 테스트를 마무리하고 PR을 생성한다. 실제 동작을 바꾼 경우 관련 테스트부터 실행한다.
 2. 버전을 `Cargo.toml` workspace, `Cargo.lock`의 `agent-browser-bridge`, `extension/public/manifest.json`에 동일하게 반영한다.
    제품 라이선스는 루트 `LICENSE`와 Cargo package의 workspace 상속을 유지한다.
-3. `CHANGELOG.md`에 사용자 변경·호환성과 미검증 범위를 적고 설치·사용·문제 해결 문서를 실제 UI와 대조한다.
+3. `CHANGELOG.md`에 사용자 변경·호환성을 적고 설치·사용·문제 해결 문서를 실제 UI와 대조한다.
 4. PR의 `Linux checks`와 `Windows checks` 결과를 확인한다. 실패를 숨기거나 실행하지 않은 검사를 통과로 표시하지 않는다.
    CI가 만든 Windows zip은 검토용 artifact이며 자동으로 GitHub Release를 게시하지 않는다.
 5. 독립 검토의 중요한 결함을 수정하고 최종 PR 커밋의 CI가 성공한 뒤 main에 머지한다.
@@ -77,7 +77,7 @@ Bridge 포트를 변경했거나 관리 서버가 사용하던 Bridge exe를 별
    CI의 main 실행도 확인한다. 이미 게시한 태그/동일 이름 zip을 강제로 바꾸지 않는다.
 7. `package.tests.ps1`로 필수 문서·zip 내부 링크·allowlist·manifest·체크섬·재현성을 검사한다.
    `SHA256SUMS`와 zip을 같은 Release에 게시하고 GitHub asset digest와 로컬 해시가 같은지 확인한다.
-8. Release 안내에는 설치 시작점, CHANGELOG, 검증 환경, 미검증 모델/사내 환경을 적는다.
+8. Release 안내에는 설치 시작점, CHANGELOG, 검증 환경을 적는다.
    `docs/status.md`에 실제 명령·결과·태그/PR/CI 링크를 기록한다. 실행 로그나 사용자 데이터는 게시하지 않는다.
 
 `README-install.md`, `CHANGELOG.md`, `LICENSE`, `SECURITY.md`, `docs/user-guide.md`,

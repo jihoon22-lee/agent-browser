@@ -5,7 +5,7 @@ function ratio(a: string, b: string) {
 }
 it.each(THEMES)("keeps final %s text, focus and control tokens readable on every surface", theme => {
   const tokens = themeTokens(theme);
-  for (const background of ["--base", "--canvas", "--raised", "--hover"] as const) {
+  for (const background of ["--base", "--canvas", "--raised", "--hover", "--bubble"] as const) {
     for (const foreground of ["--text", "--muted", "--accent", "--danger", "--success"] as const) expect(ratio(tokens[foreground], tokens[background]), `${theme} ${foreground}/${background}`).toBeGreaterThanOrEqual(4.5);
     for (const foreground of ["--control-border", "--focus"] as const) expect(ratio(tokens[foreground], tokens[background]), `${theme} ${foreground}/${background}`).toBeGreaterThanOrEqual(3);
   }

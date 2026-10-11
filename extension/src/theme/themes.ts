@@ -18,10 +18,12 @@ function readable(color: string, text: string, backgrounds: string[], minimum: n
 export function themeTokens(theme: Theme) {
   const flavor = palette[theme], colors = flavor.colors;
   const base = colors.base.hex, canvas = colors.mantle.hex, raised = flavor.dark ? colors.surface0.hex : colors.base.hex, hover = flavor.dark ? colors.surface0.hex : colors.crust.hex;
-  const backgrounds = [base, canvas, raised, hover], text = colors.text.hex;
+  // User bubbles are tinted toward the accent so turns stay distinguishable without borders.
+  const bubble = mix(base, colors.blue.hex, flavor.dark ? .16 : .12);
+  const backgrounds = [base, canvas, raised, hover, bubble], text = colors.text.hex;
   const accent = readable(colors.blue.hex, text, backgrounds, 4.5), danger = readable(colors.red.hex, text, backgrounds, 4.5);
   return {
-    "--base": base, "--canvas": canvas, "--surface": base, "--raised": raised, "--hover": hover,
+    "--base": base, "--canvas": canvas, "--surface": base, "--raised": raised, "--hover": hover, "--bubble": bubble,
     "--text": text, "--muted": readable(colors.subtext1.hex, text, backgrounds, 4.5),
     "--line": colors.surface1.hex, "--control-border": readable(colors.overlay2.hex, text, backgrounds, 3),
     "--accent": accent, "--accent-on": flavor.dark ? colors.crust.hex : base,
