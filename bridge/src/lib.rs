@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod mcp;
 pub mod rpc;
+pub mod runtime;
 pub mod server;
 
 /// Writes every log line to stderr and, when a file is given, to that file as well.
@@ -89,4 +90,16 @@ pub fn run_pair() -> anyhow::Result<()> {
     println!("{}", cfg.token);
     eprintln!("config: {}", home.join("config.json").display());
     Ok(())
+}
+
+pub fn run_start(port: Option<u16>) -> anyhow::Result<()> {
+    let home = config::home_dir()?; let cfg = config::load_or_init(&home)?;
+    let port = port.unwrap_or(cfg.port); let exe = std::env::current_exe()?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let client = mcp::client::ServeClient::connect_or_start(&home,port,&exe).await?;
+        anyhow::ensure!(client.connected().await,"Cannot start or authenticate the resident Bridge");
+        let pid = std::fs::read_to_string(home.join("serve.pid")).ok().and_then(|text| text.trim().parse::<u32>().ok());
+        println!("{}",serde_json::json!({"running":true,"port":port,"pid":pid,"home":home}));
+        Ok(())
+    })
 }

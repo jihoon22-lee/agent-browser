@@ -32,7 +32,6 @@ pub enum ServeError {
 }
 
 pub async fn start(opts: ServeOptions) -> anyhow::Result<ServeHandle> {
-    let cfg = config::load_or_init(&opts.home)?;
     let listener = match TcpListener::bind(("127.0.0.1", opts.port)).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
@@ -44,7 +43,11 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<ServeHandle> {
         Err(e) => return Err(e.into()),
     };
     let port = listener.local_addr()?.port();
-    let state = Arc::new(conn::ServerState::new(opts.home, cfg));
+    // Persist only a successfully bound port. Read the current configuration here so
+    // the token, pairing, and browser selection survive a custom-port start.
+    let mut cfg = config::load_or_init(&opts.home)?;
+    if cfg.port != port { cfg.port = port; config::save(&opts.home,&cfg)?; }
+    let state = Arc::new(conn::ServerState::new_with_port(opts.home, cfg, port));
     let (tx, mut rx) = tokio::sync::oneshot::channel();
     let join = tokio::spawn(async move {
         loop {

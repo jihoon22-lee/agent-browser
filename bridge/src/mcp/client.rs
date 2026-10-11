@@ -35,6 +35,13 @@ pub async fn probe(port: u16) -> bool {
     )
 }
 
+/// Authenticate an existing Bridge for diagnostics, without starting a process.
+pub async fn probe_authenticated(home: &Path, port: u16) -> bool {
+    let Ok(cfg) = config::load_or_init(home) else { return false; };
+    let client = ServeClient { port, exe: Path::new("").into(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
+    client.open().await.is_ok()
+}
+
 async fn auth_exchange(ws: &mut Ws, request: &Envelope) -> Result<Value, String> {
     tokio::time::timeout(Duration::from_secs(5), async {
         ws.send(Message::text(request.to_text())).await.map_err(|_| "authentication send failed".to_string())?;
@@ -127,6 +134,7 @@ pub struct ServeClient {
 }
 
 impl ServeClient {
+    pub async fn connected(&self) -> bool { self.conn.lock().await.is_some() }
     /// Never fails because serve is unreachable: `tools/list` must work without it, and a failed
     /// start is reported by each tool call instead.
     pub async fn connect_or_start(home: &Path, port: u16, exe: &Path) -> anyhow::Result<ServeClient> {

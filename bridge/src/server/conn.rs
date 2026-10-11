@@ -42,13 +42,14 @@ impl Role {
     /// Methods a connection of this role may call on serve. Anything else is FORBIDDEN_METHOD.
     fn allows(self, method: &str) -> bool {
         match self {
-            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "browser.use"),
+            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
             Role::Mcp => method == "tool.call",
         }
     }
 }
 
 pub struct ServerState {
+    pub runtime: crate::runtime::Manager,
     pub home: std::path::PathBuf,
     pub cfg: tokio::sync::Mutex<Config>,
     pub registry: Registry,
@@ -60,8 +61,13 @@ pub struct ServerState {
 
 impl ServerState {
     pub fn new(home: std::path::PathBuf, cfg: Config) -> Self {
+        let port = cfg.port;
+        Self::new_with_port(home,cfg,port)
+    }
+    pub fn new_with_port(home: std::path::PathBuf, cfg: Config, port: u16) -> Self {
         let registry = Registry::new(cfg.selected_client_id.clone());
         Self {
+            runtime: crate::runtime::Manager::new(home.clone(),port),
             home,
             cfg: tokio::sync::Mutex::new(cfg),
             registry,
@@ -374,9 +380,11 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
     }
 }
 
-async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::UnboundedReceiver<String>, state: &ServerState, conn: ConnId) {
+async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::UnboundedReceiver<String>, state: &Arc<ServerState>, conn: ConnId) {
+    let (replies, mut pending) = tokio::sync::mpsc::unbounded_channel::<Envelope>();
     loop {
         tokio::select! {
+            Some(reply) = pending.recv() => { if !send(ws,&reply).await { break; } }
             out = outbound.recv() => {
                 let Some(text) = out else { break };
                 if ws.send(Message::text(text)).await.is_err() { break; }
@@ -395,6 +403,11 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                 match env {
                     Envelope::Res { .. } => state.registry.handle_response(env),
                     Envelope::Req { id, method, params, .. } => {
+                        if Role::Extension.allows(&method) && (method.starts_with("profile.") || method.starts_with("runtime.") || method == "doctor.run") {
+                            let state = state.clone(); let replies = replies.clone();
+                            tokio::spawn(async move { let reply = extension_request(&state,id,&method,&params).await; let _ = replies.send(reply); });
+                            continue;
+                        }
                         let reply = if Role::Extension.allows(&method) {
                             extension_request(state, id, &method, &params).await
                         } else {
@@ -420,6 +433,10 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
 }
 
 async fn extension_request(state: &ServerState, id: String, method: &str, params: &Value) -> Envelope {
+    if method.starts_with("profile.") || method.starts_with("runtime.") || method == "doctor.run" {
+        let result = management_request(state,method,params).await;
+        return match result { Ok(value) => Envelope::ok(id,value), Err(error) => Envelope::err(id,error) };
+    }
     match method {
         "heartbeat" => Envelope::ok(id, json!({ "at": now_ms() })),
         "status.get" => Envelope::ok(id, state.status()),
@@ -452,6 +469,34 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             None => Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "clientId is required")),
         },
         _ => not_available(id),
+    }
+}
+
+async fn management_request(state: &ServerState, method: &str, params: &Value) -> Result<Value,RpcError> {
+    let profile_id = || params.get("profileId").and_then(Value::as_str).filter(|id| !id.is_empty()).ok_or_else(|| crate::runtime::profile::invalid("profileId is required"));
+    match method {
+        "profile.list" => state.runtime.list(),
+        "profile.save" => {
+            let profile = serde_json::from_value(params.get("profile").cloned().unwrap_or(Value::Null)).map_err(|_| crate::runtime::profile::invalid("Invalid profile object"))?;
+            state.runtime.save(profile,params.get("makeDefault").and_then(Value::as_bool).unwrap_or(false))
+        }
+        "profile.delete" => state.runtime.delete(profile_id()?).await,
+        "runtime.ensure" => {
+            let extension = state.cfg.lock().await.paired_extension_id.clone().ok_or_else(|| crate::runtime::profile::invalid("Pair a Chrome extension before starting OpenCode"))?;
+            state.runtime.ensure(profile_id()?,&format!("chrome-extension://{extension}")).await
+        }
+        "runtime.status" => state.runtime.status(profile_id()?).await,
+        "runtime.stop" => state.runtime.stop(profile_id()?).await,
+        "doctor.run" => {
+            let mut report = state.runtime.doctor(params.get("profileId").and_then(Value::as_str)).await?;
+            let browsers = state.registry.snapshot();
+            let selected = browsers.iter().any(|browser| browser.selected && browser.connected);
+            if let Some(check) = report["checks"].as_array_mut().and_then(|checks| checks.iter_mut().find(|check| check["id"] == "extension")) {
+                *check = json!({"id":"extension","status":if selected {"ok"} else {"warning"},"message":if selected {"Selected Chrome profile is authenticated and connected"} else {"Select an authenticated, connected Chrome profile"},"browsers":browsers});
+            }
+            Ok(report)
+        }
+        _ => Err(crate::runtime::profile::invalid("Unknown management method")),
     }
 }
 

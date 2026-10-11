@@ -1,0 +1,170 @@
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::process::{Command,Stdio};
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Identity { pub pid: u32, pub created: u64, pub image: String }
+
+#[cfg(windows)]
+pub fn identity(pid: u32) -> Option<Identity> {
+    use windows_sys::Win32::{Foundation::{CloseHandle, FILETIME}, System::Threading::*};
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() { return None; }
+        let mut created: FILETIME = std::mem::zeroed(); let mut exit = created; let mut kernel = created; let mut user = created;
+        let mut image = vec![0u16; 32768]; let mut len = image.len() as u32; let mut code = 0;
+        let okay = GetProcessTimes(handle, &mut created, &mut exit, &mut kernel, &mut user) != 0
+            && QueryFullProcessImageNameW(handle, 0, image.as_mut_ptr(), &mut len) != 0
+            && GetExitCodeProcess(handle, &mut code) != 0 && code == 259;
+        CloseHandle(handle);
+        okay.then(|| Identity { pid, created: ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64, image: String::from_utf16_lossy(&image[..len as usize]) })
+    }
+}
+
+#[cfg(unix)]
+pub fn identity(pid: u32) -> Option<Identity> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let tail: Vec<_> = stat.rsplit_once(')')?.1.split_whitespace().collect();
+    if tail.first() == Some(&"Z") { return None; }
+    Some(Identity { pid, created: tail.get(19)?.parse().ok()?, image: std::fs::read_link(format!("/proc/{pid}/exe")).ok()?.to_string_lossy().into_owned() })
+}
+
+pub fn matches(owner: &Identity) -> bool { identity(owner.pid).is_some_and(|now| now.created == owner.created && now.image == owner.image) }
+
+#[cfg(windows)]
+pub fn terminate(owner: &Identity) -> bool {
+    use windows_sys::Win32::{Foundation::{CloseHandle, FILETIME}, System::Threading::*};
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, 0, owner.pid);
+        if handle.is_null() { return false; }
+        let mut created: FILETIME = std::mem::zeroed(); let mut exit = created; let mut kernel = created; let mut user = created;
+        let mut image = vec![0u16; 32768]; let mut len = image.len() as u32;
+        let okay = GetProcessTimes(handle, &mut created, &mut exit, &mut kernel, &mut user) != 0
+            && QueryFullProcessImageNameW(handle, 0, image.as_mut_ptr(), &mut len) != 0
+            && owner.created == ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64
+            && owner.image == String::from_utf16_lossy(&image[..len as usize]);
+        let stopped = okay && TerminateProcess(handle, 0) != 0; CloseHandle(handle); stopped
+    }
+}
+#[cfg(unix)]
+pub fn terminate(owner: &Identity) -> bool {
+    matches(owner) && Command::new("/bin/kill").args(["-TERM", &owner.pid.to_string()]).status().is_ok_and(|status| status.success())
+}
+
+pub fn spawn(executable: &str, args: &[String], directory: Option<&str>, env: &BTreeMap<String,String>) -> std::io::Result<Identity> {
+    #[cfg(windows)] { spawn_windows(executable,args,directory,env) }
+    #[cfg(unix)] {
+        use std::os::unix::process::CommandExt;
+        let mut command = Command::new(executable);
+        command.args(args).envs(env).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+        if let Some(directory) = directory { command.current_dir(directory); }
+        let child = command.spawn()?;
+        identity(child.id()).ok_or_else(|| std::io::Error::other("Started process exited before ownership could be recorded"))
+    }
+}
+
+#[cfg(windows)]
+fn spawn_windows(executable: &str, args: &[String], directory: Option<&str>, env: &BTreeMap<String,String>) -> std::io::Result<Identity> {
+    use std::{io,os::windows::ffi::OsStrExt,ptr};
+    use windows_sys::Win32::{Foundation::CloseHandle,System::Threading::*};
+    if !std::path::Path::new(executable).is_absolute() || executable.contains(['\0','"']) || args.iter().any(|arg| arg.contains('\0')) || directory.is_some_and(|path| path.contains('\0')) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput,"Invalid runtime executable, argument, or directory"));
+    }
+    let mut application: Vec<u16> = executable.encode_utf16().chain([0]).collect();
+    let mut command = windows_quote(executable);
+    let raw_cmd_tail = executable.to_ascii_lowercase().ends_with("\\cmd.exe") && args.len() == 4 && args[2] == "/c";
+    for (index,arg) in args.iter().enumerate() { command.push(' '); command.push_str(&if raw_cmd_tail && index == 3 { arg.clone() } else { windows_quote(arg) }); }
+    let command: Vec<u16> = command.encode_utf16().chain([0]).collect();
+    let directory: Option<Vec<u16>> = directory.map(|path| path.encode_utf16().chain([0]).collect());
+    // Environment keys are case-insensitive on Windows. Preserve inherited Unicode
+    // values, then apply validated profile values and managed credentials exactly.
+    let mut merged = BTreeMap::new();
+    for (key,value) in std::env::vars_os() { merged.insert(key.to_string_lossy().to_ascii_uppercase(),(key,value)); }
+    for (key,value) in env { merged.insert(key.to_ascii_uppercase(),(std::ffi::OsString::from(key),std::ffi::OsString::from(value))); }
+    let mut block = Vec::<u16>::new();
+    for (key,value) in merged.values() { block.extend(key.encode_wide()); block.push(b'=' as u16); block.extend(value.encode_wide()); block.push(0); }
+    block.push(0);
+    let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+    for extra in [CREATE_BREAKAWAY_FROM_JOB,0] {
+        let mut line = command.clone(); let startup = STARTUPINFOW { cb:std::mem::size_of::<STARTUPINFOW>() as u32,..Default::default() }; let mut process = PROCESS_INFORMATION::default();
+        // No inherited handles: in particular, keep caller/WSL/Node pipe handles out
+        // of detached runtimes so short-lived CLI start/attach can actually exit.
+        let created = unsafe { CreateProcessW(application.as_mut_ptr(),line.as_mut_ptr(),ptr::null(),ptr::null(),0,flags | extra,block.as_ptr().cast(),directory.as_ref().map_or(ptr::null(),|path| path.as_ptr()),&startup,&mut process) };
+        if created != 0 {
+            let owner = identity(process.dwProcessId);
+            unsafe { CloseHandle(process.hThread); CloseHandle(process.hProcess); }
+            return owner.ok_or_else(|| io::Error::other("Started runtime exited before ownership could be recorded"));
+        }
+        if extra == 0 { return Err(io::Error::last_os_error()); }
+    }
+    unreachable!()
+}
+
+#[cfg(any(windows,test))]
+fn windows_quote(value: &str) -> String {
+    if !value.is_empty() && !value.contains([' ','\t','\n','\r','"']) { return value.into(); }
+    let mut result = String::from("\""); let mut slashes = 0;
+    for character in value.chars() {
+        if character == '\\' { slashes += 1; continue; }
+        if character == '"' { result.extend(std::iter::repeat_n('\\',slashes * 2 + 1)); }
+        else { result.extend(std::iter::repeat_n('\\',slashes)); }
+        slashes = 0; result.push(character);
+    }
+    result.extend(std::iter::repeat_n('\\',slashes * 2)); result.push('"'); result
+}
+
+#[cfg(windows)]
+pub fn listener(port: u16) -> Option<Identity> {
+    use windows_sys::Win32::{NetworkManagement::IpHelper::*, Networking::WinSock::AF_INET};
+    unsafe {
+        let mut len = 0u32;
+        GetExtendedTcpTable(std::ptr::null_mut(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0);
+        let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
+        if GetExtendedTcpTable(buffer.as_mut_ptr().cast(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0) != 0 { return None; }
+        let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+        for row in std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize) {
+            if u16::from_be(row.dwLocalPort as u16) == port { return identity(row.dwOwningPid); }
+        }
+        None
+    }
+}
+#[cfg(windows)]
+pub fn descendant(child: &Identity, parent: &Identity) -> bool {
+    use windows_sys::Win32::{Foundation::{CloseHandle, INVALID_HANDLE_VALUE}, System::Diagnostics::ToolHelp::*};
+    if !matches(parent) || child.created < parent.created { return false; }
+    if child.pid == parent.pid { return child.created == parent.created && child.image == parent.image; }
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); if snapshot == INVALID_HANDLE_VALUE { return false; }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed(); entry.dwSize = std::mem::size_of_val(&entry) as u32;
+        let mut parents = BTreeMap::new(); let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more { parents.insert(entry.th32ProcessID, entry.th32ParentProcessID); more = Process32NextW(snapshot, &mut entry) != 0; }
+        CloseHandle(snapshot);
+        let mut pid = child.pid;
+        for _ in 0..64 { let Some(next) = parents.get(&pid) else { return false }; if *next == parent.pid { return true; } if *next == pid { break; } pid = *next; }
+        false
+    }
+}
+
+pub fn wsl_executable() -> String {
+    #[cfg(windows)] { format!("{}\\System32\\wsl.exe", std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into())) }
+    #[cfg(not(windows))] { "/mnt/c/Windows/System32/wsl.exe".into() }
+}
+
+pub fn windows_to_wsl(path: &str) -> Option<String> {
+    let bytes = path.as_bytes();
+    (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':').then(|| format!("/mnt/{}/{}", (bytes[0] as char).to_ascii_lowercase(), path[2..].trim_start_matches(['\\','/']).replace('\\', "/")))
+}
+
+#[cfg(test)]
+mod quoting_tests {
+    use super::windows_quote;
+    #[test]
+    fn structured_windows_arguments_preserve_unicode_quotes_and_trailing_backslashes() {
+        assert_eq!(windows_quote("plain"),"plain");
+        assert_eq!(windows_quote(""),"\"\"");
+        assert_eq!(windows_quote("한글 space\\"),"\"한글 space\\\\\"");
+        assert_eq!(windows_quote("a\"b"),"\"a\\\"b\"");
+        assert_eq!(windows_quote("a\\\" b"),"\"a\\\\\\\" b\"");
+    }
+}
