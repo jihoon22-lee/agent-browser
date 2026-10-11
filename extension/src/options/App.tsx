@@ -3,9 +3,11 @@ import { DEFAULT_BRIDGE_URL, type ConnStatus } from "../background/bridge-connec
 import { bridgeRequest, type Data } from "../sidepanel/workbench-state";
 import { validatePairing, profilePayload, type ProfileForm } from "./profile-form";
 import "./style.css";
+import { THEMES, themeNames, useTheme } from "../theme/themes";
 const LABELS: Record<ConnStatus["state"], string> = { unpaired: "페어링 토큰을 입력하세요.", connecting: "연결하는 중…", connected: "Bridge에 연결되었습니다.", auth_failed: "상호 인증에 실패했습니다. 주소·버전·토큰을 확인하세요.", not_paired: "다른 확장과 페어링되어 있습니다. 토큰으로 다시 페어링하세요.", disconnected: "Bridge 연결을 다시 시도하는 중…" };
 const blank: ProfileForm = { id: "", name: "", kind: "windows", directory: "", executable: "", distribution: "", user: "", baseUrl: "http://127.0.0.1:4096", username: "opencode", password: "", port: "", envText: "" };
 export function App() {
+  const { theme, chooseTheme } = useTheme();
   const [url, setUrl] = useState(DEFAULT_BRIDGE_URL), [token, setToken] = useState("");
   const [status, setStatus] = useState<ConnStatus>({ state: "disconnected" });
   const [profiles, setProfiles] = useState<Data[]>([]), [defaultId, setDefaultId] = useState("");
@@ -23,7 +25,7 @@ export function App() {
   async function run(action: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await action(); } catch (error) { setError(error instanceof Error ? error.message : "요청에 실패했습니다."); } finally { setBusy(false); } }
   const field = (key: keyof ProfileForm, value: string) => setForm(previous => ({ ...previous, [key]: value }));
   const connected = status.state === "connected";
-  return <main className="options"><header><h1>AgentBrowser 설정</h1><p>Chrome과 기존 OpenCode 실행 환경을 연결합니다.</p></header>
+  return <main className="options"><header className="options-header"><div><h1>AgentBrowser 설정</h1><p>Chrome과 기존 OpenCode 실행 환경을 연결합니다.</p></div><label>테마<select aria-label="테마" value={theme} onChange={event => chooseTheme(event.target.value)}>{(["system", ...THEMES] as const).map(name => <option key={name} value={name}>{themeNames[name]}</option>)}</select></label></header>
     {error && <p role="alert" className="error">{error}</p>}{notice && <p role="status" className="notice">{notice}</p>}
     <section><h2>Bridge 페어링</h2><p>설치 폴더의 페어링 안내 또는 <code>browser-bridge.exe pair</code>에 표시된 토큰을 사용하세요.</p>
       <label>Bridge 주소<input value={url} onChange={event => setUrl(event.target.value)} autoComplete="off" /></label>

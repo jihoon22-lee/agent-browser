@@ -68,3 +68,8 @@ it("keeps session errors visible even when no assistant message was created", ()
   state = workbenchReducer(state, { type: "event", event: { id: "evt-retry", type: "session.status", properties: { sessionID: "ses-a", status: { type: "busy" } } } });
   expect(state.errors["ses-a"]).toBeUndefined();
 });
+
+it("does not fabricate an assistant message from session metadata events", () => {
+  const state = workbenchReducer(initialWorkbench, { type: "event", event: { id: "evt-session-meta", type: "session.updated", properties: { sessionID: "ses-one", info: { id: "ses-one", title: "합성 세션" } } } });
+  expect(state.messages).toEqual({});
+});

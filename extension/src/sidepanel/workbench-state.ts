@@ -17,11 +17,13 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
     const errors = { ...state.errors }; if (p.status?.type === "busy") delete errors[p.sessionID];
     return { ...next, errors, statuses: { ...state.statuses, [p.sessionID]: p.status } };
   }
+  if (event.type === "session.idle") return { ...next, statuses: { ...state.statuses, [p.sessionID]: { type: "idle" } } };
   if (event.type === "session.error") return { ...next, errors: { ...state.errors, [p.sessionID ?? "global"]: String(p.error?.data?.message ?? p.error?.message ?? p.error?.name ?? "OpenCode 작업에 실패했습니다.").slice(0, 1000) } };
   if (event.type === "question.asked") return { ...next, questions: byId([...state.questions, p]) };
   if (event.type === "permission.asked") return { ...next, permissions: byId([...state.permissions, p]) };
   if (["question.replied", "question.rejected"].includes(event.type)) return { ...next, questions: state.questions.filter(q => q.id !== p.requestID) };
   if (event.type === "permission.replied") return { ...next, permissions: state.permissions.filter(q => q.id !== p.requestID) };
+  if (!["message.updated", "message.removed", "message.part.updated", "message.part.removed", "message.part.delta"].includes(event.type)) return next;
   const sessionID = p.sessionID ?? p.info?.sessionID ?? p.part?.sessionID;
   const messageID = p.messageID ?? p.info?.id ?? p.part?.messageID;
   if (!sessionID || !messageID) return next;

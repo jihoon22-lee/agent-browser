@@ -217,3 +217,119 @@ it.each(["/todo", "/children", "/diff"])("keeps messages and live updates visibl
   expect(host.textContent).toContain("메타데이터보다 먼저 도착한 응답");
   await act(async () => pending.resolve([]));
 });
+
+it("separates chat, sessions and browser activity while keeping browser Stop available", async () => {
+  await render();
+  const tab = (name: string) => [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(el => el.textContent === name)!;
+  expect(tab("대화")?.getAttribute("aria-selected")).toBe("true");
+  expect(host.querySelector<HTMLElement>('#view-chat')?.hidden).toBe(false);
+  expect(host.querySelector<HTMLElement>('#view-sessions')?.hidden).toBe(true);
+  expect(host.querySelector<HTMLElement>('#view-browser')?.hidden).toBe(true);
+  await draftValue("탐색 중 유지할 초안");
+  for (const name of ["세션", "브라우저", "대화"]) {
+    await act(async () => tab(name).click());
+    expect(tab(name).getAttribute("aria-selected")).toBe("true");
+    expect(button("중단").closest("[hidden]")).toBeNull();
+  }
+  expect(composerValue().value).toBe("탐색 중 유지할 초안");
+});
+it("opens focused controls without stacking them below the conversation and returns focus with Escape", async () => {
+  await render();
+  const trigger = host.querySelector<HTMLButtonElement>('button[aria-label="실행 설정"]')!; expect(trigger).toBeDefined();
+  await act(async () => trigger.click());
+  expect(host.querySelector<HTMLElement>('[aria-label="실행 설정 패널"]')?.hidden).toBe(false);
+  expect(host.querySelector<HTMLElement>('#view-chat .conversation')?.hidden).toBe(true);
+  await act(async () => host.querySelector<HTMLElement>('[aria-label="실행 설정 패널"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(host.querySelector<HTMLElement>('#view-chat .conversation')?.hidden).toBe(false);
+  expect(document.activeElement).toBe(trigger);
+});
+
+it("reconciles a missing final message and idle event while the SSE connection remains open", async () => {
+  await render(); vi.useFakeTimers();
+  try {
+    await act(async () => test.stream({ id: "evt-busy-only", type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } }));
+    messages.push({ info: { ...info, id: "msg-final-missed", role: "assistant", time: { created: 2, completed: 3 } }, parts: [{ id: "prt-final-missed", type: "text", text: "이벤트 없이 완료된 응답" }] });
+    await act(async () => { test.stream({ id: "evt-heartbeat-only", type: "server.heartbeat", properties: {} }); await vi.advanceTimersByTimeAsync(2500); });
+    expect(host.textContent).toContain("이벤트 없이 완료된 응답");
+    expect(button("응답 중단").hidden).toBe(true);
+    expect(test.calls).not.toContain("/session/ses-one/abort");
+    await act(async () => vi.advanceTimersByTimeAsync(5000));
+    expect([...host.querySelectorAll(".message")].filter(el => el.textContent?.includes("이벤트 없이 완료된 응답"))).toHaveLength(1);
+  } finally { vi.useRealTimers(); }
+});
+it("checks for a submitted reply even when neither initial busy nor message events arrive", async () => {
+  await render(); vi.useFakeTimers();
+  try {
+    await draftValue("이벤트가 없는 요청"); await act(async () => button("보내기").click());
+    messages.push({ info: { ...info, id: "msg-no-events", role: "assistant", time: { created: 2, completed: 3 } }, parts: [{ id: "prt-no-events", type: "text", text: "HTTP 조회로 복원한 응답" }] });
+    await act(async () => vi.advanceTimersByTimeAsync(2500));
+    expect(host.textContent).toContain("HTTP 조회로 복원한 응답");
+    expect(test.calls).not.toContain("/session/ses-one/abort");
+  } finally { vi.useRealTimers(); }
+});
+it("refreshes the selected session on visibility restoration without requiring a broken SSE connection", async () => {
+  await render(); const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  try {
+    messages.push({ info: { ...info, id: "msg-visible-again", role: "assistant", time: { created: 2, completed: 3 } }, parts: [{ id: "prt-visible-again", type: "text", text: "화면 복귀 후 복원한 응답" }] });
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    expect(host.textContent).toContain("화면 복귀 후 복원한 응답");
+  } finally { visibility.mockRestore(); }
+});
+
+it("queries root sessions explicitly so subagents cannot consume the first page", async () => {
+  sessions.push({ ...sessions[0], id: "ses-child", parentID: "ses-one", title: "하위 작업" });
+  await render();
+  expect(test.get).toHaveBeenCalledWith("/session", expect.objectContaining({ roots: true, limit: 50 }));
+  const list = host.querySelector(".session-tree"); expect(list).not.toBeNull();
+  expect(list?.textContent).not.toContain("하위 작업");
+});
+it("loads more root sessions in bounded increments and resets the bound for a new search", async () => {
+  sessions = Array.from({ length: 70 }, (_, i) => ({ ...sessions[0], id: i ? `ses-root-${i}` : "ses-one", title: `상위 대화 ${i}` }));
+  const original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === "/session" ? Promise.resolve(sessions.filter(session => !query?.search || session.title.includes(query.search)).slice(0, query?.limit ?? 100)) : original(path, query));
+  await render(); expect(host.querySelectorAll(".session-tree > li")).toHaveLength(50);
+  await act(async () => button("더 보기").click()); expect(host.querySelectorAll(".session-tree > li")).toHaveLength(70);
+  expect(test.get).toHaveBeenCalledWith("/session", expect.objectContaining({ roots: true, limit: 100 }));
+  const search = host.querySelector<HTMLInputElement>('input[aria-label="세션 검색"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "상위 대화 6"); search.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => button("검색").click());
+  expect(test.get).toHaveBeenCalledWith("/session", expect.objectContaining({ roots: true, limit: 50, search: "상위 대화 6" }));
+});
+
+it("expands nested children lazily and preserves a selected child's title and parent navigation", async () => {
+  const child = { ...sessions[0], id: "ses-child", parentID: "ses-one", title: "하위 조사" }, grandchild = { ...sessions[0], id: "ses-grandchild", parentID: "ses-child", title: "중첩 조사" };
+  const original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? Promise.resolve([child]) : path === "/session/ses-child/children" ? Promise.resolve([grandchild]) : path === "/session/ses-child" ? Promise.resolve(child) : original(path, query));
+  await render();
+  expect(host.querySelector(".session-tree")?.textContent).not.toContain("하위 조사");
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
+  expect(host.querySelector(".session-tree")?.textContent).toContain("하위 조사");
+  expect(host.querySelector(".session-tree")?.textContent).not.toContain("중첩 조사");
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="하위 조사 하위 세션 펼치기"]')!.click());
+  expect(host.querySelector(".session-tree")?.textContent).toContain("중첩 조사");
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".session-tree .session-open")].find(el => el.querySelector("strong")?.textContent === "하위 조사")!.click());
+  expect(host.querySelector(".conversation h2")?.textContent).toBe("하위 조사");
+  await act(async () => button("상위 세션으로").click());
+  expect(host.querySelector(".conversation h2")?.textContent).toBe("기존 대화");
+  expect(host.querySelectorAll(".session-tree > li")).toHaveLength(1);
+});
+it("discards a child-tree response from a runtime that was replaced", async () => {
+  twoProfiles(); await render(); const pending = deferred<any[]>(), original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? pending.promise : original(path, query));
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
+  await selectProfile("second");
+  await act(async () => pending.resolve([{ ...sessions[0], id: "ses-private-child", parentID: "ses-one", title: "다른 환경 하위 작업" }]));
+  expect(host.querySelector(".session-tree")?.textContent).not.toContain("다른 환경 하위 작업");
+});
+
+it("refreshes an expanded child list after a subagent is created later", async () => {
+  let children: any[] = []; const original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? Promise.resolve(children) : original(path, query));
+  await render();
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
+  expect(host.querySelector(".session-tree")?.textContent).toContain("하위 세션이 없습니다");
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 접기"]')!.click());
+  children = [{ ...sessions[0], id: "ses-new-child", parentID: "ses-one", title: "나중에 생성된 하위 작업" }];
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
+  expect(host.querySelector(".session-tree")?.textContent).toContain("나중에 생성된 하위 작업");
+});
