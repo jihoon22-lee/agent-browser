@@ -1,3 +1,4 @@
+use super::{operation::OperationGate, registry::Registry, timeline::Timeline};
 use crate::config::{self, Config};
 use crate::rpc::{parse_envelope, Envelope, ErrorCode, Retry, RpcError, PROTOCOL_VERSION};
 use futures_util::{SinkExt, StreamExt};
@@ -49,11 +50,49 @@ impl Role {
 pub struct ServerState {
     pub home: std::path::PathBuf,
     pub cfg: tokio::sync::Mutex<Config>,
+    pub registry: Registry,
+    pub ops: OperationGate,
+    pub timeline: Timeline,
 }
 
 impl ServerState {
     pub fn new(home: std::path::PathBuf, cfg: Config) -> Self {
-        Self { home, cfg: tokio::sync::Mutex::new(cfg) }
+        let registry = Registry::new(cfg.selected_client_id.clone());
+        Self {
+            home,
+            cfg: tokio::sync::Mutex::new(cfg),
+            registry,
+            ops: OperationGate::default(),
+            timeline: Timeline::default(),
+        }
+    }
+
+    /// Payload shared by `status.get` and the `status.changed` event.
+    pub fn status(&self) -> Value {
+        json!({
+            "operation": self.ops.current(),
+            "browsers": self.registry.snapshot(),
+            "timeline": self.timeline.entries(),
+        })
+    }
+
+    pub fn broadcast_status(&self) {
+        self.registry.broadcast(&Envelope::evt("status.changed", self.status()).to_text());
+    }
+
+    /// Writes the registry's current selection to config.json when it changed.
+    async fn persist_selection(&self) {
+        let selected = self.registry.selected_client();
+        let mut cfg = self.cfg.lock().await;
+        if cfg.selected_client_id == selected {
+            return;
+        }
+        let mut updated = cfg.clone();
+        updated.selected_client_id = selected;
+        match config::save(&self.home, &updated) {
+            Ok(()) => *cfg = updated,
+            Err(e) => tracing::error!("cannot save selected browser: {e:#}"),
+        }
     }
 }
 
@@ -130,11 +169,27 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
     };
     let Some((role, extension_id)) = slot.lock().unwrap().take() else { return };
     let connection_id = format!("conn-{}", uuid::Uuid::new_v4());
-    if !authenticate(&mut ws, role, extension_id, &connection_id, &state).await {
-        return;
-    }
+    let Some((hello_id, hello)) = authenticate(&mut ws, role, extension_id, &state).await else { return };
     tracing::debug!(role = role.name(), %connection_id, "connection authenticated");
-    serve_requests(&mut ws, role).await;
+    match role {
+        Role::Extension => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let conn = state.registry.register(&hello.client_id, tx);
+            state.persist_selection().await;
+            let selected = state.registry.selected_client().as_deref() == Some(hello.client_id.as_str());
+            if send_hello_ok(&mut ws, hello_id, &connection_id, selected, &hello.client_id).await {
+                state.broadcast_status();
+                serve_extension(&mut ws, rx, &state).await;
+            }
+            state.registry.unregister(conn);
+            state.broadcast_status();
+        }
+        Role::Mcp => {
+            if send_hello_ok(&mut ws, hello_id, &connection_id, false, &hello.client_id).await {
+                serve_mcp(&mut ws).await;
+            }
+        }
+    }
 }
 
 /// Runs the `auth.hello` handshake. On any failure it answers, closes the socket and returns false.
@@ -142,14 +197,13 @@ async fn authenticate(
     ws: &mut Ws,
     role: Role,
     extension_id: Option<String>,
-    connection_id: &str,
     state: &ServerState,
-) -> bool {
+) -> Option<(String, Hello)> {
     let first = match tokio::time::timeout(HELLO_TIMEOUT, ws.next()).await {
         Ok(Some(Ok(Message::Text(t)))) => t,
         _ => {
             send_err_and_close(ws, "", ErrorCode::AuthRequired, "auth.hello must be the first message").await;
-            return false;
+            return None;
         }
     };
     let (id, params) = match parse_envelope(&first) {
@@ -157,19 +211,19 @@ async fn authenticate(
         Ok(other) => {
             let id = other.id().unwrap_or_default().to_string();
             send_err_and_close(ws, &id, ErrorCode::AuthRequired, "auth.hello must be the first message").await;
-            return false;
+            return None;
         }
         Err(e) => {
             let _ = send(ws, &Envelope::err(raw_id(&first), e)).await;
             let _ = ws.close(None).await;
-            return false;
+            return None;
         }
     };
     let hello: Hello = match serde_json::from_value(params) {
         Ok(h) => h,
         Err(e) => {
             send_err_and_close(ws, &id, ErrorCode::InvalidParams, &format!("invalid auth.hello params: {e}")).await;
-            return false;
+            return None;
         }
     };
     let expected_token = state.cfg.lock().await.token.clone();
@@ -179,7 +233,7 @@ async fn authenticate(
             .with_details(json!({ "serverName": SERVER_NAME }));
         let _ = send(ws, &Envelope::err(&id, error)).await;
         let _ = ws.close(None).await;
-        return false;
+        return None;
     }
     if let Some(ext_id) = extension_id {
         let mut cfg = state.cfg.lock().await;
@@ -196,7 +250,7 @@ async fn authenticate(
                 "This bridge is paired with another extension ID. Re-pair from the extension options page.",
             )
             .await;
-            return false;
+            return None;
         }
         if cfg.paired_extension_id.as_deref() != Some(ext_id.as_str()) {
             let mut updated = cfg.clone();
@@ -205,55 +259,134 @@ async fn authenticate(
                 drop(cfg);
                 tracing::error!("cannot save pairing: {e:#}");
                 send_err_and_close(ws, &id, ErrorCode::Internal, "cannot save pairing").await;
-                return false;
+                return None;
             }
             *cfg = updated;
         }
     }
+    if role == Role::Extension && hello.client_id.is_empty() {
+        send_err_and_close(ws, &id, ErrorCode::InvalidParams, "clientId is required for extensions").await;
+        return None;
+    }
+    Some((id, hello))
+}
+
+async fn send_hello_ok(ws: &mut Ws, id: String, connection_id: &str, selected: bool, client_id: &str) -> bool {
     let result = json!({
         "serverName": SERVER_NAME,
         "serverVersion": env!("CARGO_PKG_VERSION"),
         "protocolVersion": PROTOCOL_VERSION,
         "connectionId": connection_id,
-        "selected": false,
-        "clientId": hello.client_id,
+        "selected": selected,
+        "clientId": client_id,
     });
     send(ws, &Envelope::ok(id, result)).await
 }
 
-async fn serve_requests(ws: &mut Ws, role: Role) {
+/// Parses one inbound text frame. `Err(true)` means the connection must be closed.
+async fn parse_or_reject(ws: &mut Ws, text: &str) -> Result<Envelope, bool> {
+    match parse_envelope(text) {
+        Ok(env) => Ok(env),
+        Err(e) => {
+            let fatal = e.code == ErrorCode::ProtocolVersionUnsupported;
+            let _ = send(ws, &Envelope::err(raw_id(text), e)).await;
+            if fatal {
+                let _ = ws.close(None).await;
+            }
+            Err(fatal)
+        }
+    }
+}
+
+fn forbidden(id: String, method: &str) -> Envelope {
+    Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, format!("{method} is not allowed for this connection")))
+}
+
+fn not_available(id: String) -> Envelope {
+    Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
+}
+
+async fn serve_mcp(ws: &mut Ws) {
     while let Some(frame) = ws.next().await {
         let text = match frame {
             Ok(Message::Text(t)) => t,
             Ok(Message::Close(_)) | Err(_) => break,
             Ok(_) => continue,
         };
-        let env = match parse_envelope(&text) {
+        let env = match parse_or_reject(ws, &text).await {
             Ok(env) => env,
-            Err(e) => {
-                let fatal = e.code == ErrorCode::ProtocolVersionUnsupported;
-                let _ = send(ws, &Envelope::err(raw_id(&text), e)).await;
-                if fatal {
-                    let _ = ws.close(None).await;
-                    break;
-                }
-                continue;
-            }
+            Err(true) => break,
+            Err(false) => continue,
         };
         let Envelope::Req { id, method, .. } = env else { continue };
-        let reply = if !role.allows(&method) {
-            Envelope::err(
-                id,
-                RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, format!("{method} is not allowed for this connection")),
-            )
-        } else if role == Role::Extension && method == "heartbeat" {
-            Envelope::ok(id, json!({ "at": now_ms() }))
-        } else {
-            Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
-        };
+        let reply = if Role::Mcp.allows(&method) { not_available(id) } else { forbidden(id, &method) };
         if !send(ws, &reply).await {
             break;
         }
+    }
+}
+
+async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::UnboundedReceiver<String>, state: &ServerState) {
+    loop {
+        tokio::select! {
+            out = outbound.recv() => {
+                let Some(text) = out else { break };
+                if ws.send(Message::text(text)).await.is_err() { break; }
+            }
+            frame = ws.next() => {
+                let text = match frame {
+                    Some(Ok(Message::Text(t))) => t,
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(_)) => continue,
+                };
+                let env = match parse_or_reject(ws, &text).await {
+                    Ok(env) => env,
+                    Err(true) => break,
+                    Err(false) => continue,
+                };
+                match env {
+                    Envelope::Res { .. } => state.registry.handle_response(env),
+                    Envelope::Req { id, method, params, .. } => {
+                        let reply = if Role::Extension.allows(&method) {
+                            extension_request(state, id, &method, &params).await
+                        } else {
+                            forbidden(id, &method)
+                        };
+                        if !send(ws, &reply).await { break; }
+                    }
+                    Envelope::Evt { .. } => {}
+                }
+            }
+        }
+    }
+}
+
+async fn extension_request(state: &ServerState, id: String, method: &str, params: &Value) -> Envelope {
+    match method {
+        "heartbeat" => Envelope::ok(id, json!({ "at": now_ms() })),
+        "status.get" => Envelope::ok(id, state.status()),
+        "operation.abort" => {
+            let operation_id = params.get("operationId").and_then(Value::as_str);
+            match state.ops.abort(operation_id) {
+                Some((op_id, generation)) => {
+                    // The gate is already closed; tell the selected browser to stop whatever it is running.
+                    state.registry.notify_selected("browser.cancel", json!({ "operationId": op_id, "generation": generation }));
+                    state.broadcast_status();
+                    Envelope::ok(id, json!({ "aborted": true, "operationId": op_id }))
+                }
+                None => Envelope::ok(id, json!({ "aborted": false, "operationId": Value::Null })),
+            }
+        }
+        "browser.use" => match params.get("clientId").and_then(Value::as_str).filter(|c| !c.is_empty()) {
+            Some(client_id) => {
+                state.registry.use_browser(client_id);
+                state.persist_selection().await;
+                state.broadcast_status();
+                Envelope::ok(id, json!({ "selected": client_id }))
+            }
+            None => Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "clientId is required")),
+        },
+        _ => not_available(id),
     }
 }
 

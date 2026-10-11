@@ -34,10 +34,27 @@ pub async fn recv(ws: &mut Ws) -> Envelope {
     }
 }
 
+/// Sends a request and waits for the response with the same id; `evt` frames in between are skipped.
 pub async fn call(ws: &mut Ws, method: &str, params: serde_json::Value) -> Envelope {
     let req = Envelope::req(method, params);
     send_raw(ws, &req.to_text()).await;
-    recv(ws).await
+    loop {
+        let env = recv(ws).await;
+        if matches!(env, Envelope::Res { .. }) && env.id() == req.id() {
+            return env;
+        }
+    }
+}
+
+/// Waits for the next `evt` with this name, ignoring everything else.
+pub async fn next_event(ws: &mut Ws, name: &str) -> serde_json::Value {
+    loop {
+        if let Envelope::Evt { event, data, .. } = recv(ws).await {
+            if event == name {
+                return data;
+            }
+        }
+    }
 }
 
 pub async fn hello(ws: &mut Ws, role: &str, token: &str, client_id: &str) -> Envelope {

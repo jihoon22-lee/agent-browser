@@ -32,6 +32,8 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 �
 | 2026-10-11 | M1 Task 2: `node --test tests/fixtures/server.test.mjs`(Linux) | 3/3 통과 |
 | 2026-10-11 | M1 Task 3: `cargo test -p agent-browser-bridge --lib config`(Linux). `browser-bridge pair`를 한글·공백 경로의 `AGENT_BROWSER_HOME`으로 Linux에서 수동 실행 | 5/5 통과, 토큰 64자 출력. 보안 리뷰 지적 반영(config.json 0600, Unix) 후 6/6 — Windows ACL은 미검증 |
 | 2026-10-11 | M1 Task 4: `cargo test -p agent-browser-bridge --test serve_auth`(Linux, 실제 WebSocket). `serve --port 0`을 SIGINT로 종료 | 13/13 통과(계획 9 + 추가 4), 종료 코드 0. Windows 포트 중복 bind는 Task 14에서 확인 예정 |
+| 2026-10-11 | M1 Task 4 후속(보안 리뷰 반영): `--test serve_port_conflict`(Linux) | 2/2 통과 — 포트 점유 프로그램에 페어링 토큰을 보내지 않음. 확장·mcp가 토큰을 보내는 첫 `auth.hello`는 같은 위험이 남아 있음(포트 선점) |
+| 2026-10-11 | M1 Task 5: `cargo test -p agent-browser-bridge`(Linux): 작업 게이트·레지스트리·타임라인 단위 테스트, 연결 루프 통합 테스트 | lib 19, protocol_contract 4, serve_auth 18, serve_port_conflict 2 모두 통과 |
 
 ## 미검증
 
@@ -48,4 +50,4 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 �
 
 ## 다음 작업
 
-1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 5(Extension 레지스트리·작업 게이트·명령 중계)부터 순서대로 구현.
+1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 6(도구 정의와 tool.call 라우터)부터 순서대로 구현.

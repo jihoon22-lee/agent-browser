@@ -1,5 +1,8 @@
 pub mod conn;
-// Task 5 adds: pub mod operation; pub mod registry; pub mod timeline;  Task 6 adds: pub mod router;
+pub mod operation;
+pub mod registry;
+pub mod timeline;
+// Task 6 adds: pub mod router;
 
 use crate::config;
 use std::{path::PathBuf, sync::Arc};

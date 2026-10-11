@@ -139,3 +139,66 @@ async fn unknown_path_is_refused_at_handshake() {
     let (_h, serve, _cfg) = start_test_serve().await;
     assert!(ws_connect(serve.port, "/other", None).await.is_err());
 }
+
+#[tokio::test]
+async fn extension_status_get_reports_selected_browser() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut ws = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut ws, "extension", &cfg.token, "cli-1").await;
+    let res = call(&mut ws, "status.get", serde_json::json!({})).await;
+    let Envelope::Res { ok: true, result: Some(r), .. } = res else { panic!("{res:?}") };
+    assert_eq!(r["browsers"][0]["clientId"], "cli-1");
+    assert_eq!(r["browsers"][0]["selected"], true);
+}
+
+#[tokio::test]
+async fn auto_selection_of_the_only_browser_is_persisted() {
+    let (home, serve, cfg) = start_test_serve().await;
+    let mut ws = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut ws, "extension", &cfg.token, "cli-1").await;
+    let saved = agent_browser_bridge::config::load_or_init(home.path()).unwrap();
+    assert_eq!(saved.selected_client_id.as_deref(), Some("cli-1"));
+}
+
+#[tokio::test]
+async fn browser_use_changes_and_persists_the_selected_browser() {
+    let (home, serve, cfg) = start_test_serve().await;
+    let mut ws = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut ws, "extension", &cfg.token, "cli-1").await;
+    let res = call(&mut ws, "browser.use", serde_json::json!({"clientId": "cli-9"})).await;
+    assert!(matches!(res, Envelope::Res { ok: true, .. }), "{res:?}");
+    let status = call(&mut ws, "status.get", serde_json::json!({})).await;
+    let Envelope::Res { result: Some(r), .. } = status else { panic!() };
+    let selected: Vec<_> = r["browsers"].as_array().unwrap().iter().filter(|b| b["selected"] == true).collect();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0]["clientId"], "cli-9");
+    assert_eq!(selected[0]["connected"], false);
+    let saved = agent_browser_bridge::config::load_or_init(home.path()).unwrap();
+    assert_eq!(saved.selected_client_id.as_deref(), Some("cli-9"));
+}
+
+#[tokio::test]
+async fn abort_without_active_operation_reports_not_aborted() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut ws = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut ws, "extension", &cfg.token, "cli-1").await;
+    let res = call(&mut ws, "operation.abort", serde_json::json!({})).await;
+    let Envelope::Res { ok: true, result: Some(r), .. } = res else { panic!("{res:?}") };
+    assert_eq!(r["aborted"], false);
+}
+
+#[tokio::test]
+async fn status_changed_is_broadcast_when_another_browser_connects() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut a = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut a, "extension", &cfg.token, "cli-1").await;
+    let mut b = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut b, "extension", &cfg.token, "cli-2").await;
+    // `a` first sees its own registration, then cli-2 joining; wait until both browsers are listed.
+    loop {
+        let data = next_event(&mut a, "status.changed").await;
+        if data["browsers"].as_array().is_some_and(|b| b.len() == 2) {
+            break;
+        }
+    }
+}
