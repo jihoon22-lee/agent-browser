@@ -24,6 +24,9 @@ try {
     } finally { $archive.Dispose() }
     $extract=Join-Path $root 'extracted'; [IO.Compression.ZipFile]::ExtractToDirectory($second.Package,$extract)
     $null=Read-VerifiedPackage $extract
+    $inventory=Read-Utf8Text (Join-Path $extract 'third-party-inventory.json') | ConvertFrom-Json
+    Assert (@($inventory.packages | Where-Object { $_.name -eq 'catppuccin/palette' -and $_.version -eq '1.8.0' -and $_.license -eq 'MIT' }).Count -eq 1) 'Vendored palette license/provenance missing from release inventory'
+    Assert ((Read-Utf8Text (Join-Path $extract 'THIRD_PARTY_NOTICES')).Contains('catppuccin/palette 1.8.0')) 'Palette license text missing from release notices'
     foreach ($document in Get-ChildItem -LiteralPath $extract -Recurse -Filter '*.md') {
         foreach ($match in [regex]::Matches((Read-Utf8Text $document.FullName), '\]\(([^)]+)\)')) {
             $link=$match.Groups[1].Value

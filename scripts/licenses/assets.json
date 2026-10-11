@@ -1,0 +1,13 @@
+[
+  {
+    "name": "catppuccin/palette",
+    "version": "1.8.0",
+    "license": "MIT",
+    "source": "https://github.com/catppuccin/palette/tree/07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd",
+    "asset": "extension/src/theme/catppuccin-palette.json",
+    "assetSha256": "4bc114bb6b3c9a9c9e156564aa84625aef32c5da514d9dd431cf1fcad433a05f",
+    "licenseFile": "scripts/licenses/catppuccin-palette-1.8.0-LICENSE",
+    "licenseSha256": "814096d2c34cc216c624738a49356f32b7237733b4f7edb0685f4e50ef5074ba",
+    "licenseSource": "https://github.com/catppuccin/palette/blob/07d02aa110ef9eb7e7427afca5c73ba9cf7f8ebd/LICENSE"
+  }
+]

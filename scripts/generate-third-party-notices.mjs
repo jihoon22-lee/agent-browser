@@ -78,8 +78,17 @@ async function walkNpm(name, from) {
 const extensionManifest = join(root, 'extension', 'package.json');
 const extension = JSON.parse(await readFile(extensionManifest, 'utf8'));
 for (const name of Object.keys(extension.dependencies ?? {})) await walkNpm(name, extensionManifest);
+const assetManifest = join(root, 'scripts', 'licenses', 'assets.json');
+const assets = JSON.parse(await readFile(assetManifest, 'utf8'));
+for (const asset of assets) {
+  const bytes = await readFile(join(root, asset.asset));
+  const text = await readFile(join(root, asset.licenseFile), 'utf8');
+  const sha256 = createHash('sha256').update(text).digest('hex');
+  if (createHash('sha256').update(bytes).digest('hex') !== asset.assetSha256 || sha256 !== asset.licenseSha256) throw new Error('Vendored asset or license checksum mismatch: ' + asset.name);
+  inventory.push({ ecosystem: 'vendored', name: asset.name, version: asset.version, license: asset.license, source: asset.source, assetSha256: asset.assetSha256, files: [{ name: 'LICENSE', text, sha256, source: asset.licenseSource }] });
+}
 inventory.sort((a,b) => (a.ecosystem + '/' + a.name + '/' + a.version).localeCompare(b.ecosystem + '/' + b.name + '/' + b.version));
-const heading = ['AgentBrowser third-party notices', '', 'Inventory: Windows x64 Bridge normal/build dependency closure and bundled Extension production dependencies.', 'Generated from the locked build dependency metadata. Package source directories and user configuration are not included.', 'The texts below are the upstream license/notice files as distributed with each dependency.', ''];
+const heading = ['AgentBrowser third-party notices', '', 'Inventory: Windows x64 Bridge normal/build dependency closure, bundled Extension production dependencies, and pinned vendored visual assets.', 'Generated from the locked build dependency metadata and verified asset/license checksums. Package source directories and user configuration are not included.', 'The texts below are the upstream license/notice files as distributed with each dependency.', ''];
 for (const item of inventory) {
   heading.push('='.repeat(78), `${item.ecosystem}: ${item.name} ${item.version}`, `License: ${item.license}`, `Source: ${item.source}`, '');
   for (const file of item.files) heading.push(`--- ${file.name} ---`, file.text.trimEnd(), '');
@@ -87,5 +96,5 @@ for (const item of inventory) {
 await mkdir(output, { recursive: true });
 await writeFile(join(output, 'THIRD_PARTY_NOTICES'), heading.join('\n') + '\n');
 const hashFile = async path => createHash('sha256').update(await readFile(path)).digest('hex');
-await writeFile(join(output, 'third-party-inventory.json'), JSON.stringify({ target, cargoLockSha256: await hashFile(join(root, 'Cargo.lock')), pnpmLockSha256: await hashFile(join(root, 'pnpm-lock.yaml')), extensionPackageSha256: await hashFile(extensionManifest), packages: inventory.map(({ files, ...item }) => ({ ...item, files: files.map(({ name, sha256, source }) => ({ name, sha256, ...(source ? { source } : {}) })) })) }, null, 2) + '\n');
+await writeFile(join(output, 'third-party-inventory.json'), JSON.stringify({ target, cargoLockSha256: await hashFile(join(root, 'Cargo.lock')), pnpmLockSha256: await hashFile(join(root, 'pnpm-lock.yaml')), extensionPackageSha256: await hashFile(extensionManifest), assetsManifestSha256: await hashFile(assetManifest), packages: inventory.map(({ files, ...item }) => ({ ...item, files: files.map(({ name, sha256, source }) => ({ name, sha256, ...(source ? { source } : {}) })) })) }, null, 2) + '\n');
 console.log(`Third-party notices generated: ${inventory.length} packages -> ${output}`);

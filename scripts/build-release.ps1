@@ -39,7 +39,7 @@ foreach ($path in @($BridgeExe, (Join-Path $ExtensionDir 'manifest.json'), (Join
 $binaryVersion = & $BridgeExe --version
 if ($LASTEXITCODE -ne 0 -or ([string]$binaryVersion).Trim() -ne ('browser-bridge ' + $Version)) { throw 'Executable version does not match the requested release.' }
 $inventory = (Read-Utf8Text (Join-Path $NoticesDir 'third-party-inventory.json')) | ConvertFrom-Json
-if ($inventory.cargoLockSha256 -ne (Get-FileSha256 (Join-Path $repo 'Cargo.lock')) -or $inventory.pnpmLockSha256 -ne (Get-FileSha256 (Join-Path $repo 'pnpm-lock.yaml')) -or $inventory.extensionPackageSha256 -ne (Get-FileSha256 (Join-Path $repo 'extension\package.json'))) { throw 'Third-party inventory is stale. Regenerate it from the current locked dependencies.' }
+if ($inventory.cargoLockSha256 -ne (Get-FileSha256 (Join-Path $repo 'Cargo.lock')) -or $inventory.pnpmLockSha256 -ne (Get-FileSha256 (Join-Path $repo 'pnpm-lock.yaml')) -or $inventory.extensionPackageSha256 -ne (Get-FileSha256 (Join-Path $repo 'extension\package.json')) -or $inventory.assetsManifestSha256 -ne (Get-FileSha256 (Join-Path $repo 'scripts\licenses\assets.json'))) { throw 'Third-party inventory is stale. Regenerate it from the current locked dependencies and assets.' }
 Assert-PlainPath $OutDir
 if (-not (Test-Path -LiteralPath $OutDir)) { $null=New-Item -ItemType Directory -Path $OutDir -Force }
 $stage=Join-Path $OutDir ('.package-' + [guid]::NewGuid().ToString('N'))
