@@ -3,7 +3,7 @@
 ## 현재 단계
 
 **M1 브라우저 제어 구현 — 진행 중**(브랜치 `feat/m1-browser-control`).
-M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–12 구현 완료, Task 13 결정적 E2E 검증 중, Task 14–15 남음.
+M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현·Linux 검증 완료, 전체 브랜치 검토 및 Task 14–15 Windows 검증 남음.
 **이어서 작업하려면 [m1-resume.md](./m1-resume.md)를 먼저 읽는다.**
 
 ## 실측 환경 (2026-10-11, main)
@@ -47,6 +47,8 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–12 구현
 
 | 2026-10-11 | M1 Task 11: SW 탭·문서 라우팅, 원자적 요청 중복 방지, 실행 중 취소, 캡처 보호, 탭 종료 복구, HMAC 상호 인증 | 실패 테스트 확인 후 구현. Extension 전체 15파일 111/111(동시 구현된 Task 12 테스트 포함), TypeScript/Vite 빌드 성공. Bridge 전체 Linux 78/78(lib 27, MCP 5, protocol 4, auth 23, port 2, router 17). Windows 검증 아님 |
 | 2026-10-11 | M1 Task 12: 한국어 최소 패널(연결·작업 탭·최근 20개 기록·중단·브라우저 선택) | reducer 7 + React 통합 6 통과(Extension 111개 실행에 포함). 오류/재연결 복구, 오래된 초기 응답 경합, 다른 프로필 tabId 혼동 방지, React 텍스트 렌더링 검증. TypeScript/Vite 빌드 성공 |
+| 2026-10-11 | M1 Task 13: `pnpm --filter agent-browser-e2e exec playwright test`, fixture 서버 테스트 | 실제 Linux Bridge + 확장 + Chromium 156.0.8078.4에서 20/20 통과, fixture 3/3 통과. S12 초기 관찰 방식 실패는 CDP stopped/timeOrigin 검증으로 수정. S13 제출 응답 보류→Bridge/SW 재시작→동일 ID replay에도 제출 1회. [테스트 문서](./testing.md) |
+| 2026-10-11 | Task 11 이후 `cargo xwin build --offline --locked -p agent-browser-bridge --release --target x86_64-pc-windows-msvc` | HMAC 포함 Windows exe 빌드 성공. 이 행은 Windows 실행 증거가 아님 |
 
 ## 미검증
 
