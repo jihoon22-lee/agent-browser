@@ -2,11 +2,12 @@
 
 ## 현재 단계
 
-**M2–M4 구현·검증·Windows 설치·v0.1.0 시험 배포 완료**(브랜치 `feat/m2-m4-usable-release`).
+**M2–M4 및 실제 사용 피드백 수정·문서 보완 완료. PR #1 main 병합, Linux/Windows CI 통과, v0.1.1 시험 배포와 이 PC 업데이트 완료.**
+배포 소스는 main 병합 커밋 `4cfae595230db2f359973ef5c2f98c07c550be00`이다. 상세 링크·해시·검증 범위는 아래 최종 결과에 있다.
 M0 환경 실측·OpenCode v1 명세 확보 완료. M1 Task 1–13 구현과 전체 브랜치 검토·수정 완료.
 Task 14의 실제 Windows Chrome 회귀 26/26과 Task 15 네이티브 OpenCode API 검증은 통과했다.
 **사용자 결정(2026-10-11)**: 실제 OpenCode 모델 테스트는 배포 후 사용자가 수행한다. 기존 HTTP 403·도구 0건 결과는 유지하며, 이 항목을 다음 단계 진행/배포의 차단 조건에서 제외한다. M2–M4 구현과 모델 호출 없는 검증을 완료했고 v0.1.0 설치 패키지를 생성했다.
-M2–M4의 완료 기록은 [해당 계획](./plans/2026-10-11-m2-m4-usable-release.md)에 있다. 현재 후속 작업은 [배포 문서·PR·CI 계획](./plans/2026-10-11-release-readiness.md)을 따른다. [m1-resume.md](./m1-resume.md)는 이전 단계의 역사 기록이다.
+M2–M4의 완료 기록은 [해당 계획](./plans/2026-10-11-m2-m4-usable-release.md)에 있다. 후속 사용성·배포 작업의 완료 기록은 [배포 문서·PR·CI 계획](./plans/2026-10-11-release-readiness.md)에 있다. [m1-resume.md](./m1-resume.md)는 이전 단계의 역사 기록이다.
 
 ## 실측 환경 (2026-10-11)
 
@@ -161,7 +162,7 @@ CI 구성, PR 검토·main 머지와 Release 결과는 이 절에 실제 확인 
 독립 검토에서 중요 지적 없음. MSVC 0.1.1 빌드·Extension 빌드 성공, Cargo metadata의 MIT 상속 확인.
 
 
-## 0.1.1 실제 사용 피드백 수정 — 진행 중
+## 0.1.1 실제 사용 피드백 수정·검증 기록
 
 사용자가 Chrome 로드·페어링을 마치고 실제 대화를 실행했다. 아래 진단은 최초 연결 대기 기록 이후이며,
 실제 대화·웹페이지 원문·자격증명은 fixture나 배포물에 포함하지 않았다.
@@ -179,7 +180,7 @@ CI 구성, PR 검토·main 머지와 Release 결과는 이 절에 실제 확인 
   영향받는 기존 M1 시나리오 6/6 통과. 사용자 Chrome과 설치 Bridge는 중단하지 않았다.
 - Catppuccin palette 1.8.0의 고정 소스·MIT 원문·해시를 고지 생성기에 추가했다. 제3자 항목은 163개.
 - 첫 원격 CI의 Windows 초기화 잠금 경합 수정. 두 번째 Linux CI는 자식 프로세스의 exec 전 이미지 경로를
-  기록한 것이 소유권 불일치 원인임을 로그로 확인하고 수정했다. 원격 CI 전체 통과·main 머지·0.1.1 발행은 아직 하지 않았다.
+  기록한 것이 소유권 불일치 원인임을 로그로 확인하고 수정했다. 당시 원격 CI 전체 통과·main 머지·0.1.1 발행 전이었으며 최종 결과는 아래에 기록했다.
 
 - 원격 Windows 두 번째 CI는 Rust·Chrome 32개·JSONC를 통과한 뒤 한글 Startup 경로 저장에 실패했다.
   WScript.Shell의 파일명 ANSI 변환을 로컬 이모지 경로로 재현했고 IShellLinkW/IPersistFile로 수정했다.
@@ -200,3 +201,31 @@ CI 구성, PR 검토·main 머지와 Release 결과는 이 절에 실제 확인 
   Clippy도 완료했으며 기존 스타일/복잡도 경고가 남아 있다. 실제 모델 호출은 하지 않았다.
 
 - 최종 UI 포함 0.1.1 패키징 3/3 통과. Windows에서 WSL 공유 폴더의 기존 SHA256SUMS를 File.Replace로 교체하지 못하는 빌드 wrapper 문제는 새 임시 출력 후 WSL rename으로 처리했다.
+
+
+## v0.1.1 최종 배포·설치 결과
+
+- [PR #1](https://github.com/jihoon22-lee/agent-browser/pull/1)을 2026-10-11 main에 병합했다.
+  검토한 PR head `d3e8bee`와 merge `4cfae595230db2f359973ef5c2f98c07c550be00`의 파일 트리는 동일하다.
+- [최종 PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38126797768)와
+  [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38127471889)가 Linux·Windows 모두 성공했다.
+  앞선 두 실패 실행은 삭제하지 않았으며 원인·수정은 위 기록에 남겼다. 테스트를 건너뛰어 성공 처리하지 않았다.
+- 위 main 커밋으로 MSVC exe·확장·패키지를 다시 만들고 실제 Windows Chrome 47/47을 재실행했다.
+  최종 exe SHA-256은 `055f81a58681f6418a9ae3bfa3262fd316d9270face30c71d81712654dbf3d8a`.
+  같은 exe로 관리 런타임 정리 3/3·패키징 3/3도 통과했다. ZIP의 exe와 확장 JS가 검사한 파일과 일치한다.
+- [v0.1.1 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.1) 게시 완료.
+  비공개 저장소의 prerelease이며 draft가 아니다. 태그는 위 main 병합 커밋을 가리킨다.
+- ZIP `agent-browser-0.1.1-windows-x64.zip`: 3,410,517 bytes, 파일 31개, 제3자 고지 163개.
+  SHA-256 `11eb24028a265fa24d0a76d60bc725f32c195e20100d3e4c7ff0127da7304efd`.
+  GitHub가 반환한 asset digest, 로컬 파일, manifest 모든 파일의 해시를 확인했다.
+- v0.1.0 태그·ZIP을 변경하지 않았다. 기존 ZIP SHA-256 `909021621dbf3c578496f760524c233f5a51556ec480adbfb1ccee16cd57ac0f` 유지.
+- 실제 설치 `%LOCALAPPDATA%\AgentBrowser`를 0.1.1로 업데이트했다. 적용 전 OpenCode의 busy/retry 작업이
+  없음을 두 번 확인했고, 페어링 토큰·프로필·기본 프로필·전역 WSL OpenCode 설정 보존을 검사했다.
+  관리 OpenCode 서버를 유지한 채 Bridge를 교체했다. 관측된 새 Bridge PID 34988, 포트 4317.
+- 업데이트 후 진단: Bridge 인증·실행 파일·OpenCode ready·browser MCP 연결 정상. CLI의 Extension 경고는
+  실제 Chrome 연결 상태를 직접 증명하지 않는다는 안내이며, 모델 추론 검사는 실행하지 않았다.
+- 다운로드 폴더에 ZIP·`AgentBrowser-0.1.1-SHA256SUMS`·압축 해제 폴더 `AgentBrowser-0.1.1`을 준비했다.
+  사용자에게 `chrome://extensions`에서 AgentBrowser 새로고침 후 패널을 다시 열도록 안내했다.
+  실제 개인 Chrome의 새로고침과 새 버전에서의 모델 작업 재확인은 사용자 단계다.
+
+이 배포 후 기록 수정은 `docs/status.md`와 완료 계획만 갱신한다. 게시한 태그·패키지·제품 코드를 바꾸지 않는다.

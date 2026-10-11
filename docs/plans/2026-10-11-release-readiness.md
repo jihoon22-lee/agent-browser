@@ -15,12 +15,12 @@
 - [x] 사용자/유지보수 문서 작성과 README·설치·상태·역사 문서 링크/표현 정리.
 - [x] 새 문서를 zip에 포함하고 누락·링크·버전 검사를 추가. 0.1.1 패키지 생성 및 Windows 설치/문서 보존 검사.
 - [x] GitHub Actions에 고정 도구·의존성 기반 Linux/Windows 결정적 검증 구성. 실제 LLM 호출 제외.
-- [ ] 문서/패키징/CI 최종 검토, PR 생성, 원격 CI 실패 원인 수정과 통과 확인.
-- [ ] main 머지, 머지 결과 확인, main의 정확한 커밋으로 0.1.1 Release 게시와 해시 확인.
-- [ ] 사용자에게 현재 설치에서 바로 연결하는 절차, 문서 위치와 최종 PR/CI/Release 결과 전달.
+- [x] 문서/패키징/CI 최종 검토, PR 생성, 원격 CI 실패 원인 수정과 통과 확인.
+- [x] main 머지, 머지 결과 확인, main의 정확한 커밋으로 0.1.1 Release 게시와 해시 확인.
+- [x] 사용자에게 현재 설치에서 바로 연결하는 절차, 문서 위치와 최종 PR/CI/Release 결과 전달.
 
 
-## 실제 사용 피드백 반영 — 남은 작업 순서 (2026-10-11)
+## 실제 사용 피드백 반영 — 완료한 작업 (2026-10-11)
 
 문서/CI만 완료하고 머지하지 않는다. 아래 사용자 보고와 사용성 요구를 같은 PR의 완료 조건에 추가한다.
 
@@ -57,4 +57,17 @@
 
 최종 로컬 검증: Rust 117, Extension 242, Node 28, Linux Chromium 47, 실제 Windows Chrome 47,
 Windows 설치 13, 패키징 3 통과. 독립 검토의 동일 프레임 사용자 입력 경합도 재현·수정했다.
-화면/세션/완료 상태/새 탭/테마 구현과 사용자 문서 갱신 완료. 최종 원격 CI와 main/Release 확인을 남겼다.
+화면/세션/완료 상태/새 탭/테마 구현과 사용자 문서 갱신 완료. 최종 PR CI와 main CI도 모두 통과했고 main 병합·v0.1.1 배포·이 PC 업데이트를 완료했다.
+
+
+## 완료 근거
+
+- [PR #1 병합](https://github.com/jihoon22-lee/agent-browser/pull/1), main 소스 `4cfae595230db2f359973ef5c2f98c07c550be00`.
+- [최종 PR CI 성공](https://github.com/jihoon22-lee/agent-browser/actions/runs/38126797768),
+  [main CI 성공](https://github.com/jihoon22-lee/agent-browser/actions/runs/38127471889).
+- [v0.1.1 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.1), 체크섬과 설치 결과는 [상태](../status.md).
+- 최종 배포 exe로 Windows Chrome 47개, 런타임 정리 3개, 패키징 3개를 확인했다.
+  실제 설치는 작업이 없음을 확인한 뒤 0.1.1로 업데이트했고 Chrome 확장 새로고침을 안내했다.
+- 실제 모델 작업 재확인과 사내 환경·로그인 후 자동 실행 검증은 사용자 범위이며 성공으로 기록하지 않았다.
+
+이 계획은 완료 기록이다. 새 작업의 원장으로 사용하지 않는다.
