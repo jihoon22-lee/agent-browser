@@ -24,7 +24,7 @@ export function useWorkbench() {
   // Child lists keyed by parent ID. A missing key means "not checked yet", so the tree shows no toggle.
   const [childIndex, setChildIndex] = useState<Record<string, Data[]>>({});
   const childQueue = useRef<string[]>([]), childRequested = useRef(new Set<string>()), childActive = useRef(0);
-  const lastMessageEvent = useRef(new Map<string, number>());
+  const lastMessageEvent = useRef(new Map<string, number>()), rerunDetails = useRef(false), previousStatus = useRef({ id: "", type: undefined as string | undefined });
   const currentProfile = useRef(""), selectionRevision = useRef(0);
   const captureScope = useCallback(() => { const revision = epoch.current, selection = selectionRevision.current; return () => revision === epoch.current && selection === selectionRevision.current; }, []);
   const fail = (value: unknown) => setError(value instanceof Error ? value.message : String(value));
@@ -93,7 +93,9 @@ export function useWorkbench() {
   const remember = (messages: UiMessage[], api: OpenCodeV1Client) => { for (const [operationID, sessionID] of Object.entries(operationBindings(messages))) bindings.current.set(operationID, { client: api, sessionID, profileId: currentProfile.current, directory: api.directory }); };
   const resync = useCallback(async (refreshDetails = true) => {
     const api = client.current, revision = epoch.current, id = selected.current;
-    if (!api || syncing.current) return;
+    if (!api) return;
+    // A detailed refresh requested mid-sync (e.g. the run just finished) must not be dropped.
+    if (syncing.current) { if (refreshDetails) rerunDetails.current = true; return; }
     syncing.current = true; buffered.current = [];
     try {
       if (refreshDetails) void refreshSessions().catch(value => { if (revision === epoch.current) fail(value); });
@@ -125,7 +127,8 @@ export function useWorkbench() {
         // authoritative updates; reconcile buffered deltas with another snapshot instead
         // of appending them twice to the newly fetched message text.
         for (const event of events) if (event.type !== "message.part.delta") dispatch({ type: "event", event });
-        if (events.some(event => event.type === "message.part.delta")) { clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => void resync(), 300); }
+        const rerun = rerunDetails.current; rerunDetails.current = false;
+        if (rerun || events.some(event => event.type === "message.part.delta")) { clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => void resync(), rerun ? 50 : 300); }
       }
     }
   }, [refreshSessions]);
@@ -150,6 +153,15 @@ export function useWorkbench() {
     timer = setTimeout(() => void tick(), 2_000);
     return () => { active = false; clearTimeout(timer); };
   }, [sessionId, runtime, state.statuses[sessionId]?.type, watchRevision, resync]);
+  // When the selected run ends, fetch once with details: the final message, todos and the file diff
+  // are only guaranteed after completion, and the busy poll does not fetch them.
+  const selectedStatus = state.statuses[sessionId]?.type;
+  useEffect(() => {
+    const previous = previousStatus.current; previousStatus.current = { id: sessionId, type: selectedStatus };
+    if (previous.id === sessionId && (previous.type === "busy" || previous.type === "retry") && selectedStatus === "idle" && client.current) {
+      clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => void resync(), 50);
+    }
+  }, [sessionId, selectedStatus, resync]);
   useEffect(() => {
     const restore = () => { if (document.visibilityState !== "hidden" && client.current && selected.current) void resync(false); };
     document.addEventListener("visibilitychange", restore); window.addEventListener("focus", restore);
@@ -180,7 +192,12 @@ export function useWorkbench() {
         if (event.type.startsWith("message.")) { const sessionID = properties.sessionID ?? properties.info?.sessionID ?? part?.sessionID; if (sessionID) lastMessageEvent.current.set(sessionID, Date.now()); }
         // Session and todo events carry the new state; applying them directly avoids refetching the whole conversation.
         const info = properties.info;
-        if (event.type === "session.updated") updateSession(info);
+        if (event.type === "session.updated") {
+          updateSession(info);
+          // Activity reorders the root list; one debounced list GET keeps the order without refetching messages.
+          if (info && !info.parentID) { clearTimeout(listTimer.current); listTimer.current = setTimeout(() => void refreshSessions().catch(() => {}), 1_000); }
+        }
+        if (event.type === "session.diff" && properties.sessionID === selected.current && Array.isArray(properties.diff)) setDiff(properties.diff);
         if (event.type === "session.created" && info?.id) {
           mergeSessions([info]);
           if (info.parentID) {

@@ -408,3 +408,18 @@ it("keeps message actions to the relevant role and hides empty reasoning", async
   expect(turn.querySelectorAll("article.message > header")).toHaveLength(1);
   expect(turn.querySelector(".tool-card summary")?.textContent).toContain("e12");
 });
+it("refreshes the conversation and file changes once when the selected run finishes", async () => {
+  await render();
+  await act(async () => test.stream({ id: "evt-run-busy", type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } }));
+  const diffs = () => test.get.mock.calls.filter(([path]) => path === "/session/ses-one/diff").length, before = diffs();
+  messages.push({ info: { ...info, id: "msg-finished", role: "assistant", time: { created: 2, completed: 3 } }, parts: [{ id: "prt-finished", type: "text", text: "완료 후 확인한 최종 응답" }] });
+  await act(async () => test.stream({ id: "evt-run-idle", type: "session.idle", properties: { sessionID: "ses-one" } }));
+  await act(async () => new Promise(resolve => setTimeout(resolve, 200)));
+  expect(diffs()).toBe(before + 1);
+  expect(host.textContent).toContain("완료 후 확인한 최종 응답");
+});
+it("applies a session.diff event to the selected session's file changes", async () => {
+  await render();
+  await act(async () => test.stream({ id: "evt-diff", type: "session.diff", properties: { sessionID: "ses-one", diff: [{ file: "src/이벤트-변경.ts", additions: 3, deletions: 1 }] } }));
+  expect(host.textContent).toContain("src/이벤트-변경.ts");
+});
