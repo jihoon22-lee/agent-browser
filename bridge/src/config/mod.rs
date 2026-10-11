@@ -45,9 +45,23 @@ pub fn load_or_init(home: &Path) -> anyhow::Result<Config> {
 pub fn save(home: &Path, cfg: &Config) -> anyhow::Result<()> {
     std::fs::create_dir_all(home).with_context(|| format!("cannot create {}", home.display()))?;
     let tmp = home.join(format!("{FILE}.tmp-{}", std::process::id()));
-    std::fs::write(&tmp, serde_json::to_vec_pretty(cfg)?)?;
+    write_private(&tmp, &serde_json::to_vec_pretty(cfg)?)?;
     std::fs::rename(&tmp, home.join(FILE))?;
     Ok(())
+}
+
+/// The file holds the pairing token. On Unix it is created owner-only; on Windows the
+/// per-user `%LOCALAPPDATA%` directory's inherited ACL already limits it to the user.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)?.write_all(bytes)
 }
 
 pub fn tokens_equal(a: &str, b: &str) -> bool {
@@ -97,6 +111,16 @@ mod tests {
         assert!(tokens_equal("abc", "abc"));
         assert!(!tokens_equal("abc", "abd"));
         assert!(!tokens_equal("abc", "abcd"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_file_holding_the_token_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        load_or_init(dir.path()).unwrap();
+        let mode = std::fs::metadata(dir.path().join("config.json")).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
