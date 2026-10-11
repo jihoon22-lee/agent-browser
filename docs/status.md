@@ -39,6 +39,7 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 �
 | 2026-10-11 | M1 Task 6 후속(보안 리뷰 반영, 입력 검증): `--test tool_router`(Linux) | 13/13 통과 — 스키마에 선언되지 않은 인수는 브라우저로 전달하지 않고, http(s) 이외 URL은 `UNSUPPORTED_PAGE`로 브리지에서 거부 |
 | 2026-10-11 | M1 Task 8: `vitest run`(extension, jsdom, 가짜 WebSocket·타이머), `pnpm --filter agent-browser-extension build` | 단위 14/14 통과(protocol 4, bridge-connection 6, sender 4). 빌드 성공(`dist/`에 manifest·background·options·content 생성). **실제 Chrome에 로드한 검증은 미실시**(Task 14) |
 | 2026-10-11 | M1 Task 9: `vitest run test/snapshot.test.ts`(jsdom) 및 extension 전체, build | snapshot 8/8, extension 전체 23/23 통과, 빌드 성공. jsdom에는 레이아웃이 없어 `checkLayout:true` 경로(실제 가시성)와 `innerText`는 **실제 Chrome에서 미검증**(Task 13·14) |
+| 2026-10-11 | M1 Task 10: `vitest run`(jsdom) actions·extract 및 extension 전체, build | actions 11 + extract 4, extension 전체 39/39 통과, 빌드 성공. 클릭 가림 판정(`elementFromPoint`)·실제 스크롤·실제 키 이벤트는 jsdom에 레이아웃이 없어 **미검증**(Task 13·14) |
 
 ## 미검증
 
@@ -63,4 +64,4 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 �
 
 ## 다음 작업
 
-1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 10(content script 조작·대기·추출)부터 순서대로 구현.
+1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 11(Service Worker 명령 처리)부터 순서대로 구현.
