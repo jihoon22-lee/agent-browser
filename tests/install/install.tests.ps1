@@ -37,7 +37,8 @@ try {
     $package1 = New-TestPackage 'package 1' '0.1.0'
     $package2 = New-TestPackage 'package 2' '0.2.0'
     $install = Join-Path $testRoot '사용자 설치 & 공백'
-    $startup = Join-Path $testRoot '합성 Startup'
+    # Include a character outside legacy Windows ANSI code pages on every locale.
+    $startup = Join-Path $testRoot ('합성 Startup ' + [char]::ConvertFromUtf32(0x1F9EA))
     $settings = Join-Path $testRoot 'OpenCode 설정.jsonc'
     $original = '{ // keep Korean comment: 보존' + "`r`n" + '"model":"corp/model","provider":{"corp":{"options":{"apiKey":"synthetic-not-a-secret"}}},"mcp":{"other":{"type":"local","command":["other.exe"]},},}'
     Write-Utf8Atomic $settings $original
@@ -160,6 +161,21 @@ try {
     }
     if (-not $SkipProcessTests) {
         $liveInstall=Join-Path $testRoot '실행 설치'; $liveStartup=Join-Path $testRoot 'startup live'; $activeInstalls.Add($liveInstall); $port=Free-Port
+        Case 'Unicode Startup shortcut launches the installed Bridge' {
+            $unicodeStartup=Join-Path $testRoot ('startup launch ' + [char]::ConvertFromUtf32(0x1F9EA))
+            $null=& (Join-Path $package1 'setup.ps1') -InstallDir $liveInstall -StartupDir $unicodeStartup -Port $port -NoStart -Quiet
+            $liveState=Read-InstallState $liveInstall
+            Start-Process -FilePath (Join-Path $unicodeStartup 'AgentBrowser.lnk')
+            $verified=$null
+            for ($attempt=0; $attempt -lt 150; $attempt++) {
+                $verified=Get-VerifiedBridgeProcess $liveState
+                if ($verified) { break }
+                Start-Sleep -Milliseconds 200
+            }
+            Assert ($null -ne $verified) 'Unicode Startup shortcut did not launch its owned Bridge'
+            $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $liveInstall -RemoveData -Quiet
+            Assert (-not (Get-Process -Id ([int]$verified.Marker.Pid) -ErrorAction SilentlyContinue)) 'Shortcut-launched Bridge survived uninstall'
+        }
         Case 'immediate detached start, repeated start, upgrade and exact-owned stop' {
             $first=& (Join-Path $package1 'setup.ps1') -InstallDir $liveInstall -StartupDir $liveStartup -Port $port -Quiet
             Assert $first.Running.running 'Setup did not start Bridge'

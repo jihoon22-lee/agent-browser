@@ -317,20 +317,59 @@ function New-StartupShortcut([string]$Path, [string]$InstallDir) {
     Assert-PlainPath $Path
     $parent = [IO.Path]::GetDirectoryName($Path)
     if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $null
-    try {
-        $shortcut = $shell.CreateShortcut($Path)
-        $shortcut.TargetPath = Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'
-        $shortcut.Arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $InstallDir 'start-bridge.ps1') + '"'
-        $shortcut.WorkingDirectory = $InstallDir
-        $shortcut.Description = 'AgentBrowser user-session Browser Bridge'
-        $shortcut.WindowStyle = 7
-        $shortcut.Save()
-    } finally {
-        if ($shortcut) { $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
-        $null = [Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
+    # WScript.Shell Save converts the link filename through the system ANSI code page.
+    # Use Unicode IShellLinkW + IPersistFile instead, including for the save path.
+    # Contract: https://learn.microsoft.com/windows/win32/shell/links
+    if (-not ('AgentBrowser.InstallerShortcut' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+namespace AgentBrowser {
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+    internal class ShellLink {}
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, uint flags);
+        void GetIDList(out IntPtr idList);
+        void SetIDList(IntPtr idList);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string value);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string value);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string value);
+        void GetHotkey(out short value);
+        void SetHotkey(short value);
+        void GetShowCmd(out int value);
+        void SetShowCmd(int value);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, out int index);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string path, int index);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, uint reserved);
+        void Resolve(IntPtr window, uint flags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
     }
+    public static class InstallerShortcut {
+        public static void Save(string path, string target, string arguments, string directory) {
+            object instance = new ShellLink();
+            try {
+                IShellLinkW link = (IShellLinkW)instance;
+                link.SetPath(target);
+                link.SetArguments(arguments);
+                link.SetWorkingDirectory(directory);
+                link.SetDescription("AgentBrowser user-session Browser Bridge");
+                link.SetShowCmd(7);
+                ((IPersistFile)instance).Save(path, true);
+            } finally { Marshal.FinalReleaseComObject(instance); }
+        }
+    }
+}
+'@
+    }
+    $target = Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'
+    $arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $InstallDir 'start-bridge.ps1') + '"'
+    [AgentBrowser.InstallerShortcut]::Save($Path, $target, $arguments, $InstallDir)
 }
 function Get-WslPath([string]$Path, [string]$Distribution) {
     if (-not $Distribution) { throw 'Specify -Distribution when generating a WSL MCP fragment.' }
