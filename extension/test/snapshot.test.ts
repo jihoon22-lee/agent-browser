@@ -47,6 +47,15 @@ describe("snapshot", () => {
     expect(s.elementsTruncated).toBe(true);
   });
 
+  it("does not leak the value of an unlabelled password field through its name", () => {
+    document.body.innerHTML = `<input type="password" value="secret"><input type="text" value="visible-value"><input type="submit" value="로그인">`;
+    const s = takeSnapshot(opts);
+    expect(JSON.stringify(s)).not.toContain("secret");
+    // a text field's value is reported in `value`, never borrowed as its name; a submit button's value is its label
+    expect(s.elements.find((e) => e.value === "visible-value")?.name).toBe("");
+    expect(s.elements.find((e) => e.role === "button")?.name).toBe("로그인");
+  });
+
   it("does not leak password values", () => {
     document.body.innerHTML = `<label for="p">비밀번호</label><input id="p" type="password" value="secret">`;
     const s = takeSnapshot(opts);

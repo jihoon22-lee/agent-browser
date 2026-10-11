@@ -48,7 +48,12 @@ export function accessibleName(el: Element): string {
   if (ph) return ph;
   const text = clean((el as HTMLElement).innerText ?? el.textContent);
   if (text) return text;
-  return clean(el.getAttribute("title")) || clean((el as HTMLInputElement).value);
+  const title = clean(el.getAttribute("title"));
+  if (title) return title;
+  // An input's value is what the user typed, not its name (and may be a password). Only
+  // submit/button/reset inputs use their value as the visible label.
+  if (el instanceof HTMLInputElement && ["submit", "button", "reset"].includes(el.type)) return clean(el.value);
+  return "";
 }
 
 export function walkDeep(root: Document | ShadowRoot, visit: (el: Element, inShadow: boolean) => void, inShadow = false) {
