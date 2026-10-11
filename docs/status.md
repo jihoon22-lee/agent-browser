@@ -11,13 +11,47 @@
 
 이전 단계의 계획·재개 기록은 git 이력에 있다(M1 계획, M2–M4 계획, 배포 준비 계획, `m1-resume.md`).
 
-## 리뷰 후속 수정 — 로컬 완료 (2026-10-11)
+## PR #3 2차 리뷰 수정 — 로컬 검증 완료
+
+- 기준 head: `60303431e70e947ec83d42f3535daed2bef860cf`. 원격/로컬 일치와 두 체크아웃의 clean 상태를 확인하고 시작했다. PR은 사용자가 전환한 일반 리뷰 상태를 유지한다.
+- 기존 [PR #3](https://github.com/jihoon22-lee/agent-browser/pull/3)의 네 P2 지적 모두 수정 전 실패를 확인한 실제 결함이다. 원본 main, 운영 설치, 전역 설정을 변경하지 않았다. 리뷰 스레드 댓글/해결 처리는 하지 않는다.
+
+| 리뷰 | 재현·수정 |
+|---|---|
+| [pending WSL owner](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4241916760) | 실제 Windows Rust 테스트에서 owner 게시를 늦춘 WSL 자식을 시작하고 초기 runtime.json 저장을 실패시켰다. 수정 전 terminate 반환 후 자식이 실행됨 → 수정 후 신원 게시를 기다려 정확한 group을 종료한다. 저장 성공 뒤에만 nonce별 start permit을 기록하며, WSL shell은 일치하는 permit 전에는 OpenCode를 exec하지 않는다. permit 없음/잘못된 nonce도 실패 테스트 후 통과했다. |
+| [삭제와 목록 응답](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4241916763) | 초기/검색/더 보기 응답 중 무관한 child 삭제가 오면 결과 전체가 버려지는 3개 실패를 확인했다. 삭제 시 목록 revision을 바꾸지 않고 tombstone으로 삭제 ID만 거른다. 로딩 상태도 진행 중 조회가 끝날 때 갱신한다. |
+| [연결 완료와 선택 저장](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4241916768) | provider 조회를 지연한 상태에서 다른 세션 선택/현재 세션 삭제를 각각 수행하면 connect의 이전 restored 값이 저장되는 2개 실패를 확인했다. 연결 완료 시 selected.current를 저장한다. |
+| [하위 조회 동시성 상한](https://github.com/jihoon22-lee/agent-browser/pull/3#discussion_r4241916773) | 미완료 child 조회를 둔 채 반복 SSE 재연결/프로필 전환 시 4개 제한을 넘는 2개 실패를 확인했다. freshness 세대는 결과 유효성만 제어하고 실제 미완료 요청 수는 세대와 무관하게 유지·감소시킨다. 이전 응답을 버리면서 슬롯이 비면 새 세대 queue를 실행한다. |
+
+WSL 정리는 제한된 재시도 뒤에도 신원을 확인할 수 없으면 확인되지 않은 프로세스를 강제로 죽이지 않는다. 초기 저장이 실패한 경우 start permit이 없어 늦게 시작한 shell도 OpenCode를 실행하지 못하며 permit 대기는 약 60초 후 종료된다. 정상 저장/시작, cd 실패, unknown marker 보존도 함께 검사했다.
+
+| 최종 로컬 검사 | 결과 |
+|---|---|
+| `pnpm --filter agent-browser-extension exec vitest run test/workbench.test.ts` | 64/64 통과. 새 UI 7개는 수정 전 모두 실패했다. |
+| `pnpm --filter agent-browser-extension test` | 279/279 통과. 첫 전체 실행은 동시 빌드 중 기존 snapshot-bounds의 5초 timeout 1건(278 pass)이 있었고, 코드/timeout 변경 없이 단독 5/5와 전체 279/279 재실행이 통과했다. |
+| `cargo test --offline --locked -p agent-browser-bridge` | 128 통과, 기존 별도 프로세스 helper 1 ignored. 기존 MCP 취소·router·runtime 회귀 포함. |
+| Windows lib 테스트 exe | 48 통과, WSL 필요 테스트 1 ignored. 해당 WSL 테스트는 아래 명령으로 별도 실행했다. |
+| Windows lib `--ignored --exact runtime::wsl_persist_failure_tests::review_pending_wsl_owner_is_cleaned_after_initial_persist_failure` | 수정 전 실패 → 최종 1/1 통과. 실제 Windows→WSL이며 합성 shell/sleep만 사용한다. |
+| Windows mcp_stdio 테스트 exe, Unix 전용 cleanup 1개 제외 | 최종 release exe로 7/7 통과. |
+| `AGENT_BROWSER_WINDOWS_TEST_DIR=<isolated-directory> bash scripts/test-windows.sh` | release/Extension 빌드 및 Windows Chrome E2E 48/48 통과. |
+| `xvfb-run -a pnpm --filter agent-browser-e2e test` | WSL Chromium E2E 48/48 통과. |
+| 기존 Windows/WSL 합성 runtime 7시나리오 | 모두 통과: .cmd health 실패, WSL cd 실패/unknown marker, 양쪽 doctor env 및 정상 재시작/재사용/Stop. |
+| `pnpm --filter agent-browser-e2e check`, Clippy, 문서 링크, `git diff --check` | 통과. Clippy의 기존 7곳 경고는 동일하며 새 경고는 없다. |
+
+검증한 Windows release SHA-256: `20e0fcea3f5526bd61d91909cd5fe375cac63e1eda787ed77754b354686ad7d5`.
+코드/테스트 diff SHA-256: `1f616a4076737fbab32412a7df06f404ac8204a90f54aeea3f4b0817c0b3327e` (기준 6030343, `bridge/src extension/src extension/test`).
+테스트 중 한 번의 합성 runtime 실행은 호출 환경변수가 누락되어 제품 시작 전에 중단됐으며, 명시적 환경으로 다시 실행한 위 7개 결과만 제품 검증으로 집계했다.
+
+변경 파일: `bridge/src/runtime/mod.rs`, `extension/src/sidepanel/use-workbench.ts`, `extension/test/workbench.test.ts`, `CHANGELOG.md`, `docs/status.md`, `docs/testing.md`.
+실제 모델·OpenCode CLI 전체 통합·사내 환경은 미검증이다. 새 Windows→WSL 테스트는 WSL 없는 hosted CI에서 기본 제외하며 로컬에서 명시적으로 실행했다. 원격 CI 결과는 PR의 해당 head 실행을 별도로 확인한다. 병합·배포·release·설치본 업데이트는 수행하지 않는다.
+
+## 리뷰 1차 수정 — 6030343 로컬 검증 (2026-10-11)
 
 - 기준: 로컬·원격 main `c3243f8419d54e87c073082f9fb6d4fbee150f49`. 시작 시 원격 main과 같았으며 기존 v0.1.2 Stop 수정도 확인했다.
 - 격리 worktree의 검토 브랜치: `feat/review-regressions`.
 - R01–R11 및 D01 모두 수정·회귀 검증 완료. 원본 main 체크아웃은 변경하지 않았다. 사용자가 승인한 24개 파일을 커밋·푸시하고 main 대상 draft PR로 제출한다. 병합·release·운영 설치 업데이트는 승인 범위에 없다.
 - 최종 Windows release exe SHA-256: `212e2f92f70530f3ad0afbfb3469a49df41a16dc187931fb7b0ecdd4fa074d06`.
-- 최종 코드·테스트 diff SHA-256: `4f26d4137d173be624d10c8fb0da41d2e3d280c39e62c05d1a2a1dcd6d704de2` (`git diff --binary c3243f8 HEAD -- bridge/src bridge/tests extension/src extension/test | sha256sum`). 이후 수정은 문서뿐이다.
+- 최종 코드·테스트 diff SHA-256: `4f26d4137d173be624d10c8fb0da41d2e3d280c39e62c05d1a2a1dcd6d704de2` (`git diff --binary c3243f8 6030343 -- bridge/src bridge/tests extension/src extension/test | sha256sum`). 아래는 6030343 제출 당시의 기록이다.
 - 아래 Windows MCP 취소·런타임 7시나리오·정리·Chrome E2E는 위 최종 release exe로 실행했다. Rust lib/router는 최종 소스에서 만든 Windows 테스트 exe 자체를 실행했다.
 
 | 결함 | 수정과 회귀 근거 |

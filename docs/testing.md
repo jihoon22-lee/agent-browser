@@ -280,3 +280,19 @@ WSL 배포 이름은 기본 Ubuntu이며 다른 이름은 `AGENT_BROWSER_TEST_WS
 각 실행은 고유 임시 home, 포트, 자식 서버만 사용한다. health-failure는 제품의 60초 health timeout을 실제로 기다린다.
 `healthy-fixture`는 ready·status·Bridge 재시작 재사용·Stop·프로필 삭제를 검사한다.
 `RUNTIME_SCENARIO`를 생략한 기존 모드는 실제 OpenCode를 사용하므로 위 합성 검증과 구분한다.
+
+
+### PR #3의 pending WSL 저장 실패 회귀
+
+`runtime::wsl_persist_failure_tests::review_pending_wsl_owner_is_cleaned_after_initial_persist_failure`는 Windows lib 테스트 exe에서 실행한다.
+기존 Ubuntu WSL 배포를 사용하며 고유 임시 home의 synthetic shell/sleep 프로세스만 시작·정리한다. 실제 OpenCode나 모델은 실행하지 않는다.
+WSL이 없는 hosted Windows runner에서 잘못 실패하지 않도록 기본 ignored이며, WSL 검증 PC에서는 반드시 명시적으로 실행한다.
+
+```powershell
+$testExe = '<copied Windows lib test exe>'
+& $testExe --ignored --exact runtime::wsl_persist_failure_tests::review_pending_wsl_owner_is_cleaned_after_initial_persist_failure
+```
+
+소유자 신원 게시를 늦추고 초기 runtime.json 저장을 실패시켜, cleanup 이후 서버 역할의 명령이 뒤늦게 실행되지 않는지 검사한다.
+Unix lib의 `review_wsl_launch_requires_matching_persisted_start_permit`는 같은 launch shell이 permit 없음/다른 nonce에서는 exec하지 않고 일치하는 저장 허가 뒤에만 실행하는지 검사한다.
+UI 후속 회귀는 기존 `workbench.test.ts`의 `review ` 테스트 7개로 초기·검색·추가 목록, 연결 중 선택/삭제, 반복 재연결/프로필 전환의 요청 상한을 검증한다.
