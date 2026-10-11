@@ -40,7 +40,7 @@ export function useWorkbench() {
       const next = await api.get<Data[]>("/session", { roots: true, limit: query.limit, ...(query.search ? { search: query.search } : {}) });
       if (revision !== epoch.current || request !== sessionListRevision.current) return;
       const roots = next.filter(session => !session.parentID && !deletedSessions.current.has(session.id));
-      setSessions(roots); mergeSessions(roots); setHasMoreSessions(roots.length >= query.limit);
+      setSessions(roots); mergeSessions(roots); setHasMoreSessions(next.length >= query.limit);
     } finally { if (revision === epoch.current && request === sessionListRevision.current) setSessionsLoading(false); }
   }, []);
   const loadMoreSessions = useCallback(async () => { sessionQuery.current = { ...sessionQuery.current, limit: sessionQuery.current.limit + 50 }; await refreshSessions(); }, [refreshSessions]);

@@ -550,3 +550,21 @@ it.each(['reconnect', 'profile change'])('review child discovery stays capped ac
   expect(peak).toBeLessThanOrEqual(4);
   expect(active).toBe(0);
 });
+
+it('review tombstoned roots keep the next page reachable', async () => {
+  sessions = Array.from({length: 70}, (_, i) => ({...sessions[0], id: i ? `ses-root-${i}` : 'ses-one', title: `페이지 결과 ${i}`}));
+  const original = test.get.getMockImplementation()!, pending = deferred<any[]>();
+  let held = true;
+  test.get.mockImplementation((path: string, query: any) => path === '/session'
+    ? held ? pending.promise : Promise.resolve(sessions.filter(session => session.id !== 'ses-one').slice(0, query.limit))
+    : original(path, query));
+  await render();
+  await act(async () => test.stream({type:'session.deleted', properties:{info:sessions[0]}}));
+  await act(async () => pending.resolve(sessions.slice(0, 50)));
+  expect(host.textContent).not.toContain('페이지 결과 0');
+  expect(button('더 보기')).toBeDefined();
+  held = false;
+  await act(async () => button('더 보기').click());
+  expect([...host.querySelectorAll('.session-tree > li strong')].map(element => element.textContent)).toEqual(sessions.slice(1).map(session => session.title));
+  expect(button('더 보기')).toBeUndefined();
+});
