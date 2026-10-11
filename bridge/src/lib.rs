@@ -1,5 +1,7 @@
 pub mod config;
+pub mod mcp;
 pub mod rpc;
+pub mod server;
 
 pub fn init_logging() {
     // stderr only: in `mcp` mode stdout belongs to the MCP transport.
@@ -13,8 +15,16 @@ pub fn init_logging() {
         .init();
 }
 
-pub fn run_serve(_port: Option<u16>) -> anyhow::Result<()> {
-    anyhow::bail!("serve is not implemented yet")
+pub fn run_serve(port: Option<u16>) -> anyhow::Result<()> {
+    let home = config::home_dir()?;
+    let cfg = config::load_or_init(&home)?;
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async move {
+        let handle = server::start(server::ServeOptions { home, port: port.unwrap_or(cfg.port) }).await?;
+        tokio::signal::ctrl_c().await.ok();
+        let _ = handle.shutdown.send(());
+        Ok(())
+    })
 }
 pub fn run_mcp() -> anyhow::Result<()> {
     anyhow::bail!("mcp is not implemented yet")

@@ -30,7 +30,8 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 �
 | 2026-10-11 | cargo-xwin으로 msvc exe 크로스 빌드 → `C:\...\ab 한글 probe\`(공백·한글 경로)에 복사 → WSL interop 실행 | 통과, `current_exe`가 Windows 경로로 출력 |
 | 2026-10-11 | M1 Task 1: `cargo test -p agent-browser-bridge --test protocol_contract`(Linux), `vitest run test/protocol-contract.test.ts` | 4/4, 4/4 통과 |
 | 2026-10-11 | M1 Task 2: `node --test tests/fixtures/server.test.mjs`(Linux) | 3/3 통과 |
-| 2026-10-11 | M1 Task 3: `cargo test -p agent-browser-bridge --lib config`(Linux). `browser-bridge pair`를 한글·공백 경로의 `AGENT_BROWSER_HOME`으로 Linux에서 수동 실행 | 5/5 통과, 토큰 64자 출력 |
+| 2026-10-11 | M1 Task 3: `cargo test -p agent-browser-bridge --lib config`(Linux). `browser-bridge pair`를 한글·공백 경로의 `AGENT_BROWSER_HOME`으로 Linux에서 수동 실행 | 5/5 통과, 토큰 64자 출력. 보안 리뷰 지적 반영(config.json 0600, Unix) 후 6/6 — Windows ACL은 미검증 |
+| 2026-10-11 | M1 Task 4: `cargo test -p agent-browser-bridge --test serve_auth`(Linux, 실제 WebSocket). `serve --port 0`을 SIGINT로 종료 | 13/13 통과(계획 9 + 추가 4), 종료 코드 0. Windows 포트 중복 bind는 Task 14에서 확인 예정 |
 
 ## 미검증
 
@@ -47,4 +48,4 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획의 Task 1부터 �
 
 ## 다음 작업
 
-1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 4(serve 리스너·인증)부터 순서대로 구현.
+1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 5(Extension 레지스트리·작업 게이트·명령 중계)부터 순서대로 구현.
