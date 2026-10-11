@@ -3,7 +3,7 @@
 ## 현재 단계
 
 **M1 브라우저 제어 구현 — 진행 중**(브랜치 `feat/m1-browser-control`).
-M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–10 구현 완료, Task 11–15 남음.
+M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–11 구현 완료, Task 12–15 진행 중/남음.
 **이어서 작업하려면 [m1-resume.md](./m1-resume.md)를 먼저 읽는다.**
 
 ## 실측 환경 (2026-10-11, main)
@@ -41,6 +41,11 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–10 구현
 | 2026-10-11 | M1 Task 8: `vitest run`(extension, jsdom, 가짜 WebSocket·타이머), `pnpm --filter agent-browser-extension build` | 단위 14/14 통과(protocol 4, bridge-connection 6, sender 4). 빌드 성공(`dist/`에 manifest·background·options·content 생성). **실제 Chrome에 로드한 검증은 미실시**(Task 14) |
 | 2026-10-11 | M1 Task 9: `vitest run test/snapshot.test.ts`(jsdom) 및 extension 전체, build | snapshot 8/8, extension 전체 23/23 통과, 빌드 성공. jsdom에는 레이아웃이 없어 `checkLayout:true` 경로(실제 가시성)와 `innerText`는 **실제 Chrome에서 미검증**(Task 13·14) |
 | 2026-10-11 | M1 Task 10: `vitest run`(jsdom) actions·extract 및 extension 전체, build | actions 11 + extract 4, extension 전체 39/39 통과, 빌드 성공. 클릭 가림 판정(`elementFromPoint`)·실제 스크롤·실제 키 이벤트는 jsdom에 레이아웃이 없어 **미검증**(Task 13·14) |
+| 2026-10-11 | 재개 검토: `pnpm --filter agent-browser-extension exec vitest run test/actions.test.ts test/extract.test.ts test/bridge-connection.test.ts`, `pnpm --filter agent-browser-extension build` | 선별 3파일 22/22 통과, TypeScript 검사·Vite 빌드 성공. 전체 테스트 재실행 아님 |
+| 2026-10-11 | 재개 검토: `cargo test --offline -p agent-browser-bridge --lib server::operation`, `cargo test --offline -p agent-browser-bridge --test tool_router` | Linux 5/5, 13/13 통과. tool_router는 최초 샌드박스 실행에서 localhost 소켓 생성이 `Operation not permitted`로 차단됨. 같은 명령을 제한 밖에서 재실행해 통과 |
+| 2026-10-11 | 재개 검토: 기존 Rust 라이브러리·TS 소스를 호출하는 임시 재현 코드(Linux/Node/jsdom, 제품 코드 변경 없음) | 현재 탭 종료 후 switch/release 모두 `TAB_CLOSED`; `cancelUpTo` 후 이미 시작한 wait는 `CANCELLED` 대신 `TIMEOUT`; 연결 단절 후 `status.get` Promise 미종결 확인. 독립 ref 레지스트리의 동일 ID 충돌과 Bridge 재시작 시 generation 초기화도 확인. 실제 Chrome E2E 결과 아님. 상세는 [재개 검토](./m1-resume.md#재개-검토-2026-10-11) |
+
+| 2026-10-11 | M1 Task 11: SW 탭·문서 라우팅, 원자적 요청 중복 방지, 실행 중 취소, 캡처 보호, 탭 종료 복구, HMAC 상호 인증 | 실패 테스트 확인 후 구현. Extension 전체 15파일 111/111(동시 구현된 Task 12 테스트 포함), TypeScript/Vite 빌드 성공. Bridge 전체 Linux 78/78(lib 27, MCP 5, protocol 4, auth 23, port 2, router 17). Windows 검증 아님 |
 
 ## 미검증
 
@@ -50,13 +55,14 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–10 구현
 - Chrome 정책에 의한 압축해제 확장 로드 제한 여부(개발용 프로필에서 확인 예정).
 - 사내 Windows / 사내 WSL Ubuntu 24 전체.
 
-## 알려진 위험 (결정 필요)
+## 인증 보강과 남은 검증
 
-- **포트 선점 시 토큰 노출·브라우저 조작**: `auth.hello`는 페어링 토큰을 그대로 보내고 서버는 자신을 증명하지 않는다. 같은 PC의 다른
-  사용자(또는 프로그램)가 serve보다 먼저 `127.0.0.1:4317`을 점유하면 Extension·mcp가 그 프로그램에 토큰을 보내고, 그 프로그램이
-  hello를 승인해 주면 `browser.*` 명령으로 Chrome을 조작할 수도 있다. 시작 시 포트 점검(probe)은 토큰을 보내지 않도록, Extension은
-  hello 승인 전의 명령을 실행하지 않도록 고쳤다(서버가 승인하는 한 위험은 그대로). 완전한 해결은 토큰을 보내지 않는 챌린지-응답(HMAC) 핸드셰이크로 `auth.hello` 계약을 바꾸는 것이며, 계획의 인증 규약이 달라지므로
-  임의로 바꾸지 않았다. 개인 PC 단일 사용자 전제라면 현재 수준으로 두고, 다중 사용자 환경이면 M1 마무리 전에 바꾼다.
+- 기존 **포트 선점 시 토큰 노출** 문제는 Task 11에서 HMAC-SHA256 상호 인증으로 보강했다.
+  Extension과 MCP는 토큰을 전송하지 않고, 양쪽 nonce·역할·clientId·repair를 결합한 서버 증명을 검증한 후
+  클라이언트 증명을 보낸다. 가짜 서버, 증명 반사/재생, 인증 전 명령 거부와 Rust/TS 공유 벡터를 테스트했다.
+- 기존 저장 토큰은 유지된다. 구형 인증 클라이언트와는 호환되지 않으므로 Bridge와 Extension을 함께 갱신한다.
+- `webNavigation` 권한을 추가해 프레임·documentId를 식별한다. 요소 ref는 다른 탭/문서에서 사용할 수 없다.
+- Windows ACL·실제 Windows exe 프로세스 수명·Chrome 정책·사내 환경은 계속 미검증이다.
 
 ## 참고 사항
 
@@ -65,4 +71,6 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–10 구현
 
 ## 다음 작업
 
-1. [M1 계획](./plans/2026-10-11-m1-browser-control.md) Task 11(Service Worker 명령 처리)부터 순서대로 구현.
+1. [재개 검토](./m1-resume.md#재개-검토-2026-10-11)의 회귀 항목을 반영해 [M1 계획](./plans/2026-10-11-m1-browser-control.md) 남은 과제를 순서대로 구현.
+2. Task 12 최소 패널 → Task 13 결정적 E2E → 전체 브랜치 검토 → Task 14 Windows Chrome/WSL OpenCode → Task 15 Windows 네이티브 OpenCode 검증.
+3. 이번 재개 검토는 구현 착수 전 준비다. Task 11–15 완료 상태는 바뀌지 않았으며 Windows 실행·Chrome·LLM 검증을 추가로 수행하지 않았다.

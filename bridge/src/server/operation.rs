@@ -52,17 +52,25 @@ impl OperationGate {
         Ok(op)
     }
 
-    pub fn check(&self, id: &str) -> Result<Operation, RpcError> {
+    /// Validates operation identity/state, even when its current tab has closed.
+    pub fn check_active(&self, id: &str) -> Result<Operation, RpcError> {
         let g = self.inner.lock().unwrap();
+        Self::active(&g, id).cloned()
+    }
+
+    pub fn check(&self, id: &str) -> Result<Operation, RpcError> {
+        let op = self.check_active(id)?;
+        if op.current_tab_closed {
+            return Err(RpcError::new(ErrorCode::TabClosed, Retry::Never,
+                "The operation's current tab was closed. Use browser_tabs action=switch or release.")
+                .with_details(json!({ "tabId": op.current_tab })));
+        }
+        Ok(op)
+    }
+
+    fn active<'a>(g: &'a GateInner, id: &str) -> Result<&'a Operation, RpcError> {
         match g.current.as_ref() {
-            Some(op) if op.id == id && op.state == OpState::Active => {
-                if op.current_tab_closed {
-                    return Err(RpcError::new(ErrorCode::TabClosed, Retry::Never,
-                        "The operation's current tab was closed. Use browser_tabs action=switch or release.")
-                        .with_details(json!({ "tabId": op.current_tab })));
-                }
-                Ok(op.clone())
-            }
+            Some(op) if op.id == id && op.state == OpState::Active => Ok(op),
             _ => match g.finished.iter().rev().find(|(fid, _)| fid == id) {
                 Some((_, OpState::Aborted)) => Err(RpcError::new(ErrorCode::Cancelled, Retry::Never,
                     "Stopped by the user. Start a new operation with browser_tabs action=attach after taking a fresh snapshot.")),
@@ -75,9 +83,9 @@ impl OperationGate {
     }
 
     fn with_active<T>(&self, id: &str, f: impl FnOnce(&mut Operation) -> Result<T, RpcError>) -> Result<T, RpcError> {
-        self.check(id)?;
         let mut g = self.inner.lock().unwrap();
-        f(g.current.as_mut().expect("checked"))
+        Self::active(&g, id)?;
+        f(g.current.as_mut().expect("validated under the same lock"))
     }
 
     pub fn add_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
@@ -105,6 +113,15 @@ impl OperationGate {
         }
     }
 
+    /// The event's profile must still own the operation if selection changed concurrently.
+    pub fn remove_tab_for_client(&self, client_id: &str, tab: i64) {
+        let mut g = self.inner.lock().unwrap();
+        if let Some(op) = g.current.as_mut().filter(|op| op.client_id == client_id) {
+            op.tabs.retain(|t| *t != tab);
+            if op.current_tab == tab { op.current_tab_closed = true; }
+        }
+    }
+
     fn finish(g: &mut GateInner, state: OpState) -> Option<Operation> {
         let mut op = g.current.take()?;
         op.state = state;
@@ -114,8 +131,8 @@ impl OperationGate {
     }
 
     pub fn release(&self, id: &str) -> Result<(), RpcError> {
-        self.check(id)?;
         let mut g = self.inner.lock().unwrap();
+        Self::active(&g, id)?;
         Self::finish(&mut g, OpState::Released);
         Ok(())
     }
@@ -176,6 +193,39 @@ mod tests {
         let op = g.attach(1, "cli").unwrap();
         g.remove_tab(1);
         assert_eq!(g.check(&op.id).unwrap_err().code, ErrorCode::TabClosed);
+    }
+
+    #[test]
+    fn closed_current_tab_can_switch_to_a_remaining_tab() {
+        let g = OperationGate::default();
+        let op = g.attach(1, "cli").unwrap();
+        g.add_tab(&op.id, 2).unwrap();
+        g.remove_tab(1);
+        g.switch_tab(&op.id, 2).unwrap();
+        assert_eq!(g.check(&op.id).unwrap().current_tab, 2);
+    }
+
+    #[test]
+    fn closed_current_tab_can_release() {
+        let g = OperationGate::default();
+        let op = g.attach(1, "cli").unwrap();
+        g.remove_tab(1);
+        g.release(&op.id).unwrap();
+        assert!(g.current().is_none());
+        assert!(g.attach(2, "cli").is_ok());
+    }
+
+    #[test]
+    fn ended_operation_cannot_mutate_a_replacement() {
+        let g = OperationGate::default();
+        let old = g.attach(1, "cli").unwrap();
+        g.abort(Some(&old.id));
+        let new = g.attach(2, "cli").unwrap();
+        assert_eq!(g.add_tab(&old.id, 3).unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(g.switch_tab(&old.id, 2).unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(g.release(&old.id).unwrap_err().code, ErrorCode::Cancelled);
+        assert_eq!(g.current().unwrap().id, new.id);
+        assert_eq!(g.current().unwrap().tabs, vec![2]);
     }
 
     #[test]

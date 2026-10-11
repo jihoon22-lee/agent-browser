@@ -1,8 +1,11 @@
 import { ProtocolError } from "../protocol/errors";
 import { pageText } from "./snapshot";
 import { resolveRef } from "./refs";
+import { cancellationError } from "./cancellation";
+import { observePage } from "./observe";
 
-export function waitFor(p: Record<string, unknown>): Promise<Record<string, unknown>> {
+export function waitFor(p: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  if (signal?.aborted) return Promise.reject(cancellationError());
   const conds: [string, () => boolean][] = [];
   if (typeof p.text === "string") conds.push(["text", () => pageText(document).includes(p.text as string)]);
   if (typeof p.textGone === "string") conds.push(["textGone", () => !pageText(document).includes(p.textGone as string)]);
@@ -17,10 +20,12 @@ export function waitFor(p: Record<string, unknown>): Promise<Record<string, unkn
       if (met) { done(); resolve({ executed: false, verified: { met: met[0] }, elapsedMs: Date.now() - start }); return true; }
       return false;
     };
-    const mo = new MutationObserver(() => check());
-    const poll = setInterval(check, 250);
+    const mo = observePage(() => check());
+    const poll = setInterval(() => { mo.refresh(); check(); }, 250);
     const timer = setTimeout(() => { done(); reject(new ProtocolError("TIMEOUT", `Condition not met within ${timeout} ms.`, "safe", { conditions: conds.map(([k]) => k) })); }, timeout);
-    const done = () => { mo.disconnect(); clearInterval(poll); clearTimeout(timer); };
-    if (!check()) mo.observe(document, { subtree: true, childList: true, characterData: true });
+    const done = () => { mo.disconnect(); clearInterval(poll); clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+    const abort = () => { done(); reject(cancellationError()); };
+    signal?.addEventListener("abort", abort, { once: true });
+    check();
   });
 }

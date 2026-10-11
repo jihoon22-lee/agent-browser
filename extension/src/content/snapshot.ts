@@ -14,7 +14,26 @@ export function sliceText(full: string, offset: number, maxChars: number): TextS
 export function pageText(doc: Document): string {
   const body = doc.body;
   if (!body) return "";
-  return ((body as HTMLElement).innerText ?? body.textContent ?? "").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const plain = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+    if (!(node instanceof Element) || ["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE"].includes(node.tagName) || !isRendered(node, { checkLayout: false })) return "";
+    // Native innerText preserves rendered whitespace. jsdom has no innerText.
+    return (node as HTMLElement).innerText ?? [...node.childNodes].map(plain).join("");
+  };
+  const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
+  const base = plain(body), parts = [base];
+  function shadows(root: Document | ShadowRoot, ancestorText: string) {
+    for (const host of root.querySelectorAll("*")) {
+      if (!host.shadowRoot || !isRendered(host, { checkLayout: false })) continue;
+      const chunks = [...host.shadowRoot.childNodes].map(plain).filter((text) => normalize(text));
+      // Some renderers include shadow text in an ancestor's innerText. Compare
+      // only against ancestors, so identical independent shadow roots stay distinct.
+      for (const chunk of chunks) if (!` ${normalize(ancestorText)} `.includes(` ${normalize(chunk)} `)) parts.push(chunk);
+      shadows(host.shadowRoot, `${ancestorText}\n${chunks.join("\n")}`);
+    }
+  }
+  shadows(doc, base);
+  return parts.join("\n").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number }): FrameSnapshot {

@@ -1,1 +1,1 @@
-{"v":1,"type":"req","id":"req-0001","method":"auth.hello","params":{"role":"extension","token":"<pairing-token>","clientId":"cli-7f3a","clientVersion":"0.1.0"}}
+{"v":1,"type":"req","id":"req-0001","method":"auth.hello","params":{"authVersion":1,"role":"extension","clientId":"cli-test","clientVersion":"0.1.0","clientNonce":"1111111111111111111111111111111111111111111111111111111111111111","repair":false}}

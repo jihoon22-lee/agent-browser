@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
-const NAVIGATE_TIMEOUT: Duration = Duration::from_secs(30);
+const NAVIGATE_TIMEOUT: Duration = Duration::from_secs(35);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -134,6 +134,7 @@ fn timeout_for(name: &str, args: &Value) -> Duration {
     match name {
         "browser_wait" => Duration::from_millis(args["timeoutMs"].as_u64().unwrap_or(5000)) + Duration::from_secs(3),
         "browser_navigate" => NAVIGATE_TIMEOUT,
+        "browser_tabs" if args["action"] == "new" => NAVIGATE_TIMEOUT,
         _ => DEFAULT_TIMEOUT,
     }
 }
@@ -277,6 +278,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             Err(e) => delivered_failure(None, e),
         },
         "attach" => {
+            let _selection = state.selection.lock().await;
             let params = match args["tabId"].as_i64() {
                 Some(id) => json!({ "tabId": id }),
                 None => json!({}),
@@ -308,7 +310,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 Err(e) => return ToolOutcome::rejected(NAME, Some(op_id), e),
             };
             let params = json!({ "url": args["url"], "operationId": op.id, "generation": op.generation });
-            let created = state.registry.send_command("browser.tabs.create", params, CommandClass::Write, DEFAULT_TIMEOUT).await;
+            let created = state.registry.send_command("browser.tabs.create", params, CommandClass::Write, timeout_for(NAME, args)).await;
             let tab = match created {
                 Ok(tab) => tab,
                 Err(e) => return delivered_failure(Some(op_id), e),
@@ -332,13 +334,14 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         "switch" => {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             let tab_id = args["tabId"].as_i64().unwrap_or_default();
-            let op = match state.ops.check(op_id) {
+            let op = match state.ops.check_active(op_id) {
                 Ok(op) => op,
                 Err(e) => return ToolOutcome::rejected(NAME, Some(op_id), e),
             };
             if !op.tabs.contains(&tab_id) {
-                // The gate produces the standard TAB_NOT_FOUND error for tabs outside the operation.
-                let e = state.ops.switch_tab(op_id, tab_id).expect_err("tab is outside the operation");
+                let e = RpcError::new(ErrorCode::TabNotFound, Retry::Never,
+                    "That tab is not part of this operation. Use action=new or attach it first.")
+                    .with_details(json!({ "tabId": tab_id, "operationTabs": op.tabs }));
                 return ToolOutcome::rejected(NAME, Some(op_id), e);
             }
             match read("browser.tabs.get", json!({ "tabId": tab_id })).await {
@@ -362,5 +365,17 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             }
         }
         other => ToolOutcome::rejected(NAME, None, invalid(format!("unknown action `{other}`"))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn navigation_budget_includes_extension_load_and_response_time() {
+        assert_eq!(timeout_for("browser_navigate", &json!({})), Duration::from_secs(35));
+        assert_eq!(timeout_for("browser_tabs", &json!({"action":"new"})), Duration::from_secs(35));
+        assert_eq!(timeout_for("browser_tabs", &json!({"action":"list"})), Duration::from_secs(15));
     }
 }

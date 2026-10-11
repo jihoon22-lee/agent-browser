@@ -1,0 +1,32 @@
+[
+  {
+    "token": "synthetic-pairing-token",
+    "role": "extension",
+    "clientId": "cli-test",
+    "clientNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+    "serverNonce": "2222222222222222222222222222222222222222222222222222222222222222",
+    "repair": false,
+    "serverProof": "601c1d51718d02392250c191736ed1a9227ef4a5d9181dfd3bb9082f18298b88",
+    "clientProof": "682c8d07a4a282320ab60407775b9c0be0a97d6a08458313f52bd1a06e8b551a"
+  },
+  {
+    "token": "synthetic-pairing-token",
+    "role": "extension",
+    "clientId": "cli-test",
+    "clientNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+    "serverNonce": "2222222222222222222222222222222222222222222222222222222222222222",
+    "repair": true,
+    "serverProof": "98dd0207fec8e8ac79bde2fc4ba5932c5db27b19ac12e91b31dc7deb948dfbf0",
+    "clientProof": "8646723f665cad4d3ee51a754f0b4007876b5569dcd329a49f3a07825ca7723b"
+  },
+  {
+    "token": "synthetic-pairing-token",
+    "role": "extension",
+    "clientId": "cli-테스트\"\\",
+    "clientNonce": "1111111111111111111111111111111111111111111111111111111111111111",
+    "serverNonce": "2222222222222222222222222222222222222222222222222222222222222222",
+    "repair": false,
+    "serverProof": "1d1c8fa9b17c45692a09a8e167d4ead183383567e391ccff65da3d89071a6a85",
+    "clientProof": "c7907af298f45668cfa2bb792f79126796a58d8f67a57925bbedc971a387c14e"
+  }
+]

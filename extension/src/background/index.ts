@@ -1,8 +1,11 @@
 import { BridgeConnection, type ConnStatus } from "./bridge-connection";
-import { handleBridgeRequest } from "./handlers";
-import { chromeStorage } from "./chrome-api";
+import { createHandlers } from "./handlers";
+import { chromeSessionStore } from "./dedupe";
+import { ProtocolError } from "../protocol/errors";
+import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 
+const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore());
 let lastStatus: ConnStatus = { state: "disconnected" };
 const conn = new BridgeConnection({
   WebSocketImpl: WebSocket,
@@ -11,6 +14,7 @@ const conn = new BridgeConnection({
   setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
+  onDisconnect: () => handleBridgeRequest.disconnect(),
   onStatus: (s) => { lastStatus = s; void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   onEvent: (event, data) => { void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {}); },
 });
@@ -30,8 +34,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
   if (msg?.kind === "get-conn-status") { sendResponse(lastStatus); return; }
   if (msg?.kind === "bridge" && ["status.get", "operation.abort", "browser.use"].includes(msg.method)) {
-    conn.request(msg.method, msg.params ?? {}).then((r) => sendResponse({ ok: true, result: r }), (e) => sendResponse({ ok: false, error: e }));
+    conn.request(msg.method, msg.params ?? {}).then((r) => sendResponse({ ok: true, result: r }), (e) => sendResponse({ ok: false, error: e instanceof ProtocolError ? e.toRpc() : { code: "INTERNAL", message: String(e), retry: "never" } }));
     return true;
   }
 });
+chrome.tabs.onRemoved.addListener((tabId) => { conn.sendEvent("tab.closed", { tabId }); });
 conn.start();

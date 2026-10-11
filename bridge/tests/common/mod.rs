@@ -58,7 +58,20 @@ pub async fn next_event(ws: &mut Ws, name: &str) -> serde_json::Value {
 }
 
 pub async fn hello(ws: &mut Ws, role: &str, token: &str, client_id: &str) -> Envelope {
-    call(ws, "auth.hello", serde_json::json!({"role": role, "token": token, "clientId": client_id, "clientVersion": "test"})).await
+    hello_repair(ws, role, token, client_id, false).await
+}
+
+pub async fn hello_repair(ws: &mut Ws, role: &str, token: &str, client_id: &str, repair: bool) -> Envelope {
+    use agent_browser_bridge::auth;
+    let nonce = auth::nonce();
+    let challenge = call(ws, "auth.hello", serde_json::json!({
+        "authVersion":1,"role":role,"clientId":client_id,"clientNonce":nonce,"clientVersion":"test","repair":repair
+    })).await;
+    let Envelope::Res { ok: true, result: Some(challenge), .. } = challenge else { return challenge };
+    let server_nonce = challenge["serverNonce"].as_str().unwrap();
+    // Intentionally send an incorrect proof for wrong-token server rejection tests.
+    let proof = auth::proof(token, &auth::transcript("client", role, client_id, &nonce, server_nonce, repair));
+    call(ws, "auth.prove", serde_json::json!({"authVersion":1,"proof":proof})).await
 }
 
 pub fn err_code(env: &Envelope) -> Option<ErrorCode> {

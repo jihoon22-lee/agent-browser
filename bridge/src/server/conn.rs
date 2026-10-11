@@ -1,5 +1,6 @@
-use super::{now_ms, operation::OperationGate, registry::Registry, router, timeline::Timeline};
+use super::{now_ms, operation::OperationGate, registry::{ConnId, Registry}, router, timeline::Timeline};
 use crate::config::{self, Config};
+use crate::auth;
 use crate::rpc::{parse_envelope, Envelope, ErrorCode, Retry, RpcError, PROTOCOL_VERSION};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -53,6 +54,8 @@ pub struct ServerState {
     pub registry: Registry,
     pub ops: OperationGate,
     pub timeline: Timeline,
+    // Protect selection across attach's asynchronous tab lookup and gate registration.
+    pub selection: tokio::sync::Mutex<()>,
 }
 
 impl ServerState {
@@ -64,6 +67,7 @@ impl ServerState {
             registry,
             ops: OperationGate::default(),
             timeline: Timeline::default(),
+            selection: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -100,7 +104,8 @@ impl ServerState {
 #[serde(rename_all = "camelCase")]
 struct Hello {
     role: String,
-    token: String,
+    auth_version: u64,
+    client_nonce: String,
     #[serde(default)]
     client_id: String,
     #[serde(default)]
@@ -179,7 +184,7 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
             let selected = state.registry.selected_client().as_deref() == Some(hello.client_id.as_str());
             if send_hello_ok(&mut ws, hello_id, &connection_id, selected, &hello.client_id).await {
                 state.broadcast_status();
-                serve_extension(&mut ws, rx, &state).await;
+                serve_extension(&mut ws, rx, &state, conn).await;
             }
             state.registry.unregister(conn);
             state.broadcast_status();
@@ -192,7 +197,7 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
     }
 }
 
-/// Runs the `auth.hello` handshake. On any failure it answers, closes the socket and returns false.
+/// Mutual HMAC handshake: server proof first, then client proof. Pair only after both.
 async fn authenticate(
     ws: &mut Ws,
     role: Role,
@@ -219,6 +224,14 @@ async fn authenticate(
             return None;
         }
     };
+    if params.get("authVersion").and_then(Value::as_u64) != Some(auth::VERSION) || params.get("token").is_some() {
+        let error = RpcError::new(ErrorCode::AuthFailed, Retry::Never,
+            "Mutual authentication v1 is required. Update both the Bridge and extension, then reconnect.")
+            .with_details(json!({ "serverName": SERVER_NAME, "authVersion": auth::VERSION }));
+        let _ = send(ws, &Envelope::err(&id, error)).await;
+        let _ = ws.close(None).await;
+        return None;
+    }
     let hello: Hello = match serde_json::from_value(params) {
         Ok(h) => h,
         Err(e) => {
@@ -226,13 +239,40 @@ async fn authenticate(
             return None;
         }
     };
+    if hello.auth_version != auth::VERSION || hello.role != role.name()
+        || !auth::valid_hex(&hello.client_nonce) || hello.client_id.is_empty() || hello.client_id.len() > 256
+    {
+        send_err_and_close(ws, &id, ErrorCode::AuthFailed, "Invalid authentication role, clientId or nonce").await;
+        return None;
+    }
     let expected_token = state.cfg.lock().await.token.clone();
-    if hello.role != role.name() || !config::tokens_equal(&hello.token, &expected_token) {
-        // serverName lets `serve` startup recognize a running instance without ever sending it the token.
-        let error = RpcError::new(ErrorCode::AuthFailed, Retry::Never, "authentication failed")
-            .with_details(json!({ "serverName": SERVER_NAME }));
-        let _ = send(ws, &Envelope::err(&id, error)).await;
-        let _ = ws.close(None).await;
+    let server_nonce = auth::nonce();
+    let server_proof = auth::proof(&expected_token, &auth::transcript(
+        "server", &hello.role, &hello.client_id, &hello.client_nonce, &server_nonce, hello.repair));
+    if !send(ws, &Envelope::ok(&id, json!({
+        "authVersion": auth::VERSION, "serverName": SERVER_NAME,
+        "serverNonce": server_nonce, "serverProof": server_proof
+    }))).await { return None; }
+    let text = match tokio::time::timeout(HELLO_TIMEOUT, ws.next()).await {
+        Ok(Some(Ok(Message::Text(text)))) => text,
+        _ => {
+            send_err_and_close(ws, "", ErrorCode::AuthRequired, "auth.prove must complete within five seconds").await;
+            return None;
+        }
+    };
+    let (id, params) = match parse_envelope(&text) {
+        Ok(Envelope::Req { id, method, params, .. }) if method == "auth.prove" => (id, params),
+        _ => {
+            send_err_and_close(ws, &raw_id(&text), ErrorCode::AuthRequired, "auth.prove must follow auth.hello").await;
+            return None;
+        }
+    };
+    if params.get("authVersion").and_then(Value::as_u64) != Some(auth::VERSION)
+        || !auth::verify(&expected_token, &auth::transcript(
+            "client", &hello.role, &hello.client_id, &hello.client_nonce, &server_nonce, hello.repair),
+            params.get("proof").and_then(Value::as_str).unwrap_or_default())
+    {
+        send_err_and_close(ws, &id, ErrorCode::AuthFailed, "Client authentication proof is invalid; check pairing credentials").await;
         return None;
     }
     if let Some(ext_id) = extension_id {
@@ -274,6 +314,7 @@ async fn authenticate(
 async fn send_hello_ok(ws: &mut Ws, id: String, connection_id: &str, selected: bool, client_id: &str) -> bool {
     let result = json!({
         "serverName": SERVER_NAME,
+        "authVersion": auth::VERSION,
         "serverVersion": env!("CARGO_PKG_VERSION"),
         "protocolVersion": PROTOCOL_VERSION,
         "connectionId": connection_id,
@@ -333,7 +374,7 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
     }
 }
 
-async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::UnboundedReceiver<String>, state: &ServerState) {
+async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::UnboundedReceiver<String>, state: &ServerState, conn: ConnId) {
     loop {
         tokio::select! {
             out = outbound.recv() => {
@@ -361,7 +402,17 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                         };
                         if !send(ws, &reply).await { break; }
                     }
-                    Envelope::Evt { .. } => {}
+                    Envelope::Evt { event, data, .. } => {
+                        if event == "tab.closed" {
+                            if let (Some(client), Some(tab_id)) = (
+                                state.registry.selected_connection_client(conn),
+                                data.get("tabId").and_then(Value::as_i64),
+                            ) {
+                                state.ops.remove_tab_for_client(&client, tab_id);
+                                state.broadcast_status();
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -386,6 +437,16 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
         }
         "browser.use" => match params.get("clientId").and_then(Value::as_str).filter(|c| !c.is_empty()) {
             Some(client_id) => {
+                // Waiting here could block this socket from delivering attach's tabs.get response.
+                let Ok(_selection) = state.selection.try_lock() else {
+                    return Envelope::err(id, RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
+                        "A browser operation is being attached. Wait for it to finish before selecting a browser."));
+                };
+                if let Some(op) = state.ops.current().filter(|op| op.client_id != client_id) {
+                    return Envelope::err(id, RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
+                        "Finish or stop the current operation before selecting another browser.")
+                        .with_details(json!({ "operationId": op.id })));
+                }
                 state.registry.use_browser(client_id);
                 state.persist_selection().await;
                 state.broadcast_status();

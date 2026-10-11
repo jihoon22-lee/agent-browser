@@ -278,3 +278,98 @@ async fn non_http_urls_are_rejected_before_reaching_the_browser() {
     let methods = seen.lock().unwrap().clone();
     assert!(!methods.iter().any(|m| m == "browser.navigate" || m == "browser.tabs.create"), "{methods:?}");
 }
+
+// Complete a browser_tabs request against a real authenticated extension socket.
+async fn attach_with_socket(mcp: Ws, ext: &mut Ws, args: Value) -> (Ws, Value) {
+    let task = tokio::spawn(async move {
+        let mut mcp = mcp;
+        let result = tool(&mut mcp, "browser_tabs", args).await;
+        (mcp, result)
+    });
+    loop {
+        if let Envelope::Req { id, method, params, .. } = recv(ext).await {
+            let response = default_reply(&method, &params).unwrap();
+            send_raw(ext, &Envelope::ok(id, response).to_text()).await;
+            break;
+        }
+    }
+    task.await.unwrap()
+}
+
+async fn close_tab_and_status(ext: &mut Ws, tab: i64) -> Value {
+    send_raw(ext, &Envelope::evt("tab.closed", json!({"tabId": tab})).to_text()).await;
+    let Envelope::Res { result: Some(status), .. } = call(ext, "status.get", json!({})).await else { panic!() };
+    status
+}
+
+#[tokio::test]
+async fn selected_extension_tab_closed_allows_switch_and_release() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut ext, "extension", &cfg.token, "cli-1").await;
+    let mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let (mcp, attached) = attach_with_socket(mcp, &mut ext, json!({"action":"attach"})).await;
+    let op = attached["operationId"].clone();
+    let (mut mcp, _) = attach_with_socket(mcp, &mut ext, json!({"action":"new","operationId":op,"url":"http://127.0.0.1/y"})).await;
+    let status = close_tab_and_status(&mut ext, 77).await;
+    assert_eq!(status["operation"]["currentTabClosed"], true);
+    let blocked = tool(&mut mcp, "browser_snapshot", json!({"operationId":op})).await;
+    assert_eq!(blocked["error"]["code"], "TAB_CLOSED");
+    let (mut mcp, switched) = attach_with_socket(mcp, &mut ext, json!({"action":"switch","operationId":op,"tabId":42})).await;
+    assert_eq!(switched["ok"], true, "{switched}");
+    assert_eq!(close_tab_and_status(&mut ext, 42).await["operation"]["currentTabClosed"], true);
+    let released = tool(&mut mcp, "browser_tabs", json!({"action":"release","operationId":op})).await;
+    assert_eq!(released["ok"], true, "{released}");
+}
+
+#[tokio::test]
+async fn another_profile_or_superseded_connection_cannot_close_operation_tab() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut old = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut old, "extension", &cfg.token, "cli-1").await;
+    let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut ext, "extension", &cfg.token, "cli-1").await;
+    let mut other = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut other, "extension", &cfg.token, "cli-2").await;
+    let mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let (_mcp, _) = attach_with_socket(mcp, &mut ext, json!({"action":"attach"})).await;
+    for socket in [&mut old, &mut other] {
+        assert_eq!(close_tab_and_status(socket, 42).await["operation"]["currentTabClosed"], false);
+    }
+    assert_eq!(close_tab_and_status(&mut ext, 42).await["operation"]["currentTabClosed"], true);
+}
+
+#[tokio::test]
+async fn profile_switch_is_busy_until_operation_is_released() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    fake_extension(serve.port, cfg.token.clone(), default_reply).await;
+    let mut panel = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut panel, "extension", &cfg.token, "cli-2").await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let attached = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await;
+    assert_eq!(err_code(&call(&mut panel, "browser.use", json!({"clientId":"cli-2"})).await), Some(agent_browser_bridge::rpc::ErrorCode::BrowserBusy));
+    assert!(matches!(call(&mut panel, "browser.use", json!({"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    tool(&mut mcp, "browser_tabs", json!({"action":"release","operationId":attached["operationId"]})).await;
+    assert!(matches!(call(&mut panel, "browser.use", json!({"clientId":"cli-2"})).await, Envelope::Res { ok: true, .. }));
+}
+
+#[tokio::test]
+async fn profile_switch_during_attach_returns_busy_without_blocking_browser_reply() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut ext, "extension", &cfg.token, "cli-1").await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let attaching = tokio::spawn(async move { tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await });
+    let request_id = loop {
+        if let Envelope::Req { id, method, .. } = recv(&mut ext).await {
+            assert_eq!(method, "browser.tabs.get");
+            break id;
+        }
+    };
+    // Same socket can issue UI requests while handling the pending browser command.
+    let switched = tokio::time::timeout(std::time::Duration::from_millis(200),
+        call(&mut ext, "browser.use", json!({"clientId":"cli-2"}))).await.expect("must not block the reply loop");
+    assert_eq!(err_code(&switched), Some(agent_browser_bridge::rpc::ErrorCode::BrowserBusy));
+    send_raw(&mut ext, &Envelope::ok(request_id, json!({"tabId":42,"url":"http://127.0.0.1/x"})).to_text()).await;
+    assert_eq!(attaching.await.unwrap()["ok"], true);
+}

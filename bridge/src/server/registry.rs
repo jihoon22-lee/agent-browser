@@ -51,6 +51,14 @@ impl Registry {
     pub fn use_browser(&self, client_id: &str) { self.inner.lock().unwrap().selected = Some(client_id.into()); }
     pub fn selected_client(&self) -> Option<String> { self.inner.lock().unwrap().selected.clone() }
 
+    /// Only the selected profile's newest authenticated worker may send tab lifecycle events.
+    pub fn selected_connection_client(&self, conn: ConnId) -> Option<String> {
+        let g = self.inner.lock().unwrap();
+        newest_for(&g, g.selected.as_deref())
+            .filter(|(id, _)| *id == conn)
+            .map(|(_, c)| c.client_id.clone())
+    }
+
     pub fn snapshot(&self) -> Vec<BrowserInfo> {
         let g = self.inner.lock().unwrap();
         let mut ids: Vec<(ConnId, &str)> = g.conns.iter().map(|(k, c)| (*k, c.client_id.as_str())).collect();
