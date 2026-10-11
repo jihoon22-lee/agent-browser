@@ -96,6 +96,7 @@ it("commands from a cancelled generation do not run", async () => {
   expect(clicks).toBe(0);
 });
 
+// generation 10: the cancel test above leaves generations up to 5 cancelled in this module
 it("scroll moves the page and rejects unknown directions", async () => {
   document.body.innerHTML = `<p>본문</p>`;
   const el = document.documentElement; // jsdom has no document.scrollingElement; the action falls back to this
@@ -103,8 +104,8 @@ it("scroll moves the page and rejects unknown directions", async () => {
   // jsdom has no scrolling; record what the action asks for
   (el as unknown as { scrollBy: (o: { top?: number }) => void }).scrollBy = (o) => { calls.push(o); };
   Object.defineProperty(el, "clientHeight", { configurable: true, value: 1000 });
-  const r = await runAction("scroll", { direction: "down", generation: 1 });
+  const r = await runAction("scroll", { direction: "down", generation: 10 });
   expect(r).toMatchObject({ executed: true });
   expect(calls).toEqual([{ top: 800 }]);
-  await expect(runAction("scroll", { direction: "sideways", generation: 1 })).rejects.toMatchObject({ code: "INVALID_PARAMS" });
+  await expect(runAction("scroll", { direction: "sideways", generation: 10 })).rejects.toMatchObject({ code: "INVALID_PARAMS" });
 });
