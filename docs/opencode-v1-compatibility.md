@@ -101,3 +101,18 @@ NAT localhostForwarding이 준비될 때까지 초기 연결 재시도가 필요
 TUI 전용 단축키, 대화형 터미널, 외부 편집기·OS 대화상자는 CLI로 넘긴다.
 서버 플러그인의 도구·훅은 기존 서버가 실행하며 별도 플러그인/스킬 실행 엔진은 없다.
 revert는 OpenCode 대화·파일 변경용이며 이미 제출한 웹사이트 작업을 되돌리지 않는다.
+
+
+## 실제 생성 스트림 계약 확인 (2026-10-11)
+
+[스트림 통합 검사](../tests/integration/opencode-v1-stream.mjs)는 실제 설치된 1.18.29에 로컬 합성 OpenAI 호환 provider만 연결했다. noReply 검사와 달리 실제 서버의 생성 경로를 실행했으며, 각 실행은 **합성 provider 요청 1회 / 실제 LLM 호출 0회**다. 임시 설정으로 provider·모델·plugin·도구를 제한하고 원래 사용자 세션과 전역 설정을 사용하지 않았다.
+
+실측 legacy `/event`는 고유 `id`와 `{type, properties}`를 전달했다. assistant 생성에는 `message.updated`, `message.part.updated`, `message.part.delta`, `session.status`, `session.idle`이 관찰됐다. text delta의 필드는 `sessionID`, `messageID`, `partID`, `field`, `delta`다. 완료는 assistant의 `info.time.completed`와 세션 idle 상태로 확인했다. 이벤트 ID에 의한 제품 중복 제거로 실제 chunk가 사라지는 현상은 이 측정에서 없었다.
+
+`session.updated`의 `properties.info.id`는 **세션 ID**이므로 message ID로 사용하면 안 된다. 이 이벤트를 일반 message placeholder 경로에 넣으면 빈 assistant가 하나 더 만들어진다. 제품 reducer는 message 이벤트 유형을 먼저 제한하고, `session.idle`도 별도로 처리한다.
+
+수정 후 Linux는 첫 텍스트/완료 **1246/2144ms**, 실제 Windows는 **1525/2749ms**였으며 Stop이나 수동 resync 없이 서버와 reducer 모두 assistant 1개였다. 이는 제품 HTTP/SSE 클라이언트와 상태 처리 검증이며 실제 Chrome 화면·React hook 전체 또는 사용자에게 발생한 지연의 원인 확인은 아니다. 실행 방법과 출력 범위는 [테스트 문서](./testing.md#실제-opencode-생성--sse--제품-상태-검증)를 따른다.
+
+## 세션 목록 경계
+
+v1 `GET /session`의 `roots=true`는 `parent_id IS NULL`인 최상위 세션만 반환한다. `start`는 `time_updated >= start` 조건이며 오래된 페이지를 가져오는 cursor가 아니다. 기본 정렬은 수정 시각 내림차순, 기본 limit은 100이다. 사용하지 않는 global 목록의 별도 cursor를 `/session`에 그대로 적용하지 않는다. 근거는 고정 버전의 [Session.listByProject 구현](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/session.ts#L985)이다.

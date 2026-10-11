@@ -187,6 +187,35 @@ attach는 fixture wrapper의 argv/env 및 실제 backend 인증까지 검사하�
 실행 시 개발 도구·패키지 다운로드를 요구하지 않는다. 수동 Chrome 확장 로딩은 사용자 최초 1회 절차다.
 
 
+## 실제 OpenCode 생성 → SSE → 제품 상태 검증
+
+`tests/integration/opencode-v1-stream.mjs`는 설치된 **OpenCode 1.18.29**를 고유 임시 설정·작업 디렉터리·포트로 실행한다. 로컬 OpenAI 호환 provider fixture가 300ms 간격의 텍스트 chunk 3개, finish와 `[DONE]`을 반환한다. 외부 모델과 인증정보를 쓰지 않으며 설정상 허용 provider·모델은 fixture 하나다. 원래 사용자 서버·세션·전역 설정은 읽거나 수정하지 않는다.
+
+```bash
+node --experimental-transform-types tests/integration/opencode-v1-stream.mjs \
+  --opencode /home/<user>/.opencode/bin/opencode
+```
+
+Windows에서는 Windows Node로 같은 파일을 실행한다.
+
+```powershell
+node --experimental-transform-types .\tests\integration\opencode-v1-stream.mjs `
+  --opencode 'C:\<existing-opencode>\opencode.exe'
+```
+
+실제 서버의 SSE 원문에서 이벤트 **메타데이터**를 별도로 기록하고, 같은 스트림을 제품 `OpenCodeV1Client`와 `workbenchReducer`에 전달한다. 다음을 assert한다.
+
+- 합성 provider 요청 정확히 **1회**, 실제 LLM 호출 **0회**.
+- Stop·abort 요청과 수동 상태 재조회 없이 SSE만으로 완전한 assistant 텍스트와 완료 상태가 구성됨.
+- 첫 텍스트가 provider의 최종 응답 종료 전에 보임.
+- 서버에 저장된 assistant 수와 reducer의 assistant 수가 같음. 검증용 마지막 GET은 reducer에 넣지 않음.
+
+2026-10-11 수정 후 검증은 WSL/Linux(Node 24.18.0)와 실제 Windows(Node 24.18.1) 모두 통과했다. 최종 측정에서 요청 이후 첫 텍스트/완료는 Linux **1246/2144ms**, Windows **1525/2749ms**였으며, 두 환경 모두 assistant **1개**로 서버와 일치했다. 최초 진단은 `session.updated`를 잘못 message로 해석해 빈 assistant가 추가되는 결함을 드러냈고, 허용된 message 이벤트만 처리하는 회귀 검사로 보강했다.
+
+출력 `tests/agent/results/stream-*/summary.json`은 플랫폼·이벤트 유형/ID·길이·개수·HTTP 상태와 시각만 담는다. 비밀번호·환경변수·대화 본문·provider 요청 본문·서버 stderr 원문은 쓰지 않는다. 초기 준비, HTTP 응답, SSE 표시 시각을 분리한다. Linux 측정의 약 62초 초기 health 대기는 프롬프트 이전이므로 응답 렌더링 지연과 합산하지 않는다.
+
+이 검사는 실제 설치된 서버의 생성/SSE 계약을 검증하지만 Chrome DOM이나 React hook 전체를 실행하지 않는다. 사용자가 보고한 “Stop을 눌러야 응답이 보임” 현상의 원인을 확정하거나 해당 사용자 환경이 수정되었음을 증명하지 않는다. 실제 모델의 판단·도구 사용·속도 검증도 아니다. CI는 이 실제 OpenCode 실행을 자동 호출하지 않는다.
+
 ## GitHub Actions CI
 
 [CI workflow](../.github/workflows/ci.yml)는 main 대상 PR과 main push에서 Linux/Windows를 따로 실행한다.
