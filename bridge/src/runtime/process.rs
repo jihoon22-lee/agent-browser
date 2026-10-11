@@ -32,6 +32,32 @@ pub fn identity(pid: u32) -> Option<Identity> {
 
 pub fn matches(owner: &Identity) -> bool { identity(owner.pid).is_some_and(|now| now.created == owner.created && now.image == owner.image) }
 
+/// Unlike a failed ownership lookup, this is positive evidence that the original
+/// launcher exited. Access-denied and other inspection failures remain unknown.
+#[cfg(windows)]
+pub fn exited(owner: &Identity) -> bool {
+    use windows_sys::Win32::{Foundation::{CloseHandle, GetLastError, ERROR_INVALID_PARAMETER, FILETIME}, System::Threading::*};
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, owner.pid);
+        if handle.is_null() { return GetLastError() == ERROR_INVALID_PARAMETER; }
+        let mut code = 0;
+        let mut created: FILETIME = std::mem::zeroed(); let mut exit = created; let mut kernel = created; let mut user = created;
+        let known = GetExitCodeProcess(handle, &mut code) != 0 && GetProcessTimes(handle, &mut created, &mut exit, &mut kernel, &mut user) != 0;
+        CloseHandle(handle);
+        known && (code != 259 || owner.created != ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64)
+    }
+}
+#[cfg(unix)]
+pub fn exited(owner: &Identity) -> bool {
+    match std::fs::read_to_string(format!("/proc/{}/stat", owner.pid)) {
+        Err(error) => error.kind() == std::io::ErrorKind::NotFound,
+        Ok(stat) => stat.rsplit_once(')').is_some_and(|(_, rest)| {
+            let fields: Vec<_> = rest.split_whitespace().collect();
+            fields.first() == Some(&"Z") || fields.get(19).and_then(|ticks| ticks.parse::<u64>().ok()).is_some_and(|ticks| ticks != owner.created)
+        }),
+    }
+}
+
 #[cfg(unix)]
 fn capture_spawn_identity(
     pid: u32,

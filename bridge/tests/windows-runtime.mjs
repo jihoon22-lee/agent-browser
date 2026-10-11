@@ -17,6 +17,8 @@ const exe = process.env.AGENT_BROWSER_TEST_EXE;
 const openCode = process.env.AGENT_BROWSER_TEST_OPENCODE_EXE;
 assert(exe && openCode, 'Explicit fixture executable paths are required');
 const kind = process.env.RUNTIME_KIND || 'native';
+const scenario = process.env.RUNTIME_SCENARIO || '';
+let fixtureShutdown;
 const home = mkdtempSync(join(tmpdir(), 'ab-runtime-한글 공간-'));
 const directory = join(home, '작업 공간'); mkdirSync(directory);
 const env = { ...process.env, AGENT_BROWSER_HOME: home };
@@ -92,8 +94,97 @@ if (kind === 'cmd') {
   profile.executable = windowsToWsl(launcher); profile.directory = '/tmp';
 }
 profile.env.ATTACH_EXPECTED_DIRECTORY = profile.directory;
+async function regression() {
+  if (scenario === 'healthy-fixture') {
+    const file = join(home,'healthy-fixture.cjs');
+    writeFileSync(file, readFileSync(new URL('./fixtures/opencode-server.cjs',import.meta.url),'utf8') + '\nsetTimeout(()=>process.exit(0),90000).unref();\n');
+    if(kind === 'wsl') {
+      const launcher = join(home,'healthy-fixture.sh');
+      writeFileSync(launcher, `#!/bin/sh\nexec "${process.env.AGENT_BROWSER_TEST_WSL_NODE}" "${windowsToWsl(file)}" "$@"\n`);
+      profile.executable = windowsToWsl(launcher); profile.directory='/tmp';
+    } else {
+      const launcher = join(home,'healthy-fixture.cmd');
+      profile.env.AB_FIXTURE_NODE = process.execPath; profile.env.AB_FIXTURE_FILE = file;
+      writeFileSync(launcher, '@echo off\r\n"%AB_FIXTURE_NODE%" "%AB_FIXTURE_FILE%" %*\r\n'); profile.executable = launcher;
+    }
+    await call('profile.save',{profile});
+    const ready = await call('runtime.ensure',{profileId:profile.id}); assert.equal(ready.state,'ready',ready.error);
+    const status = await call('runtime.status',{profileId:profile.id}); assert.equal(status.state,'ready');
+    ws.close(); bridge.kill(); await sleep(400); launch(); await connect();
+    assert.equal((await call('runtime.ensure',{profileId:profile.id})).baseUrl,ready.baseUrl);
+    await call('runtime.stop',{profileId:profile.id});
+    assert.equal(await fetch(ready.baseUrl+'/').then(()=>true,()=>false),false);
+    await call('profile.delete',{profileId:profile.id}); outcome.checks.push('synthetic-ready-restart-reuse-stop');
+  } else if (scenario === 'wsl-unknown-marker') {
+    assert.equal(kind,'wsl'); profile.executable='/bin/true'; profile.directory='/tmp';
+    await call('profile.save',{profile});
+    const path=join(home,'runtime.json'), config=JSON.parse(readFileSync(path));
+    config.runtimes[profile.id]={profileId:profile.id,instance:'missing-fixture',baseUrl:'http://127.0.0.1:'+profile.port,username:'opencode',password:'fixture',launcher:{pid:0,created:0,image:'absent'},server:null,wslOwnerFile:windowsToWsl(join(home,'missing.owner')),version:null};
+    writeFileSync(path,JSON.stringify(config));
+    assert.equal((await call('runtime.status',{profileId:profile.id})).state,'error','Unknown ownership is not stopped');
+    await assert.rejects(call('runtime.stop',{profileId:profile.id}),/record was retained/);
+    await assert.rejects(call('profile.delete',{profileId:profile.id}),/record was retained/);
+    assert(JSON.parse(readFileSync(path)).runtimes[profile.id]);
+    outcome.checks.push('R04-missing-marker-preserves-unknown-runtime');
+  } else if (scenario === 'health-failure') {
+    assert.equal(kind, 'cmd');
+    const file = join(home, 'bad-health.mjs'), launcher = join(home, 'bad-health.cmd'), nonce = randomBytes(16).toString('hex');
+    writeFileSync(file, `import {createServer} from 'node:http';
+const port = Number(process.argv[process.argv.indexOf('--port')+1]);
+const server = createServer((req,res) => { res.writeHead(503); res.end('synthetic unhealthy'); if(req.url === '/stop/${nonce}') server.close(); });
+server.listen(port,'127.0.0.1'); setTimeout(()=>process.exit(0),90000).unref();`);
+    profile.env.AB_FIXTURE_NODE = process.execPath; profile.env.AB_FIXTURE_FILE = file;
+      writeFileSync(launcher, '@echo off\r\n"%AB_FIXTURE_NODE%" "%AB_FIXTURE_FILE%" %*\r\n');
+    profile.executable = launcher;
+    fixtureShutdown = () => fetch(`http://127.0.0.1:${profile.port}/stop/${nonce}`).catch(()=>{});
+    await call('profile.save', {profile});
+    const ready = call('runtime.ensure', {profileId:profile.id});
+    let recordedChild = false, listening = false;
+    for(let i=0;i<80;i++) {
+      await sleep(100);
+      listening ||= await fetch(`http://127.0.0.1:${profile.port}/`).then(()=>true,()=>false);
+      try { if(JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes[profile.id]?.server) recordedChild=true; } catch {}
+      if(listening && recordedChild) break;
+    }
+    const result = await ready;
+    assert.equal(result.state,'error');
+    const alive = await fetch(`http://127.0.0.1:${profile.port}/`).then(()=>true,()=>false);
+    outcome.observed = {listening, recordedChild, aliveAfterFailure:alive};
+    assert(listening, 'Synthetic .cmd fixture never opened its listener');
+    assert(recordedChild, 'R03 verified .cmd child listener was not persisted before health failed');
+    assert.equal(alive,false,'R03 failed ensure left the synthetic child server listening');
+    assert(!JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes[profile.id]);
+    outcome.checks.push('R03-unhealthy-cmd-child-recorded-and-terminated');
+  } else if (scenario === 'wsl-start-failure') {
+    assert.equal(kind,'wsl'); profile.executable = '/bin/true'; profile.directory = '/nonexistent-agent-browser-' + randomBytes(10).toString('hex');
+    await call('profile.save',{profile});
+    assert.equal((await call('runtime.ensure',{profileId:profile.id})).state,'error');
+    await call('runtime.stop',{profileId:profile.id});
+    assert(!JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes[profile.id], 'R04 failed WSL launch retained its ownership record');
+    await call('profile.save',{profile:{...profile,name:'Editable after failed start'}});
+    await call('profile.delete',{profileId:profile.id});
+    outcome.checks.push('R04-wsl-invalid-directory-stop-edit-delete');
+  } else if (scenario === 'doctor-env') {
+    profile.env.AB_DOCTOR_FIXTURE = 'fixture-env-present';
+    if(kind === 'wsl') {
+      const file = join(home,'version-env.sh');
+      writeFileSync(file, `#!/bin/sh\n[ "$AB_DOCTOR_FIXTURE" = fixture-env-present ] && [ "$PWD" = "$AB_DOCTOR_DIRECTORY" ] || exit 1\nprintf '1.18.29\\n'\n`);
+      profile.executable = windowsToWsl(file); profile.directory = '/tmp';
+    } else {
+      const file = join(home,'version-env.cmd');
+      writeFileSync(file, '@echo off\r\nif not "%AB_DOCTOR_FIXTURE%"=="fixture-env-present" exit /b 1\r\nif not "%CD%"=="%AB_DOCTOR_DIRECTORY%" exit /b 1\r\necho 1.18.29\r\n');
+      profile.executable = file;
+    }
+    profile.env.AB_DOCTOR_DIRECTORY = profile.directory;
+    await call('profile.save',{profile});
+    const result = await call('doctor.run',{profileId:profile.id});
+    assert(result.checks.some(check => check.id === 'executable' && check.status === 'ok'), 'D01 doctor must use the profile environment and working directory');
+    await call('profile.delete',{profileId:profile.id}); outcome.checks.push('D01-profile-environment-and-directory');
+  } else throw Error('Unknown regression scenario');
+}
 try {
   launch(); await connect();
+  if (scenario) { await regression(); outcome.ok = true; } else {
   const started = JSON.parse(execFileSync(exe, ['--home', home, 'start', '--port', String(port)], { env: process.env, timeout: 20_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
   assert(started.running && started.port === port);
   assert.equal(JSON.parse(readFileSync(join(home, 'config.json'))).port, port);
@@ -129,9 +220,10 @@ try {
   assert.deepEqual(stopped.stoppedProfiles, [profile.id]); assert.deepEqual(stopped.errors, []);
   assert.equal((await call('runtime.status', { profileId: profile.id })).state, 'stopped');
   outcome.checks.push('cli-stop-all-owned-runtime-confirmed-stopped'); await call('profile.delete', { profileId: profile.id }); outcome.ok = true;
+  }
 } catch (error) {
   outcome.error = error.message;
   try { await call('runtime.stop', { profileId: profile.id }); } catch { outcome.cleanup = 'Runtime ownership record was retained in the isolated home'; }
-} finally { ws?.close(); bridge?.kill(); }
+} finally { await fixtureShutdown?.(); ws?.close(); bridge?.kill(); }
 writeFileSync(join(home, 'result.json'), JSON.stringify(outcome, null, 2));
-console.log(JSON.stringify(outcome)); process.exit(outcome.ok ? 0 : 1);
+console.log(JSON.stringify(outcome)); process.exitCode = outcome.ok ? 0 : 1;
