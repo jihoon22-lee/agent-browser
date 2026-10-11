@@ -1,0 +1,62 @@
+const INTERACTIVE = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[contenteditable=''],[contenteditable=true]";
+export const isInteractive = (el: Element) => el.matches(INTERACTIVE);
+
+export function isRendered(el: Element, opts: { checkLayout: boolean }): boolean {
+  for (let n: Element | null = el; n; n = n.parentElement ?? ((n.getRootNode() as ShadowRoot).host ?? null)) {
+    if ((n as HTMLElement).hidden) return false;
+    const cs = getComputedStyle(n);
+    if (cs.display === "none" || cs.visibility === "hidden") return false;
+  }
+  return opts.checkLayout ? el.getClientRects().length > 0 : true;
+}
+
+export function roleOf(el: Element): string {
+  const explicit = el.getAttribute("role");
+  if (explicit) return explicit;
+  const tag = el.tagName.toLowerCase();
+  if (tag === "a") return "link";
+  if (tag === "button" || tag === "summary") return "button";
+  if (tag === "select") return "combobox";
+  if (tag === "textarea") return "textbox";
+  if (tag === "input") {
+    const t = (el as HTMLInputElement).type;
+    if (t === "checkbox" || t === "radio") return t;
+    if (t === "submit" || t === "button" || t === "reset") return "button";
+    return "textbox";
+  }
+  return (el as HTMLElement).isContentEditable ? "textbox" : tag;
+}
+
+const clean = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+
+export function accessibleName(el: Element): string {
+  const aria = clean(el.getAttribute("aria-label"));
+  if (aria) return aria;
+  const by = el.getAttribute("aria-labelledby");
+  if (by) {
+    const t = clean(by.split(/\s+/).map((id) => el.ownerDocument.getElementById(id)?.textContent).join(" "));
+    if (t) return t;
+  }
+  if ("labels" in el) {
+    const labels = (el as HTMLInputElement).labels;
+    if (labels && labels.length) {
+      const t = clean([...labels].map((l) => l.textContent).join(" "));
+      if (t) return t;
+    }
+  }
+  const ph = clean(el.getAttribute("placeholder"));
+  if (ph) return ph;
+  const text = clean((el as HTMLElement).innerText ?? el.textContent);
+  if (text) return text;
+  return clean(el.getAttribute("title")) || clean((el as HTMLInputElement).value);
+}
+
+export function walkDeep(root: Document | ShadowRoot, visit: (el: Element, inShadow: boolean) => void, inShadow = false) {
+  const doc = root.ownerDocument ?? (root as Document);
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n as Element;
+    visit(el, inShadow);
+    if (el.shadowRoot) walkDeep(el.shadowRoot, visit, true);
+  }
+}
