@@ -1,7 +1,7 @@
 :root {
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 13px; color: var(--text, #4c4f69); background: var(--base, #eff1f5);
-  --base: #eff1f5; --canvas: #e6e9ef; --surface: #eff1f5; --raised: #eff1f5; --hover: #dce0e8;
+  --base: #eff1f5; --canvas: #e6e9ef; --surface: #eff1f5; --raised: #eff1f5; --hover: #dce0e8; --bubble: #d6e0f5;
   --text: #4c4f69; --muted: #5c5f77; --line: #bcc0cc; --control-border: #74788e;
   --accent: #245ac8; --accent-on: #eff1f5; --danger: #b51c3e; --danger-on: #eff1f5;
   --success: #347a34; --focus: #8839ef;
@@ -59,18 +59,36 @@ summary { cursor: pointer; line-height: 1.5; }
 .conversation { flex: 1; min-height: 0; display: flex; flex-direction: column; margin: 0; padding: 0; overflow: hidden; }
 .section-heading, .view-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .conversation > .section-heading { flex: none; padding: 5px 16px 11px; }
-.conversation > .section-heading h2 { font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation > .section-heading h2 { flex: 1; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation > .error, .conversation > .notice { flex: none; margin: 0 12px 8px; max-height: 100px; overflow: auto; }
 .status-pill { flex: none; font-size: 10px; color: var(--muted); background: var(--canvas); padding: 3px 7px; border-radius: 99px; }
 .status-pill.busy { color: var(--accent); }
 .message-viewport { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 16px 12px; scrollbar-width: thin; scrollbar-color: var(--control-border) transparent; }
-.message { margin: 14px 0 22px; padding: 2px 0; overflow-wrap: anywhere; min-width: 0; }
-.message.user { margin-left: 18px; padding: 12px; border: 1px solid var(--line); border-radius: 12px 12px 3px 12px; background: var(--canvas); }
-.message > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
-.message > footer { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 9px; }
-.message > footer button { font-size: 10px; min-height: 26px; padding: 4px 6px; border-color: transparent; background: transparent; color: var(--muted); }
+/* A turn is one user prompt or one assistant reply (all of its steps). Turns, not steps, get the spacing. */
+.turn { margin: 18px 0; min-width: 0; }
+.turn:first-child { margin-top: 12px; }
+.turn.user:not(:first-child) { padding-top: 18px; border-top: 1px solid var(--line); }
+.turn.user { display: flex; flex-direction: column; align-items: flex-end; }
+.message { margin: 0; padding: 0; overflow-wrap: anywhere; min-width: 0; }
+.message.continued { margin-top: 2px; }
+.message.user { max-width: 88%; padding: 10px 12px; border-radius: 14px 14px 4px 14px; background: var(--bubble); }
+.message > header { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.message.assistant > header strong { color: var(--accent); font-weight: 650; }
+.message.user > header strong { color: var(--text); }
+.message-actions { display: flex; gap: 2px; margin-left: auto; }
+.message-actions button, .turn-actions button { font-size: 10px; min-height: 24px; padding: 2px 6px; border-color: transparent; background: transparent; color: var(--muted); }
+.turn-actions { display: flex; justify-content: flex-start; margin-top: 4px; }
+/* Actions appear on hover or keyboard focus; they keep their space so text never shifts. */
+.message-actions, .turn-actions { opacity: 0; }
+.turn:hover .turn-actions, .turn:focus-within .turn-actions, .message:hover .message-actions, .message:focus-within .message-actions { opacity: 1; }
+@media (hover: none) { .message-actions, .turn-actions { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) { .message-actions, .turn-actions { transition: opacity .12s; } }
+.reasoning > summary { font-size: 11px; color: var(--muted); }
+.waiting { font-size: 12px; margin: 14px 0; }
 .workbench pre { overflow: auto; max-height: 300px; max-width: 100%; font-size: 11px; line-height: 1.65; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--canvas); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .markdown p { margin: 7px 0; white-space: pre-wrap; }
+.message .markdown > :first-child { margin-top: 0; }
+.message .markdown > :last-child { margin-bottom: 0; }
 .markdown h1 { font-size: 19px; margin: 16px 0 8px; }
 .markdown h2 { font-size: 17px; margin: 14px 0 8px; }
 .markdown h3 { font-size: 15px; margin: 12px 0 7px; }
@@ -80,8 +98,9 @@ summary { cursor: pointer; line-height: 1.5; }
 .table-scroll { overflow: auto; max-width: 100%; }
 .markdown table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .markdown td, .markdown th { padding: 7px; border: 1px solid var(--line); white-space: pre-wrap; }
-.tool-card { border: 1px solid var(--line); border-radius: 9px; margin: 10px 0; padding: 10px; background: var(--surface); }
+.tool-card { border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; padding: 7px 10px; background: var(--surface); }
 .tool-card > summary { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; }
+.tool-card .tool-hint { display: block; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-card > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .tool-card > summary > span:last-child { flex: none; }
 .tool-card.error { border-color: var(--danger); color: var(--text); }
@@ -137,8 +156,8 @@ summary { cursor: pointer; line-height: 1.5; }
 .toolbar > input { flex: 1; min-width: 80px !important; width: 100px !important; margin: 0 !important; }
 .workbench small { display: block; }
 .session-list, .command-list { list-style: none; padding: 0; margin: 14px 0; }
-.session-list button { display: block; width: 100%; text-align: left; margin: 8px 0; padding: 12px; border-color: var(--line); overflow-wrap: anywhere; }
-.session-list button.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+.session-list .session-open { display: block; width: 100%; text-align: left; margin: 8px 0; padding: 12px; border-color: var(--line); overflow-wrap: anywhere; }
+.session-list .session-open.selected { border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
 .session-list strong { display: block; font-size: 13px; margin-bottom: 4px; }
 .session-list small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
 .usage { font-size: 12px; }
@@ -179,9 +198,23 @@ summary { cursor: pointer; line-height: 1.5; }
 }
 @media (prefers-reduced-motion: no-preference) { button { transition: background-color .12s, border-color .12s; } }
 .session-scope { font-size: 11px; }
-.session-row { display: flex; align-items: center; gap: 6px; }
-.session-tree .tree-toggle { flex: none; width: 28px; min-height: 32px; margin: 0; padding: 3px; border-color: transparent; font-size: 20px; color: var(--muted); text-align: center; }
-.session-tree .session-open { flex: 1; min-width: 0; width: auto; }
+.session-row { display: flex; align-items: center; gap: 4px; }
+.session-tree .tree-toggle, .tree-spacer { flex: none; width: 24px; }
+.session-tree .tree-toggle { min-height: 32px; margin: 0; padding: 3px; border-color: transparent; font-size: 20px; color: var(--muted); text-align: center; }
+.session-tree .session-open { flex: 1; min-width: 0; width: auto; margin: 4px 0; padding: 9px 10px; }
+.session-tree .session-open.renaming { padding: 4px; border: 1px solid var(--accent); border-radius: 8px; }
+.session-list .session-directory { margin-top: 2px; }
+.running-dot { color: var(--accent); font-weight: 600; }
+.session-menu { position: relative; flex: none; }
+.session-list .session-menu button, .session-menu button { display: block; width: auto; margin: 0; }
+.session-menu-trigger { min-height: 30px; padding: 2px 8px; font-size: 16px; line-height: 1; }
+.session-menu-popover { position: absolute; z-index: 3; right: 0; top: calc(100% + 2px); min-width: 150px; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--surface); box-shadow: 0 4px 16px #0003; }
+.session-menu-popover button { width: 100%; text-align: left; border-color: transparent; }
+.session-menu-popover button.stop { text-align: center; }
+.session-menu-popover p { margin: 4px 6px 6px; font-size: 11px; line-height: 1.5; }
+.session-menu-popover .danger-text { color: var(--danger); }
+.workbench input.rename-field { margin: 0; padding: 5px 8px; font-size: 13px; font-weight: 600; }
+.conversation > .section-heading .rename-field { flex: 1; }
 .session-children { margin: 0 0 4px 14px; padding-left: 10px; border-left: 1px solid var(--line); }
 .session-children > ul { list-style: none; padding: 0; margin: 0; }
 .session-children > p { font-size: 11px; padding: 0 8px; }

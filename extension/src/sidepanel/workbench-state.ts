@@ -6,7 +6,16 @@ export const initialWorkbench: WorkbenchState = { messages: {}, questions: [], p
 const byId = <T extends Data>(items: T[]) => [...new Map(items.map(item => [item.id, item])).values()];
 export function workbenchReducer(state: WorkbenchState, action: Data): WorkbenchState {
   if (action.type === "reset") return initialWorkbench;
-  if (action.type === "messages") return { ...state, messages: { ...state.messages, [action.sessionID]: action.messages.map((m: UiMessage) => ({ ...m, parts: byId(m.parts) })) } };
+  if (action.type === "messages") {
+    // Snapshots are refetched while a response runs; keep unchanged messages identical so memoized cards skip rendering.
+    const previous = new Map((state.messages[action.sessionID] ?? []).map(message => [message.info.id, message]));
+    const next = action.messages.map((m: UiMessage) => {
+      const message = { ...m, parts: byId(m.parts) }, old = previous.get(m.info?.id);
+      return old && JSON.stringify(old) === JSON.stringify(message) ? old : message;
+    });
+    return { ...state, messages: { ...state.messages, [action.sessionID]: next } };
+  }
+  if (action.type === "forget") { const messages = { ...state.messages }; delete messages[action.sessionID]; return { ...state, messages }; }
   if (action.type === "pending") return { ...state, questions: byId(action.questions), permissions: byId(action.permissions) };
   if (action.type === "statuses") return { ...state, statuses: action.statuses };
   if (action.type !== "event") return state;

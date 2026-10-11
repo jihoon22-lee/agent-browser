@@ -161,6 +161,7 @@ it("does not attach a browser reference to a different session after its delayed
 });
 it.each(["전체 분기", "새 세션", "여기서 분기"])("does not select a late %s result over the user's new session selection", async action => {
   secondSession(); await render(); const pending = deferred<any>(); test.post.mockReturnValue(pending.promise);
+  if (action === "전체 분기") await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="현재 세션 작업"]')!.click());
   await act(async () => button(action).click()); await selectOtherSession(); await draftValue("둘째 대화 초안");
   await act(async () => pending.resolve({ ...sessions[0], id: "ses-late", title: "늦은 세션" }));
   expect(host.querySelector(".conversation h2")?.textContent).toBe("둘째 대화"); expect(composerValue().value).toBe("둘째 대화 초안");
@@ -314,22 +315,96 @@ it("expands nested children lazily and preserves a selected child's title and pa
   expect(host.querySelectorAll(".session-tree > li")).toHaveLength(1);
 });
 it("discards a child-tree response from a runtime that was replaced", async () => {
-  twoProfiles(); await render(); const pending = deferred<any[]>(), original = test.get.getMockImplementation()!;
-  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? pending.promise : original(path, query));
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
-  await selectProfile("second");
+  twoProfiles(); const pending = deferred<any[]>(), original = test.get.getMockImplementation()!; let first = true;
+  // Only the first runtime's check is held; the replacement runtime gets its own (empty) answer.
+  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? (first ? (first = false, pending.promise) : Promise.resolve([])) : original(path, query));
+  await render(); await selectProfile("second");
   await act(async () => pending.resolve([{ ...sessions[0], id: "ses-private-child", parentID: "ses-one", title: "다른 환경 하위 작업" }]));
   expect(host.querySelector(".session-tree")?.textContent).not.toContain("다른 환경 하위 작업");
+  expect(host.querySelector('button[aria-label="기존 대화 하위 세션 펼치기"]')).toBeNull();
 });
 
-it("refreshes an expanded child list after a subagent is created later", async () => {
-  let children: any[] = []; const original = test.get.getMockImplementation()!;
-  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? Promise.resolve(children) : original(path, query));
+it("shows a child toggle only after a subagent session exists", async () => {
   await render();
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
-  expect(host.querySelector(".session-tree")?.textContent).toContain("하위 세션이 없습니다");
-  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 접기"]')!.click());
-  children = [{ ...sessions[0], id: "ses-new-child", parentID: "ses-one", title: "나중에 생성된 하위 작업" }];
+  expect(host.querySelector('button[aria-label="기존 대화 하위 세션 펼치기"]')).toBeNull();
+  const child = { ...sessions[0], id: "ses-new-child", parentID: "ses-one", title: "나중에 생성된 하위 작업" };
+  await act(async () => test.stream({ id: "evt-child-created", type: "session.created", properties: { sessionID: child.id, info: child } }));
+  const original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? Promise.resolve([child]) : original(path, query));
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
   expect(host.querySelector(".session-tree")?.textContent).toContain("나중에 생성된 하위 작업");
+});
+it("shows child toggles only for sessions that have children, including nested children", async () => {
+  secondSession(); const child = { ...sessions[0], id: "ses-child", parentID: "ses-one", title: "하위 조사" }, original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === "/session/ses-one/children" ? Promise.resolve([child]) : original(path, query));
+  await render();
+  expect(host.querySelector('button[aria-label="기존 대화 하위 세션 펼치기"]')).not.toBeNull();
+  expect(host.querySelector('button[aria-label="둘째 대화 하위 세션 펼치기"]')).toBeNull();
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="기존 대화 하위 세션 펼치기"]')!.click());
+  expect(host.querySelector(".session-tree")?.textContent).toContain("하위 조사");
+  expect(host.querySelector('button[aria-label="하위 조사 하위 세션 펼치기"]')).toBeNull();
+});
+
+const messageGets = () => test.get.mock.calls.filter(([path]) => path === "/session/ses-one/message").length;
+async function sessionMenu(label: string, action: string) {
+  await act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
+  await act(async () => button(action).click());
+}
+it("deletes a session in place without clearing the list or reconnecting the runtime", async () => {
+  secondSession(); await render();
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, ensures = () => runtime.mock.calls.filter(([message]) => message.method === "runtime.ensure").length, before = ensures();
+  const pending = deferred<any[]>(), original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === "/session" ? pending.promise : original(path, query));
+  await sessionMenu("둘째 대화 세션 작업", "삭제"); await act(async () => button("삭제 확인").click());
+  expect(test.post.mock.calls.some(([path]) => path === "/session/ses-two")).toBe(true);
+  const tree = host.querySelector(".session-tree")!;
+  expect(tree.textContent).toContain("기존 대화"); expect(tree.textContent).not.toContain("둘째 대화");
+  expect(ensures()).toBe(before);
+  await act(async () => pending.resolve([sessions[0]]));
+  expect(host.querySelector(".conversation h2")?.textContent).toBe("기존 대화");
+});
+it("clears the conversation when the selected session is deleted", async () => {
+  await render();
+  await sessionMenu("현재 세션 작업", "삭제"); await act(async () => button("삭제 확인").click());
+  expect(host.querySelector(".conversation h2")?.textContent).toBe("새 대화");
+  expect(host.textContent).not.toContain("기존 질문");
+});
+it("renames a session inline from its menu and applies the title without a full resync", async () => {
+  await render(); const gets = messageGets();
+  await sessionMenu("현재 세션 작업", "이름 변경");
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="세션 이름"]')!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "바뀐 이름"); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+  expect(test.post).toHaveBeenCalledWith("/session/ses-one", { title: "바뀐 이름" });
+  expect(host.querySelector(".conversation h2")?.textContent).toBe("바뀐 이름");
+  expect(host.querySelector('input[aria-label="세션 이름"]')).toBeNull();
+  await act(async () => test.stream({ id: "evt-renamed", type: "session.updated", properties: { sessionID: "ses-one", info: { ...sessions[0], title: "바뀐 이름" } } }));
+  await act(async () => new Promise(resolve => setTimeout(resolve, 200)));
+  expect(messageGets()).toBe(gets);
+});
+it("cancels inline rename with Escape and hides the rename field by default", async () => {
+  await render();
+  expect(host.querySelector('input[aria-label="세션 이름"]')).toBeNull();
+  await sessionMenu("현재 세션 작업", "이름 변경");
+  await act(async () => host.querySelector<HTMLInputElement>('input[aria-label="세션 이름"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  expect(host.querySelector('input[aria-label="세션 이름"]')).toBeNull();
+  expect(test.post).not.toHaveBeenCalledWith("/session/ses-one", expect.anything());
+});
+it("applies todo updates from the event without refetching messages", async () => {
+  await render(); const gets = messageGets();
+  await act(async () => test.stream({ id: "evt-todo", type: "todo.updated", properties: { sessionID: "ses-one", todos: [{ content: "이벤트로 받은 할 일", status: "pending", priority: "high" }] } }));
+  await act(async () => new Promise(resolve => setTimeout(resolve, 200)));
+  expect(host.textContent).toContain("이벤트로 받은 할 일"); expect(messageGets()).toBe(gets);
+});
+it("keeps message actions to the relevant role and hides empty reasoning", async () => {
+  messages.push(
+    { info: { ...info, id: "msg-step-1", role: "assistant", time: { created: 2 } }, parts: [{ id: "prt-r1", type: "reasoning", text: "  " }, { id: "prt-t1", type: "tool", tool: "browser_click", state: { status: "completed", input: { ref: "e12" }, output: "ok", title: "클릭" } }] },
+    { info: { ...info, id: "msg-step-2", role: "assistant", time: { created: 3 } }, parts: [{ id: "prt-s", type: "step-start" }, { id: "prt-a", type: "text", text: "최종 답변" }] });
+  await render();
+  const user = host.querySelector('article.message.user')!, turn = host.querySelector('.turn.assistant')!;
+  expect([...user.querySelectorAll("button")].map(el => el.textContent)).toEqual(["여기서 분기", "이전으로 되돌리기"]);
+  expect(host.textContent).not.toContain("추론 과정");
+  expect([...turn.querySelectorAll("button")].filter(el => el.textContent === "복사")).toHaveLength(1);
+  expect(turn.querySelectorAll("article.message > header")).toHaveLength(1);
+  expect(turn.querySelector(".tool-card summary")?.textContent).toContain("e12");
 });

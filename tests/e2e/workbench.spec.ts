@@ -121,13 +121,19 @@ test("W05 current-tab reference is an explicit typed observation and user comman
 
 test("W06 exports, message fork, revert and session search remain usable", async () => {
   const id = await createSession(); await send("분기할 합성 메시지");
-  await panel.getByRole("tab", { name: "세션", exact: true }).click();
-  await panel.getByLabel("세션 이름").fill("검색할 합성 제목");
-  await panel.getByRole("button", { name: "이름 저장", exact: true }).click();
+  await expect(panel.getByLabel("세션 이름", { exact: true })).toHaveCount(0);
+  const sessionMenu = panel.getByRole("button", { name: "현재 세션 작업", exact: true });
+  await sessionMenu.click(); await panel.getByRole("button", { name: "이름 변경", exact: true }).click();
+  await panel.getByLabel("세션 이름", { exact: true }).fill("검색할 합성 제목"); await panel.keyboard.press("Enter");
   await expect.poll(() => api.state.sessions.find(session => session.id === id)!.title).toBe("검색할 합성 제목");
+  await expect(panel.getByRole("heading", { name: "검색할 합성 제목", exact: true })).toBeVisible();
+  await sessionMenu.click();
   const download = panel.waitForEvent("download"); await panel.getByRole("button", { name: "JSON 내보내기", exact: true }).click();
   expect((await download).suggestedFilename()).toBe("검색할 합성 제목.json");
-  await panel.getByRole("tab", { name: "대화", exact: true }).click();
+  const userMessage = panel.locator("article.message.user").first();
+  // Message actions stay hidden until the message is hovered (or focused), so they do not clutter the conversation.
+  await panel.mouse.move(0, 0); await expect(userMessage.locator(".message-actions")).toHaveCSS("opacity", "0");
+  await userMessage.hover(); await expect(userMessage.locator(".message-actions")).toHaveCSS("opacity", "1");
   panel.once("dialog", dialog => dialog.accept());
   await panel.locator("article.message.user").first().getByRole("button", { name: "이전으로 되돌리기" }).click();
   await expect(panel.getByRole("button", { name: "되돌리기 취소", exact: true })).toBeVisible();
@@ -286,7 +292,10 @@ test("W11 subagent sessions stay under collapsed parents and nested selection ca
   await expect(tree.locator(":scope > li")).toHaveCount(api.state.sessions.filter(session => !session.parentID).length);
   expect(api.state.requests.filter(request => request.path === "/session" && request.method === "GET").every(request => request.query.roots === "true")).toBe(true);
   await tree.getByRole("button", { name: "상위 업무 세션 하위 세션 펼치기", exact: true }).focus(); await panel.keyboard.press("Enter");
-  await tree.getByRole("button", { name: "하위 조사 0 하위 세션 펼치기", exact: true }).focus(); await panel.keyboard.press("Enter");
+  await tree.getByRole("button", { name: "하위 조사 0 하위 세션 펼치기", exact: true }).focus();
+  // Only a session that really has subagents gets a toggle.
+  await expect(tree.getByRole("button", { name: "하위 조사 1 하위 세션 펼치기", exact: true })).toHaveCount(0);
+  await panel.keyboard.press("Enter");
   await expect(tree.getByText("중첩된 조사", { exact: true })).toBeVisible();
   const screenshot = info.outputPath("nested-sessions-400.png"); await panel.setViewportSize({ width: 400, height: 900 }); await panel.screenshot({ path: screenshot }); await info.attach("nested-sessions", { path: screenshot, contentType: "image/png" });
   await tree.locator(".session-open").filter({ has: panel.getByText("중첩된 조사", { exact: true }) }).click();
@@ -313,4 +322,22 @@ test("W12 a successful submit with no initial SSE event is still observed for a 
     await expect(panel.getByText("첫 이벤트가 없어도 관찰한 합성 결과", { exact: true })).toBeVisible();
     expect(api.state.requests.filter(request => request.path === `/session/${id}/abort`)).toHaveLength(0);
   } finally { await panel.unroute(`**${path}*`); }
+});
+
+test("W13 deleting a session removes only that row and keeps the rest of the list on screen", async () => {
+  const keep = api.session({ title: "남길 합성 세션" }), remove = api.session({ title: "지울 합성 세션" });
+  await panel.getByRole("tab", { name: "세션", exact: true }).click();
+  const tree = panel.locator(".session-tree");
+  await expect(tree.getByText("지울 합성 세션", { exact: true })).toBeVisible();
+  await expect(tree.getByRole("button", { name: "지울 합성 세션 하위 세션 펼치기", exact: true })).toHaveCount(0);
+  const ensures = api.state.requests.filter(request => request.path === "/provider").length;
+  await tree.getByRole("button", { name: "지울 합성 세션 세션 작업", exact: true }).click();
+  await panel.getByRole("button", { name: "삭제", exact: true }).click();
+  await panel.getByRole("button", { name: "삭제 확인", exact: true }).click();
+  await expect.poll(() => api.state.sessions.some(session => session.id === remove.id)).toBe(false);
+  await expect(tree.getByText("지울 합성 세션", { exact: true })).toHaveCount(0);
+  await expect(tree.getByText("남길 합성 세션", { exact: true })).toBeVisible();
+  // The runtime is not reconnected, so models/agents are not fetched again.
+  expect(api.state.requests.filter(request => request.path === "/provider").length).toBe(ensures);
+  expect(api.state.sessions.some(session => session.id === keep.id)).toBe(true);
 });

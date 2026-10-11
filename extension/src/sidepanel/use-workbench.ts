@@ -8,18 +8,23 @@ export function useWorkbench() {
   const [runtime, setRuntime] = useState<Data>(), [directory, setDirectory] = useState("");
   const [sessions, setSessions] = useState<Data[]>([]), [sessionId, setSessionId] = useState("");
   const [knownSessions, setKnownSessions] = useState<Record<string, Data>>({}), [sessionsLoading, setSessionsLoading] = useState(false), [hasMoreSessions, setHasMoreSessions] = useState(false);
-  const sessionQuery = useRef({ search: "", limit: 50 }), sessionListRevision = useRef(0);
+  const sessionQuery = useRef({ search: "", limit: 50 }), sessionListRevision = useRef(0), knownRef = useRef(knownSessions);
+  knownRef.current = knownSessions;
   const [catalog, setCatalog] = useState<Data>({ all: [], connected: [], default: {} });
   const [agents, setAgents] = useState<Data[]>([]), [commands, setCommands] = useState<Data[]>([]), [skills, setSkills] = useState<Data[]>([]);
   const [todos, setTodos] = useState<Data[]>([]), [children, setChildren] = useState<Data[]>([]), [diff, setDiff] = useState<Data[]>([]), [mcp, setMcp] = useState<Data>({});
   const [connected, setConnected] = useState(false), [loading, setLoading] = useState(false), [error, setError] = useState("");
   const client = useRef<OpenCodeV1Client | undefined>(undefined), epoch = useRef(0), stream = useRef<AbortController | undefined>(undefined), selected = useRef("");
-  const syncing = useRef(false), buffered = useRef<Data[]>([]), refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const syncing = useRef(false), buffered = useRef<Data[]>([]), refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), listTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const bindings = useRef(new Map<string, { client: OpenCodeV1Client; sessionID: string; profileId: string; directory: string }>());
   const recentSessions = useRef(new Map<string, string>()), metadataRevision = useRef(0);
   const responseWatch = useRef({ epoch: 0, sessionID: "", until: 0 }), latestState = useRef(state);
   latestState.current = state;
   const [watchRevision, setWatchRevision] = useState(0);
+  // Child lists keyed by parent ID. A missing key means "not checked yet", so the tree shows no toggle.
+  const [childIndex, setChildIndex] = useState<Record<string, Data[]>>({});
+  const childQueue = useRef<string[]>([]), childRequested = useRef(new Set<string>()), childActive = useRef(0);
+  const lastMessageEvent = useRef(new Map<string, number>());
   const currentProfile = useRef(""), selectionRevision = useRef(0);
   const captureScope = useCallback(() => { const revision = epoch.current, selection = selectionRevision.current; return () => revision === epoch.current && selection === selectionRevision.current; }, []);
   const fail = (value: unknown) => setError(value instanceof Error ? value.message : String(value));
@@ -41,7 +46,49 @@ export function useWorkbench() {
     const api = client.current, revision = epoch.current; if (!api) return [];
     const list = await api.get<Data[]>(`/session/${encodeURIComponent(id)}/children`);
     if (revision !== epoch.current) return [];
-    mergeSessions(list); return list;
+    mergeSessions(list); setChildIndex(previous => ({ ...previous, [id]: list })); return list;
+  }, []);
+  const pumpChildren = useCallback(() => {
+    while (childActive.current < 4 && childQueue.current.length) {
+      const id = childQueue.current.shift()!, api = client.current, revision = epoch.current;
+      if (!api) return;
+      childActive.current++;
+      void api.get<Data[]>(`/session/${encodeURIComponent(id)}/children`).then(list => {
+        if (revision !== epoch.current) return;
+        mergeSessions(list); setChildIndex(previous => previous[id] ? previous : { ...previous, [id]: list });
+      }).catch(() => { /* Unknown stays without a toggle; selecting the session still works. */ }).finally(() => {
+        if (revision !== epoch.current) return;
+        childActive.current--; pumpChildren();
+      });
+    }
+  }, []);
+  // The v1 Session has no child count, so only rendered rows are checked, a few at a time, once per connection.
+  const ensureChildren = useCallback((ids: string[]) => {
+    for (const id of ids) if (!childRequested.current.has(id)) { childRequested.current.add(id); childQueue.current.push(id); }
+    pumpChildren();
+  }, [pumpChildren]);
+  const isSelectedOrAncestor = (id: string) => {
+    for (let current = selected.current, depth = 0; current && depth < 50; current = knownRef.current[current]?.parentID ?? "", depth++) if (current === id) return true;
+    return false;
+  };
+  const updateSession = useCallback((info: Data) => {
+    if (typeof info?.id !== "string") return;
+    mergeSessions([info]);
+    // Events carry the full Session, so replace rather than merge: a cleared `revert` must disappear.
+    setSessions(previous => previous.map(session => session.id === info.id ? info : session));
+    if (info.parentID) setChildIndex(previous => previous[info.parentID] ? { ...previous, [info.parentID]: previous[info.parentID]!.map(child => child.id === info.id ? info : child) } : previous);
+  }, []);
+  const removeSession = useCallback((id: string) => {
+    const clearSelection = isSelectedOrAncestor(id);
+    setSessions(previous => previous.filter(session => session.id !== id));
+    setKnownSessions(previous => { const next = { ...previous }; delete next[id]; return next; });
+    setChildIndex(previous => { const next: Record<string, Data[]> = {}; for (const [parent, list] of Object.entries(previous)) if (parent !== id) next[parent] = list.filter(child => child.id !== id); return next; });
+    setChildren(previous => previous.filter(child => child.id !== id));
+    dispatch({ type: "forget", sessionID: id });
+    if (clearSelection) {
+      selectionRevision.current++; selected.current = ""; setSessionId(""); setTodos([]); setChildren([]); setDiff([]);
+      void chrome.storage.local.set({ [`recentSession:${currentProfile.current}`]: "" }).catch(() => {});
+    }
   }, []);
   const remember = (messages: UiMessage[], api: OpenCodeV1Client) => { for (const [operationID, sessionID] of Object.entries(operationBindings(messages))) bindings.current.set(operationID, { client: api, sessionID, profileId: currentProfile.current, directory: api.directory }); };
   const resync = useCallback(async (refreshDetails = true) => {
@@ -96,7 +143,8 @@ export function useWorkbench() {
     let active = true, timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
       if (!active || revision !== epoch.current || id !== selected.current) return;
-      if (document.visibilityState !== "hidden") await resync(false);
+      // Streaming already delivers this session's messages; poll only when the stream has gone quiet.
+      if (document.visibilityState !== "hidden" && Date.now() - (lastMessageEvent.current.get(id) ?? 0) > 1_500) await resync(false);
       if (active && needsRefresh()) timer = setTimeout(() => void tick(), 2_000);
     };
     timer = setTimeout(() => void tick(), 2_000);
@@ -113,6 +161,7 @@ export function useWorkbench() {
     const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); syncing.current = false; buffered.current = [];
     setLoading(true); setConnected(false); setError(""); setProfileId(id); currentProfile.current = id;
     sessionQuery.current = { search: "", limit: 50 }; sessionListRevision.current++; setKnownSessions({}); setHasMoreSessions(false); setSessionsLoading(false);
+    childQueue.current = []; childRequested.current.clear(); childActive.current = 0; setChildIndex({}); lastMessageEvent.current.clear();
     selected.current = restored; setSessionId(restored); dispatch({ type: "reset" }); setSessions([]); setTodos([]); setChildren([]); setDiff([]); setCatalog({ all: [], connected: [], default: {} }); setAgents([]); setCommands([]); setSkills([]); setMcp({}); setRuntime(undefined); client.current = undefined;
     try {
       const info = await bridgeRequest("runtime.ensure", { profileId: id });
@@ -126,9 +175,21 @@ export function useWorkbench() {
         if (revision !== epoch.current) return;
         if (syncing.current) buffered.current.push(event);
         else dispatch({ type: "event", event });
-        const part = (event.properties as Data).part;
+        const properties = event.properties as Data, part = properties.part;
         if (part?.type === "tool") remember([{ info: { sessionID: part.sessionID }, parts: [part] }], api);
-        if (/^(session\.(created|updated|deleted)|todo\.updated)/.test(event.type)) { clearTimeout(refreshTimer.current); refreshTimer.current = setTimeout(() => void resync(), 120); }
+        if (event.type.startsWith("message.")) { const sessionID = properties.sessionID ?? properties.info?.sessionID ?? part?.sessionID; if (sessionID) lastMessageEvent.current.set(sessionID, Date.now()); }
+        // Session and todo events carry the new state; applying them directly avoids refetching the whole conversation.
+        const info = properties.info;
+        if (event.type === "session.updated") updateSession(info);
+        if (event.type === "session.created" && info?.id) {
+          mergeSessions([info]);
+          if (info.parentID) {
+            setChildIndex(previous => ({ ...previous, [info.parentID]: [...(previous[info.parentID] ?? []).filter(child => child.id !== info.id), info] }));
+            if (info.parentID === selected.current) setChildren(previous => [...previous.filter(child => child.id !== info.id), info]);
+          } else { clearTimeout(listTimer.current); listTimer.current = setTimeout(() => void refreshSessions().catch(() => {}), 120); }
+        }
+        if (event.type === "session.deleted" && info?.id) removeSession(info.id);
+        if (event.type === "todo.updated" && properties.sessionID === selected.current && Array.isArray(properties.todos)) setTodos(properties.todos);
       }, online => { if (revision === epoch.current) { setConnected(online); if (online) void resync(); } }, controller.signal).catch(value => { if (revision === epoch.current && !controller.signal.aborted) fail(value); });
       const results = await Promise.allSettled([api.get<Data>("/provider"), api.get<Data[]>("/agent"), api.get<Data[]>("/command"), api.get<Data[]>("/skill"), api.get<Data>("/mcp")]);
       if (revision !== epoch.current) return;
@@ -138,7 +199,7 @@ export function useWorkbench() {
       await resync();
     } catch (value) { if (revision === epoch.current) fail(value); }
     finally { if (revision === epoch.current) setLoading(false); }
-  }, [resync]);
+  }, [resync, refreshSessions, updateSession, removeSession]);
   const selectSession = useCallback(async (session: Data) => {
     selectionRevision.current++;
     if (session.directory && session.directory !== client.current?.directory) { await connect(currentProfile.current, session.directory, session.id); return; }
@@ -167,11 +228,11 @@ export function useWorkbench() {
     void load();
     const listener = (message: Data) => { if (message.kind === "conn-status" && message.status?.state === "connected") void load(); if (message.kind === "profiles-changed") void load(message.profileId); };
     chrome.runtime.onMessage.addListener(listener);
-    return () => { active = false; epoch.current++; stream.current?.abort(); clearTimeout(refreshTimer.current); chrome.runtime.onMessage.removeListener(listener); };
+    return () => { active = false; epoch.current++; stream.current?.abort(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); chrome.runtime.onMessage.removeListener(listener); };
   }, [connect]);
   const abortKnown = useCallback(async (operationId: string) => {
     const binding = bindings.current.get(operationId); if (!binding) return false;
     await binding.client.post(`/session/${encodeURIComponent(binding.sessionID)}/abort`); return true;
   }, []);
-  return { state, dispatch, profiles, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, setError, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown };
+  return { state, dispatch, profiles, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, setError, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown };
 }
