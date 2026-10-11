@@ -51,37 +51,69 @@ async fn auth_exchange(ws: &mut Ws, request: &Envelope) -> Result<Value, String>
 
 /// Starts `exe serve --port <port>` so that it keeps running after this process exits.
 pub fn spawn_detached_serve(exe: &Path, port: u16) -> std::io::Result<()> {
-    let mut cmd = std::process::Command::new(exe);
-    cmd.arg("serve")
-        .arg("--port")
-        .arg(port.to_string())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
-        let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW;
-        // WSL interop and some terminals run us inside a job object; try to leave it so
-        // serve survives OpenCode exiting. Fall back when the job forbids breakaway.
-        cmd.creation_flags(base | CREATE_BREAKAWAY_FROM_JOB);
-        if let Ok(child) = cmd.spawn() {
-            tracing::info!(serve_spawn = true, launch_method = "windows-breakaway", pid = child.id(), "detached bridge started");
-            return Ok(());
-        }
-        cmd.creation_flags(base);
-        return cmd.spawn().map(|child| tracing::info!(serve_spawn = true, launch_method = "windows-detached-fallback", pid = child.id(), "detached bridge started"));
+        spawn_windows_without_handles(exe, port)
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("serve").arg("--port").arg(port.to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .process_group(0);
         cmd.spawn().map(|child| tracing::info!(serve_spawn = true, launch_method = "unix-process-group", pid = child.id(), "detached bridge started"))
     }
+}
+
+/// Stable std::process::Command inherits every inheritable Windows handle, including WSL
+/// interop channels unrelated to stdio (rust-lang/rust#161158). A detached serve needs none:
+/// it logs to its own file and communicates over WebSocket. Explicitly inherit zero handles
+/// so closing MCP stdin also lets the WSL parent observe process exit while serve survives.
+#[cfg(windows)]
+fn spawn_windows_without_handles(exe: &Path, port: u16) -> std::io::Result<()> {
+    use std::{io, os::windows::ffi::OsStrExt, ptr};
+    use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::{
+        CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
+        CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
+        CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS,
+    }};
+
+    let mut application: Vec<u16> = exe.as_os_str().encode_wide().collect();
+    if !exe.is_absolute() || application.iter().any(|unit| *unit == 0 || *unit == u16::from(b'"')) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "detached serve requires an absolute executable path without NUL or quotes"));
+    }
+    // The executable is an explicit lpApplicationName, never searched or interpreted by a shell.
+    // It ends in a filename, so wrapping argv[0] in quotes preserves spaces and Unicode exactly.
+    let mut command_line = vec![u16::from(b'"')];
+    command_line.extend_from_slice(&application);
+    command_line.extend(format!("\" serve --port {port}").encode_utf16());
+    command_line.push(0);
+    application.push(0);
+    let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+    for (extra, method) in [(CREATE_BREAKAWAY_FROM_JOB, "windows-breakaway"), (0, "windows-detached-fallback")] {
+        let mut command = command_line.clone();
+        let startup = STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..Default::default() };
+        let mut process = PROCESS_INFORMATION::default();
+        // SAFETY: UTF-16 buffers are NUL terminated and live for the call; command is writable.
+        // Null security/environment/directory pointers select documented defaults. No stdio
+        // handles or STARTF_USESTDHANDLES are supplied, and bInheritHandles is FALSE.
+        let created = unsafe {
+            CreateProcessW(application.as_ptr(), command.as_mut_ptr(), ptr::null(), ptr::null(),
+                0, base | extra, ptr::null(), ptr::null(), &startup, &mut process)
+        };
+        if created != 0 {
+            // SAFETY: successful CreateProcessW returned these owned kernel handles. Closing
+            // our references does not stop the detached child; its PID is retained only for logs.
+            unsafe { CloseHandle(process.hThread); CloseHandle(process.hProcess); }
+            tracing::info!(serve_spawn = true, launch_method = method, pid = process.dwProcessId, "detached bridge started");
+            return Ok(());
+        }
+        if extra == 0 { return Err(io::Error::last_os_error()); }
+    }
+    unreachable!("the final spawn attempt always returns")
 }
 
 pub struct ServeClient {
