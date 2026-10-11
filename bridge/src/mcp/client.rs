@@ -281,13 +281,20 @@ impl ServeClient {
                 _ = self.ensure_connected(&mut conn) => {},
             }
             let Some(ws) = conn.as_mut() else { break };
+            let mut queued = false;
             let send = tokio::select! {
                 biased;
                 _ = &mut cancel => {
-                    Self::cancel_request(&mut conn, req.id().unwrap()).await;
-                    return Ok(self.cancelled(name, &args, true));
+                    if queued { Self::cancel_request(&mut conn, req.id().unwrap()).await; }
+                    return Ok(self.cancelled(name, &args, queued));
                 },
-                sent = ws.send(Message::text(req_text.clone())) => sent,
+                sent = async {
+                    // feed completes immediately after the sink accepts the message.
+                    // Cancellation before acceptance cannot have delivered this call.
+                    ws.feed(Message::text(req_text.clone())).await?;
+                    queued = true;
+                    ws.flush().await
+                } => sent,
             };
             match send {
                 Ok(()) => {
@@ -363,6 +370,38 @@ impl ServeClient {
 mod auth_tests {
     use super::*;
 
+
+    #[tokio::test]
+    async fn review_cancel_before_send_is_undelivered_and_reuses_connection() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (stream,_) = listener.accept().await.unwrap();
+            tokio_tungstenite::accept_async(stream).await.unwrap()
+        });
+        let (ws,_) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}")).await.unwrap();
+        let mut peer = server.await.unwrap();
+        let client = ServeClient {port,exe:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(Some(ws)),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
+        let mut polls = 0;
+        // First poll: before the mutex. Second: before the cached connection.
+        // Third: the send select, before its send future has ever been polled.
+        let cancel = std::future::poll_fn(|_| {
+            polls += 1;
+            if polls == 3 { std::task::Poll::Ready(()) } else { std::task::Poll::Pending }
+        });
+        let outcome = client.call_tool_cancellable("browser_click",json!({"ref":"e1","operationId":"fixture"}),cancel).await.unwrap();
+        assert_eq!(outcome["error"]["code"],"CANCELLED");
+        assert_eq!(outcome["delivered"],false); assert_eq!(outcome["executed"],"no");
+        assert!(tokio::time::timeout(Duration::from_millis(30),peer.next()).await.is_err(),"Neither tool.call nor tool.cancel should be sent");
+        let next = tokio::spawn(async move {
+            let Message::Text(text) = peer.next().await.unwrap().unwrap() else {panic!("expected tool.call")};
+            let Envelope::Req {id,method,..} = parse_envelope(&text).unwrap() else {panic!("expected request")};
+            assert_eq!(method,"tool.call");
+            peer.send(Message::text(Envelope::ok(id,json!({"ok":true})).to_text())).await.unwrap();
+        });
+        assert_eq!(client.call_tool("browser_tabs",json!({"action":"list"})).await.unwrap()["ok"],true);
+        next.await.unwrap();
+    }
 
     #[tokio::test]
     async fn r01_cancellation_interrupts_connection_authentication() {

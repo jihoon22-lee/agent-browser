@@ -399,6 +399,36 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn review_attach_creation_and_outcome_complete_in_the_same_poll() {
+        use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered, StreamExt};
+        use crate::rpc::{Envelope, parse_envelope};
+        for cancel_before_poll in [true, false] {
+            let home = tempfile::tempdir().unwrap();
+            let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+            let (tx,mut rx) = tokio::sync::mpsc::unbounded_channel();
+            state.registry.register("fixture",tx);
+            let (abort,registration) = AbortHandle::new_pair();
+            let mut pending = FuturesUnordered::new();
+            pending.push(Abortable::new(call_tool(&state,"browser_tabs",json!({"action":"attach"})),registration));
+            assert!(futures_util::poll!(pending.next()).is_pending());
+            let Envelope::Req {id,method,..} = parse_envelope(&rx.try_recv().unwrap()).unwrap() else {panic!("expected browser request")};
+            assert_eq!(method,"browser.tabs.get");
+            state.registry.handle_response(Envelope::ok(id,json!({"tabId":42})));
+            assert!(state.ops.current().is_none(),"An unpolled ready reply cannot execute attach in the background");
+            if cancel_before_poll { abort.abort(); }
+            let std::task::Poll::Ready(Some(result)) = futures_util::poll!(pending.next()) else {panic!("Attach must finish in this poll without suspending after creation")};
+            if cancel_before_poll {
+                assert!(result.is_err()); assert!(state.ops.current().is_none());
+            } else {
+                let outcome = result.unwrap(); assert!(outcome.ok);
+                assert_eq!(Some(state.ops.current().unwrap().id),outcome.operation_id);
+                state.ops.abort(outcome.operation_id.as_deref());
+            }
+            assert!(state.ops.attach(43,"replacement").is_ok());
+        }
+    }
+
+    #[tokio::test]
     async fn operation_dispatch_uses_its_owner_even_if_registry_selection_changed() {
         use std::sync::Arc;
         use crate::rpc::{Envelope, parse_envelope};
