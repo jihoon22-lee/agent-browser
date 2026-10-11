@@ -148,26 +148,76 @@ async fn cli_doctor_honors_explicit_bridge_port_environment() {
 }
 
 #[cfg(unix)]
+#[path = "common/runtime_fixture.rs"]
+mod runtime_fixture;
+
+#[cfg(unix)]
 #[tokio::test(flavor="multi_thread",worker_threads=4)]
 async fn concurrent_profiles_reserve_distinct_ports_and_changed_bridge_port_refuses_reuse() {
-    use std::{os::unix::fs::PermissionsExt,sync::Arc};
-    let home = tempfile::tempdir().unwrap(); let executable = home.path().join("fixture-opencode");
+    use std::{os::unix::fs::PermissionsExt,sync::Arc,time::Duration};
+    let home = tempfile::tempdir().unwrap(); let executable = home.path().join("fixture-opencode.cjs");
     let node = std::process::Command::new("node").args(["-p","process.execPath"]).output().unwrap(); assert!(node.status.success()); let node = String::from_utf8(node.stdout).unwrap();
     std::fs::write(&executable,format!("#!{}\n{}",node.trim(),include_str!("fixtures/opencode-server.cjs"))).unwrap(); std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+    let syntax = std::process::Command::new(node.trim()).arg("--check").arg(&executable).output().unwrap();
+    assert!(syntax.status.success(),"Synthetic CommonJS fixture failed Node preflight: {}",String::from_utf8_lossy(&syntax.stderr));
     let manager = Arc::new(Manager::new(home.path().into(),54321));
-    for id in ["first","second"] { let profile: Profile = serde_json::from_value(json!({"id":id,"name":id,"kind":"windows","directory":home.path(),"executable":executable})).unwrap(); manager.save(profile,false).unwrap(); }
+    for id in ["first","second"] {
+        let profile: Profile = serde_json::from_value(json!({"id":id,"name":id,"kind":"windows","directory":home.path(),"executable":executable,"env":{"AGENT_BROWSER_FIXTURE_LOG":home.path().join(format!("{id}.jsonl"))}})).unwrap();
+        manager.save(profile,false).unwrap();
+    }
     let one = manager.clone(); let two = manager.clone();
     let first = tokio::spawn(async move { one.ensure("first","chrome-extension://abcdefghijklmnopabcdefghijklmnop").await });
     let second = tokio::spawn(async move { two.ensure("second","chrome-extension://abcdefghijklmnopabcdefghijklmnop").await });
-    let first_abort = first.abort_handle(); let second_abort = second.abort_handle();
-    let results = tokio::time::timeout(std::time::Duration::from_secs(8),async { tokio::join!(first,second) }).await;
-    if results.is_err() { first_abort.abort(); second_abort.abort(); tokio::time::sleep(std::time::Duration::from_millis(50)).await; manager.stop_all().await.unwrap(); panic!("Concurrent delayed runtimes did not become ready on distinct ports"); }
-    let (first,second) = results.unwrap(); let first = first.unwrap().unwrap(); let second = second.unwrap().unwrap();
+    // Manager::ensure has a 60-second startup contract. The former unrelated eight-
+    // second deadline discarded its error and all child diagnostics on hosted CI.
+    // Fail immediately on a duplicate reservation, dead/mismatched child, or fixture
+    // error; otherwise allow the actual contract to complete, with five seconds
+    // solely for returning the result. This does not retry a failed startup.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(65);
+    let mut failure = None;
+    while !first.is_finished() || !second.is_finished() {
+        let evidence = runtime_fixture::diagnostics(home.path());
+        if let Some(reason) = runtime_fixture::startup_failure(&evidence) { failure = Some(reason); break; }
+        if tokio::time::Instant::now() >= deadline { failure = Some("Runtime startup exceeded its 60-second contract plus result-delivery allowance".into()); break; }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    if let Some(reason) = failure {
+        let mut evidence = runtime_fixture::diagnostics(home.path());
+        first.abort(); second.abort(); let _ = first.await; let _ = second.await;
+        evidence["cleanup"] = match tokio::time::timeout(Duration::from_secs(5),manager.stop_all()).await {
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => json!({"error":error.message}),
+            Err(_) => json!({"error":"cleanup timed out; fixture exits when its isolated script is removed"}),
+        };
+        runtime_fixture::fail(&reason,evidence);
+    }
+    let first = runtime_fixture::outcome(first.await); let second = runtime_fixture::outcome(second.await);
+    if first["state"] != "ready" || second["state"] != "ready" {
+        let mut evidence = runtime_fixture::diagnostics(home.path());
+        evidence["outcomes"] = json!([runtime_fixture::summary(&first),runtime_fixture::summary(&second)]);
+        evidence["cleanup"] = manager.stop_all().await.map_err(|error| error.message).unwrap_or_else(|error| json!({"error":error}));
+        runtime_fixture::fail("Concurrent runtimes returned a startup error",evidence);
+    }
     let changed = Manager::new(home.path().into(),54322);
     let refused = changed.ensure("first","chrome-extension://abcdefghijklmnopabcdefghijklmnop").await.unwrap();
     let still_running = manager.status("first").await.unwrap();
     let stopped = manager.stop_all().await.unwrap();
-    assert_eq!(first["state"],"ready"); assert_eq!(second["state"],"ready"); assert_ne!(first["baseUrl"],second["baseUrl"]);
+    assert_ne!(first["baseUrl"],second["baseUrl"]);
     assert_eq!(refused["state"],"error"); assert_eq!(refused["owned"],true); assert!(!refused.to_string().contains(first["password"].as_str().unwrap()));
     assert_eq!(still_running["state"],"ready"); assert_eq!(stopped["errors"],json!([]));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn runtime_fixture_records_bind_failure_and_stderr_without_authentication_secrets() {
+    let home = tempfile::tempdir().unwrap(); let log = home.path().join("fixture.jsonl");
+    let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap(); let port = occupied.local_addr().unwrap().port().to_string();
+    let mut command = tokio::process::Command::new("node");
+    command.arg(concat!(env!("CARGO_MANIFEST_DIR"),"/tests/fixtures/opencode-server.cjs")).args(["serve","--port",&port])
+        .env("AGENT_BROWSER_FIXTURE_LOG",&log).env("OPENCODE_SERVER_USERNAME","fixture").env("OPENCODE_SERVER_PASSWORD","must-not-appear-in-fixture-diagnostics")
+        .kill_on_drop(true);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5),command.output()).await.unwrap().unwrap(); assert!(!result.status.success());
+    let evidence = std::fs::read_to_string(log).expect("Fixture failures must retain diagnostic events");
+    assert!(evidence.contains("EADDRINUSE") && evidence.contains("stderr"));
+    assert!(!evidence.contains("must-not-appear-in-fixture-diagnostics"));
 }

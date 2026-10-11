@@ -46,13 +46,17 @@ impl Drop for InitLock {
 }
 
 pub fn load_or_init(home: &Path) -> anyhow::Result<Config> {
+    load_or_init_with_lock(home,|path| std::fs::create_dir(path))
+}
+
+fn load_or_init_with_lock(home: &Path, mut create_lock: impl FnMut(&Path) -> std::io::Result<()>) -> anyhow::Result<Config> {
     let path = home.join(FILE);
     if let Some(cfg) = read_config(&path)? { return Ok(cfg); }
     std::fs::create_dir_all(home).with_context(|| format!("cannot create {}", home.display()))?;
     let lock_path = home.join(INIT_LOCK);
     let deadline = std::time::Instant::now() + INIT_WAIT;
     loop {
-        match std::fs::create_dir(&lock_path) {
+        match create_lock(&lock_path) {
             Ok(()) => {
                 let _lock = InitLock(lock_path);
                 // A previous initializer may have published between our first read and lock acquisition.
@@ -61,17 +65,27 @@ pub fn load_or_init(home: &Path) -> anyhow::Result<Config> {
                 save(home, &cfg)?;
                 return Ok(cfg);
             }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                // Publication uses rename: readers never see an incomplete config.
+            Err(e) => {
+                // Publication may race lock-directory deletion. Windows can report
+                // AccessDenied for that delete-pending directory, not AlreadyExists.
+                // The already-published config wins regardless of the lock error.
                 if let Some(cfg) = read_config(&path)? { return Ok(cfg); }
+                if !retry_init_lock(&e) { return Err(e).with_context(|| format!("cannot acquire config initialization lock {}",lock_path.display())); }
                 if std::time::Instant::now() >= deadline {
+                    if e.kind() != std::io::ErrorKind::AlreadyExists { return Err(e).with_context(|| format!("cannot acquire config initialization lock {} after waiting two seconds",lock_path.display())); }
                     anyhow::bail!("config initialization lock {} remained held for two seconds; verify no bridge or pair process is initializing before removing a stale lock", lock_path.display());
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            Err(e) => return Err(e).with_context(|| format!("cannot acquire config initialization lock {}", lock_path.display())),
         }
     }
+}
+
+fn retry_init_lock(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::AlreadyExists { return true; }
+    #[cfg(windows)]
+    if matches!(error.raw_os_error(),Some(5 | 32 | 303)) { return true; }
+    false
 }
 
 struct TempConfig(PathBuf);
@@ -163,6 +177,33 @@ mod tests {
             let config = result.expect("concurrent initialization must not fail");
             assert!(tokens_equal(&config.token, &published.token), "initializers returned different tokens");
         }
+    }
+
+    #[test]
+    fn published_config_wins_even_when_lock_creation_reports_access_denied() {
+        let home = tempfile::tempdir().unwrap();
+        let expected = Config {version:1,token:"published-once".into(),port:DEFAULT_PORT,paired_extension_id:None,selected_client_id:None};
+        let observed = load_or_init_with_lock(home.path(), |_| {
+            save(home.path(),&expected).unwrap();
+            Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,"lock directory is delete-pending"))
+        }).unwrap();
+        assert_eq!(observed,expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_delete_pending_lock_retries_without_hiding_permanent_access_denial() {
+        let home = tempfile::tempdir().unwrap(); let mut attempts = 0;
+        let config = load_or_init_with_lock(home.path(), |path| {
+            attempts += 1;
+            if attempts == 1 { Err(std::io::Error::from_raw_os_error(5)) } else { std::fs::create_dir(path) }
+        }).unwrap();
+        assert_eq!(attempts,2); assert!(tokens_equal(&config.token,&load_or_init(home.path()).unwrap().token));
+        let denied = tempfile::tempdir().unwrap(); let started = std::time::Instant::now();
+        let error = load_or_init_with_lock(denied.path(), |_| Err(std::io::Error::from_raw_os_error(5))).unwrap_err();
+        assert!(error.chain().any(|cause| cause.downcast_ref::<std::io::Error>().is_some_and(|error| error.raw_os_error() == Some(5))));
+        assert!(!error.to_string().contains("stale lock"),"Permission failure must retain its actual cause");
+        assert!(started.elapsed() < std::time::Duration::from_secs(3)); assert!(!denied.path().join(FILE).exists());
     }
 
     #[test]
