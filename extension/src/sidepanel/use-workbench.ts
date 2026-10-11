@@ -14,7 +14,7 @@ export function useWorkbench() {
   const client = useRef<OpenCodeV1Client | undefined>(undefined), epoch = useRef(0), stream = useRef<AbortController | undefined>(undefined), selected = useRef("");
   const syncing = useRef(false), buffered = useRef<Data[]>([]), refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const bindings = useRef(new Map<string, { client: OpenCodeV1Client; sessionID: string; profileId: string; directory: string }>());
-  const recentSessions = useRef(new Map<string, string>());
+  const recentSessions = useRef(new Map<string, string>()), metadataRevision = useRef(0);
   const currentProfile = useRef(""), selectionRevision = useRef(0);
   const captureScope = useCallback(() => { const revision = epoch.current, selection = selectionRevision.current; return () => revision === epoch.current && selection === selectionRevision.current; }, []);
   const fail = (value: unknown) => setError(value instanceof Error ? value.message : String(value));
@@ -34,9 +34,17 @@ export function useWorkbench() {
       if (revision !== epoch.current) return;
       dispatch({ type: "pending", questions, permissions }); dispatch({ type: "statuses", statuses }); setSessions(Array.isArray(sessionList) ? sessionList : []);
       if (id) {
-        const [messages, taskList, childList, differences] = await Promise.all([api.get<UiMessage[]>(`/session/${encodeURIComponent(id)}/message`), api.get<Data[]>(`/session/${encodeURIComponent(id)}/todo`), api.get<Data[]>(`/session/${encodeURIComponent(id)}/children`), api.get<Data[]>(`/session/${encodeURIComponent(id)}/diff`)]);
+        // Optional metadata must not hold the message snapshot or the SSE buffer open.
+        // A diff can stay pending while OpenCode is working, even as text is streaming.
+        const metadata = ++metadataRevision.current;
+        for (const [path, update] of [["todo", setTodos], ["children", setChildren], ["diff", setDiff]] as const) {
+          void api.get<Data[]>(`/session/${encodeURIComponent(id)}/${path}`).then(value => {
+            if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) update(value);
+          }).catch(value => { if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) fail(value); });
+        }
+        const messages = await api.get<UiMessage[]>(`/session/${encodeURIComponent(id)}/message`);
         if (revision !== epoch.current || id !== selected.current) return;
-        dispatch({ type: "messages", sessionID: id, messages }); remember(messages, api); setTodos(taskList); setChildren(childList); setDiff(differences);
+        dispatch({ type: "messages", sessionID: id, messages }); remember(messages, api);
       }
     } catch (value) { if (revision === epoch.current) fail(value); }
     finally {

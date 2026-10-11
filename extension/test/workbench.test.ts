@@ -208,3 +208,12 @@ it("stops selected B even when A owns the browser operation and selection change
   await act(async () => pending.resolve({ ok: true, result: { aborted: true } }));
   expect(test.calls).toEqual(["bridge-gate", "/session/ses-two/abort"]);
 });
+
+it.each(["/todo", "/children", "/diff"])("keeps messages and live updates visible while optional session metadata %s is pending", async endpoint => {
+  const pending = deferred<any[]>(), original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path.endsWith(endpoint) ? pending.promise : original(path, query));
+  await render();
+  await act(async () => test.stream({ id: "evt-live-during-metadata", type: "message.part.updated", properties: { sessionID: "ses-one", part: { id: "prt-one", messageID: "msg-one", sessionID: "ses-one", type: "text", text: "메타데이터보다 먼저 도착한 응답" } } }));
+  expect(host.textContent).toContain("메타데이터보다 먼저 도착한 응답");
+  await act(async () => pending.resolve([]));
+});

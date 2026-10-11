@@ -37,3 +37,15 @@ it("opens server file artifacts through the owning runtime instead of a Windows 
   expect(open).toBeDefined(); await act(async () => open!.click()); expect(onOpenFile).toHaveBeenCalledWith(part);
   expect(host.querySelector('a[href^="file:"]')).toBeNull();
 });
+
+it.each(["error", "completed"])("shows structured browser errors from a %s tool state with an actionable page hint", async status => {
+  const { MessageCard } = await import("../src/sidepanel/MessageCards");
+  const result = { ok: false, tool: "browser_tabs", error: { code: "UNSUPPORTED_PAGE", message: "Synthetic restricted page" } };
+  const state = { status, input: { action: "attach" }, [status === "error" ? "error" : "output"]: JSON.stringify(result) };
+  await act(async () => root.render(createElement(MessageCard, { message: { info: { id: "msg-fixture", role: "assistant" }, parts: [{ id: "prt-fixture", type: "tool", tool: "browser_browser_tabs", state }] }, onFork: vi.fn(), onRevert: vi.fn() })));
+  const card = host.querySelector<HTMLDetailsElement>(".tool-card")!;
+  expect(card.open).toBe(true); expect(card.querySelector("summary")?.textContent).toContain("오류");
+  expect(card.querySelector('[role="alert"]')?.textContent).toContain("UNSUPPORTED_PAGE: Synthetic restricted page");
+  expect(card.textContent).toContain("일반 HTTP/HTTPS 페이지를 열고");
+  expect(card.querySelector(".tool-error-details pre")?.textContent).not.toContain('\\"');
+});
