@@ -49,4 +49,20 @@
 
 - SSE의 Last-Event-ID·replay 지원 여부.
 - 토큰 필드(`AssistantMessage.tokens`)의 캐시·추론 포함 관계와 단계별 집계 중복.
-- Windows 네이티브 OpenCode의 동일 버전 동작(설치 전).
+- Windows/WSL 실제 Zen 모델 판단 흐름: 무료 모델 파일럿 모두 HTTP 403으로 도구 호출 전에 중단. API 명세 일치가 모델 실행 성공을 의미하지 않는다.
+
+## Windows 네이티브 실측 (2026-10-11)
+
+공식 GitHub v1.18.29의 `opencode-windows-x64.zip`을 사용자 개발 영역에 압축 해제했다.
+ZIP SHA-256 `b32618aa3d1415f6e4f473aec248edef25759203fb707d7d968359d86d4a35ee`는 release asset digest와 일치했다.
+실행 파일 SHA-256은 `88d2fa691b2d9e32fde6d1039382a850ddf96fe49cd41683c6375fe1dc8ec2a5`다.
+PATH나 전역 설정을 변경하지 않았다.
+
+Windows Node 24.18.1의 [검증 스크립트](../tests/agent/check-native.mjs)가 고유 임시 설정과
+127.0.0.1의 임시 포트에서 실제 Windows 서버를 실행했다. `/global/health`는 healthy=true/version=1.18.29,
+`/doc` 경로 162개와 HTTP 메서드·경로 조합 188개는 저장된 WSL 명세와 일치했다.
+non-`/api/` 경로 111개, `/api/` 경로 51개이며 v2 API는 실행하지 않았다.
+서버 프로세스 종료도 확인했다. 경로 집합 일치는 모든 경로의 동작 검증을 뜻하지 않는다.
+
+Windows Chrome에서 WSL 서버의 `/global/health`도 읽을 수 있었다.
+NAT localhostForwarding이 준비될 때까지 초기 연결 재시도가 필요했다.
