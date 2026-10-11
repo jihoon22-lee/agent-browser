@@ -1,0 +1,14 @@
+{
+  "mcp": {
+    "browser": {
+      "type": "local",
+      "command": ["<wslpath -u of installed browser-bridge.exe>", "mcp"],
+      "enabled": true,
+      "environment": {
+        "AGENT_BROWSER_HOME": "<native Windows installed data path>",
+        "AGENT_BROWSER_PORT": "4317",
+        "WSLENV": "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w"
+      }
+    }
+  }
+}

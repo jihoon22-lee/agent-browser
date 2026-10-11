@@ -1,0 +1,7 @@
+{
+  "id": "windows",
+  "name": "Windows OpenCode",
+  "kind": "windows",
+  "executable": "C:\\Path\\To\\opencode.exe",
+  "directory": "C:\\Work\\Project"
+}

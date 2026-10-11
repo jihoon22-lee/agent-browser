@@ -1,0 +1,59 @@
+# 설치·업데이트·패키징
+
+사용자 설치 절차는 배포에 포함되는 [README-install.md](../README-install.md)를 따른다. 설치 기본값은 현재 사용자 `%LOCALAPPDATA%\AgentBrowser`, 확장 고정 경로는 그 아래 `extension`이다.
+
+## 설치 파일과 소유권
+
+- `app/<version>-<exe sha256 앞 12자>/browser-bridge.exe`: 업데이트 시 실행 중인 이전 exe를 덮어쓰지 않는다. 기존 관리 OpenCode의 MCP 경로를 유지하도록 이전 버전도 소유 파일로 남긴다.
+- `data/config.json`, `data/runtime.json`: 페어링과 실행 프로필. 기본 제거에서는 보존한다.
+- `.agent-browser-install.json`: 설치 ID, 소유 파일 해시, Startup 및 선택적 MCP 등록 정보. 다른 위치의 설치에 재사용하지 않는다.
+- `data/.installer-bridge-process.json`: 직접 시작한 Bridge의 PID, 실행 경로, 생성 시각, 포트. 종료 직전 다시 검증한다.
+- `data/runtime/`: 프로필 작업 잠금과 WSL 관리 프로세스 소유권 표식. `runtime.json`의 PID·생성 시각·실행 경로 등과 함께 종료·재사용을 검증한다.
+- `data/logs/serve.log`: 상주 Bridge 진단 로그. 사용자 데이터 디렉터리는 ACL 상속을 끊고 현재 사용자·SYSTEM·Administrators 접근으로 제한한다.
+- `examples/mcp-windows.json`: 설치된 실제 실행 경로로 만든 MCP 조각. WSL을 명시하면 `mcp-wsl.json`도 생성한다.
+
+기본 설치는 OpenCode 전역 설정을 수정하지 않는다. `-OpenCodeConfig`로 지정한 JSON/JSONC 파일만 `mcp.browser`를 병합한다. 주석과 다른 설정을 원문 그대로 유지하고, 수정 전 전체 원본을 같은 디렉터리에 백업한다. 기존 browser 항목이나 사용자가 수정한 소유 항목은 거부한다. 제거도 소유 항목만 지우며 백업은 남긴다.
+
+설치 루트와 파일 경로의 reparse point 및 경로 이탈을 거부한다. 중간 실패 시 제품 파일·Startup·MCP 변경을 rollback하고, 중지했던 소유 Bridge를 복구한다. 제거에서는 관리 OpenCode 프로세스의 소유권을 Bridge CLI로 검증해 종료하고, 외부 서버는 건드리지 않는다. 일부 종료 또는 이후 파일 작업이 실패하면 제거를 중단하고 실제 종료한 프로필만 다시 시작한다. 업데이트에서는 OpenCode 서버를 종료하지 않는다. rollback 실패 시 경고를 보고하고 transaction 백업을 남기며 임의로 다른 프로세스를 종료하지 않는다. 설치 폴더에 사용자가 추가한 파일은 삭제하지 않는다.
+
+## 실행 환경과 진단
+
+Options에서 기존 Windows OpenCode의 절대 실행 경로와 작업 디렉터리, 또는 WSL 배포판·Linux 절대 경로를 저장한다. Windows `.cmd` 런처도 지원한다. 외부 서버 주소는 path가 없는 origin으로 지정하고, 원격 서버에는 HTTPS를 사용한다. 관리 서버에는 프로세스별 인증과 브라우저 MCP overlay를 제공하며, 외부 서버는 기존 인증·MCP 등록을 사용한다.
+
+패널에서 프로필을 선택하면 Bridge가 서버를 시작하거나 검증된 기존 서버를 재사용한다. 표시된 CLI 연결 명령은 동일한 서버에 attach하며 비밀번호를 명령 문자열에 넣지 않는다. 관리 프로필 수정 전에는 Options에서 해당 런타임을 중지한다. 사용 중인 OpenCode를 강제로 재설치하거나 다른 버전으로 전환하지 않는다.
+
+`doctor --json`과 Options 진단은 서버를 새로 시작하거나 모델 추론을 수행하지 않는다. 실행 파일·v1 API·MCP·모델 메타데이터 결과를 구분하며, 실제 추론 성공 여부는 배포 후 사용자 확인 대상으로 남긴다. CLI에서 설치 데이터를 명시할 때에는 `browser-bridge.exe --home <설치 경로>\data doctor --json`을 사용한다. 설치 경로에 공백이 있으면 인수를 따옴표로 감싼다.
+
+## 패키지 생성
+
+런타임에는 개발 도구가 필요하지 않다. 패키지를 만드는 개발 환경에는 저장소에 고정한 Rust·pnpm 9·Node가 필요하다.
+
+```bash
+# WSL 개발 환경: Windows x64 크로스 빌드, 확장 빌드, 고지 생성, Windows zip 생성
+bash scripts/build-release-wsl.sh
+```
+
+Windows 개발 환경에서는 다음을 실행할 수 있다.
+
+```powershell
+.\scripts\build-release.ps1
+# 이미 빌드와 제3자 고지를 생성한 경우
+.\scripts\build-release.ps1 -SkipBuild
+```
+
+GitHub Actions 없이 실행 가능하다. `release/agent-browser-<version>-windows-x64.zip`, `release/SHA256SUMS`를 생성하며 publish는 하지 않는다. zip에는 Windows exe, 확장 빌드, 설치·제거·시작 스크립트, 설치 안내, 공개 예제, 제3자 고지와 해시 manifest만 포함한다. 모델 테스트 결과·실제 대화·로그·전역 설정·환경변수·node_modules는 포함하지 않는다.
+
+패키징은 exe의 버전, lockfile과 제3자 inventory의 해시, 확장 산출물 경로를 확인한다. manifest에는 포함 파일별 SHA-256을 기록하고, zip 엔트리 순서와 시각을 고정해 같은 입력에서 동일한 zip을 만든다. 설치도 manifest 해시를 검증한 뒤 파일을 변경한다.
+
+`generate-third-party-notices.mjs`는 잠긴 Cargo 메타데이터에서 Windows normal/build 의존성과 실제 설치된 Extension production 의존성을 수집한다. 각 패키지의 라이선스 파일을 읽어 `THIRD_PARTY_NOTICES`와 inventory를 만들고, 필요한 라이선스가 없으면 생성을 중단한다. 패키징은 source tree 전체를 복사하지 않는다.
+
+## 검증 명령
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\install\jsonc.tests.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\install\install.tests.ps1 -BridgeExe <Windows x64 exe> -WslDistribution Ubuntu
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\install\runtime-cleanup.tests.ps1 -BridgeExe <Windows x64 exe>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\install\package.tests.ps1 -BridgeExe <Windows x64 exe>
+```
+
+테스트는 고유한 임시 설치 위치·임시 Startup 디렉터리·합성 OpenCode 설정을 사용한다. 실제 사용자 Startup 및 전역 OpenCode 설정은 테스트 대상이 아니다. 설치·중복 실행·업데이트·제거·주석과 Unicode 경로·충돌·누락 파일·실패 rollback을 검증한다. 실행 결과는 상태 문서에서 별도로 기록한다.

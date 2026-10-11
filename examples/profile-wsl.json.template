@@ -1,0 +1,8 @@
+{
+  "id": "ubuntu",
+  "name": "Ubuntu OpenCode",
+  "kind": "wsl",
+  "distribution": "Ubuntu",
+  "executable": "/home/USER/.opencode/bin/opencode",
+  "directory": "/home/USER/projects/PROJECT"
+}
