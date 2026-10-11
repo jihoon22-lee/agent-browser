@@ -67,11 +67,19 @@ Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 
 | 방향 | 메서드 |
 |---|---|
 | Extension → serve | `heartbeat`, `status.get`, `operation.abort`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
-| Mcp → serve | `tool.call` |
+| Mcp → serve | `tool.call`, `tool.cancel` |
 | serve → Extension | `browser.*` 명령(`browser.click` 등) |
 | 그 밖 | `FORBIDDEN_METHOD` |
 
 MCP 연결은 동일한 토큰으로 인증했더라도 프로필과 런타임 관리 메서드를 호출할 수 없다. Extension SW는 확장 내부 페이지에서 온 관리 요청만 전달한다. 관리 작업은 연결의 브라우저 응답 처리를 막지 않도록 비동기로 실행된다.
+
+## MCP 요청 취소
+
+MCP `notifications/cancelled`의 요청별 토큰은 mutex 대기·연결·전송·응답 대기를 중단한다.
+전송 후에는 `tool.cancel`의 `{requestId: 원래 tool.call의 RPC ID}`를 같은 인증 연결로 보낸다.
+serve는 해당 연결의 요청 future만 정리하며, registry는 그 요청의 `browser.cancel`을 원래 Extension으로 보낸다.
+연결과 다른 요청, 기존 operation은 유지된다. 이미 전달된 쓰기는 실행 여부가 불명확할 수 있으므로 자동 재실행하지 않는다.
+취소와 성공 응답이 교차한 attach만 그 요청이 새로 만든 operation을 닫는다. 교체된 operation은 닫지 않는다.
 
 ## 프로필 관리
 

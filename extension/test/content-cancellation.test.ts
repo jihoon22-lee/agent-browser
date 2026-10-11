@@ -70,3 +70,31 @@ it("stops all requests in an operation without cancelling another operation", as
   await expect(other).resolves.toMatchObject({ verified: { met: "text" } });
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it('R06 does not mistake eviction during refGone wait for DOM removal', async () => {
+  document.body.innerHTML = '<button>Still attached</button>';
+  const snapshot = (id: number) => takeSnapshot({snapshotId: id, frameId: 0, maxChars: 100, offset: 0, checkLayout: false});
+  const ref = snapshot(100).elements[0]!.ref;
+  const waiting = runAction('wait', {refGone: ref, timeoutMs: 2000, generation: 20});
+  let resolved = false; void waiting.then(() => { resolved = true; });
+  for(let id=101; id<=106; id++) snapshot(id);
+  await vi.advanceTimersByTimeAsync(250); expect(resolved).toBe(false);
+  document.querySelector('button')!.remove();
+  await vi.advanceTimersByTimeAsync(250);
+  await expect(waiting).resolves.toMatchObject({verified: {met: 'refGone'}});
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('R06 rejects a ref already expired when the wait starts', async () => {
+  document.body.innerHTML = '<button>Still attached</button>';
+  const snapshot = (id: number) => takeSnapshot({snapshotId: id, frameId: 0, maxChars: 100, offset: 0, checkLayout: false});
+  const ref = snapshot(200).elements[0]!.ref;
+  for(let id=201; id<=206; id++) snapshot(id);
+  await expect(runAction('wait', {refGone: ref, generation: 20})).rejects.toMatchObject({code: 'STALE_ELEMENT'});
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('R06 recognizes a detached node retained by an unexpired ref', async () => {
+  document.body.innerHTML = '<button>Remove</button>';
+  const ref = takeSnapshot({snapshotId: 300, frameId: 0, maxChars: 100, offset: 0, checkLayout: false}).elements[0]!.ref;
+  document.querySelector('button')!.remove();
+  await expect(runAction('wait', {refGone: ref, generation: 20})).resolves.toMatchObject({verified: {met: 'refGone'}});
+});

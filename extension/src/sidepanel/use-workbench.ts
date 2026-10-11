@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { OpenCodeV1Client } from "../agents/opencode-v1/client";
+import { OpenCodeApiError, OpenCodeV1Client } from "../agents/opencode-v1/client";
 import { initialWorkbench, workbenchReducer, bridgeRequest, operationBindings, type Data, type UiMessage } from "./workbench-state";
 
 export function useWorkbench() {
@@ -10,6 +10,7 @@ export function useWorkbench() {
   const [knownSessions, setKnownSessions] = useState<Record<string, Data>>({}), [sessionsLoading, setSessionsLoading] = useState(false), [hasMoreSessions, setHasMoreSessions] = useState(false);
   const sessionQuery = useRef({ search: "", limit: 50 }), sessionListRevision = useRef(0), knownRef = useRef(knownSessions);
   knownRef.current = knownSessions;
+  const deletedSessions = useRef(new Set<string>());
   const [catalog, setCatalog] = useState<Data>({ all: [], connected: [], default: {} });
   const [agents, setAgents] = useState<Data[]>([]), [commands, setCommands] = useState<Data[]>([]), [skills, setSkills] = useState<Data[]>([]);
   const [todos, setTodos] = useState<Data[]>([]), [children, setChildren] = useState<Data[]>([]), [diff, setDiff] = useState<Data[]>([]), [mcp, setMcp] = useState<Data>({});
@@ -23,12 +24,13 @@ export function useWorkbench() {
   const [watchRevision, setWatchRevision] = useState(0);
   // Child lists keyed by parent ID. A missing key means "not checked yet", so the tree shows no toggle.
   const [childIndex, setChildIndex] = useState<Record<string, Data[]>>({});
+  const childGeneration = useRef(0), [childFreshness, setChildFreshness] = useState(0);
   const childQueue = useRef<string[]>([]), childRequested = useRef(new Set<string>()), childActive = useRef(0);
   const lastMessageEvent = useRef(new Map<string, number>()), rerunDetails = useRef(false), previousStatus = useRef({ id: "", type: undefined as string | undefined });
   const currentProfile = useRef(""), selectionRevision = useRef(0);
   const captureScope = useCallback(() => { const revision = epoch.current, selection = selectionRevision.current; return () => revision === epoch.current && selection === selectionRevision.current; }, []);
   const fail = (value: unknown) => setError(value instanceof Error ? value.message : String(value));
-  const mergeSessions = (items: Data[]) => setKnownSessions(previous => { const next = { ...previous }; for (const item of items) if (typeof item?.id === "string") next[item.id] = item; return next; });
+  const mergeSessions = (items: Data[]) => setKnownSessions(previous => { const next = { ...previous }; for (const item of items) if (typeof item?.id === "string" && !deletedSessions.current.has(item.id)) next[item.id] = item; return next; });
   const refreshSessions = useCallback(async (search?: string) => {
     const api = client.current, revision = epoch.current; if (!api) return;
     if (search !== undefined) sessionQuery.current = { search, limit: 50 };
@@ -37,27 +39,30 @@ export function useWorkbench() {
     try {
       const next = await api.get<Data[]>("/session", { roots: true, limit: query.limit, ...(query.search ? { search: query.search } : {}) });
       if (revision !== epoch.current || request !== sessionListRevision.current) return;
-      const roots = next.filter(session => !session.parentID);
-      setSessions(roots); mergeSessions(roots); setHasMoreSessions(roots.length >= query.limit);
+      const roots = next.filter(session => !session.parentID && !deletedSessions.current.has(session.id));
+      setSessions(roots); mergeSessions(roots); setHasMoreSessions(next.length >= query.limit);
     } finally { if (revision === epoch.current && request === sessionListRevision.current) setSessionsLoading(false); }
   }, []);
   const loadMoreSessions = useCallback(async () => { sessionQuery.current = { ...sessionQuery.current, limit: sessionQuery.current.limit + 50 }; await refreshSessions(); }, [refreshSessions]);
   const loadChildren = useCallback(async (id: string) => {
-    const api = client.current, revision = epoch.current; if (!api) return [];
-    const list = await api.get<Data[]>(`/session/${encodeURIComponent(id)}/children`);
-    if (revision !== epoch.current) return [];
+    const api = client.current, revision = epoch.current, generation = childGeneration.current; if (!api) return [];
+    const list = (await api.get<Data[]>(`/session/${encodeURIComponent(id)}/children`)).filter(child => !deletedSessions.current.has(child.id));
+    if (revision !== epoch.current || generation !== childGeneration.current || deletedSessions.current.has(id)) return [];
     mergeSessions(list); setChildIndex(previous => ({ ...previous, [id]: list })); return list;
   }, []);
   const pumpChildren = useCallback(() => {
     while (childActive.current < 4 && childQueue.current.length) {
-      const id = childQueue.current.shift()!, api = client.current, revision = epoch.current;
+      const id = childQueue.current.shift()!, api = client.current, revision = epoch.current, generation = childGeneration.current;
       if (!api) return;
       childActive.current++;
       void api.get<Data[]>(`/session/${encodeURIComponent(id)}/children`).then(list => {
-        if (revision !== epoch.current) return;
+        if (revision !== epoch.current || generation !== childGeneration.current || deletedSessions.current.has(id)) return;
+        list = list.filter(child => !deletedSessions.current.has(child.id));
         mergeSessions(list); setChildIndex(previous => previous[id] ? previous : { ...previous, [id]: list });
-      }).catch(() => { /* Unknown stays without a toggle; selecting the session still works. */ }).finally(() => {
-        if (revision !== epoch.current) return;
+      }).catch(() => {
+        if (revision === epoch.current && generation === childGeneration.current) childRequested.current.delete(id);
+      }).finally(() => {
+        // Old generations still occupy a slot until their HTTP requests settle.
         childActive.current--; pumpChildren();
       });
     }
@@ -66,19 +71,25 @@ export function useWorkbench() {
   const ensureChildren = useCallback((ids: string[]) => {
     for (const id of ids) if (!childRequested.current.has(id)) { childRequested.current.add(id); childQueue.current.push(id); }
     pumpChildren();
-  }, [pumpChildren]);
+  }, [pumpChildren, childFreshness]);
+  const invalidateChildren = useCallback(() => {
+    childGeneration.current++; childQueue.current = []; childRequested.current.clear();
+    setChildIndex({}); setChildFreshness(value => value + 1);
+  }, []);
   const isSelectedOrAncestor = (id: string) => {
     for (let current = selected.current, depth = 0; current && depth < 50; current = knownRef.current[current]?.parentID ?? "", depth++) if (current === id) return true;
     return false;
   };
   const updateSession = useCallback((info: Data) => {
-    if (typeof info?.id !== "string") return;
+    if (typeof info?.id !== "string" || deletedSessions.current.has(info.id)) return;
     mergeSessions([info]);
     // Events carry the full Session, so replace rather than merge: a cleared `revert` must disappear.
     setSessions(previous => previous.map(session => session.id === info.id ? info : session));
     if (info.parentID) setChildIndex(previous => previous[info.parentID] ? { ...previous, [info.parentID]: previous[info.parentID]!.map(child => child.id === info.id ? info : child) } : previous);
   }, []);
   const removeSession = useCallback((id: string) => {
+    deletedSessions.current.add(id);
+    if (recentSessions.current.get(currentProfile.current) === id) recentSessions.current.delete(currentProfile.current);
     const clearSelection = isSelectedOrAncestor(id);
     setSessions(previous => previous.filter(session => session.id !== id));
     setKnownSessions(previous => { const next = { ...previous }; delete next[id]; return next; });
@@ -99,10 +110,16 @@ export function useWorkbench() {
     syncing.current = true; buffered.current = [];
     try {
       if (refreshDetails) void refreshSessions().catch(value => { if (revision === epoch.current) fail(value); });
-      const requests = [api.get<Data[]>("/question"), api.get<Data[]>("/permission"), api.get<Data>("/session/status")];
+      const requests = [api.get<Data[]>("/question"), api.get<Data[]>("/permission"), api.get<Data>("/session/status")] as const;
       const [questions, permissions, statuses] = await Promise.all(requests);
       if (revision !== epoch.current) return;
-      dispatch({ type: "pending", questions, permissions }); dispatch({ type: "statuses", statuses });
+      // OpenCode 1.18.29 removes idle sessions from its authoritative status map.
+      // Only a successful snapshot can end a previously busy/retrying run this way.
+      const authoritative: Data = { ...statuses };
+      for (const [session, status] of Object.entries(latestState.current.statuses)) {
+        if (!(session in statuses) && (status.type === "busy" || status.type === "retry")) authoritative[session] = { type: "idle" };
+      }
+      dispatch({ type: "pending", questions, permissions }); dispatch({ type: "statuses", statuses: authoritative });
       if (id) {
         // Optional metadata must not hold the message snapshot or the SSE buffer open.
         // A diff can stay pending while OpenCode is working, even as text is streaming.
@@ -112,7 +129,7 @@ export function useWorkbench() {
         }).catch(value => { if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) fail(value); });
         if (refreshDetails) for (const [path, update] of [["todo", setTodos], ["children", setChildren], ["diff", setDiff]] as const) {
           void api.get<Data[]>(`/session/${encodeURIComponent(id)}/${path}`).then(value => {
-            if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) update(value);
+            if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) update(path === "children" ? value.filter(child => !deletedSessions.current.has(child.id)) : value);
           }).catch(value => { if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) fail(value); });
         }
         const messages = await api.get<UiMessage[]>(`/session/${encodeURIComponent(id)}/message`);
@@ -168,19 +185,31 @@ export function useWorkbench() {
     return () => { document.removeEventListener("visibilitychange", restore); window.removeEventListener("focus", restore); };
   }, [resync]);
   const connect = useCallback(async (id: string, workdir?: string, restoreId?: string) => {
-    const restored = restoreId ?? (id !== currentProfile.current ? recentSessions.current.get(id) : undefined) ?? "";
+    let restored = restoreId ?? (id !== currentProfile.current ? recentSessions.current.get(id) : undefined) ?? "";
     if (currentProfile.current && selected.current) recentSessions.current.set(currentProfile.current, selected.current);
     const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); syncing.current = false; buffered.current = [];
     setLoading(true); setConnected(false); setError(""); setProfileId(id); currentProfile.current = id;
     sessionQuery.current = { search: "", limit: 50 }; sessionListRevision.current++; setKnownSessions({}); setHasMoreSessions(false); setSessionsLoading(false);
-    childQueue.current = []; childRequested.current.clear(); childActive.current = 0; setChildIndex({}); lastMessageEvent.current.clear();
+    invalidateChildren(); deletedSessions.current.clear(); lastMessageEvent.current.clear();
     selected.current = restored; setSessionId(restored); dispatch({ type: "reset" }); setSessions([]); setTodos([]); setChildren([]); setDiff([]); setCatalog({ all: [], connected: [], default: {} }); setAgents([]); setCommands([]); setSkills([]); setMcp({}); setRuntime(undefined); client.current = undefined;
     try {
       const info = await bridgeRequest("runtime.ensure", { profileId: id });
       if (revision !== epoch.current) return;
       if (info.state !== "ready" || !info.baseUrl) throw new Error(info.error ?? "OpenCode 실행 환경을 준비하지 못했습니다.");
-      const actualDirectory = workdir || info.directory;
-      const api = new OpenCodeV1Client({ baseUrl: info.baseUrl, username: info.username, password: info.password, directory: actualDirectory });
+      let actualDirectory = workdir || info.directory;
+      const makeClient = () => new OpenCodeV1Client({ baseUrl: info.baseUrl, username: info.username, password: info.password, directory: actualDirectory });
+      let api = makeClient();
+      if (restored && !workdir) {
+        // Session-ID middleware resolves the session across directories. Resolve it before
+        // opening instance-scoped APIs/SSE, which have no session ID to correct their scope.
+        const session = await api.get<Data>(`/session/${encodeURIComponent(restored)}`).catch(value => {
+          if (!(value instanceof OpenCodeApiError) || value.status !== 404) throw value;
+          return undefined;
+        });
+        if (revision !== epoch.current) return;
+        if (!session) { restored = ""; selected.current = ""; setSessionId(""); recentSessions.current.delete(id); }
+        if (session?.id === restored && session.directory) { actualDirectory = session.directory; api = makeClient(); mergeSessions([session]); }
+      }
       client.current = api; setDirectory(actualDirectory); setRuntime({ profileId: id, state: info.state, baseUrl: info.baseUrl, version: info.version, owned: info.owned, attachCommand: info.attachCommand });
       const controller = new AbortController(); stream.current = controller;
       void api.events(event => {
@@ -207,16 +236,16 @@ export function useWorkbench() {
         }
         if (event.type === "session.deleted" && info?.id) removeSession(info.id);
         if (event.type === "todo.updated" && properties.sessionID === selected.current && Array.isArray(properties.todos)) setTodos(properties.todos);
-      }, online => { if (revision === epoch.current) { setConnected(online); if (online) void resync(); } }, controller.signal).catch(value => { if (revision === epoch.current && !controller.signal.aborted) fail(value); });
+      }, online => { if (revision === epoch.current) { setConnected(online); if (online) { invalidateChildren(); void resync(); } } }, controller.signal).catch(value => { if (revision === epoch.current && !controller.signal.aborted) fail(value); });
       const results = await Promise.allSettled([api.get<Data>("/provider"), api.get<Data[]>("/agent"), api.get<Data[]>("/command"), api.get<Data[]>("/skill"), api.get<Data>("/mcp")]);
       if (revision !== epoch.current) return;
       const setters = [setCatalog, setAgents, setCommands, setSkills, setMcp] as Array<(value: any) => void>;
       results.forEach((result, index) => { if (result.status === "fulfilled") setters[index]!(result.value); else fail(result.reason); });
-      await chrome.storage.local.set({ lastProfileId: id });
+      await chrome.storage.local.set({ lastProfileId: id, [`recentSession:${id}`]: selected.current });
       await resync();
     } catch (value) { if (revision === epoch.current) fail(value); }
     finally { if (revision === epoch.current) setLoading(false); }
-  }, [resync, refreshSessions, updateSession, removeSession]);
+  }, [resync, refreshSessions, updateSession, removeSession, invalidateChildren]);
   const selectSession = useCallback(async (session: Data) => {
     selectionRevision.current++;
     if (session.directory && session.directory !== client.current?.directory) { await connect(currentProfile.current, session.directory, session.id); return; }

@@ -103,3 +103,24 @@ it("honors maxlength and beforeinput readonly changes for text editing", async (
   expect(await press("제한", "Backspace")).toMatchObject({ verified: { defaultApplied: false } });
   expect(input.value).toBe("abc");
 });
+
+it.each([false, true])('R07 invokes the default submitter click and honors click cancellation %s', async cancel => {
+  document.body.innerHTML = '<form><input aria-label="query"><button name="action" value="search">Search</button></form>';
+  const form = document.querySelector('form')!, submitter = document.querySelector('button')!, order: string[] = [];
+  submitter.addEventListener('click', e => { order.push('click'); if (cancel) e.preventDefault(); });
+  form.addEventListener('submit', e => { e.preventDefault(); order.push('submit'); expect(e.submitter).toBe(submitter); });
+  const result = await press('query', 'Enter');
+  expect(order).toEqual(cancel ? ['click'] : ['click', 'submit']);
+  expect(result).toMatchObject({verified: {submitted: !cancel}});
+});
+it('R07 does not implicitly submit multiple blocking fields without a submitter', async () => {
+  document.body.innerHTML = '<form><input aria-label="query"><input></form>';
+  const submit = vi.fn((e: Event) => e.preventDefault()); document.querySelector('form')!.addEventListener('submit', submit);
+  expect(await press('query', 'Enter')).toMatchObject({verified: {submitted: false}});
+  expect(submit).not.toHaveBeenCalled();
+});
+it('R07 finds a form-associated image submitter in document order', async () => {
+  document.body.innerHTML = '<input form="f" type="image"><form id="f"><input aria-label="query"><button>Later</button></form>';
+  const image = document.querySelector('input')!, clicks = vi.fn((e: Event) => e.preventDefault()); image.addEventListener('click', clicks);
+  await press('query', 'Enter'); expect(clicks).toHaveBeenCalledTimes(1);
+});

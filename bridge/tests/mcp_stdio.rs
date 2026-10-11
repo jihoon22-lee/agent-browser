@@ -3,7 +3,11 @@ use serde_json::{json, Value};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-fn bin() -> &'static str { env!("CARGO_BIN_EXE_browser-bridge") }
+fn bin() -> std::path::PathBuf {
+    // A cross-built Windows test runs with an explicit local copy of the same exe.
+    std::env::var_os("AGENT_BROWSER_TEST_EXE").map(std::path::PathBuf::from)
+        .unwrap_or_else(|| env!("CARGO_BIN_EXE_browser-bridge").into())
+}
 
 struct McpChild { child: tokio::process::Child, stdin: tokio::process::ChildStdin, out: tokio::io::Lines<BufReader<tokio::process::ChildStdout>> }
 
@@ -115,3 +119,89 @@ async fn tools_list_works_without_any_serve_and_calls_report_disconnected() {
 }
 
 fn free_port() -> u16 { std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port() }
+
+// Synthetic extension only: no browser or model is involved.
+async fn cancellation_browser(port: u16, token: &str, delay_attach: bool) -> (tokio::task::JoinHandle<()>, tokio::sync::mpsc::UnboundedReceiver<(String, Value)>) {
+    use futures_util::{SinkExt, StreamExt};
+    use agent_browser_bridge::rpc::{Envelope, parse_envelope};
+    let mut ws = common::ws_connect(port, "/extension", Some("chrome-extension://abcdefghijklmnopabcdefghijklmnop")).await.unwrap();
+    common::hello(&mut ws, "extension", token, "cancel-fixture").await;
+    let (seen, rx) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        let (mut write, mut read) = ws.split();
+        let (replies, mut reply_rx) = tokio::sync::mpsc::unbounded_channel::<Envelope>();
+        loop { tokio::select! {
+            Some(reply) = reply_rx.recv() => { if write.send(tokio_tungstenite::tungstenite::Message::text(reply.to_text())).await.is_err() { break; } }
+            frame = read.next() => {
+                let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = frame else { break; };
+                if let Ok(Envelope::Req {id, method, params, ..}) = parse_envelope(&text) {
+                    let _ = seen.send((method.clone(), params.clone()));
+                    let delay = method == "browser.wait" || (delay_attach && method == "browser.tabs.get");
+                    let value = if method == "browser.tabs.get" { json!({"tabId":42}) } else { json!({"executed":false}) };
+                    let replies = replies.clone();
+                    tokio::spawn(async move { if delay { tokio::time::sleep(std::time::Duration::from_millis(400)).await; } let _ = replies.send(Envelope::ok(id,value)); });
+                }
+            }
+        }}
+    });
+    (task, rx)
+}
+async fn send_tool(m: &mut McpChild, id: u32, name: &str, args: Value) {
+    m.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":args}})).await;
+}
+async fn cancel_tool(m: &mut McpChild, id: u32) {
+    m.send(json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id,"reason":"fixture cancellation"}})).await;
+}
+async fn attach_fixture(m: &mut McpChild) -> String {
+    send_tool(m,2,"browser_tabs",json!({"action":"attach"})).await;
+    let reply = m.recv().await;
+    serde_json::from_str::<Value>(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap()["operationId"].as_str().unwrap().to_string()
+}
+#[tokio::test]
+async fn r01_cancelled_mutex_waiter_never_reaches_browser_and_connection_survives() {
+    let (home,serve,cfg) = common::start_test_serve().await;
+    let (browser,mut seen) = cancellation_browser(serve.port,&cfg.token,false).await;
+    let mut m = spawn_mcp(home.path(),serve.port).await; m.init().await;
+    let op = attach_fixture(&mut m).await; seen.recv().await.unwrap();
+    send_tool(&mut m,3,"browser_wait",json!({"operationId":op,"text":"ready"})).await;
+    assert_eq!(seen.recv().await.unwrap().0,"browser.wait");
+    send_tool(&mut m,4,"browser_click",json!({"operationId":op,"ref":"s1f0e1"})).await;
+    cancel_tool(&mut m,4).await;
+    send_tool(&mut m,5,"browser_snapshot",json!({"operationId":op})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+    let mut methods = Vec::new(); while let Ok((method,_)) = seen.try_recv() { methods.push(method); }
+    browser.abort();
+    assert!(!methods.iter().any(|m| m == "browser.click"),"cancelled queued write executed: {methods:?}");
+    assert!(methods.iter().any(|m| m == "browser.snapshot"),"unrelated request must survive: {methods:?}");
+}
+#[tokio::test]
+async fn r01_cancel_running_request_reaches_downstream_without_aborting_operation() {
+    let (home,serve,cfg) = common::start_test_serve().await;
+    let (browser,mut seen) = cancellation_browser(serve.port,&cfg.token,false).await;
+    let mut m = spawn_mcp(home.path(),serve.port).await; m.init().await;
+    let op = attach_fixture(&mut m).await; seen.recv().await.unwrap();
+    send_tool(&mut m,3,"browser_wait",json!({"operationId":op,"text":"ready"})).await;
+    seen.recv().await.unwrap(); cancel_tool(&mut m,3).await;
+    send_tool(&mut m,4,"browser_snapshot",json!({"operationId":op})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+    let mut methods = Vec::new(); while let Ok((method,_)) = seen.try_recv() { methods.push(method); }
+    browser.abort();
+    assert!(methods.iter().any(|m| m == "browser.cancel"),"downstream never cancelled: {methods:?}");
+    assert!(methods.iter().any(|m| m == "browser.snapshot"),"same operation must remain usable: {methods:?}");
+}
+#[tokio::test]
+async fn r01_cancel_attach_does_not_leave_a_late_operation() {
+    let (home,serve,cfg) = common::start_test_serve().await;
+    let (browser,mut seen) = cancellation_browser(serve.port,&cfg.token,true).await;
+    let mut m = spawn_mcp(home.path(),serve.port).await; m.init().await;
+    send_tool(&mut m,3,"browser_tabs",json!({"action":"attach"})).await;
+    seen.recv().await.unwrap(); cancel_tool(&mut m,3).await;
+    tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+    send_tool(&mut m,4,"browser_tabs",json!({"action":"attach"})).await;
+    loop {
+        let reply = m.recv().await;
+        if reply["id"] != 4 { continue; }
+        browser.abort();
+        assert_ne!(reply["result"]["isError"],true,"cancelled attach kept the gate: {reply}"); break;
+    }
+}

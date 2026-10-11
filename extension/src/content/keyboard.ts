@@ -55,11 +55,19 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
       target.click(); defaultApplied = true; defaultAction = "click";
     } else if (key === "Enter" && target instanceof HTMLInputElement && INPUT_TEXT.has(target.type) && target.form) {
       // Native implicit submit uses the default submitter (including its name/value).
-      const submitter = [...target.form.elements].find(el => (el instanceof HTMLButtonElement && el.type === "submit") || (el instanceof HTMLInputElement && ["submit", "image"].includes(el.type)));
-      if (!submitter || !submitter.matches(":disabled")) {
+      const form = target.form;
+      // form.elements omits image inputs. Include external form-associated controls in tree order.
+      const submitter = [...(form.getRootNode() as Document | ShadowRoot).querySelectorAll("button,input")].find(el =>
+        (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && el.form === form &&
+        (el.type === "submit" || el instanceof HTMLInputElement && el.type === "image")) as HTMLElement | undefined;
+      const blockers = [...form.elements].filter(el => el instanceof HTMLInputElement && INPUT_TEXT.has(el.type));
+      if (submitter ? !submitter.matches(":disabled") : blockers.length <= 1) {
         const form = target.form, onSubmit = () => { submitted = true; };
         form.addEventListener("submit", onSubmit, { capture: true });
-        try { form.requestSubmit(submitter as HTMLElement | undefined); defaultApplied = submitted; }
+        try {
+          if (submitter) { submitter.click(); defaultApplied = true; }
+          else { form.requestSubmit(); defaultApplied = submitted; }
+        }
         finally { form.removeEventListener("submit", onSubmit, { capture: true }); }
       }
       defaultAction = "submit";

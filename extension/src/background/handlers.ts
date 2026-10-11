@@ -119,7 +119,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 await check(req,signal);
                 try {
                     await frames.inject(tabId,f);
-                    const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:f.frameId===0?(p.maxChars??4000):1000,offset:f.frameId===0?(p.offset??0):0,elementOffset:p.elementOffset??0},run);
+                    const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
                     const withDocument={...result,documentId:f.documentId};
                     const length=JSON.stringify(withDocument).length;
                     if(length>60_000)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');

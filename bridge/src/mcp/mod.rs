@@ -33,11 +33,11 @@ impl ServerHandler for BridgeMcp {
         Ok(ListToolsResult::with_all_items(tools))
     }
 
-    async fn call_tool(&self, req: CallToolRequestParams, _c: RequestContext<RoleServer>) -> Result<CallToolResponse, McpError> {
+    async fn call_tool(&self, req: CallToolRequestParams, context: RequestContext<RoleServer>) -> Result<CallToolResponse, McpError> {
         let args = serde_json::Value::Object(req.arguments.unwrap_or_default());
         let outcome = self
             .client
-            .call_tool(&req.name, args)
+            .call_tool_cancellable(&req.name, args, context.ct.cancelled())
             .await
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         let ok = outcome["ok"].as_bool().unwrap_or(false);

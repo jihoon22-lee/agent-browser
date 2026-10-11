@@ -22,12 +22,12 @@ export function newTable(snapshotId: number, frameId: number): RefTable {
   if (tables.length > KEEP) tables.shift();
   return t;
 }
-export function resolveRef(ref: string): Element {
+export function resolveRef(ref: string, allowDetached = false): Element {
   const p = RefTable.parse(ref);
   if (!p) throw new ProtocolError("ELEMENT_NOT_FOUND", `"${ref}" is not an element ref. Use a ref like s3f0e12 from browser_snapshot.`);
   const t = tables.find((x) => x.snapshotId === p.snapshotId && x.frameId === p.frameId);
   const el = t?.get(p.index);
-  if (!t || !el || !el.isConnected) {
+  if (!t || !el || (!allowDetached && !el.isConnected)) {
     throw new ProtocolError("STALE_ELEMENT", `Element ref ${ref} is no longer in the page. Take a new browser_snapshot.`, "never", { ref });
   }
   return el;

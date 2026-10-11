@@ -43,7 +43,7 @@ impl Role {
     fn allows(self, method: &str) -> bool {
         match self {
             Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
-            Role::Mcp => method == "tool.call",
+            Role::Mcp => matches!(method, "tool.call" | "tool.cancel"),
         }
     }
 }
@@ -354,30 +354,68 @@ fn not_available(id: String) -> Envelope {
 }
 
 async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
-    while let Some(frame) = ws.next().await {
-        let text = match frame {
-            Ok(Message::Text(t)) => t,
-            Ok(Message::Close(_)) | Err(_) => break,
-            Ok(_) => continue,
-        };
-        let env = match parse_or_reject(ws, &text).await {
-            Ok(env) => env,
-            Err(true) => break,
-            Err(false) => continue,
-        };
-        let Envelope::Req { id, method, params, .. } = env else { continue };
-        let reply = if Role::Mcp.allows(&method) {
-            let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
-            let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-            let outcome = router::call_tool(state, name, arguments).await;
-            Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"))
-        } else {
-            forbidden(id, &method)
-        };
-        if !send(ws, &reply).await {
-            break;
+    use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered};
+    let mut pending = FuturesUnordered::new();
+    let mut running = std::collections::HashMap::<String, AbortHandle>::new();
+    // A cancellation may cross an attach reply in flight. Only this connection's
+    // successful attach ID can release that newly created operation, never another one.
+    let mut attached: Option<(String, String)> = None;
+    loop {
+        tokio::select! {
+            biased;
+            frame = ws.next() => {
+                let text = match frame {
+                    Some(Ok(Message::Text(t))) => t,
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(_)) => continue,
+                };
+                let env = match parse_or_reject(ws, &text).await {
+                    Ok(env) => env, Err(true) => break, Err(false) => continue,
+                };
+                let Envelope::Req { id, method, params, .. } = env else { continue };
+                if method == "tool.cancel" {
+                    if let Some(request) = params["requestId"].as_str() {
+                        if let Some(handle) = running.get(request) { handle.abort(); }
+                        if attached.as_ref().is_some_and(|(id, _)| id == request) {
+                            let (_, op) = attached.take().unwrap();
+                            state.ops.abort(Some(&op)); state.broadcast_status();
+                        }
+                    }
+                    if !send(ws, &Envelope::ok(id, json!({"cancelled":true}))).await { break; }
+                    continue;
+                }
+                if !Role::Mcp.allows(&method) {
+                    if !send(ws, &forbidden(id, &method)).await { break; }
+                    continue;
+                }
+                if running.len() >= 32 || running.contains_key(&id) {
+                    if !send(ws, &Envelope::err(id, RpcError::new(ErrorCode::BrowserBusy, Retry::Never, "Too many or duplicate pending requests"))).await { break; }
+                    continue;
+                }
+                let name = params["name"].as_str().unwrap_or_default().to_string();
+                let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+                let attach = name == "browser_tabs" && arguments["action"] == "attach";
+                let (abort, registration) = AbortHandle::new_pair();
+                running.insert(id.clone(), abort);
+                pending.push(async move {
+                    let result = Abortable::new(router::call_tool(state, &name, arguments), registration).await;
+                    (id, attach, result)
+                });
+            }
+            Some((id, attach, result)) = pending.next(), if !pending.is_empty() => {
+                running.remove(&id);
+                let Ok(outcome) = result else { continue }; // Dropping the router sends request-scoped browser.cancel.
+                let created = attach && outcome.ok;
+                if created { attached = outcome.operation_id.clone().map(|op| (id.clone(), op)); }
+                let reply = Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"));
+                if !send(ws, &reply).await {
+                    if created && let Some((_, op)) = attached.take() { state.ops.abort(Some(&op)); state.broadcast_status(); }
+                    break;
+                }
+            }
         }
     }
+    // Dropping pending cancels only commands belonging to this socket.
 }
 
 async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::UnboundedReceiver<String>, state: &Arc<ServerState>, conn: ConnId) {

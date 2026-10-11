@@ -264,3 +264,18 @@ it.each(['unchanged','user-intervention','source-unavailable'] as const)('checks
  if(mode==='unchanged')expect(result.openedTabs).toMatchObject([{tabId:9}]);
  else {expect(result.openedTabs).toBeUndefined();expect(result.openedTabWarnings).toEqual([{tabId:9,reason:mode}]);}
 });
+
+it('R05 advances iframe text pages using the returned cursor and requested budget', async () => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'doc7', url: 'https://other.test/' });
+    const text = '0123456789'.repeat(300);
+    w.api.sendToFrame = async (_, frame, msg: any) => {
+        const {offset, maxChars} = msg.params;
+        return {ok: true, result: {frameId: frame.frameId, text: {content: text.slice(offset, offset + maxChars), nextOffset: Math.min(text.length, offset + maxChars)}}};
+    };
+    const h = createHandlers(w.api, memorySessionStore());
+    const first: any = await h(request('browser.snapshot', {maxChars: 1200}));
+    const next: any = await h(request('browser.snapshot', {maxChars: 1200, offset: first.frames[1].text.nextOffset}));
+    expect(first.frames[1].text.content).toHaveLength(1200);
+    expect(next.frames[1].text.nextOffset).toBe(2400);
+    expect(next.frames[1].text.content).toBe(text.slice(1200,2400));
+});

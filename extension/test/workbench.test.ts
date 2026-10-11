@@ -1,16 +1,17 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { OpenCodeApiError } from "../src/agents/opencode-v1/client";
 import { App } from "../src/sidepanel/App";
-const test = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), stream: undefined as any, online: undefined as any, calls: [] as string[] }));
-vi.mock("../src/agents/opencode-v1/client", () => ({ OpenCodeV1Client: class {
+const test = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), stream: undefined as any, online: undefined as any, calls: [] as string[], scopes: [] as [string, string][], streamDirectories: [] as string[] }));
+vi.mock("../src/agents/opencode-v1/client", async importOriginal => ({ ...(await importOriginal<typeof import("../src/agents/opencode-v1/client")>()), OpenCodeV1Client: class {
   directory: string; constructor(value: any) { this.directory = value.directory; }
-  get = (path: string, query?: any) => test.get(path, query);
+  get = (path: string, query?: any) => { test.scopes.push([path, this.directory]); return test.get(path, query); };
   findFiles = (query: string, limit = 12) => test.get("/find/file", { query, limit });
   post = (path: string, body?: any) => { test.calls.push(path); return test.post(path, body); };
   patch = (path: string, body?: any) => test.post(path, body);
   delete = (path: string) => test.post(path);
   request = (method: string, path: string, options?: any) => test.request(method, path, options);
-  events(event: any, online: any, signal: AbortSignal) { test.stream = event; test.online = online; online(true); return new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); }
+  events(event: any, online: any, signal: AbortSignal) { test.streamDirectories.push(this.directory); test.stream = event; test.online = online; online(true); return new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); }
 } }));
 let host: HTMLDivElement, root: Root;
 let questions: any[], messages: any[], sessions: any[];
@@ -18,13 +19,14 @@ const listeners = new Set<(message: any) => void>();
 const info = { id: "msg-one", sessionID: "ses-one", role: "user", time: { created: 1 }, agent: "build", model: { providerID: "internal", modelID: "company" } };
 const model = { id: "company", providerID: "internal", name: "사내 모델", status: "active", limit: { context: 10000 }, variants: { careful: {} } };
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); test.calls = []; listeners.clear();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); test.calls = []; test.scopes = []; test.streamDirectories = []; listeners.clear();
   sessions = [{ id: "ses-one", title: "기존 대화", directory: "/fixture", time: { updated: 1 }, agent: "build" }];
   messages = [{ info, parts: [{ id: "prt-one", type: "text", text: "기존 질문" }] }]; questions = [];
   test.get.mockReset().mockImplementation(async (path: string) => {
     if (path === "/provider") return { all: [{ id: "internal", name: "업무", models: { company: model } }], connected: ["internal"], default: { internal: "company" } };
     if (path === "/agent") return [{ name: "build", mode: "primary" }];
     if (path === "/session") return sessions;
+    if (sessions.some(session => path === `/session/${session.id}`)) return sessions.find(session => path === `/session/${session.id}`);
     if (path === "/session/status") return { "ses-one": { type: "idle" } };
     if (path === "/question") return questions;
     if (path.endsWith("/message")) return messages;
@@ -432,4 +434,137 @@ it("leaves an unattributed browser operation alone when another session is also 
   await act(async () => { test.stream({ type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } }); test.stream({ type: "session.status", properties: { sessionID: "ses-two", status: { type: "busy" } } }); });
   await act(async () => button("응답 중단").click());
   expect(test.calls).toEqual(["/session/ses-one/abort"]);
+});
+
+it.each(['panel reopen', 'profile return'])('R02 restores the saved session directory for all instance APIs and SSE: %s', async mode => {
+  sessions[0].directory = '/project-b'; twoProfiles();
+  await render();
+  if (mode === 'profile return') { await selectProfile('second'); test.scopes = []; test.streamDirectories = []; await selectProfile('native'); }
+  expect(test.streamDirectories.at(-1)).toBe('/project-b');
+  for (const path of ['/session/status','/question','/permission','/provider']) {
+    expect(test.scopes.filter(([p]) => p === path).at(-1)).toEqual([path, '/project-b']);
+  }
+});
+it('R09 ignores a root list begun before a session deletion event', async () => {
+  secondSession(); await render();
+  const stale = deferred<any[]>(), before = [...sessions], original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === '/session' ? stale.promise : original(path,query));
+  await act(async () => { test.online(false); test.online(true); });
+  await act(async () => test.stream({type:'session.deleted', properties:{info:sessions[1]}}));
+  expect(host.querySelector('.session-tree')!.textContent).not.toContain('둘째 대화');
+  await act(async () => stale.resolve(before));
+  expect(host.querySelector('.session-tree')!.textContent).not.toContain('둘째 대화');
+});
+it.each([false, true])('R10 refreshes offscreen child discovery on reconnect after an empty or failed check: %s', async failed => {
+  secondSession(); const original = test.get.getMockImplementation()!;
+  if (failed) test.get.mockImplementation((path: string, query: any) => path === '/session/ses-two/children' ? Promise.reject(Error('offline')) : original(path,query));
+  await render();
+  expect(host.querySelector('button[aria-label="둘째 대화 하위 세션 펼치기"]')).toBeNull();
+  test.get.mockImplementation((path: string, query: any) => path === '/session/ses-two/children' ? Promise.resolve([{...sessions[1], id:'ses-new-child',parentID:'ses-two',title:'Offline child'}]) : original(path,query));
+  await act(async () => { test.online(false); test.online(true); });
+  expect(host.querySelector('button[aria-label="둘째 대화 하위 세션 펼치기"]')).not.toBeNull();
+});
+it.each([false,true])('R11 refreshes final details on a successful absent status, never on a failed snapshot: %s', async failed => {
+  await render();
+  await act(async () => test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  const original = test.get.getMockImplementation()!, count = (path: string) => test.get.mock.calls.filter(([p]) => p === path).length;
+  const paths = ['/todo','/children','/diff'].map(path => '/session/ses-one'+path), before = paths.map(count);
+  test.get.mockImplementation((path: string, query: any) => path === '/session/status' ? (failed ? Promise.reject(Error('fixture unavailable')) : Promise.resolve({})) : original(path,query));
+  await act(async () => window.dispatchEvent(new Event('focus')));
+  await act(async () => new Promise(resolve => setTimeout(resolve, 150)));
+  expect(paths.map(count)).toEqual(before.map(value => value + (failed ? 0 : 1)));
+});
+
+it.each([404, 500])('R02 clears a deleted saved session but does not hide a restore server failure: %s', async status => {
+  const original = test.get.getMockImplementation()!;
+  test.get.mockImplementation((path: string, query: any) => path === '/session/ses-one' ? Promise.reject(new OpenCodeApiError(status, 'fixture')) : original(path, query));
+  await render();
+  if (status === 404) {
+    expect(test.streamDirectories).toEqual(['/fixture']);
+    expect(host.textContent).toContain('사내 모델');
+    expect((await chrome.storage.local.get('recentSession:native'))['recentSession:native']).toBe('');
+  } else {
+    expect(test.streamDirectories).toEqual([]);
+    expect(host.textContent).toContain('OpenCode HTTP 500');
+  }
+});
+
+
+it.each(['initial', 'search', 'load more'])('review list deletion retains an in-flight %s result', async mode => {
+  sessions = Array.from({length: 70}, (_, i) => ({...sessions[0], id: i ? `ses-root-${i}` : 'ses-one', title: `페이지 결과 ${i}`}));
+  const original = test.get.getMockImplementation()!, pending = deferred<any[]>();
+  let hold = mode === 'initial', response: any[] = [];
+  test.get.mockImplementation((path: string, query: any) => {
+    if (path !== '/session') return original(path, query);
+    const result = sessions.filter(session => !query?.search || session.title.includes(query.search)).slice(0, query?.limit ?? 50);
+    if (hold) { response = result; return pending.promise; }
+    return Promise.resolve(result);
+  });
+  await render();
+  if (mode !== 'initial') {
+    hold = true;
+    if (mode === 'search') {
+      const input = host.querySelector<HTMLInputElement>('input[aria-label="세션 검색"]')!;
+      await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '페이지 결과 6'); input.dispatchEvent(new Event('input', {bubbles:true})); });
+      await act(async () => button('검색').click());
+    } else await act(async () => button('더 보기').click());
+  }
+  expect(response.length).toBeGreaterThan(0);
+  await act(async () => test.stream({type:'session.deleted', properties:{info:{id:'ses-unlisted-child',parentID:'ses-one'}}}));
+  await act(async () => pending.resolve(response));
+  expect([...host.querySelectorAll('.session-tree > li strong')].map(element => element.textContent)).toEqual(response.map(session => session.title));
+});
+
+it.each(['select', 'delete'])('review connect completion preserves the current selection after %s', async action => {
+  secondSession(); const original = test.get.getMockImplementation()!, catalog = deferred<any>();
+  test.get.mockImplementation((path: string, query: any) => path === '/provider' ? catalog.promise : original(path, query));
+  await render();
+  if (action === 'select') await selectOtherSession();
+  else await act(async () => test.stream({type:'session.deleted', properties:{info:sessions[0]}}));
+  const expected = action === 'select' ? 'ses-two' : '';
+  expect((await chrome.storage.local.get('recentSession:native'))['recentSession:native']).toBe(expected);
+  await act(async () => catalog.resolve(await original('/provider')));
+  expect((await chrome.storage.local.get('recentSession:native'))['recentSession:native']).toBe(expected);
+});
+
+it.each(['reconnect', 'profile change'])('review child discovery stays capped across %s with old requests pending', async mode => {
+  sessions = Array.from({length: 8}, (_, i) => ({...sessions[0], id:`ses-root-${i}`, title:`대화 ${i}`}));
+  await chrome.storage.local.set({'recentSession:native':''}); twoProfiles();
+  const original = test.get.getMockImplementation()!, pending: Array<ReturnType<typeof deferred<any[]>>> = [];
+  let active = 0, peak = 0;
+  test.get.mockImplementation((path: string, query: any) => {
+    if (!path.endsWith('/children')) return original(path, query);
+    const request = deferred<any[]>(); pending.push(request); active++; peak = Math.max(peak, active);
+    return request.promise.finally(() => active--);
+  });
+  await render(); expect(active).toBe(4);
+  if (mode === 'profile change') await selectProfile('second');
+  else for (let i=0; i<3; i++) await act(async () => {test.online(false);test.online(true);});
+  const peakBeforeRelease = peak;
+  await act(async () => { for (const request of pending.slice(0,4)) request.resolve([{...sessions[0],id:'ses-stale-child',parentID:'ses-root-0',title:'stale child'}]); });
+  expect(host.querySelector('button[aria-label="대화 0 하위 세션 펼치기"]')).toBeNull();
+  expect(active).toBe(4);
+  // Drain every synthetic request, including the replacement generation's queued rows.
+  for (let i=0; i<8 && active; i++) await act(async () => {for (const request of [...pending]) request.resolve([]);});
+  expect(peakBeforeRelease).toBeLessThanOrEqual(4);
+  expect(peak).toBeLessThanOrEqual(4);
+  expect(active).toBe(0);
+});
+
+it('review tombstoned roots keep the next page reachable', async () => {
+  sessions = Array.from({length: 70}, (_, i) => ({...sessions[0], id: i ? `ses-root-${i}` : 'ses-one', title: `페이지 결과 ${i}`}));
+  const original = test.get.getMockImplementation()!, pending = deferred<any[]>();
+  let held = true;
+  test.get.mockImplementation((path: string, query: any) => path === '/session'
+    ? held ? pending.promise : Promise.resolve(sessions.filter(session => session.id !== 'ses-one').slice(0, query.limit))
+    : original(path, query));
+  await render();
+  await act(async () => test.stream({type:'session.deleted', properties:{info:sessions[0]}}));
+  await act(async () => pending.resolve(sessions.slice(0, 50)));
+  expect(host.textContent).not.toContain('페이지 결과 0');
+  expect(button('더 보기')).toBeDefined();
+  held = false;
+  await act(async () => button('더 보기').click());
+  expect([...host.querySelectorAll('.session-tree > li strong')].map(element => element.textContent)).toEqual(sessions.slice(1).map(session => session.title));
+  expect(button('더 보기')).toBeUndefined();
 });
