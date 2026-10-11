@@ -16,16 +16,17 @@ class FakeWs {
 function setup(store: Record<string, unknown> = { pairingToken: "tok", clientId: "cli-1" }) {
   vi.useFakeTimers();
   const statuses: ConnStatus[] = [];
+  const requests: string[] = [];
   const conn = new BridgeConnection({
     WebSocketImpl: FakeWs as unknown as typeof WebSocket,
     storage: { get: async (k: string) => store[k], set: async (k: string, v: unknown) => { store[k] = v; } },
     now: () => Date.now(),
     setTimer: (fn, ms) => setTimeout(fn, ms) as unknown as number,
     clearTimer: (id) => clearTimeout(id),
-    onRequest: async (req) => ({ echoed: req.method }),
+    onRequest: async (req) => { requests.push(req.method); return { echoed: req.method }; },
     onStatus: (s) => statuses.push(s),
   });
-  return { conn, statuses, store };
+  return { conn, statuses, store, requests };
 }
 
 describe("BridgeConnection", () => {
@@ -100,5 +101,25 @@ describe("BridgeConnection", () => {
     ws.reply(makeOk(hello.type === "req" ? hello.id : "", { selected: true }));
     await vi.advanceTimersByTimeAsync(20_000 + 10_000 + 1_000 + 1);
     expect(FakeWs.last).not.toBe(ws);
+  });
+
+  it("does not execute commands that arrive before auth.hello is acknowledged", async () => {
+    const { conn, requests } = setup();
+    conn.start();
+    await vi.runOnlyPendingTimersAsync();
+    const ws = FakeWs.last;
+    ws.open();
+    ws.reply({ v: 1, type: "req", id: "early", method: "browser.click", params: {} });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toEqual([]);
+    const refusal = ws.sent.map((t) => parseEnvelope(t)).find((e) => e.type === "res" && e.id === "early");
+    expect(refusal).toMatchObject({ ok: false, error: { code: "AUTH_REQUIRED" } });
+    // once the hello is acknowledged the same kind of command is served
+    const hello = parseEnvelope(ws.sent[0]!);
+    ws.reply(makeOk(hello.type === "req" ? hello.id : "", { selected: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    ws.reply({ v: 1, type: "req", id: "late", method: "browser.click", params: {} });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests).toEqual(["browser.click"]);
   });
 });

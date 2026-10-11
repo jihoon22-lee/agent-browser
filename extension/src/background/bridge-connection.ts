@@ -107,6 +107,13 @@ export class BridgeConnection {
     let env: Envelope;
     try { env = parseEnvelope(text); } catch { return; }
     if (env.type === "res") { const cb = this.pending.get(env.id); this.pending.delete(env.id); cb?.(env); return; }
+    // Nothing the server sends is acted on until our auth.hello was acknowledged on this socket.
+    if (this.ws !== ws || this.current.state !== "connected") {
+      if (env.type === "req" && ws.readyState === 1) {
+        ws.send(JSON.stringify(makeErr(env.id, { code: "AUTH_REQUIRED", message: "auth.hello has not completed", retry: "never" })));
+      }
+      return;
+    }
     if (env.type === "evt") { this.deps.onEvent?.(env.event, env.data); return; }
     try {
       const result = await this.deps.onRequest(env);
