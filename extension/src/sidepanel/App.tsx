@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import type { ConnStatus } from "../background/bridge-connection";
 import { initialPanelState, reduceStatus } from "./status-store";
 import "./style.css";
+import { Workbench } from "./Workbench";
 
 function errorText(error: unknown): string {
   if (error && typeof error === "object") {
@@ -37,6 +38,7 @@ export function App() {
   const [selecting, setSelecting] = useState(false);
   const refresh = useRef<() => Promise<void>>(async () => {});
   const mounted = useRef(false);
+  const stopHandler = useRef<(operationId: string) => Promise<void>>(async () => {});
 
   useEffect(() => {
     mounted.current = true;
@@ -103,6 +105,7 @@ export function App() {
       const result = await request("operation.abort", { operationId: op.id });
       if (!mounted.current) return;
       dispatch({ kind: "stop-completed", operationId: op.id, confirmed: result?.aborted === true });
+      if (result?.aborted === true) await stopHandler.current(op.id);
       await refresh.current();
     } catch (error) { if (mounted.current) dispatch({ kind: "request-failed", message: errorText(error) }); }
   };
@@ -127,6 +130,7 @@ export function App() {
       <button onClick={() => void select()} disabled={!connected || !clientId || selected || selecting || !!op}>{selecting ? "선택 중…" : "이 브라우저 사용"}</button>
       {!!op && !selected && <p className="muted">작업을 종료하거나 중단한 후 선택할 수 있습니다.</p>}
     </section>}
+    <Workbench operation={op} stopHandler={stopHandler} />
     <section aria-label="현재 작업">
       <div className="section-heading"><h2>현재 작업</h2><button className="stop" disabled={!connected || !op || state.stopping} onClick={() => void stop()}>{state.stopping ? "중단 중…" : "중단"}</button></div>
       {op ? <>

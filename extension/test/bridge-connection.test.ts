@@ -378,3 +378,21 @@ describe("BridgeConnection mutual authentication", () => {
   });
 
 });
+
+describe("management request deadlines", () => {
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  it.each([["runtime.ensure", 120000], ["doctor.run", 120000], ["runtime.stop", 30000], ["profile.save", 30000], ["profile.delete", 30000]] as const)("allows %s its startup/management deadline", async (method, deadline) => {
+    const { conn } = setup(); const ws = await authenticated(conn);
+    const original = ws.send.bind(ws);
+    ws.send = text => { original(text); const message = parseEnvelope(text); if (message.type === "req" && message.method === "heartbeat") ws.reply(makeOk(message.id, {})); };
+    let outcome: unknown;
+    const pending = conn.request(method, { profileId: "fixture" }).then(value => { outcome = value; }, error => { outcome = error; });
+    await vi.advanceTimersByTimeAsync(deadline - 1); expect(outcome).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1); await pending; expect(outcome).toMatchObject({ code: "TIMEOUT" }); conn.stop();
+  });
+  it("rejects a pending runtime startup immediately when its transport closes", async () => {
+    const { conn } = setup(); const ws = await authenticated(conn);
+    const pending = expect(conn.request("runtime.ensure", { profileId: "fixture" })).rejects.toMatchObject({ code: "BROWSER_DISCONNECTED" });
+    ws.close(); await pending; conn.stop(); expect(vi.getTimerCount()).toBe(0);
+  });
+});
