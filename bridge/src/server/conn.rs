@@ -1,4 +1,4 @@
-use super::{operation::OperationGate, registry::Registry, timeline::Timeline};
+use super::{now_ms, operation::OperationGate, registry::Registry, router, timeline::Timeline};
 use crate::config::{self, Config};
 use crate::rpc::{parse_envelope, Envelope, ErrorCode, Retry, RpcError, PROTOCOL_VERSION};
 use futures_util::{SinkExt, StreamExt};
@@ -186,7 +186,7 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
         }
         Role::Mcp => {
             if send_hello_ok(&mut ws, hello_id, &connection_id, false, &hello.client_id).await {
-                serve_mcp(&mut ws).await;
+                serve_mcp(&mut ws, &state).await;
             }
         }
     }
@@ -306,7 +306,7 @@ fn not_available(id: String) -> Envelope {
     Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
 }
 
-async fn serve_mcp(ws: &mut Ws) {
+async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
     while let Some(frame) = ws.next().await {
         let text = match frame {
             Ok(Message::Text(t)) => t,
@@ -318,8 +318,15 @@ async fn serve_mcp(ws: &mut Ws) {
             Err(true) => break,
             Err(false) => continue,
         };
-        let Envelope::Req { id, method, .. } = env else { continue };
-        let reply = if Role::Mcp.allows(&method) { not_available(id) } else { forbidden(id, &method) };
+        let Envelope::Req { id, method, params, .. } = env else { continue };
+        let reply = if Role::Mcp.allows(&method) {
+            let name = params.get("name").and_then(Value::as_str).unwrap_or_default();
+            let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
+            let outcome = router::call_tool(state, name, arguments).await;
+            Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"))
+        } else {
+            forbidden(id, &method)
+        };
         if !send(ws, &reply).await {
             break;
         }
@@ -390,9 +397,3 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
     }
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}

@@ -1,12 +1,19 @@
 pub mod conn;
 pub mod operation;
 pub mod registry;
+pub mod router;
 pub mod timeline;
-// Task 6 adds: pub mod router;
 
 use crate::config;
 use std::{path::PathBuf, sync::Arc};
 use tokio::net::TcpListener;
+
+pub(crate) fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 pub struct ServeOptions { pub home: PathBuf, pub port: u16 }
 #[derive(Debug)]
