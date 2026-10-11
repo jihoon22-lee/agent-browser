@@ -101,10 +101,21 @@ function parseOutcome(output) {
 export function stopReason(events, stderr = '') {
   for (const event of events) {
     if (event.type === 'step_finish' && typeof event.part?.cost === 'number' && event.part.cost > 0) return 'Nonzero model cost was reported; further runs stopped';
-    if (event.type === 'error' || event.error) {
-      if (/quota|rate[ _-]?limit|429|credit|billing|payment required|402/i.test(JSON.stringify(event.error ?? event))) return 'Model quota/rate limit or billing error; further runs stopped';
-    }
+    if (event.type !== 'error' && !event.error) continue;
+    const error = event.error ?? event;
+    const data = error?.data ?? error;
+    const status = data?.statusCode ?? error?.status ?? data?.status;
+    // Examine provider error fields, not arbitrary headers or request IDs that
+    // may contain digits such as 429 without being a rate-limit response.
+    const detail = [error?.name, error?.type, error?.message, data?.message, data?.responseBody, error?.response?.body].filter(value => typeof value === 'string').join(' ');
+    const http = typeof status === 'number' ? ' (HTTP ' + status + ')' : '';
+    if (/FreeTierError|free tier can only be used/i.test(detail)) return 'Zen free-tier access denied' + http + '; provider rejected this OpenCode request. Further runs stopped';
+    if (status === 429 || status === 402 || /quota|rate[ _-]?limit|insufficient.{0,20}credit|billing|payment required/i.test(detail)) return 'Model quota/rate limit or billing error' + http + '; further runs stopped';
+    if (status === 401 || status === 403) return 'Model access denied' + http + '; further runs stopped';
+    if (error?.name === 'APIError' || error?.type?.startsWith('provider.') || typeof status === 'number') return 'Model/API request failed' + http + '; further runs stopped';
+    return 'OpenCode reported an error; further runs stopped';
   }
+  if (/FreeTierError|free tier can only be used/i.test(stderr)) return 'Zen free-tier access denied; further runs stopped';
   if (/quota|rate[ _-]?limit|429|insufficient.{0,20}credit|payment required/i.test(stderr)) return 'Model quota/rate limit or billing error; further runs stopped';
   return null;
 }

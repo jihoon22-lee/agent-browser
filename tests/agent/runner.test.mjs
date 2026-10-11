@@ -116,3 +116,11 @@ test('official pricing verification binds exact model ID to a free row and live 
   assert.throws(() => verifyOfficialPricing(selected, html.replace('<td>Free</td>', '<td>$1</td>'), live), /free/i);
   assert.throws(() => verifyOfficialPricing(selected, html.replace('synthetic-free</td>', 'another-free</td>'), live), /mapping/);
 });
+
+test('provider access denial and generic API failures retain an actionable stop reason', () => {
+  const freeTier = { type: 'error', error: { name: 'APIError', data: { message: "OpenCode's free tier can only be used from within OpenCode", statusCode: 403, responseBody: JSON.stringify({ error: { type: 'FreeTierError' } }) } } };
+  assert.match(stopReason([freeTier]), /Zen free-tier access denied.*403/i);
+  assert.match(stopReason([{ type: 'error', error: { name: 'APIError', data: { message: 'Provider unavailable', statusCode: 503 } } }]), /API.*503/i);
+  assert.match(stopReason([{ type: 'error', error: { name: 'APIError', data: { message: 'Unauthorized', statusCode: 401 } } }]), /access denied.*401/i);
+  assert.match(stopReason([{ type: 'error', error: { name: 'APIError', data: { message: 'Provider failed', statusCode: 500, responseHeaders: { 'x-request-id': 'abc429xyz' } } } }]), /API.*500/i);
+});
