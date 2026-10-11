@@ -8,7 +8,7 @@ Linux 테스트 통과, Windows용 빌드 성공, 실제 Windows 프로세스 �
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-extension test
-node --test tests/fixtures/server.test.mjs
+node --test tests/fixtures/server.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.test.ts tests/e2e/interop-check.test.mjs
 pnpm --filter agent-browser-extension build
 cargo build --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-e2e exec playwright test
@@ -91,7 +91,7 @@ DOM 이벤트는 trusted 사용자 입력과 동일하지 않다. OS 대화상�
 - press는 synthetic 키이며 native 기본 동작을 구현한 경우 `defaultApplied`로 알린다.
   지원하지 않는 기본 동작은 event-only 표시 또는 명시적 오류다. 체크된 radio의 false 설정은 실행 전 거부한다.
 
-## Windows 검증 실행 준비
+## Windows 검증 실행
 
 ```bash
 bash scripts/test-windows.sh -- --grep 'S01 '
@@ -103,4 +103,53 @@ Windows Node가 실제 설치된 Google Chrome과 MSVC exe를 실행하며, Linu
 테스트용 확장 로드는 Chrome의 [공식 Extensions.loadUnpacked](https://chromedevtools.github.io/devtools-protocol/tot/Extensions/)를 사용한다.
 개발용 debugging pipe/확장 디버깅 플래그는 테스트 프로필에만 적용되며 제품 권한/통신 구조에 추가되지 않는다.
 정책이 거부하면 실패로 기록하며 정책을 변경하지 않는다. 사용자 기존 Chrome 프로필/프로세스를 종료하지 않는다.
-실행 결과를 status.md에 기록하기 전까지 위 명령의 준비·빌드 성공을 Windows 통과로 해석하지 않는다.
+2026-10-11 Windows Node 24.18.1 + 설치된 Chrome 154.0.8037.99 + MSVC release로 26/26 통과했다.
+시험별 최신 실행 결과와 미검증 범위는 status.md에 기록한다.
+
+## 실제 OpenCode 검증
+
+[run-agent.mjs](../tests/agent/run-agent.mjs)는 실행마다 설정·HOME 대체 경로·XDG 디렉터리를 격리하고,
+Zen의 명시적 무료 가격·현재 가용성·설치본 cost/toolcall metadata를 확인한 뒤 호출한다.
+모델 ID는 실행 인자로만 받는다. 소스 코드에 테스트 모델을 고정하지 않는다.
+
+```bash
+bash tests/agent/run-agent.sh opencode/<verified-free-model> 5 \
+  --exe /mnt/c/<dev-directory>/browser-bridge.exe \
+  --bridge-home 'C:\<isolated-demo-home>' --bridge-port <demo-port> \
+  --fixture-url http://127.0.0.1:<fixture-port> --tab-id <fixture-tab-id>
+```
+
+실제 연결된 격리 demo가 먼저 필요하다. `windows-run.ts --demo`는 `AB_DEMO_INFO`에
+`bridgeHome`, `bridgePort`, `fixtureBase`, `tabId`, `stopFile`을 저장한다(토큰 제외).
+`stopFile`을 생성하면 해당 demo가 만든 Chrome·Bridge·MCP만 정리한다.
+Windows 네이티브 실행은 같은 runner를 **Windows node.exe**로 실행하고 `--opencode`, `--exe`,
+`--bridge-home`을 모두 Windows 경로로 전달한다. WSL Node에서 opencode.exe만 바꿔 실행한 결과로 대체하지 않는다.
+
+원시 합성 실행 기록은 ignored `tests/agent/results/`에만 저장한다.
+MCP preflight, 실제 도구 결과, fixture 검색 body·표·복귀·요약을 각각 채점한다.
+공급자 오류·비무료 비용·확인할 수 없는 가격에서 반복 실행을 중단하고 유료 fallback을 하지 않는다.
+2026-10-11의 WSL/Windows 파일럿은 Zen HTTP 403으로 실제 도구 호출 전에 종료됐다.
+따라서 5회 시연·실제 모델 실행 중 중단은 아직 검증되지 않았다.
+
+네이티브 API만 검증할 때는 LLM 없이 다음 스크립트를 Windows Node로 실행한다:
+
+```text
+node tests/agent/check-native.mjs --exe C:\<dev-directory>\opencode.exe
+```
+
+고유 임시 설정·포트를 사용해 버전, `/global/health`, `/doc`의 경로와 HTTP 메서드 집합을 비교하고
+시작한 서버를 종료한다. `/api/*`는 명세에서 비교만 하며 호출하지 않는다.
+
+## WSL interop와 Windows 프로세스 수명
+
+```bash
+node tests/e2e/interop-check.mjs --exe /mnt/c/<dev-directory>/browser-bridge.exe
+```
+
+WSL에서 일반 경로와 공백·한글 경로의 Windows exe 사본을 실행한다. 각 사본은
+`%LOCALAPPDATA%` 아래 고유 home/포트를 사용한다. MCP 초기화·11개 도구·JSON-RPC stdout,
+자동 serve 시작, MCP stdin 종료 후 **native PID 소멸과 WSL relay 종료**, serve 생존,
+중복 serve 거부와 config 상속 ACL을 확인한다. 소유한 경로·PID 생성 시각·역할/포트를 검증한 뒤에만 정리한다.
+
+Windows detached 시작은 `CreateProcessW(bInheritHandles=FALSE)`로 WSL 채널 상속을 막는다.
+이 PC에서는 `windows-breakaway`로 성공했다. breakaway가 거부될 때의 fallback은 아직 실측하지 않았다.

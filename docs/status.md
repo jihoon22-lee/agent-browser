@@ -3,10 +3,12 @@
 ## 현재 단계
 
 **M1 브라우저 제어 구현 — 진행 중**(브랜치 `feat/m1-browser-control`).
-M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현·Linux 검증 완료, 전체 브랜치 검토·수정 완료, Task 14–15 Windows 검증 진행 중.
+M0 환경 실측·OpenCode v1 명세 확보 완료. M1 Task 1–13 구현과 전체 브랜치 검토·수정 완료.
+Task 14의 실제 Windows Chrome 회귀 26/26과 Task 15 네이티브 OpenCode API 검증은 통과했다.
+**M1 완료는 보류**: WSL·Windows 네이티브 각각의 Zen 무료 모델 파일럿이 도구 호출 전에 HTTP 403으로 거부되어, 5회 시연과 실제 모델 실행 중 중단 확인은 남아 있다.
 **이어서 작업하려면 [m1-resume.md](./m1-resume.md)를 먼저 읽는다.**
 
-## 실측 환경 (2026-10-11, main)
+## 실측 환경 (2026-10-11)
 
 | 항목 | 값 | 방법 |
 |---|---|---|
@@ -16,10 +18,10 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현
 | Windows | Windows 11, `10.0.26200.9457`, AMD64, 사용자 `USER`, PowerShell 5.1(pwsh 없음) | `cmd /c ver`, PowerShell |
 | Chrome | 154.0.8037.99, `C:\Program Files\Google\Chrome\Application\chrome.exe` | 파일 버전 |
 | OpenCode (WSL) | 1.18.29, `~/.opencode/bin/opencode` | `opencode --version` |
-| OpenCode (Windows) | **없음** — M1 WSL 시연 후 1.18.29 설치 예정 | `Get-Command` |
+| OpenCode (Windows) | 공식 1.18.29 portable exe를 사용자 개발 영역 `AgentBrowser-dev/opencode/1.18.29`에 배치. PATH/전역 설정 변경 없음 | native Windows `--version`, `/global/health`, `/doc` |
 | Windows 툴체인 | node 있음, git 있음, Rust 없음 | `Get-Command` |
 | WSL 툴체인 | node 24.18.0, pnpm 9.15.9, bun 1.3.14, rustc 1.98.1/1.97.1, cargo-xwin, target `x86_64-pc-windows-msvc` | `--version` |
-| Zen 무료 모델 | `opencode/big-pickle`, `ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free` | `opencode models opencode` — 도구 호출 가능 여부는 미확인 |
+| Zen 무료 모델 | `opencode/big-pickle`, `ling-3.0-flash-fin-free`, `mimo-v2.5-free`, `muse-spark-1.2-contributor-free`, `muse-spark-1.3-contributor-free`, `nemotron-3-ultra-free`, `nemotron-3.5-lightning-free` | `opencode models opencode` — 초기 목록. 실제 테스트는 현재 공식 가격·가용성·metadata를 재확인한 `big-pickle`; 공급자 403으로 도구 호출 미실시 |
 
 ## 실제 실행한 검증
 
@@ -43,21 +45,41 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현
 | 2026-10-11 | M1 Task 10: `vitest run`(jsdom) actions·extract 및 extension 전체, build | actions 11 + extract 4, extension 전체 39/39 통과, 빌드 성공. 클릭 가림 판정(`elementFromPoint`)·실제 스크롤·실제 키 이벤트는 jsdom에 레이아웃이 없어 **미검증**(Task 13·14) |
 | 2026-10-11 | 재개 검토: `pnpm --filter agent-browser-extension exec vitest run test/actions.test.ts test/extract.test.ts test/bridge-connection.test.ts`, `pnpm --filter agent-browser-extension build` | 선별 3파일 22/22 통과, TypeScript 검사·Vite 빌드 성공. 전체 테스트 재실행 아님 |
 | 2026-10-11 | 재개 검토: `cargo test --offline -p agent-browser-bridge --lib server::operation`, `cargo test --offline -p agent-browser-bridge --test tool_router` | Linux 5/5, 13/13 통과. tool_router는 최초 샌드박스 실행에서 localhost 소켓 생성이 `Operation not permitted`로 차단됨. 같은 명령을 제한 밖에서 재실행해 통과 |
-| 2026-10-11 | 재개 검토: 기존 Rust 라이브러리·TS 소스를 호출하는 임시 재현 코드(Linux/Node/jsdom, 제품 코드 변경 없음) | 현재 탭 종료 후 switch/release 모두 `TAB_CLOSED`; `cancelUpTo` 후 이미 시작한 wait는 `CANCELLED` 대신 `TIMEOUT`; 연결 단절 후 `status.get` Promise 미종결 확인. 독립 ref 레지스트리의 동일 ID 충돌과 Bridge 재시작 시 generation 초기화도 확인. 실제 Chrome E2E 결과 아님. 상세는 [재개 검토](./m1-resume.md#재개-검토-2026-10-11) |
-
+| 2026-10-11 | 재개 검토: 기존 Rust 라이브러리·TS 소스를 호출하는 임시 재현 코드(Linux/Node/jsdom, 제품 코드 변경 없음) | 현재 탭 종료 후 switch/release 모두 `TAB_CLOSED`; `cancelUpTo` 후 이미 시작한 wait는 `CANCELLED` 대신 `TIMEOUT`; 연결 단절 후 `status.get` Promise 미종결 확인. 독립 ref 레지스트리의 동일 ID 충돌과 Bridge 재시작 시 generation 초기화도 확인. 실제 Chrome E2E 결과 아님. 이후 Task 11과 전체 브랜치 검토에서 수정(아래 행) |
 | 2026-10-11 | M1 Task 11: SW 탭·문서 라우팅, 원자적 요청 중복 방지, 실행 중 취소, 캡처 보호, 탭 종료 복구, HMAC 상호 인증 | 실패 테스트 확인 후 구현. Extension 전체 15파일 111/111(동시 구현된 Task 12 테스트 포함), TypeScript/Vite 빌드 성공. Bridge 전체 Linux 78/78(lib 27, MCP 5, protocol 4, auth 23, port 2, router 17). Windows 검증 아님 |
 | 2026-10-11 | M1 Task 12: 한국어 최소 패널(연결·작업 탭·최근 20개 기록·중단·브라우저 선택) | reducer 7 + React 통합 6 통과(Extension 111개 실행에 포함). 오류/재연결 복구, 오래된 초기 응답 경합, 다른 프로필 tabId 혼동 방지, React 텍스트 렌더링 검증. TypeScript/Vite 빌드 성공 |
 | 2026-10-11 | M1 Task 13: `pnpm --filter agent-browser-e2e exec playwright test`, fixture 서버 테스트 | 실제 Linux Bridge + 확장 + Chromium 156.0.8078.4에서 20/20 통과, fixture 3/3 통과. S12 초기 관찰 방식 실패는 CDP stopped/timeOrigin 검증으로 수정. S13 제출 응답 보류→Bridge/SW 재시작→동일 ID replay에도 제출 1회. [테스트 문서](./testing.md) |
 | 2026-10-11 | Task 11 이후 `cargo xwin build --offline --locked -p agent-browser-bridge --release --target x86_64-pc-windows-msvc` | HMAC 포함 Windows exe 빌드 성공. 이 행은 Windows 실행 증거가 아님 |
 | 2026-10-11 | 전체 브랜치 독립 검토와 회귀 수정 | Critical 프로필 전송 경합, Important 9개(새 스냅샷·키·페이지 이동/출력 제한·표·radio·동시 초기화·재페어링) 수정. 준비된 명령의 검사/owner enqueue를 원자화. 실제 SW 쓰기 중 종료(R26) 추가. Extension 147/147, Rust 90/90(자식 실행용 helper 1개 기본 ignored), Node fixture/runner/runtime 20/20, Linux 실제 확장 E2E 26/26 통과. TypeScript·빌드 통과 |
+| 2026-10-11 | Task 14 실제 Windows Chrome/MSVC exe: `bash scripts/test-windows.sh -- --grep 'S01 '`, 복사된 native Windows Node의 `windows-run.ts` 전체 실행 | Windows Node 24.18.1 + 실제 설치 Chrome 154.0.8037.99 + MSVC release exe, 별도 임시 프로필/headless 모드. 스모크 1/1 및 전체 26/26 통과(24.0초). Windows의 교차 출처 iframe·Shadow DOM·스크린샷·Bridge/SW 재시작·in-flight 쓰기 종료·중복 제출 거부 검증. 기존 사용자 Chrome 프로필/프로세스 수정·종료 없음 |
+| 2026-10-11 | Task 14 Windows → WSL localhostForwarding | WSL fixture 127.0.0.1:37237에 Windows node.exe fetch: HTTP 200, 한글 검색 fixture 확인. 방화벽 변경/0.0.0.0 바인딩 없음 |
+| 2026-10-11 | Task 14 Windows Chrome → WSL OpenCode v1 | 격리 WSL `opencode serve`의 `/global/health`를 Windows Node fetch 및 실제 Windows Chrome 새 탭/snapshot으로 확인: healthy=true, version=1.18.29. localhost forwarding 초기 재시도 필요. 작업 원래 탭 복귀/release, 임시 WSL 서버 종료 |
+| 2026-10-11 | Task 14 WSL OpenCode + Zen 무료 모델 파일럿 | `opencode/big-pickle` 1회, MCP preflight 1/1. Zen HTTP 403 FreeTierError, 도구 0건, 작업 성공 0/1. 5회 시연 미실시 |
+| 2026-10-11 | Task 15 실제 Windows OpenCode API: native Node `tests/agent/check-native.mjs` | 공식 portable 1.18.29, 격리 resolved config·health 통과. 저장된 WSL 명세와 경로 162/162, method+path 188/188 동일. non-/api 111개, /api 51개는 명세에만 존재하며 v2 호출 0회. 테스트 소유 서버 종료 확인 |
+| 2026-10-11 | Task 15 Windows 네이티브 OpenCode + Zen 무료 모델 파일럿 | 같은 검증된 무료 모델 1회, MCP preflight 1/1. 같은 HTTP 403 FreeTierError, 도구 0건, 작업 성공 0/1. 추가 모델 호출 중단 |
+| 2026-10-11 | 파일럿 실패 분류 회귀 | Zen FreeTierError·401/403·일반 API 실패 원인 보존. 실패 테스트 확인 후 수정, runner 단위/실제 합성 자식 프로세스 13/13 통과 |
+| 2026-10-11 | Task 14 WSL→Windows MCP 자동 시작·수명 회귀 | 기존 exe는 native MCP 종료 후 WSL relay가 남아 EOF 테스트 실패. Windows `CreateProcessW`에서 handle 상속을 끄고 재검증: 일반/한글·공백 경로 2/2 통과. 실제 native MCP 종료와 WSL child.close(0), serve 생존·두 번째 serve 거부·11개 도구·순수 JSON-RPC stdout·토큰 미로그 확인. 모두 windows-breakaway 경로, fallback 경로는 미실행. root 독립 재실행도 2/2 통과, Linux MCP 5/5 통과. 수정된 exe로 Windows Chrome 전체 26/26 재검증(23.5초) |
+| 2026-10-11 | interop 검증기 실패 정리 회귀 | 독립 검토에서 PID 파일 누락/손상·디렉터리 삭제 실패 시 정리/증거 보존 문제 확인 후 수정. 소유 PID 재검증은 유지. Node fixture/runner/runtime/interop 24/24 통과 |
+| 2026-10-11 | Windows config ACL | 기본 home과 같은 `%LOCALAPPDATA%` 부모 아래 고유 테스트 home에서 config 상속 ACL 확인: 현재 사용자·SYSTEM·Administrators FullControl만 존재. `%TEMP%`의 별도 테스트 home은 환경의 추가 ACL을 상속했으며 기본 부모 ACL과 구분했다. ACL 변경 없음 |
 
-## 미검증
+## 무료 모델 실행 결과와 남은 검증
 
-- Windows Chrome → WSL `opencode serve`의 localhost 접속(NAT localhostForwarding).
-- Windows 네이티브 OpenCode 경로 전체.
-- Zen 무료 모델의 도구 호출 능력.
-- Chrome 정책에 의한 압축해제 확장 로드 제한 여부(개발용 프로필에서 확인 예정).
-- 사내 Windows / 사내 WSL Ubuntu 24 전체.
+- 2026-10-11, OpenCode 1.18.29 + `opencode/big-pickle`: 기본 격리 runner의 WSL 파일럿 1회, Windows 네이티브 파일럿 1회.
+  각 플랫폼의 MCP preflight는 1/1 성공. **실제 모델 도구 호출은 각각 0건**, 작업 성공은 각각 0/1이다.
+  검색·새 탭 표 읽기·복귀·요약을 수행한 것으로 계산하지 않았다.
+- 두 실행 모두 Zen이 HTTP 403 `FreeTierError`를 반환했다. 메시지는 “OpenCode's free tier can only be used from within OpenCode”.
+  호출 전 공식 Zen 가격표의 Free 행, live model 목록, 설치본의 모든 cost tier 0과 toolcall=true를 확인했다.
+  유료 fallback·헤더 위장·전역 설정 변경 없이 추가 반복을 중단했다.
+- 별도 임시 runner에서 custom agent.prompt만 제거해 OpenCode 기본 시스템 프롬프트를 사용하는
+  WSL 비교 파일럿도 1회 실행했다. 무료 가격·가용성을 다시 확인했고 도구·권한 제한은 유지했다.
+  결과는 같은 HTTP 403, MCP preflight 1/1·도구 0건·작업 0/1이다. 프롬프트 제거만으로는 해결되지 않았다.
+- 브라우저 전용 도구 구성과 무료 서비스의 요청 판별이 충돌했을 가능성은 있으나 정확한 서버 측 원인은 확정하지 않았다.
+  [v1.18.29 요청 구성 소스](https://github.com/anomalyco/opencode/blob/v1.18.29/packages/opencode/src/session/llm/request.ts)와
+  같은 버전의 [read 비활성화 재현 보고](https://github.com/anomalyco/opencode/issues/51315)가 참고 근거다.
+- 공급자 거부가 해소되면 같은 격리 구성에서 파일럿 → 5회 시연 → 모델 실행 중 패널 중단을 수행한다.
+  결정적 Windows S11의 중단 통과를 실제 LLM 실행 중 중단 증거로 대체하지 않는다.
+- 실제 사용자의 수동 확장 설치/페어링 UX, headed Chrome UI, 기업 관리 Chrome 정책,
+  사내 Windows / 사내 WSL Ubuntu 24는 미검증이다. 이번 Chrome 검증은 별도 임시 headless 프로필이다.
 
 ## 인증 보강과 남은 검증
 
@@ -66,15 +88,17 @@ M0 환경 실측·OpenCode v1 명세 확보 완료. M1 계획 Task 1–13 구현
   클라이언트 증명을 보낸다. 가짜 서버, 증명 반사/재생, 인증 전 명령 거부와 Rust/TS 공유 벡터를 테스트했다.
 - 기존 저장 토큰은 유지된다. 구형 인증 클라이언트와는 호환되지 않으므로 Bridge와 Extension을 함께 갱신한다.
 - `webNavigation` 권한을 추가해 프레임·documentId를 식별한다. 요소 ref는 다른 탭/문서에서 사용할 수 없다.
-- Windows ACL·실제 Windows exe 프로세스 수명·Chrome 정책·사내 환경은 계속 미검증이다.
+- 이 PC의 기본 부모 상속 ACL과 Windows 자동 시작·프로세스 수명은 위 실제 테스트로 확인했다.
+  지정한 `AGENT_BROWSER_HOME`의 ACL은 부모에 따라 달라진다. 다른 PC의 ACL·breakaway 금지 시 fallback·기업 Chrome 정책은 미검증이다.
 
 ## 참고 사항
 
 - 전역 `~/.cargo/config.toml`의 `build.target-dir`이 다른 프로젝트 캐시를 가리킨다. 이 저장소는 `.cargo/config.toml`로 `target/`을 쓴다.
 - 전역 OpenCode 설정에는 기존 MCP(playwright 등)가 있다. 수정하지 않고 테스트는 별도 설정으로 격리한다.
+- 이번 검증에서 만든 Chrome/fixture/Bridge/OpenCode 프로세스는 종료했다. 로컬 커밋만 생성했으며 push·PR·Release는 수행하지 않았다.
 
 ## 다음 작업
 
-1. Task 14 실제 Windows Chrome/WSL OpenCode 검증을 진행한다. Windows Node로 설치된 Chrome을 별도 프로필에서 실행하는 도구와 격리 무료 모델 검증 스크립트를 준비했다.
-2. WSL 시연 후 Task 15 Windows 네이티브 OpenCode 1.18.29를 검증한다.
-3. 최신 검증 전까지 Windows 실행·Chrome 정책·사내 환경·실제 LLM 판단 성공은 미검증으로 유지한다.
+1. Zen 무료 서비스의 거부가 해소된 환경에서 Task 14–15 실제 모델 시나리오를 재개한다. 실패 응답을 반복 호출하거나 유료 모델로 바꾸지 않는다.
+2. 개인/기업 Chrome의 수동 설치와 실제 headed 사용 흐름을 확인한다.
+3. M1 완료 조건이 충족된 뒤 M2 실행 프로필·doctor 계획으로 진행한다. M2–M4는 이번 작업 범위 밖이다.
