@@ -140,6 +140,11 @@ jobs:
         env:
           AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
         run: node tests/e2e/request-target.windows.mjs
+      - name: Native Windows synthetic bookmark permission fixture
+        env:
+          AB_TEST_BOOKMARKS: '1'
+        # A temporary extension copy and empty profile; never approves a user permission prompt.
+        run: node tests/e2e/windows-run.ts --exe "$env:GITHUB_WORKSPACE\target\x86_64-pc-windows-msvc\release\browser-bridge.exe" --extension "$env:GITHUB_WORKSPACE\extension\dist" -- bookmarks.spec.ts
       - name: Native Windows iframe interaction boundaries
         env:
           AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
