@@ -19,6 +19,7 @@ namespace AgentBrowser.Installer {
         }
         [STAThread] public static int Main(string[] args){
             if(args.Length==3&&args[0]=="--release-boundaries"){InstallerReviewTests.RunReleaseBoundaries(args[1],args[2]);return 0;}
+            if(args.Length==3&&args[0]=="--update-runtimes"){try{InstallerReviewTests.UpdateRuntimeCases(args[1],args[2]);return 0;}catch(Exception e){Console.Error.WriteLine(e.Message);return 1;}}
             var synthetic=InstallerReviewTests.SyntheticBridge(args);if(synthetic.HasValue)return synthetic.Value;
             if(args.Length==3&&args[0]=="--startup-owner-fixture")return InstallerReviewTests.StartupOwnerFixture(args);
             if(args.Length==2&&args[0]=="--cleanup") {if(!args[1].Contains("\\windows-setup-ui\\isolated-native-"))throw new Exception("Not an owned test path");if(InstallerEngine.State(args[1])!=null)InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=args[1]}),CancellationToken.None,s=>{});return 0;}

@@ -156,3 +156,52 @@ test('B08 pointer handler cannot redirect a snapshot link to another article',as
   expect(page.url()).not.toContain('post=');
   expect((await snapshot(operationId)).frames[0].elements.find((el:any)=>el.name==='Post 1').href).toContain('post=2');
 });
+
+test('B10 rechecks an earlier iframe edited during a later close check',async()=>{
+  const {operationId}=await setup();
+  await world.ok('browser_tabs',{operationId,action:'new',url:world.fixture.base+'/close-race.html'});
+  const owned=world.context.pages().find(p=>p.url().endsWith('/close-race.html'))!;
+  await expect(owned.frameLocator('iframe').first().locator('input').first()).toBeVisible();
+  await expect(owned.frameLocator('iframe').last().locator('input').first()).toBeVisible();
+  const before=await snapshot(operationId),tabId=await world.tabId(owned);
+  const worker=world.context.serviceWorkers()[0];
+  await worker.evaluate(({tabId,early,late})=>{
+    const api=(globalThis as any).chrome;
+    const original=api.tabs.sendMessage.bind(api.tabs);
+    const state={edited:false,methods:[] as string[]};
+    (globalThis as any).__closeRace={state,restore:()=>{api.tabs.sendMessage=original;}};
+    api.tabs.sendMessage=async(id:number,msg:any,options:any)=>{
+      if(id===tabId) state.methods.push(msg.method);
+      const response=await original(id,msg,options);
+      // Gate the later frame's real reply, then edit the already-checked frame.
+      // No navigation, beforeunload handler, or synthetic input event is involved.
+      if(id===tabId&&msg.method==='close-check'&&options.documentId===late&&!state.edited) {
+        await api.scripting.executeScript({target:{tabId,documentIds:[early]},func:()=>{
+          document.querySelector('input')!.value='Unsaved during preflight';
+        }});
+        state.edited=true;
+      }
+      return response;
+    };
+  },{tabId,early:before.frames.find((f:any)=>f.url.includes('earlier=1')).documentId,
+    late:before.frames.find((f:any)=>f.url.includes('later=1')).documentId});
+  try {
+    const result=await world.mcp.call('browser_tabs',{operationId,action:'close'});
+    const evidence=await worker.evaluate(()=>(globalThis as any).__closeRace.state);
+    console.log('CLOSE same-document edit '+JSON.stringify({result,evidence,closed:owned.isClosed()}));
+    expect(evidence.edited).toBe(true);
+    expect(result.error?.code).toBe('ELEMENT_NOT_INTERACTABLE');
+    expect(result.executed).toBe('no');
+    expect(evidence.methods).not.toContain('close');
+    expect(owned.isClosed()).toBe(false);
+    await expect(owned.frameLocator('iframe').first().locator('input').first()).toHaveValue('Unsaved during preflight');
+    const after=await snapshot(operationId);
+    expect(after.frames.map((f:any)=>f.documentId)).toEqual(before.frames.map((f:any)=>f.documentId));
+    // An unchanged clean multi-frame page still closes in one bounded attempt.
+    await owned.frameLocator('iframe').first().locator('input').first().evaluate((el:HTMLInputElement)=>{el.value=el.defaultValue;});
+    await world.ok('browser_tabs',{operationId,action:'close'});
+    expect(owned.isClosed()).toBe(true);
+  } finally {
+    await worker.evaluate(()=>(globalThis as any).__closeRace.restore());
+  }
+});

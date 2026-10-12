@@ -6,7 +6,15 @@
 - Extension 단위 **392/392**, Linux E2E **86 통과/3 skipped**, Windows E2E **87 통과/2 skipped** 및 별도 bookmarks **2/2**, Rust·빌드·문서·설치·패키징·GUI 회귀 검사 통과. 코드·보안 리뷰는 추가 문제 없이 완료됐으며 리뷰 스레드 10개를 해결했다.
 - 버전·문서 변경 후 패키지 빌드, 최종 CI, 게시본 해시·격리 실행 검증은 아래에 실제 결과를 기록한다. 앞선 기능 검증을 새 버전의 실행 결과로 대체하지 않는다.
 
+## PR #7 통합 진행
+
+사용자가 PR #7도 함께 병합·릴리스하도록 요청했다. 관리 MCP 업데이트와 iframe 최종 편집 재검사를 기존 요청 수명·탐색·입력 수정과 함께 통합한다. PR #7의 기존 CI·리뷰는 통과했지만 최신 조합의 검증은 별도로 수행한다. 변경 기록과 상태 이력·회귀 테스트의 충돌을 양쪽 내용이 보존되도록 해결했다. 최종 태그와 패키지는 PR #7까지 포함한 main에서 생성한다.
+
 ## v0.1.6 로컬 패키지 검증
+
+PR #7 통합 추가 검사: handlers/panel-requests 단위 **84/84**, 빌드·E2E 타입·문서 링크 통과. 실제 Windows 게시판 **10/10**(진짜 BFCache 복원과 iframe 중간 편집 보존 포함), 네이티브 관리 업데이트 경계 **6/6** 통과. 통합 ZIP은 35개 파일의 버전·해시·링크·제외 항목을 확인했다. 실제 격리 WSL OpenCode 업데이트는 재시작 경고로 실패했고 소유 runtime record 0개로 정리를 확인했다. 원인 진단 중이며 이 실행을 통과로 보고하지 않는다.
+
+같은 제품 코드에 경고 시 doctor를 실행하는 임시 진단 드라이버를 붙여 새로운 Windows/WSL fixture에서 다시 실행했고 **실제 OpenCode 1.18.29의 0.1.5→0.1.6 업데이트가 통과**했다. 새 runtime instance·새 Bridge/MCP 경로·MCP connected, 설치 ID·페어링·프로필·시험 세션 보존을 확인했으며 종료 시 uninstall을 수행했다. 첫 경고는 이 실행에서 재현되지 않아 원인을 확정하지 않는다. 모델 요청·사용자 Chrome·전역 설정 접근은 없다. PR #11은 최종 `cdf302e`의 CI·코드·보안 리뷰 통과 후 `266b015`로 병합됐고 PR #7 통합본은 이를 포함한다.
 
 아래 최초 후보는 main CI 후속 수정 전 산출물이다. 게시하지 않았으며 최종 태그와 ZIP은 후속 수정이 포함된 main에서 다시 생성한다.
 
@@ -105,6 +113,34 @@
 - 최종 호환성 검토에서 alarm 간격을 기존 최소 Chrome 116에 맞는 1분으로 조정했다(활성 worker의 15초 timer 유지). 이 한 줄 변경 후 재빌드와 직접 영향받는 실제 Windows F16 **1/1 재검증 통과(16.8초)**. Chrome 116 자체에서 실행한 검증은 아니다.
 
 ---
+
+## PR #7 통합 전 독립 검증 기록
+
+아래 기록은 PR #7 작성 당시의 결과와 제약이다. checkbox 기본값 판정 등 이후 PR #9에서 해결한 사항과 현재 통합 결과는 위 릴리스 기록을 따른다.
+
+# v0.1.6 후속 패치 준비 — 관리 MCP 업데이트 (2026-10-12)
+
+- 기존 v0.1.5 `db397ea`와 게시 자산은 변경하지 않는다. 같은 후속 작업 공간에서 탭 닫기 수정 `8cedffc`를 기반으로 설치기 수정과 0.1.6 버전을 통합했다.
+- PR #6 [옛 MCP 유지 리뷰](https://github.com/jihoon22-lee/agent-browser/pull/6#discussion_r4246249880)를 개인 운영 업데이트와 격리 Windows fixture에서 재현했다. 기존 엔진은 업데이트 때 관리 OpenCode를 남겨 이전 버전 MCP 경로가 계속 쓰였다.
+- 실행 파일 경로 또는 포트가 바뀌는 업데이트는 관리 프로필의 인증된 `/session/status`를 확인한다. busy/retry, 알 수 없는 상태·응답·접속 실패는 프로세스 중지/파일 적용 전에 거절한다. 외부 프로필은 검사·중지 대상에서 제외한다. 유휴 확인은 순간 관찰이며 이후 사용자가 새 요청을 시작하는 경합을 잠그지 않는다.
+- 확인 뒤 소유 런타임만 중지한다. 취소/파일 실패는 실제 중지한 프로필을 기존 실행 파일로 복구한다. 파일 적용과 새 Bridge 시작이 성공한 뒤 새 MCP 경로로 프로필을 다시 시작한다. 이 마지막 단계 실패는 설치를 되돌리지 않고 경고/재시작 안내를 제공한다.
+- 시작 체크를 끄면 이전 런타임을 중지한 상태로 남겨 다음 명시적 시작에서 새 MCP를 사용한다. 경로/포트가 동일한 재적용은 기존 런타임을 유지한다.
+- Windows 네이티브 전체 회귀 65개 통과 후, 시작 체크 보완에 영향받는 6개 업데이트 회귀를 별도로 실행했다. 이전 코드에서 경로 전환/상태 차단/취소 복구 실패를 먼저 확인했다. 로그: 로컬 `patch-validation/runtime-red.log`, `native-full.log`, `runtime-final.log`.
+- 실제 Windows Bridge + WSL OpenCode 1.18.29: 격리 XDG 데이터와 합성 페어링으로 0.1.5 → 0.1.6 업데이트 통과. 새 runtime instance, 새 MCP exe 경로, browser MCP connected, 설치 ID/페어링/프로필/생성한 테스트 세션 보존을 확인했다. 모델 요청과 사용자 Chrome/세션 접근은 없다. fixture의 소유 Bridge/OpenCode는 uninstall로 정리했다. `ManagedRuntimeUpgradeTests.cs`, `patch-validation/real-wsl.log`.
+- 통합 탭 닫기 수정의 Extension 342개 및 실제 Windows Chrome 게시판 10개는 아래 인계 기록을 따른다. 최종 검사 뒤 경합 및 기존 checkbox 보수적 거절은 이 패치가 해결했다고 주장하지 않는다.
+- 운영 개인 PC는 Bridge/MCP 0.1.5이며 Chrome 실제 확장 새로고침은 Windows 잠금 해제 후 확인해야 한다. 이 패치 시험으로 운영 설치를 다시 변경하지 않았다. 최종 원격 CI/리뷰와 패치 릴리스는 별도 확인 항목이다.
+
+# v0.1.5 후속 검토 — iframe 닫기 전 재검사 (2026-10-12)
+
+- 기준: origin/main 및 v0.1.5 `db397ea19f970fcfdf4959a32ac0643d22aeb071`. 독립 worktree `/home/jihoon/projects/agent-browser-close-recheck`, branch `fix/close-frame-edit-race`. PR #6 [discussion_r4246249886](https://github.com/jihoon22-lee/agent-browser/pull/6#discussion_r4246249886)의 08:58 UTC P1은 이 기준에도 남아 있었다. 기존 board-navigation 등 다른 worktree는 사용/수정하지 않았다. 이 변경은 로컬이며 push/PR/릴리스는 하지 않았다.
+- 수정 전 단위 회귀 실패(닫기 dispatch), 실제 Windows Chrome 154.0.8037.99에서도 재현: 뒤 iframe의 실제 close-check 응답을 시험 worker에서 잠시 지연하고 이미 검사한 앞 iframe의 input.value만 변경했다. 같은 문서이며 beforeunload도 없는데 `executed:yes`, `closed:true`로 편집값을 잃었다. 시험 hook은 테스트에만 있고 제품에는 없다.
+- 최소 수정: 모든 frame의 최초 검사 완료 후 폼을 병렬로 정확히 한 번 재검사한다. 뒤이어 frame/document 집합을 재확인하며 dirty/검사 실패/교체면 close dispatch 전에 중단한다. 닫기 재시도나 강제 종료, manifest 권한 변경은 없다. Chrome beforeunload/script-close 규칙과 request dedupe를 보존한다.
+- 수정 후 실제 Chrome B10: 입력값과 문서 ID를 보존하고 `ELEMENT_NOT_INTERACTABLE`, `executed:no`, close 미전송. 값을 원래대로 복구하면 동일한 깨끗한 다중 iframe 탭은 정상적으로 닫힌다. 생성한 시험 탭만 사용했다.
+- 검증: Extension **34 suites / 342 tests**, TypeScript 및 Vite 빌드, E2E 타입 검사 통과. 실제 Windows Chrome 게시판 **10/10** 통과: 반복 hard navigation/back, SPA 정렬/페이지, iframe 교체, 새 탭 닫기/복귀, dirty form, beforeunload 취소, 실제 BFCache persisted=true, pointer href 교체, 새 경합. 최종 B10도 별도 재확인했다. Windows Bridge는 이 기준 소스를 `cargo xwin build --offline --locked --release --target x86_64-pc-windows-msvc`로 빌드했다. Rust 코드는 변경하지 않았으며 Rust 전체 단위 검사는 이번 후속에서 재실행하지 않았다.
+- 증거: Windows 작업 디렉터리 `C:/Users/USER/Documents/Codex/2026-10-12/task-3/close-review/`의 `browser-red.log`, `browser-green.log`, `browser-final.log`, `unit-red.log`, `extension-all.log`, `build-green.log`, `e2e-types.log`. 자체 임시 HOME/포트/Chrome 프로필만 사용했고 harness 종료로 시험 프로세스를 정리했다.
+- 한계: 재검사는 bounded 검증이며 frame들 사이의 원자적 잠금은 아니다. 각 frame의 최종 응답 **이후**의 동시 편집까지 완전히 보장하지 않으며, 사이트 JS 상태/닫힌 Shadow DOM의 저장 여부도 판단하지 않는다. top은 실제 close 직전에 기존 검사를 다시 한다. 별도로 기존 checkbox가 포함된 pristine form fixture도 보수적으로 닫기가 거절됨을 관찰했다(value/defaultValue 비교); 이 P1 범위에서는 해당 기존 판정 규칙을 변경하지 않았다. 재검사 후 모든 유형의 페이지 편집이 안전하다고 주장하지 않는다.
+
+아래는 이전 통합 및 릴리스 준비 기록이다.
 
 # v0.1.5 단일 통합 릴리스 준비
 

@@ -125,20 +125,33 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             const top = documents.find(f => f.frameId === 0);
             if (!top) throw new ProtocolError('FRAME_UNAVAILABLE', 'Cannot check the document before closing.');
             await requireSnapshot(p, tabId, top.documentId);
-            for (const frame of documents) {
-                await frames.inject(tabId, frame);
+            const checkClean = async (frame: FrameInfo) => {
                 const response = await interruptible(api.sendToFrame(tabId, frame, {kind:'cmd', method:'close-check', params:{...p,requestId:req.id}}), signal);
                 if (!response?.ok) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'A frame has edited controls or cannot be checked; preserve the tab.');
+            };
+            const checkDocuments = async () => {
+                const liveDocuments = await frames.list(tabId);
+                if (liveDocuments.length !== documents.length || documents.some(frame => !liveDocuments.some(live => live.frameId === frame.frameId && live.documentId === frame.documentId)))
+                    throw new ProtocolError('FRAME_UNAVAILABLE', 'A document changed during the close check. Preserve the tab and inspect a fresh snapshot.');
+            };
+            for (const frame of documents) {
+                await frames.inject(tabId, frame);
+                await checkClean(frame);
             }
-            const liveDocuments = await frames.list(tabId);
-            if (liveDocuments.length !== documents.length || documents.some(frame => !liveDocuments.some(live => live.frameId === frame.frameId && live.documentId === frame.documentId)))
-                throw new ProtocolError('FRAME_UNAVAILABLE', 'A document changed during the close check. Preserve the tab and inspect a fresh snapshot.');
+            await checkDocuments();
             let resolve!: (value: unknown) => void;
             const removed = new Promise(r => { resolve = r; });
             const off = api.onTabRemoved(id => { if (id === tabId) resolve({closed:true}); });
             let timer: ReturnType<typeof setTimeout> | undefined;
             try {
                 await check(req, signal);
+                // Earlier frames can become dirty while later frames are injected
+                // and checked without changing documentId. Re-read every form once
+                // after preflight, concurrently to avoid another sequential sweep.
+                // This is bounded validation, never a retry of the close action.
+                await Promise.all(documents.map(checkClean));
+                await checkDocuments();
+                aborted(signal);
                 run.started = true;
                 // window.close preserves Chrome beforeunload/script-close rules.
                 // A disappearing reply is expected; ONLY onRemoved confirms success.

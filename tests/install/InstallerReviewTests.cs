@@ -9,7 +9,66 @@ internal static class InstallerReviewTests {
   finally{var state=InstallerEngine.State(options.InstallDir);if(state!=null)try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=options.InstallDir}),CancellationToken.None,s=>{});}catch(Exception e){Console.WriteLine("REVIEW cleanup: "+e.Message);}}
  }
  static void Apply(SetupOptions options){InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,s=>{});}
- public static int? SyntheticBridge(string[] args){string probe=Environment.GetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE");if(args.Length==1&&args[0]=="--version"&&probe!=null){File.WriteAllText(probe,"ran");Console.WriteLine("1.18.29");return 0;}string data=Environment.GetEnvironmentVariable("AGENT_BROWSER_HOME");if(data==null)return null;if(args.Length>0&&args[0]=="start"&&File.Exists(Path.Combine(data,".review-unowned-fixture"))){File.WriteAllText(Path.Combine(data,"unowned-ran.txt"),"ran");return 0;}if(args.Length>1&&args[0]=="runtime"&&File.Exists(Path.Combine(data,".review-runtime-fixture"))){if(args[1]=="stop-all"){Console.WriteLine("{\"stoppedProfiles\":[\"broken\",\"healthy\"],\"errors\":[\"synthetic failure\"]}");return 1;}if(args[1]=="start"){string id=args.Last();File.AppendAllText(Path.Combine(data,"restart-attempts.txt"),id+"\n");return id=="broken"?1:0;}}return null;}
+ public static int? SyntheticBridge(string[] args){string probe=Environment.GetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE");if(args.Length==1&&args[0]=="--version"&&probe!=null){File.WriteAllText(probe,"ran");Console.WriteLine("1.18.29");return 0;}string data=Environment.GetEnvironmentVariable("AGENT_BROWSER_HOME");if(data==null)return null;var update=UpdateSynthetic(args,data);if(update.HasValue)return update.Value;if(args.Length>0&&args[0]=="start"&&File.Exists(Path.Combine(data,".review-unowned-fixture"))){File.WriteAllText(Path.Combine(data,"unowned-ran.txt"),"ran");return 0;}if(args.Length>1&&args[0]=="runtime"&&File.Exists(Path.Combine(data,".review-runtime-fixture"))){if(args[1]=="stop-all"){Console.WriteLine("{\"stoppedProfiles\":[\"broken\",\"healthy\"],\"errors\":[\"synthetic failure\"]}");return 1;}if(args[1]=="start"){string id=args.Last();File.AppendAllText(Path.Combine(data,"restart-attempts.txt"),id+"\n");return id=="broken"?1:0;}}return null;}
+
+ static int? UpdateSynthetic(string[] args,string data) {
+  string marker=Path.Combine(data,".update-runtime-fixture");
+  if(!File.Exists(marker)||args.Length<2||args[0]!="runtime")return null;
+  string exe=Assembly.GetExecutingAssembly().Location;
+  File.AppendAllText(Path.Combine(data,"update-runtime-events.txt"),args[1]+"|"+exe+"\n");
+  if(args[1]=="stop-all"){Console.WriteLine("{\"stoppedProfiles\":[\"owned\"],\"skippedExternal\":[\"external\"],\"errors\":[]}");return 0;}
+  if(args[1]=="start")return 0;
+  return 1;
+ }
+ sealed class IdleServer:IDisposable {
+  readonly System.Net.Sockets.TcpListener listener;readonly Thread thread;public readonly string Url;
+  public IdleServer(string body) {
+   listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();
+   Url="http://127.0.0.1:"+((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+   thread=new Thread(()=>{try{while(true)using(var socket=listener.AcceptTcpClient())using(var stream=socket.GetStream()){
+    socket.ReceiveTimeout=3000;var reader=new StreamReader(stream);string request=reader.ReadLine(),line;bool auth=false;
+    while(!String.IsNullOrEmpty(line=reader.ReadLine()))if(line=="Authorization: Basic dXNlcjpwYXNz")auth=true;
+    string payload=auth&&request=="GET /session/status HTTP/1.1"?body:"unauthorized";
+    byte[] bytes=NativeIO.Utf8.GetBytes(payload),header=System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 "+(auth?"200 OK":"401 Unauthorized")+"\r\nContent-Type: application/json\r\nContent-Length: "+bytes.Length+"\r\nConnection: close\r\n\r\n");
+    stream.Write(header,0,header.Length);stream.Write(bytes,0,bytes.Length);
+   }}catch(System.Net.Sockets.SocketException){}});
+   thread.IsBackground=true;thread.Start();
+  }
+  public void Dispose(){listener.Stop();thread.Join(5000);}
+ }
+ public static void UpdateRuntimeCases(string destination=null,string source=null) {
+  if(destination!=null){root=destination;package=source;Directory.CreateDirectory(root);}
+  foreach(string mode in new[]{"idle","busy","retry","unknown","cancel"})Case("update-managed-runtime-"+mode,o=>{
+   Apply(o);var old=InstallerEngine.State(o.InstallDir);string statePath=Path.Combine(o.InstallDir,InstallerEngine.StateName);
+   string fake=Path.Combine(o.InstallDir,"old-runtime-bridge.exe");File.Copy(Assembly.GetExecutingAssembly().Location,fake);
+   old.CurrentExe=fake;old.OwnedFiles=old.OwnedFiles.Concat(new[]{new OwnedFile{Path="old-runtime-bridge.exe",Sha256=NativeIO.FileHash(fake)}}).ToArray();
+   NativeIO.WriteText(statePath,NativeIO.Json.Serialize(old));
+   string marker=Path.Combine(old.DataDir,".update-runtime-fixture"),runtime=Path.Combine(old.DataDir,"runtime.json"),events=Path.Combine(old.DataDir,"update-runtime-events.txt");
+   File.WriteAllText(marker,"fixture");
+   using(var server=new IdleServer((mode=="busy"||mode=="retry")?"{\"session\":{\"type\":\""+mode+"\"}}":mode=="unknown"?"[]":"{}")) {
+    NativeIO.WriteText(runtime,NativeIO.Json.Serialize(new {profiles=new Dictionary<string,object>{{"owned",new{kind="windows"}},{"external",new{kind="external"}}},runtimes=new Dictionary<string,object>{{"owned",new{baseUrl=server.Url,username="user",password="pass"}},{"external",new{baseUrl="https://external.invalid"}}}}));
+    o.Operation="update";var plan=InstallerEngine.Prepare(o);
+    var binary=plan.Changes.SingleOrDefault(c=>InstallerEngine.Same(c.Path,plan.Next.CurrentExe));
+    if(binary==null){binary=new Change{Path=plan.Next.CurrentExe,Expected=NativeIO.FileHash(plan.Next.CurrentExe)};plan.Changes.Add(binary);}
+    binary.Bytes=File.ReadAllBytes(Assembly.GetExecutingAssembly().Location);
+    plan.Next.OwnedFiles.Single(f=>InstallerEngine.Same(NativeIO.SafePath(o.InstallDir,f.Path),plan.Next.CurrentExe)).Sha256=NativeIO.Hash(binary.Bytes);
+    var cancel=new CancellationTokenSource();bool failed=false;
+    try{InstallerEngine.Apply(plan,cancel.Token,msg=>{if(mode=="cancel"&&msg.StartsWith("파일 적용"))cancel.Cancel();});}catch(Exception){failed=true;}
+    string[] actions=File.Exists(events)?File.ReadAllLines(events):new string[0];
+    if(mode=="busy"||mode=="retry"||mode=="unknown"){Assert(failed&&actions.Length==0,"busy or unverified runtime was changed");Assert(InstallerEngine.State(o.InstallDir).CurrentExe==fake,"blocked update changed install");}
+    else if(mode=="cancel"){Assert(failed&&actions.SequenceEqual(new[]{"stop-all|"+fake,"start|"+fake}),"rollback did not restore old managed runtime");}
+    else {Assert(!failed&&actions.SequenceEqual(new[]{"stop-all|"+fake}),"Start=false did not leave the old runtime stopped");Assert(InstallerEngine.State(o.InstallDir).CurrentExe==plan.Next.CurrentExe,"update not committed");}
+   }
+   File.Delete(runtime);File.Delete(marker);
+  });
+  Case("unchanged-update-retains-runtime",o=>{
+   Apply(o);var state=InstallerEngine.State(o.InstallDir);string runtime=Path.Combine(state.DataDir,"runtime.json");
+   File.WriteAllText(runtime,"{\"profiles\":{\"owned\":{\"kind\":\"windows\"}},\"runtimes\":{\"owned\":{\"baseUrl\":\"http://127.0.0.1:1\"}}}");
+   try {string before=NativeIO.FileHash(runtime);o.Operation="update";Apply(o);Assert(NativeIO.FileHash(runtime)==before,"unchanged update changed the runtime record");}
+   finally{File.Delete(runtime);}
+  });
+  if(failures>0)throw new Exception("Runtime update regressions failed");
+ }
  public static int StartupOwnerFixture(string[] args){var state=InstallerEngine.State(args[1]);using(var job=new BridgeStartJob(state.CurrentExe,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},state.Port)){job.Wait();File.WriteAllText(args[2],"ready");Thread.Sleep(60000);}return 0;}
  public static void RunReleaseBoundaries(string destination,string source){root=destination;package=source;Directory.CreateDirectory(root);int previousFailures=failures;
   Case("final-replace-locked",o=>{string path=Path.Combine(o.InstallDir,"settings.json"),temp=path+".new",editor=path+".editor";File.WriteAllText(path,"original");File.WriteAllText(temp,"installer");File.WriteAllText(editor,"editor");using(var locked=new NativeIO.SettingsReplacement(path,NativeIO.FileHash(path))){bool writeBlocked=false,replaceBlocked=false;try{File.WriteAllText(path,"concurrent");}catch(IOException){writeBlocked=true;}try{File.Replace(editor,path,null);}catch(IOException){replaceBlocked=true;}Assert(writeBlocked&&replaceBlocked,"concurrent writer or replacer was not excluded");locked.Publish(temp);}Assert(File.ReadAllText(path)=="installer","verified replacement failed");Assert(Directory.GetFiles(o.InstallDir,"*.agent-browser-recovery-*").Length==0,"successful replacement leaked recovery file");});
@@ -80,6 +139,7 @@ internal static class InstallerReviewTests {
   Case("maintenance-cache-replaceable-ancestor",o=>{var acl=Directory.GetAccessControl(o.InstallDir);byte[] original=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.DeleteSubdirectoriesAndFiles,AccessControlType.Allow));Directory.SetAccessControl(o.InstallDir,acl);try{bool rejected=false;try{Program.PrepareMaintenanceCache(Path.Combine(o.InstallDir,"cache"));}catch(IOException){rejected=true;}Assert(rejected,"maintenance cache accepted a replaceable ancestor");}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(original,AccessControlSections.Access);Directory.SetAccessControl(o.InstallDir,restore);}});
   Case("automatic-discovery-rejects-local-junction",o=>{string target=Path.Combine(o.InstallDir,"target"),link=Path.Combine(o.InstallDir,"linked"),oldPath=Environment.GetEnvironmentVariable("PATH");Directory.CreateDirectory(target);File.WriteAllText(Path.Combine(target,"opencode.cmd"),"@echo off\r\necho 1.18.29\r\n");var result=NativeIO.Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe"),new[]{"/d","/c","mklink","/J",link,target},null,null,15000,System.Text.Encoding.Default);Assert(result.ExitCode==0,"junction fixture failed");try{Environment.SetEnvironmentVariable("PATH",link);var found=Discovery.Find();Assert(!found.OpenCode.Any(c=>c.Executable.StartsWith(link+"\\",StringComparison.OrdinalIgnoreCase)),"automatic discovery followed a reparse candidate");}finally{Environment.SetEnvironmentVariable("PATH",oldPath);Assert((File.GetAttributes(link)&FileAttributes.ReparsePoint)!=0,"fixture link changed");Directory.Delete(link);}});
   Case("relative-windows-path-never-executes",o=>{Apply(o);string fixture=Path.Combine(o.InstallDir,"opencode.exe"),marker=Path.Combine(o.InstallDir,"version-ran.txt"),oldPath=Environment.GetEnvironmentVariable("PATH"),oldProbe=Environment.GetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE");File.Copy(Assembly.GetExecutingAssembly().Location,fixture);try{Environment.SetEnvironmentVariable("PATH",o.InstallDir+";"+oldPath);Environment.SetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE",marker);bool rejected=false;try{ManagedProfile.Prepare(InstallerEngine.State(o.InstallDir),new OpenCodeCandidate{Kind="windows",Executable="opencode.exe"},"relative-windows","Relative Windows",o.InstallDir);}catch(IOException){rejected=true;}Assert(rejected&&!File.Exists(marker),"relative Windows version probe executed before rejection");var selected=ManagedProfile.Prepare(InstallerEngine.State(o.InstallDir),new OpenCodeCandidate{Kind="windows",Executable=fixture},"absolute-windows","Absolute Windows",o.InstallDir);Assert(File.Exists(marker)&&(string)selected["executable"]==fixture,"explicit valid Windows profile could not be prepared");}finally{Environment.SetEnvironmentVariable("PATH",oldPath);Environment.SetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE",oldProbe);}});
+  UpdateRuntimeCases();
   RunReleaseBoundaries(destination,source);
   Console.WriteLine("REVIEW "+count+" PASS, "+failures+" FAIL");if(failures>0)throw new Exception("Installer review regressions failed");return count;
  }
