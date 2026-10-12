@@ -347,7 +347,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let new_id;
             let op_id = if let Some(id) = args["operationId"].as_str() { id } else {
                 let client = state.registry.selected_client().unwrap_or_default();
-                match state.ops.reserve_new(&client) {
+                match state.ops.reserve_new(&client,args["requestId"].as_str()) {
                     Ok(op) => { new_id = op.id; reservation.id=Some(new_id.clone()); &new_id }
                     Err(error) => return ToolOutcome::rejected(NAME,None,error),
                 }

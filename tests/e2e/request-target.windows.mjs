@@ -97,6 +97,19 @@ try{
  await ok('browser_tabs',{action:'attach',requestId:'ambiguous',tabId:tab.id});
  report.checks.push('No safe default: implicit attach rejected, explicit target works');
  complete('ambiguous');
+ assert((await prepare('bootstrap',null)).ok);
+ assert.equal((await call('browser_tabs',{action:'new',windowId:tab.windowId})).error.code,'OPERATION_INVALID');
+ assert.equal((await call('browser_tabs',{action:'new',requestId:'wrong',windowId:tab.windowId})).error.code,'OPERATION_INVALID');
+ const bootstrap=await ok('browser_tabs',{action:'new',requestId:'bootstrap',windowId:tab.windowId});
+ assert.equal(bootstrap.data.tab.url,'about:blank');assert.equal(bootstrap.data.tab.windowId,tab.windowId);
+ await ok('browser_navigate',{operationId:bootstrap.operationId,url:`http://127.0.0.1:${fixturePort}/case?bootstrap=1`});
+ const bootSnapshot=(await ok('browser_snapshot',{operationId:bootstrap.operationId})).data;
+ assert.notEqual(bootSnapshot.tabId,tab.id);
+ await admin.evaluate(id=>chrome.tabs.update(id,{active:true}),tab.id);
+ assert.equal((await ok('browser_snapshot',{operationId:bootstrap.operationId})).data.tabId,bootSnapshot.tabId);
+ assert.equal((await prepare('cannot-replace-bootstrap',null)).ok,false);
+ complete('bootstrap');
+ report.checks.push('Standalone blank new requires the owning requestId, honors windowId, navigates without prior snapshot and ignores later focus changes');
  // Exercise actual panel submission and capture in a different focused Chrome window.
  await admin.evaluate(id=>chrome.storage.local.set({'lastProfileId':'request-fixture','recentSession:request-fixture':id}),session.id);
  const panel=await context.newPage();await panel.goto(`chrome-extension://${report.extensionLoad.id}/src/sidepanel/index.html`);

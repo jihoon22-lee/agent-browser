@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$Version,
@@ -79,7 +79,7 @@ try {
         }
     }
     foreach ($name in @('setup.ps1','uninstall.ps1','installer-common.ps1','start-bridge.ps1','start-bridge.cmd','show-pairing.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $stage $name) }
-    foreach ($name in @('README-install.md','CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md')) {
+    foreach ($name in @('README-install.md','CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md','docs/browser-capabilities.md')) {
         $source=Join-SafePath $repo $name
         if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw ('Required release documentation missing: ' + $name) }
         $destination=Join-SafePath $stage $name

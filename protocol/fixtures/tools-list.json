@@ -79,7 +79,7 @@
     "name": "browser_bookmarks"
   },
   {
-    "description": "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach, navigation, tab switch or rerender before writing; identify targets by name/href, never old index. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
+    "description": "Read DOM text/elements/tables with refs. Snapshot after attach, navigation, switch or rerender before writing; identify by name/href, never old index. Continue via offset/elementOffset/frameOffset cursors.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -117,7 +117,7 @@
     "name": "browser_snapshot"
   },
   {
-    "description": "Go to an http(s) URL, or go back, forward, or reload, in the operation tab. Waits for navigation to complete. For delayed lists use browser_wait for expected text, then browser_snapshot before clicking.",
+    "description": "Navigate the operation tab to HTTP(S), back, forward or reload and wait for completion. For delayed content, browser_wait then snapshot before clicking.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -292,7 +292,7 @@
     "name": "browser_scroll"
   },
   {
-    "description": "Wait for any text/textGone/refGone/urlIncludes condition or TIMEOUT. For iframe text/URL use snapshot frameRef; otherwise use refGone's frame or top document. frameRef is document-bound: snapshot again after navigation.",
+    "description": "Wait for any text/textGone/refGone/urlIncludes match or TIMEOUT. Scope: snapshot frameRef, else refGone's frame, else top. frameRef binds to one document; snapshot after navigation.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -372,7 +372,7 @@
     "name": "browser_extract"
   },
   {
-    "description": "Capture the visible part of the operation tab as PNG. Only works while that tab is the active tab of its window; otherwise returns NEEDS_TAB_ACTIVATION.",
+    "description": "Visible PNG of the operation tab; requires that tab active in its window or returns NEEDS_TAB_ACTIVATION.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

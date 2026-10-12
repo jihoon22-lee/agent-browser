@@ -47,7 +47,7 @@ def main():
         extension=json.loads((stage/"extension/manifest.json").read_text())
         validate_extension(extension, version)
         for name in ["setup.ps1","uninstall.ps1","installer-common.ps1","start-bridge.ps1","start-bridge.cmd","show-pairing.ps1"]: copy(ROOT/"scripts"/name,name)
-        for name in ["README-install.md","CHANGELOG.md","LICENSE","SECURITY.md","docs/user-guide.md","docs/troubleshooting.md"]: copy(ROOT/name,name)
+        for name in ["README-install.md","CHANGELOG.md","LICENSE","SECURITY.md","docs/user-guide.md","docs/troubleshooting.md","docs/browser-capabilities.md"]: copy(ROOT/name,name)
         for name in ["THIRD_PARTY_NOTICES","third-party-inventory.json"]: copy(a.notices/name,name)
         for name in ["profile-windows.json.template","profile-wsl.json.template","mcp-windows.json.template","mcp-wsl.json.template"]: copy(ROOT/"examples"/name,"examples/"+name)
         files=[{"Path":x.relative_to(stage).as_posix(),"Sha256":sha(x)} for x in sorted(stage.rglob("*")) if x.is_file()]

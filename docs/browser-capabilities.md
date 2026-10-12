@@ -14,7 +14,7 @@
 | 탭 목록 | list, windowId 필터. tabId/windowId/index/openerTabId/status/pinned/active 메타데이터 | 선택된 연결 Chrome 프로필 범위 |
 | 창별 대상 선택 | windows로 일반 창 ID·focused·state 확인, list/new에 windowId 지정 | 창 생성·닫기·크기 변경 도구는 이번 범위 밖. 새 권한 없음 |
 | 기존 탭 연결 | attach에 tabId 지정. 제한 페이지도 메타데이터 연결 후 일반 URL로 이동 가능 | chrome:// 등의 DOM/스크린샷 접근은 허용하지 않음 |
-| 작업 탭 전환 | switch에 작업 소유 tabId | 전경 활성화 계약은 별도 통합 작업에서 처리. 이 브랜치가 중복 구현하지 않음 |
+| 작업 탭 전환 | switch에 작업 소유 tabId | 사용자 전경 포커스를 바꾸지 않으며 진행 중인 요청 대상은 고정 |
 | 탭 닫기 | close로 현재 작업에서 생성한 웹 탭만, 원래 attach 탭은 보호 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외. 강제 닫기 없음 |
 | 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
 | back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰 | 일반 페이지 쓰기는 snapshot 필요. 빈/제한 페이지에서 HTTP(S) goto는 DOM 읽기 없이 가능 |
@@ -24,12 +24,12 @@
 | input | text input/textarea/contenteditable 값 교체와 input/change 이벤트 | 파일 입력은 경로를 입력받지 않고 명확히 거부. 모든 프레임워크/IME를 보장하지 않음 |
 | select | option value/label, checkbox/radio 원하는 상태 | 다중 선택 배열 API는 없음. disabled option과 불가능한 radio 해제는 거부 |
 | keyboard | Enter/Tab/Escape/Space/Backspace/ArrowUp/ArrowDown의 DOM 이벤트 및 구현된 기본 동작 | trusted OS 입력·Ctrl/L·브라우저 단축키·키 조합·IME 미지원 |
-| screenshot | 작업 탭이 활성일 때 visible PNG | 탭 활성화는 통합 계약 확인, 전체 페이지/백그라운드 캡처와 OS UI 미지원 |
+| screenshot | 작업 탭이 활성일 때 visible PNG | 필요하면 사용자가 작업 탭을 활성화. 전체 페이지/백그라운드 캡처와 OS UI 미지원 |
 | 즐겨찾기 | browser_bookmarks list, folderId로 폴더 진입, search query, offset/limit | 아래 선택 bookmarks 권한. 읽기만 제공. URL은 조회만 하고 방문하지 않음 |
 | 다운로드 | 일반 링크 클릭으로 Chrome 자체 다운로드가 발생할 수 있음 | 시작/목록/진행/완료/경로/파일 읽기 도구 없음. downloads 권한 추가하지 않음 |
 | 업로드 | 미지원임을 명시적으로 반환 | OS 파일 선택창·로컬 경로·파일 내용 읽기를 우회하지 않음. 별도 승인된 파일 선택 설계 필요 |
 
-새 탭은 background 생성이 기본이며 작업의 currentTab이 새 탭으로 바뀐다. 사용자 전경 탭을 임의로 바꾸지 않는다. 통합본의 활성 탭 정책과 병합할 때 이 의미를 맞춰야 한다.
+새 탭은 background 생성이 기본이며 작업의 currentTab이 새 탭으로 바뀐다. 사용자 전경 탭을 임의로 바꾸지 않는다. 패널 요청 중 단독 new는 현재 requestId를 요구한다. 안전한 기본 탭이 없어도 명시적인 새 탭 생성은 가능하고, 새 operation은 해당 요청에 속한다.
 
 ## 즐겨찾기 선택 권한의 정확한 영향
 
@@ -43,6 +43,6 @@
 
 공식 근거: [Chrome bookmarks API](https://developer.chrome.com/docs/extensions/reference/api/bookmarks), [optional permissions API](https://developer.chrome.com/docs/extensions/reference/api/permissions).
 
-## 통합 주의
+## 요청과 브라우저 선택
 
-이 후속은 게시판 커밋 뒤 적용한다. tools/router/operation/conn, handlers/chrome-api, Options, 하네스에서 기존 활성 탭·iframe 작업과 겹칠 수 있다. active-tab 기본 대상 선정은 통합 담당의 계약을 유지하고, standalone new의 작업 예약/취소 정리 및 bookmarks의 **operation 없이 선택된 브라우저를 읽는 계약**을 함께 유지한다. 일반 페이지 클릭/입력의 snapshot 안전 장치는 제거하지 않았다. 운영 설치·사용자 Chrome 프로필 변경이나 별도 배포는 하지 않는다.
+패널의 기존 페이지 작업은 요청 전송 시 캡처한 기본 탭을 사용하며, 명시한 탭이 우선한다. 독립 새 탭 생성은 해당 requestId로 새 operation을 시작한다. 실패·취소 시 새 operation 예약을 정리하며 이전 요청의 ID는 거부한다. 즐겨찾기와 창/탭 목록 조회는 operation 없이 선택된 연결 브라우저를 읽는다. 일반 웹페이지 클릭·입력에는 최신 snapshot 안전 장치를 유지한다.
