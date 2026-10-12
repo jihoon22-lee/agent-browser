@@ -43,3 +43,13 @@ test('F11 pointer side effects are never reported as unexecuted',async()=>{
   expect(outcome.executed).toBe('unknown');
   await expect(page.locator('#overlay')).toBeVisible();
 });
+test('R6 textarea fills keep refs but authored default replacement invalidates them',async()=>{
+  const page=await world.open('board.html');
+  await page.evaluate(()=>{document.body.innerHTML='<textarea>First record</textarea>';});
+  const operationId=await world.attach(page),snap=await world.ok('browser_snapshot',{operationId}),ref=snap.data.frames[0].elements[0].ref;
+  await world.ok('browser_fill',{operationId,ref,text:'edited once'});
+  await world.ok('browser_fill',{operationId,ref,text:'edited twice'});
+  await page.locator('textarea').evaluate(el=>{const textarea=el as HTMLTextAreaElement;textarea.defaultValue='Second record';textarea.value='Second record';});
+  expect((await world.mcp.call('browser_fill',{operationId,ref,text:'wrong record'})).error?.code).toBe('STALE_ELEMENT');
+  await expect(page.locator('textarea')).toHaveValue('Second record');
+});

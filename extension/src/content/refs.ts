@@ -10,6 +10,9 @@ export class RefTable {
   // deliberately excluded so fill/select do not invalidate their own controls.
   private identity(el: Element): string {
     return JSON.stringify([roleOf(el), accessibleName(el, true),
+      // Native fill changes value, not authored default text. A changed default
+      // signals that a reused textarea now belongs to another record.
+      el instanceof HTMLTextAreaElement ? el.defaultValue : null,
       el instanceof HTMLAnchorElement ? el.href : el.getAttribute('href'),
       el.getAttribute('target'), el.getAttribute('type'), el.getAttribute('formaction')]);
   }

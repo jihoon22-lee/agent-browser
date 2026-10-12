@@ -489,3 +489,13 @@ it('review R2 recognizes same-URL history entry changes',async()=>{
   try{await vi.advanceTimersByTimeAsync(1600);expect(settled).toMatchObject({executed:true,verified:{url:'https://example.test/1'}});}
   finally{h.disconnect();await work;vi.useRealTimers();}
 });
+it.each(['refGone','frameRef'])('review R5 injection loss still observes the top URL with %s',async scope=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
+  w.api.inject=async()=>{throw Error('Document changed while injecting');};
+  const condition=scope==='refGone'?{refGone:snap.frames[0].elements[0].ref}:{frameRef:snap.frames[0].frameRef,text:'destination'};
+  const work=h(request('browser.wait',{...condition,urlIncludes:'/arrived',timeoutMs:1000})).then(r=>r,e=>e);
+  await new Promise(r=>setTimeout(r,25));
+  Object.assign(w.tabs.get(1)!,{url:'https://example.test/arrived'});
+  for(const listener of w.updates)listener(1,{url:'https://example.test/arrived'},w.tabs.get(1)!);
+  expect(await work).toMatchObject({verified:{met:'urlIncludes'}});expect(w.updates.size).toBe(0);
+});

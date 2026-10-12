@@ -668,3 +668,17 @@ it('review R3 updates Stop when the background removes the selected lease',async
   expect(button('응답 중단').hidden).toBe(true);
   expect(test.post.mock.calls.some(([path])=>path.endsWith('/abort'))).toBe(false);
 });
+it('review R7 does not repeat the session abort already completed by the background',async()=>{
+  await render();await draftValue('stop once');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:{handled:true,abortSent:true}}:original(message));
+  test.post.mockClear();await act(async()=>button('응답 중단').click());
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(0);
+});
+it('review R7 falls back once when the gate closed but no background abort was sent',async()=>{
+  await render();await draftValue('stop offline');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:{handled:true,abortSent:false}}:original(message));
+  test.post.mockClear();await act(async()=>button('응답 중단').click());
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(1);
+});

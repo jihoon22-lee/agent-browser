@@ -207,3 +207,11 @@ it.each(['hidden','renamed','removed'])('F11 reports unsafe execution after mous
   expect(document.getElementById('overlay')!.hidden).toBe(false);
   expect(click).not.toHaveBeenCalled();
 });
+it('review R6 preserves textarea refs across fill but rejects a recycled authored default',async()=>{
+  document.body.innerHTML='<textarea>First record</textarea>';
+  const el=document.querySelector('textarea')!,ref=snap().elements[0]!.ref;
+  await runAction('fill',{ref,text:'edited once'});await runAction('fill',{ref,text:'edited twice'});
+  el.defaultValue='Second record';el.value='Second record';
+  await expect(runAction('fill',{ref,text:'wrong record'})).rejects.toMatchObject({code:'STALE_ELEMENT'});
+  expect(el.value).toBe('Second record');
+});

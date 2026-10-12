@@ -11,6 +11,13 @@
 - 패널 자체 완료 처리를 배제한 강화 R3를 실제 Windows에서 추가 실행해 **1/1 통과(17.2초)**를 확인했다.
 - 변경된 최종 커밋의 원격 CI와 코드/보안 재리뷰를 확인한 후 병합한다.
 
+## PR #9 두 번째 리뷰 후속
+
+- head `72af3c7`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38246158603)는 Linux·Windows 모두 통과했다. Extension 379/379, Linux Rust 157 통과/기존 helper 1 ignored, Linux E2E 83 통과/3 skipped, Windows E2E 84 통과/2 skipped 및 별도 bookmarks 2/2, iframe·설치·패키징·GUI 엔진 검사를 확인했다.
+- 두 번째 코드 리뷰의 textarea 재활용과 중복 abort를 수정했다. textarea authored defaultValue는 ref identity에 보존하며 live fill 값과 구분한다. background 취소는 handled/abortSent를 반환하고, 패널은 확인된 abort를 재전송하지 않는다. 발견/전송 실패는 직접 abort fallback을 유지한다.
+- 프레임 주입 실패 지적은 기존 frameRouter.inject가 일반 오류를 FRAME_UNAVAILABLE로 정규화하고 있어 재현되지 않았다. 일반 Document changed while injecting 오류를 refGone/frameRef 두 경로에 주입하는 회귀를 추가해 URL 대기가 계속되는 것을 확인했다.
+- 수정 전 3개 실패를 확인했다. 관련 단위 5파일 **192/192**, snapshot **11/11**, 빌드·E2E 타입 검사 통과. 실제 Windows 영향 E2E **27/27**, Linux 영향 E2E **14/14** 통과. 실제 Stop 1회에 /abort 1회와 textarea default 교체 후 STALE_ELEMENT를 확인했다.
+
 ## WP2 완료
 
 - F4: checkbox/radio는 checked, 나머지 input은 동일 속성을 가진 새 input에서 정규화한 기본값으로 비교한다. 파일 선택·실제 편집은 계속 보호한다.

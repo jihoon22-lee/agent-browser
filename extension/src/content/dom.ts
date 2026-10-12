@@ -47,7 +47,7 @@ export function accessibleName(el: Element, excludeEditableValue = false): strin
   }
   const ph = clean(el.getAttribute("placeholder"));
   if (ph) return ph;
-  const editable = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || (el as HTMLElement).isContentEditable;
+  const editable = el instanceof HTMLInputElement || (el as HTMLElement).isContentEditable;
   const text = excludeEditableValue && editable ? '' : clean((el as HTMLElement).innerText ?? el.textContent);
   if (text) return text;
   const title = clean(el.getAttribute("title"));

@@ -94,10 +94,10 @@ export function panelRequests(call:Call) {
       // User Stop already closed the gate and cleared the lease. The panel also
       // attempts /abort using its captured connection if discovery is unavailable.
       const api=await client(saved).catch(()=>null);
-      if(!api)return true;
+      if(!api)return {handled:true,abortSent:false};
       try { await api.post(`/session/${encodeURIComponent(saved.sessionId)}/abort`); }
       catch(error) { if(!(error instanceof OpenCodeApiError && error.status===404))throw error; }
-      return true;
+      return {handled:true,abortSent:true};
     }),
   };
 }

@@ -341,14 +341,18 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
               stopped=await chrome.runtime.sendMessage({kind:'request-cancel',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId,...(attempt?.requestId?{requestId:attempt.requestId}:{})}});
               if(stopped?.ok===false)throw Error(stopped.error?.message);
             } catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
-            if(stopped?.result===false||(!attempt?.requestId&&stopped?.result!==true)){
+            const handled=stopped?.ok===true&&(stopped.result===true||stopped.result?.handled===true);
+            if(!handled&&(stopped?.result===false||!attempt?.requestId)){
               try { if(operation&&stopsOperation(operation.id))await bridgeRequest('operation.abort',{operationId:operation.id}); }
               catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
             }
-            // Always attempt the selected session's abort, even if the Bridge
-            // disconnected or lease cleanup failed. Report both failures.
-            try { await selectedApi.post(path+'/abort'); }
-            catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
+            // A successful background abort must not be sent again: another
+            // request may start as soon as that cancellation releases its lock.
+            // Bridge/cleanup/discovery failures still get a direct API attempt.
+            if(!(stopped?.ok===true&&stopped.result?.abortSent===true)){
+              try { await selectedApi.post(path+'/abort'); }
+              catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
+            }
             if(failures.length)throw Error(failures.join(' · '));
             if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync(); })}>응답 중단</button></div></div>
       </form>

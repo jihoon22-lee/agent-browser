@@ -66,3 +66,14 @@ test('R3 an open panel hides Stop after background lease removal without a messa
   await expect(page.getByRole('button',{name:'응답 중단',exact:true})).toBeHidden();
   expect(api.state.requests.some(r=>r.path.endsWith('/abort'))).toBe(false);
 });
+test('R7 one Stop sends exactly one session abort across panel and background',async()=>{
+  const {lease}=await prepare('single-abort');
+  await world.adminPage.evaluate(async lease=>chrome.storage.local.set({lastProfileId:lease.profileId,['recentSession:'+lease.profileId]:lease.sessionId}),lease);
+  const page=await world.context.newPage();
+  await page.goto(`chrome-extension://${world.extensionId}/${world.manifest.side_panel.default_path}`);
+  await expect(page.getByText(/OpenCode 1\.18\.29 연결됨/)).toBeVisible();
+  await page.getByRole('button',{name:'응답 중단',exact:true}).click();
+  await expect(page.getByText('중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다.')).toBeVisible();
+  expect(api.state.requests.filter(r=>r.path===`/session/${lease.sessionId}/abort`)).toHaveLength(1);
+  expect(await saved()).toBeUndefined();
+});

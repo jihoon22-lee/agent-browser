@@ -20,7 +20,7 @@ it('can stop a reservation after Chrome session storage is cleared on restart',a
 });
 it('releases a deleted session after closing its gate even when abort returns 404',async()=>{
   storage.panelBrowserRequest=lease('one');api.post.mockRejectedValueOnce(new OpenCodeApiError(404,'deleted'));
-  await expect(panelRequests(call).cancel(lease('one'))).resolves.toBe(true);
+  await expect(panelRequests(call).cancel(lease('one'))).resolves.toEqual({handled:true,abortSent:true});
   expect(storage.panelBrowserRequest).toBeUndefined();
 });
 it.each([404,500])('handles a disappeared owning session without clearing uncertain HTTP %i failures',async status=>{
@@ -38,7 +38,7 @@ it('ignores a delayed cancellation for an older request in the same session',asy
 it('closes the browser gate even when runtime discovery fails during cancellation',async()=>{
   storage.panelBrowserRequest=lease('one');
   call.mockImplementation(async method=>{if(method==='runtime.status')throw Error('offline');return {};});
-  await expect(panelRequests(call).cancel(lease('one'))).resolves.toBe(true);
+  await expect(panelRequests(call).cancel(lease('one'))).resolves.toEqual({handled:true,abortSent:false});
   expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
   expect(storage.panelBrowserRequest).toBeUndefined();
 });
@@ -128,4 +128,12 @@ it('review R4 preserves a starting runtime lease without launching it',async()=>
   await expect(panelRequests(call).prepare(lease('two'),null)).rejects.toThrow();
   expect(storage.panelBrowserRequest).toEqual(lease('one'));
   expect(call.mock.calls.some(([m])=>m==='runtime.ensure'||m==='request.end')).toBe(false);
+});
+it('review R7 distinguishes a confirmed abort from unavailable connection discovery',async()=>{
+  storage.panelBrowserRequest=lease('one');
+  await expect(panelRequests(call).cancel(lease('one'))).resolves.toEqual({handled:true,abortSent:true});
+  expect(api.post).toHaveBeenCalledOnce();
+  storage.panelBrowserRequest=lease('two');call.mockImplementation(async method=>method==='runtime.status'?{state:'stopped'}:{});
+  await expect(panelRequests(call).cancel(lease('two'))).resolves.toEqual({handled:true,abortSent:false});
+  expect(api.post).toHaveBeenCalledOnce();
 });
