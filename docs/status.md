@@ -6,6 +6,18 @@
 - Extension 단위 **392/392**, Linux E2E **86 통과/3 skipped**, Windows E2E **87 통과/2 skipped** 및 별도 bookmarks **2/2**, Rust·빌드·문서·설치·패키징·GUI 회귀 검사 통과. 코드·보안 리뷰는 추가 문제 없이 완료됐으며 리뷰 스레드 10개를 해결했다.
 - 버전·문서 변경 후 패키지 빌드, 최종 CI, 게시본 해시·격리 실행 검증은 아래에 실제 결과를 기록한다. 앞선 기능 검증을 새 버전의 실행 결과로 대체하지 않는다.
 
+## 운영 보고 후 릴리스 보완 — 2026-10-12 14:36 UTC
+
+PR #7은 `5760a904`로 병합했고 [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38259260038)는 Linux·Windows 모두 통과했다. 게시 전에 사용자가 WSL 콘솔 팝업, attach의 requestId 누락, 완료 후 활성화된 응답 중단 버튼을 보고해 게시를 보류하고 추가 검증했다. 개인 PC 잠금 해제 후 새 빌드·격리 Chrome 프로필로 실제 사이드 패널을 열었다. 운영 v0.1.5 설치와 전역 OpenCode 설정은 변경하지 않았다.
+
+- 런처의 `DETACHED_PROCESS`는 `CREATE_NO_WINDOW`를 무시하게 한다. 상충하는 플래그를 두 백그라운드 실행 경로에서 제거하고 핸들 비상속·프로세스 그룹·job breakaway 재시도는 유지했다. 실제 Windows exe의 자식 콘솔 가시성 검사가 수정 전 `visible`로 실패하고 수정 후 `hidden`으로 통과했다. 실제 Ubuntu WSL → Windows interop 자식 콘솔도 `hidden`으로 통과했다(기능 검사 2건, 별도 helper 1건).
+- 운영 서버의 읽기 전용 상태 검사에서는 요청별 system에 requestId가 저장돼 있었지만 attach 인자에는 빠져 있었다. 완료 응답과 idle 상태도 확인했다. 실제 대화·페이지 원문은 저장하지 않았다. 패널 지침·MCP 설명에 구체적인 attach/new JSON과 필수 requestId 안내를 추가하고, 같은 브라우저의 ID 누락만 인자를 고쳐 재시도할 수 있다고 안내한다. 잘못된 ID·다른 client·종료된 요청을 허용하거나 ID를 오류로 노출하지 않는다. 수정 전 회귀 1건 실패, 수정 후 관련 Rust operation 검사 **20/20**, Extension request-target/panel-requests **41/41** 통과.
+- 새 [실제 패널 검사](../tests/e2e/opencode-panel.windows.mjs)는 `chrome.sidePanel.open`으로 실제 headed Chrome 사이드 패널을 열고 설치된 OpenCode 1.18.29, 새 MSVC Bridge, MCP, 실제 content script를 거친다. Windows 관리 프로필과 WSL 관리 프로필 모두 반복 연결 재사용, A→B 서로 다른 탭의 연속 요청, 의도적으로 누락한 requestId의 오류 후 교정, attach/snapshot의 현재 탭 확인, 정상·provider 오류 후 lease 해제와 응답 중단 비활성화가 통과했다. 각 실행 뒤 관리 runtime 중지도 확인했다. 입력은 CDP/DOM 이벤트로 전달했으며 물리 마우스 검증이라고 보고하지 않는다.
+- 합성 provider는 경로·복구·UI 계약을 검증하는 결정적 fixture이며 실제 모델이 아니다. 첫 WSL 실행은 Windows loopback fixture에 도달하지 못해 timeout/retry로 실패했다. WSL provider를 WSL loopback에 배치한 후 같은 제품 빌드로 전체 검사가 통과했다.
+- 실제 Zen `opencode/big-pickle`은 카탈로그를 갱신해 입력·출력·cache 비용 0과 공식 live 모델 목록의 가용성을 확인한 후 **한 차례** 요청했다. OpenCode가 HTTP **403 / FreeTierError**를 반환해 실제 LLM 도구 실행은 **0건**, 모델 수행 성공은 **미검증**이다. 공식 가격 페이지의 404로 사전 검사가 중단된 앞선 실행들은 LLM 요청을 하지 않았다. 카탈로그 갱신·live 목록 확인 경로를 사용했으며 유료 모델로 전환하거나 제한을 우회하지 않았다. 합성 provider의 성공을 모델 성공으로 대체하지 않는다.
+
+검증 기록은 개발 폴더의 `actual-panel-windows-synthetic.json`, `actual-panel-wsl-synthetic.json`, `actual-panel-zen.json`에 있으며 배포 ZIP에 포함하지 않는다. 이 후속 변경의 CI·리뷰·최종 main 패키지 게시 검증은 아직 진행 전이다.
+
 ## PR #7 통합 진행
 
 사용자가 PR #7도 함께 병합·릴리스하도록 요청했다. 관리 MCP 업데이트와 iframe 최종 편집 재검사를 기존 요청 수명·탐색·입력 수정과 함께 통합한다. PR #7의 기존 CI·리뷰는 통과했지만 최신 조합의 검증은 별도로 수행한다. 변경 기록과 상태 이력·회귀 테스트의 충돌을 양쪽 내용이 보존되도록 해결했다. 최종 태그와 패키지는 PR #7까지 포함한 main에서 생성한다.
