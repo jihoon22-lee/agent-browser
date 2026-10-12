@@ -44,7 +44,9 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
     const before = expectNavigation ? await getTab(api, id) : undefined;
     const beforeDocument = expectNavigation && isWeb(before?.url) ? (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId : undefined;
     const beforeEntry = historyTraversal && beforeDocument && api.historyEntry
-        ? await interruptible(api.historyEntry(id,beforeDocument),signal) : undefined;
+        ? await interruptible(api.historyEntry(id,beforeDocument).catch(()=>{
+            throw new ProtocolError('FRAME_UNAVAILABLE','The current document changed before history traversal. Take a fresh snapshot.','safe',{executed:false});
+        }),signal) : undefined;
     if(historyTraversal && api.historyEntry && !beforeEntry)
         throw new ProtocolError('FRAME_UNAVAILABLE','Cannot identify the current history entry before traversal.','safe');
     const off = api.onTabUpdated((tid, change, tab) => {

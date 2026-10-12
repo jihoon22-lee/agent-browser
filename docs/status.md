@@ -24,6 +24,12 @@
 - 같은 이벤트 주기의 두 번 클릭으로 취소가 2회 전송되는 회귀 2건을 먼저 확인했다. 동기 ref 잠금과 버튼 disabled 상태를 함께 적용하고, 직접 abort fallback·재동기화까지 잠금을 유지한다. finally에서 해제해 실패 후 명시적 재시도는 허용한다.
 - Workbench 단위 **83/83**, Extension TypeScript/Vite 빌드 통과. 실제 Windows Chrome/MSVC release Bridge에서 단일 클릭과 연속 두 번 클릭 모두 `/abort` 1회를 확인해 **2/2 통과**했다. 실패 후 재시도도 단위 테스트로 확인했다. 새 head의 원격 CI·재리뷰는 push 후 확인한다.
 
+## PR #9 네 번째 리뷰 후속
+
+- head `92e9c55`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38248963151)는 Linux·Windows 모두 통과했다. Extension **388/388**, Linux E2E **86 통과/3 skipped**, 실제 Windows E2E **87 통과/2 skipped** 및 별도 bookmarks **2/2**, 설치·패키징·GUI 엔진 검사 통과를 확인했다.
+- 추가 코드 리뷰 2건을 수정했다. history entry의 사전 조회 중 문서가 사라지면 탐색을 dispatch하지 않고 FRAME_UNAVAILABLE/safe/executed:false를 반환한다. background reconcile와 패널 finish의 네트워크 확인은 mutation queue 밖에서 실행하고, 종료 적용 직전에 client·request·message·세션 범위를 재검사한다. Stop은 지연된 확인 뒤에서 기다리지 않으며 오래된 확인 결과는 교체된 lease를 종료하지 않는다.
+- 수정 전 회귀 **4건 실패**를 확인했다. 수정 후 관련 단위 3파일 **160/160**, 빌드·E2E 타입 검사 통과. 실제 Windows 영향 E2E **15/15** 통과. 지연된 runtime 조회와 새 lease 보존 경계는 단위 mock 검증이며 실제 managed MCP hang을 재현했다고 보고하지 않는다. 새 head의 CI·재리뷰는 push 후 확인한다.
+
 ## WP2 완료
 
 - F4: checkbox/radio는 checked, 나머지 input은 동일 속성을 가진 새 input에서 정규화한 기본값으로 비교한다. 파일 선택·실제 편집은 계속 보호한다.

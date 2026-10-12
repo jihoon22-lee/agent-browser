@@ -19,17 +19,38 @@ export function panelRequests(call:Call) {
     catch(error) { if((error as any)?.code!=='OPERATION_INVALID')throw error; }
     await chrome.storage.local.remove(KEY);
   }
-  async function complete(saved:RequestLease,clientId:string) {
+  async function completion(saved:RequestLease):Promise<{abort:boolean}|null> {
     const api=await client(saved);
     // An unavailable profile must not hold all other profiles hostage. Closing
     // the Bridge gate is still mandatory before forgetting its durable lease.
-    if(!api){await end(saved,clientId,true);return true;}
+    if(!api)return {abort:true};
     const [messages,statuses]=await Promise.all([api.get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`).catch(error=>{
       if(error instanceof OpenCodeApiError&&error.status===404)return null;
       throw error;
     }),api.get<Record<string,any>>('/session/status')]);
-    if(['busy','retry'].includes(statuses[saved.sessionId]?.type)||(messages!==null&&!completedRequest(saved,messages)))return false;
-    await end(saved,clientId);return true;
+    if(['busy','retry'].includes(statuses[saved.sessionId]?.type)||(messages!==null&&!completedRequest(saved,messages)))return null;
+    return {abort:false};
+  }
+  async function complete(saved:RequestLease,clientId:string) {
+    const result=await completion(saved);
+    if(!result)return false;
+    await end(saved,clientId,result.abort);return true;
+  }
+  async function observeCompletion(scope?:Pick<RequestLease,'profileId'|'directory'|'sessionId'>) {
+    const data=await chrome.storage.local.get([KEY,'clientId']);
+    const saved=data[KEY] as RequestLease|undefined;
+    if(!saved||typeof data.clientId!=='string')return false;
+    const clientId=data.clientId;
+    if(scope&&(saved.profileId!==scope.profileId||saved.directory!==scope.directory||saved.sessionId!==scope.sessionId))return false;
+    // Network probes must never hold the mutation queue needed by Stop.
+    const result=await completion(saved);
+    if(!result)return false;
+    return serial(async()=>{
+      const current=await chrome.storage.local.get([KEY,'clientId']);
+      const active=current[KEY] as RequestLease|undefined;
+      if(current.clientId!==clientId||!active||active.requestId!==saved.requestId||active.messageId!==saved.messageId||active.profileId!==saved.profileId||active.directory!==saved.directory||active.sessionId!==saved.sessionId)return false;
+      await end(saved,clientId,result.abort);return true;
+    });
   }
   let polling=false;
   return {
@@ -63,20 +84,11 @@ export function panelRequests(call:Call) {
       }
       return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target)};
     }),
-    finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>serial(async()=>{
-      const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
-      if(!saved||saved.profileId!==scope.profileId||saved.directory!==scope.directory||saved.sessionId!==scope.sessionId)return false;
-      const {clientId}=await chrome.storage.local.get('clientId');
-      return typeof clientId==='string' ? complete(saved,clientId) : false;
-    }),
+    finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>observeCompletion(scope),
     reconcile:async()=>{
       if(polling)return false;
       polling=true;
-      try { return await serial(async()=>{
-        const data=await chrome.storage.local.get([KEY,'clientId']);
-        const saved=data[KEY] as RequestLease|undefined;
-        return saved&&typeof data.clientId==='string' ? complete(saved,data.clientId) : false;
-      }); } finally { polling=false; }
+      try { return await observeCompletion(); } finally { polling=false; }
     },
     removeProfile:(profileId:string)=>serial(async()=>{
       const data=await chrome.storage.local.get([KEY,'clientId']);

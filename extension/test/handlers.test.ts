@@ -489,6 +489,15 @@ it('review R2 recognizes same-URL history entry changes',async()=>{
   try{await vi.advanceTimersByTimeAsync(1600);expect(settled).toMatchObject({executed:true,verified:{url:'https://example.test/1'}});}
   finally{h.disconnect();await work;vi.useRealTimers();}
 });
+it.each(['back','forward'])('review R9 reports safe document loss before %s dispatch',async action=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  w.api.historyEntry=async()=>{throw Error('No document with id doc1');};
+  w.api.tabsGoBack=vi.fn();w.api.tabsGoForward=vi.fn();
+  try{
+    await expect(h(request('browser.navigate',{action}))).rejects.toMatchObject({code:'FRAME_UNAVAILABLE',retry:'safe',details:{executed:false}});
+    expect(w.api.tabsGoBack).not.toHaveBeenCalled();expect(w.api.tabsGoForward).not.toHaveBeenCalled();
+  }finally{h.disconnect();}
+});
 it.each(['refGone','frameRef'])('review R5 injection loss still observes the top URL with %s',async scope=>{
   const w=world(),h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
   w.api.inject=async()=>{throw Error('Document changed while injecting');};

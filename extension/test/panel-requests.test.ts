@@ -137,3 +137,23 @@ it('review R7 distinguishes a confirmed abort from unavailable connection discov
   await expect(panelRequests(call).cancel(lease('two'))).resolves.toEqual({handled:true,abortSent:false});
   expect(api.post).toHaveBeenCalledOnce();
 });
+it.each(['reconcile','finish'] as const)('review R10 Stop bypasses a stalled %s probe and its stale result preserves a new lease',async method=>{
+  storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
+  let release!:(value:any)=>void,started!:()=>void;
+  const probing=new Promise<void>(resolve=>{started=resolve;});
+  call.mockImplementationOnce(async()=>{started();return new Promise(resolve=>{release=resolve;});});
+  const poll=method==='reconcile'?manager.reconcile():manager.finish(lease('one'));
+  await probing;
+  const cancel=manager.cancel(lease('one'));
+  try{
+    for(let i=0;i<20;i++)await Promise.resolve();
+    expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
+    await cancel;
+    await manager.prepare(lease('two'),null);
+    api.get.mockImplementation(async path=>path==='/session/status'?{}:[{info:{role:'assistant',sessionID:'session-one',parentID:'msg-one',time:{completed:1},finish:'stop'}}]);
+    release({state:'ready',baseUrl:'http://127.0.0.1:4444'});
+    expect(await poll).toBe(false);
+    expect(storage.panelBrowserRequest).toEqual(lease('two'));
+    expect(call.mock.calls.filter(([m])=>m==='request.end')).toHaveLength(1);
+  }finally{release({state:'stopped'});await poll;await cancel;}
+});
