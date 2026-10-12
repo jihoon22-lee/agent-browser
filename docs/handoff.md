@@ -783,3 +783,8 @@ Final current-source Windows/WSL integration: **56 PASS** (14 existing + 42 revi
 ### Publication authorization restored — 2026-10-12 07:08 UTC
 
 The parent supplied the later explicit user deployment approvals. The same previously rejected push was retried once and approved; `c61094d` and `8aa6677` are now on PR #5. The earlier blocker is resolved. Latest-head CI/code/security reviews remain required before merge and a new v0.1.5 prerelease; the operating v0.1.4 and separate WSL/iframe/active-tab work remain excluded.
+
+
+### PowerShell CI execution follow-up — 2026-10-12 07:16 UTC
+
+Current-head Linux CI passed. Windows CI 38216139555 passed the new concurrent text/copy/delete rollback regression plus normal install/update/removal and live-process checks, then exposed a real integration omission: direct COM Startup shortcut creation did not record its written hash, so occupied-port rollback retained that shortcut as a supposed concurrent edit. The existing occupied-port regression is the failing test. Setup now creates the link in its transaction stage and publishes it through Copy-TransactionFile. Owned process-marker writes also use the transaction when setup provides one, and snapshot-only calls suppress their internal journal objects from command output. GUI/native product code is unchanged; targeted PowerShell CI is the required revalidation, with no redundant manual review request.

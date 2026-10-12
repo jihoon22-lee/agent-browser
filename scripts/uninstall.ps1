@@ -54,7 +54,7 @@ try {
     if (-not $lockedState -or $lockedState.UpdatedAt -ne $state.UpdatedAt) { throw 'Installation changed while uninstall was preparing; try again.' }
     Assert-OwnedFiles $root $state
     $transaction = New-FileTransaction $root
-    Save-TransactionFile $transaction (Join-Path $state.DataDir '.installer-bridge-process.json')
+    $null = Save-TransactionFile $transaction (Join-Path $state.DataDir '.installer-bridge-process.json')
     if (Test-Path -LiteralPath (Join-Path $state.DataDir 'runtime.json')) {
         $runtimeReport = $null
         $runtimeResult = Invoke-BridgeCapture $state @('runtime','stop-all','--json') 120000 -ReturnResult

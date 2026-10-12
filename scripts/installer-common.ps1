@@ -477,7 +477,7 @@ function Invoke-NativeCapture([string]$Executable, [string[]]$Arguments, [string
 function Invoke-BridgeCapture($State, [string[]]$Arguments, [int]$TimeoutMs=20000, [switch]$ReturnResult) {
     return Invoke-NativeCapture $State.CurrentExe $Arguments $State.InstallDir @{ AGENT_BROWSER_HOME=$State.DataDir; AGENT_BROWSER_PORT=[string]$State.Port } $TimeoutMs -ReturnResult:$ReturnResult
 }
-function Start-OwnedBridge($State) {
+function Start-OwnedBridge($State, $Transaction=$null) {
     $existing = Get-VerifiedBridgeProcess $State
     if ($existing -and (Get-FullPath $existing.Marker.Executable) -eq (Get-FullPath $State.CurrentExe) -and [int]$existing.Marker.Port -eq [int]$State.Port) {
         return [pscustomobject]@{ running=$true; pid=[int]$existing.Marker.Pid; port=[int]$State.Port; reused=$true }
@@ -494,6 +494,8 @@ function Start-OwnedBridge($State) {
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$State.Port) + '(?:\s|$)'
     if (-not $process -or (Get-FullPath $process.ExecutablePath) -ne $expectedExe -or $process.CommandLine -notmatch $role) { throw 'Started Bridge process identity could not be verified.' }
     $marker = [ordered]@{ Product=$script:AgentBrowserProduct; InstallId=$State.InstallId; Pid=[int]$started.pid; Executable=$expectedExe; Port=[int]$State.Port; CreatedAt=$process.CreationDate.ToUniversalTime().ToString('o') }
-    Write-Utf8Atomic (Join-Path $State.DataDir '.installer-bridge-process.json') (ConvertTo-Json $marker -Depth 5)
+    $markerPath=Join-Path $State.DataDir '.installer-bridge-process.json'
+    if($Transaction){Set-TransactionText $Transaction $markerPath (ConvertTo-Json $marker -Depth 5)}
+    else {Write-Utf8Atomic $markerPath (ConvertTo-Json $marker -Depth 5)}
     return [pscustomobject]@{ running=$true; pid=[int]$started.pid; port=[int]$State.Port; reused=$false }
 }
