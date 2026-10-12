@@ -149,3 +149,10 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 브라우저의 새 사용자 요청을 예약한다. 하나의 요청만 예약할 수 있다. tabId 누락은 안전한 기본 대상이 없음을 뜻하며 attach 시 현재 탭으로 대체하지 않는다. `browser_tabs action=attach`의 선택적 requestId가 예약과 일치해야 한다. 명시적 tabId는 캡처된 기본값보다 우선한다. 기존 CLI는 예약이 없을 때 requestId 없이 attach할 수 있다.
 
 `request.end {requestId, clientId}`는 정확히 일치하는 예약과 그 operation을 해제하고 content 명령을 취소한다. 이전 operation으로 뒤늦게 들어온 도구 호출은 거부한다. Stop은 operation과 연결된 예약도 무효화한다. 완료 판단은 동일 OpenCode session/message 응답과 authoritative idle 상태로 확인하며, API 응답이 불명확하면 session storage의 예약 식별자를 보존한다.
+
+
+### 프레임 대기
+
+`browser_snapshot`의 각 프레임은 `frameRef`(예: `s12f7`)를 반환한다. `browser_wait {operationId, frameRef, text}`는 그 snapshot에 결합된 tab/operation/document에서 조건을 검사한다. DOM 본문만 교체되면 유지되지만 프레임 제거·문서 이동·다른 작업/탭의 참조는 `STALE_ELEMENT`다. `refGone`과 함께 지정하면 같은 snapshot 프레임이어야 한다.
+
+조건은 OR이며, 명시적 frameRef의 URL 조건도 해당 문서에만 적용한다. frameRef를 생략하면 refGone의 프레임, 둘 다 없으면 최상위 문서를 사용한다. 최상위 URL 대기는 기존의 탭 이동 관찰을 유지한다. iframe의 문서 간 이동 후에는 새 snapshot을 요청한다. 다른 프레임의 같은 텍스트나 URL로 성공을 대신하지 않는다.

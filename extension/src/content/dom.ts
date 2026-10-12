@@ -1,5 +1,6 @@
 const INTERACTIVE = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[contenteditable=''],[contenteditable=true]";
-export const isInteractive = (el: Element) => el.matches(INTERACTIVE);
+export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick], [onmousedown], [onpointerdown], [onkeydown], [onkeyup]') ||
+  (el.hasAttribute('tabindex') && (el as HTMLElement).tabIndex>=0);
 
 export function isRendered(el: Element, opts: { checkLayout: boolean }): boolean {
   for (let n: Element | null = el; n; n = n.parentElement ?? ((n.getRootNode() as ShadowRoot).host ?? null)) {

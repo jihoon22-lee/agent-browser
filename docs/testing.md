@@ -316,3 +316,10 @@ node tests/e2e/request-target.windows.mjs
 기본 exe는 `target/x86_64-pc-windows-msvc/debug/browser-bridge.exe`이며 `AB_BRIDGE_EXE`로 변경할 수 있다. Chrome은 설치된 Windows Chrome을 사용한다. 테스트는 자체 포트·임시 HOME/profile·합성 HTTP/SSE만 사용하고 생성한 프로세스를 정리한다. `Extensions.loadUnpacked`는 공식 CDP API로 호출하며 새 확장 권한/정책 설정을 추가하지 않는다. 현재 PC에서 플래그를 수동 추가하지 않고 로드에 성공했다. 다른 환경에서 실패하면 오류를 그대로 보고한다.
 
 추가 단위 회귀: `extension/test/request-target.test.ts`, `extension/test/panel-requests.test.ts`, `workbench.test.ts`의 요청 캡처/전송 취소; Rust `server::operation`과 `mcp::tools`. 실제 모델이 요청 문맥을 따르는지는 이 결정적 테스트의 검증 범위가 아니다. 요청 ID를 누락하거나 종료된 operation을 재사용하면 조작 전에 거부한다.
+
+
+## iframe 전체 경로 회귀
+
+`node tests/e2e/iframe.windows.mjs`는 실제 Windows Chrome + MSVC Bridge + 빌드 확장으로 MCP → background → 격리 content 경로를 검사한다. `tests/fixtures/iframe.mjs`의 합성 같은 출처·다른 출처·중첩 iframe만 이용하며 새 임시 프로필·HOME·포트를 사용한다. `AB_BRIDGE_EXE`와 `AB_EXTENSION_DIR`로 격리 패키지를 지정할 수 있고 활성 탭 스크립트도 같은 변수를 지원한다. 운영 설치·Chrome 프로필은 읽거나 변경하지 않는다.
+
+검사 항목: inline/키보드 후보, 좌표 조건과 스크롤, isTrusted 거절 유지, 체크박스 기본 활성화, 새 탭 편입, frameRef의 텍스트·URL 범위, 본문 교체 후 대기, 오래된 요소 및 문서 이동 후 프레임 참조 거부. 결과 JSON은 ignored `tests/agent/results/iframe.json`에 기록한다. 실제 모델 호출과 사내 서비스 접속은 포함하지 않는다.

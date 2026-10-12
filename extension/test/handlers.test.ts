@@ -35,6 +35,18 @@ async function firstRef(h: ReturnType<typeof createHandlers>, tabId = 1) {
     const result: any = await h(request('browser.snapshot', { tabId }));
     return result.frames[0].elements[0].ref as string;
 }
+it('waits in the snapshot-bound child document, rejects navigation and conflicting refs',async()=>{
+    const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://other.test/mail'});
+    const h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
+    const frameRef=snap.frames[1].frameRef;
+    expect(frameRef).toBe(`s${snap.snapshotId}f7`);
+    await expect(h(request('browser.wait',{frameRef:'',text:'body'}))).rejects.toMatchObject({code:'INVALID_PARAMS'});
+    await h(request('browser.wait',{frameRef,text:'body',urlIncludes:'/mail'}));
+    expect(w.sent.at(-1)?.frame.documentId).toBe('child');
+    await expect(h(request('browser.wait',{frameRef,refGone:snap.frames[0].elements[0].ref}))).rejects.toMatchObject({code:'INVALID_PARAMS'});
+    w.frames.get(1)![1]!.documentId='replacement';
+    await expect(h(request('browser.wait',{frameRef,text:'body'}))).rejects.toMatchObject({code:'STALE_ELEMENT'});
+});
 it('lists tabs with attachability and returns flat tab metadata', async () => {
     const w = world(), h = createHandlers(w.api, memorySessionStore());
     expect(await h(request('browser.tabs.list'))).toMatchObject({ tabs: [{ tabId: 1, attachable: true }, { tabId: 2, attachable: true }, { tabId: 3, attachable: false }] });

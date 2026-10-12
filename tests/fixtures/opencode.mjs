@@ -38,6 +38,7 @@ export async function startOpenCodeFixture({ responseDelayMs = 30 } = {}) {
     emit('message.part.delta', { sessionID: id, messageID, partID, field: 'text', delta: text.slice(7) });
     part.text = text;
     record.parts.push({ id: next('prt'), sessionID: id, messageID, type: 'step-finish', reason: 'stop', tokens, cost: 0 });
+    record.info.finish='stop';
     saveMessage(record); status(id, 'idle'); return record;
   }
   const addQuestion = id => {

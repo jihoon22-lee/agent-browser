@@ -11,6 +11,11 @@ export function cancelUpTo(generation: number) { cancelCommands({ generation });
 
 type P = Record<string, unknown> & CommandScope;
 const hasLayout = () => document.documentElement.getClientRects().length > 0;
+function clickPoint(el:Element) {
+  const r=el.getBoundingClientRect();
+  return {clientX:(Math.max(0,r.left)+Math.min(innerWidth,r.left+r.width))/2,
+    clientY:(Math.max(0,r.top)+Math.min(innerHeight,r.top+r.height))/2};
+}
 
 function assertInteractable(el: Element) {
   if (!isRendered(el, { checkLayout: hasLayout() }) || el.matches(":disabled") || el.closest("[inert]")) {
@@ -18,8 +23,7 @@ function assertInteractable(el: Element) {
   }
   if (!hasLayout()) return;
   (el as HTMLElement).scrollIntoView({ block: "center", inline: "center" });
-  const r = el.getBoundingClientRect();
-  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const {clientX:x,clientY:y}=clickPoint(el);
   let top = document.elementFromPoint(x, y);
   // Document hit testing retargets shadow children to their host. Descend each
   // open root so an overlay inside that same root still blocks the click.
@@ -70,10 +74,15 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const el = resolveRef(String(p.ref));
       assertInteractable(el);
       const changes = observeChanges(500, signal);
+      const point=clickPoint(el);
+      const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
       for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
-        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, { bubbles: true, cancelable: true, composed: true }));
+        const down=type.endsWith('down');
+        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:down?1:0,pointerId:1,pointerType:'mouse',isPrimary:true,pressure:down?0.5:0}));
       }
-      (el as HTMLElement).click();
+      // dispatchEvent retains native activation (links, form controls) while
+      // HTMLElement.click() discards coordinates. This is still untrusted input.
+      el.dispatchEvent(new MouseEvent('click',{...base,buttons:0}));
       return { executed: true, verified: await changes };
     }
     case "fill": {

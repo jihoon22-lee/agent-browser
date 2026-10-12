@@ -37,7 +37,7 @@ try{
  context=await chromium.launchPersistentContext(join(temp,'profile'),{executablePath:'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true,ignoreDefaultArgs:['--disable-extensions']});
  const cdp=await context.browser().newBrowserCDPSession();
  report.browser=await cdp.send('Browser.getVersion');
- report.extensionLoad=await cdp.send('Extensions.loadUnpacked',{path:join(root,'extension/dist')});
+ report.extensionLoad=await cdp.send('Extensions.loadUnpacked',{path:process.env.AB_EXTENSION_DIR??join(root,'extension/dist')});
  const admin=await context.newPage();await admin.goto(`chrome-extension://${report.extensionLoad.id}/src/options/index.html`);
  const {token}=JSON.parse(await readFile(join(temp,'home/config.json'),'utf8'));
  await admin.evaluate(({token,port})=>chrome.storage.local.set({pairingToken:token,bridgeUrl:`ws://127.0.0.1:${port}/extension`}),{token,port});

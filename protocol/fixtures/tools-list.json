@@ -248,7 +248,7 @@
     "name": "browser_scroll"
   },
   {
-    "description": "Wait until text appears, text disappears, an element ref disappears, or the URL contains a string. Fails with TIMEOUT.",
+    "description": "Wait until any condition matches: text appears, text disappears, an element ref disappears, or the URL contains a string. Use snapshot frameRef for iframe text/URL conditions; otherwise uses refGone's frame or the top document. A frameRef stays bound to its document; take a fresh snapshot after navigation. Fails with TIMEOUT.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -273,6 +273,10 @@
         },
         "urlIncludes": {
           "type": "string"
+        },
+        "frameRef": {
+          "type": "string",
+          "description": "Document-bound frameRef returned on a browser_snapshot frame."
         }
       },
       "required": [

@@ -120,7 +120,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 try {
                     await frames.inject(tabId,f);
                     const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
-                    const withDocument={...result,documentId:f.documentId};
+                    const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotId}f${f.frameId}`};
                     const length=JSON.stringify(withDocument).length;
                     if(length>60_000)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
                     if(used+length>60_000){framesNextOffset=index;break;}
@@ -176,6 +176,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         }
         if (CONTENT.has(req.method)) {
             const ref = typeof p.ref === 'string' ? p.ref : typeof p.refGone === 'string' ? p.refGone : undefined;
+            const frameRef=req.method==='browser.wait'&&typeof p.frameRef==='string'?p.frameRef:undefined;
+            if(frameRef!==undefined)await frames.resolve(tabId,ref,String(p.operationId),frameRef);
             if (typeof p.refGone === 'string') {
                 const parsed = RefTable.parse(p.refGone);
                 const binding = parsed ? await store.binding(parsed.snapshotId, parsed.frameId) : undefined;
@@ -186,13 +188,13 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     return { executed: false, verified: { met: 'refGone' } };
             }
             const prepare = async () => {
-                const frame = await frames.resolve(tabId, ref, String(p.operationId));
+                const frame = await frames.resolve(tabId, ref, String(p.operationId),frameRef);
                 if(WRITE.has(req.method))await requireSnapshot(p,tabId,frame.documentId);
                 await frames.inject(tabId, frame);
                 await check(req, signal);
                 return frame;
             };
-            if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
+            if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string' && !frameRef && !ref)
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
             return send(tabId, frame, req.method.slice('browser.'.length), p, run);

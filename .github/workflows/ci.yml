@@ -133,6 +133,14 @@ jobs:
         # Uses the runner's installed Google Chrome, isolated temporary profiles, and native Windows Node/exe.
         # The harness records the exact browser/Node versions. WSL and real OpenCode are separate manual checks.
         run: node tests/e2e/windows-run.ts --exe "$env:GITHUB_WORKSPACE\target\x86_64-pc-windows-msvc\release\browser-bridge.exe" --extension "$env:GITHUB_WORKSPACE\extension\dist"
+      - name: Native Windows request target boundaries
+        env:
+          AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+        run: node tests/e2e/request-target.windows.mjs
+      - name: Native Windows iframe interaction boundaries
+        env:
+          AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+        run: node tests/e2e/iframe.windows.mjs
       - name: PowerShell 5.1 JSONC preservation
         shell: powershell
         run: .\tests\install\jsonc.tests.ps1

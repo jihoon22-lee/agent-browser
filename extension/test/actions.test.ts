@@ -14,6 +14,22 @@ function controlledInput(el: HTMLInputElement, onChange: (v: string) => void) {
 }
 
 beforeEach(() => { document.body.innerHTML = ""; resetRegistry(); });
+it('click supplies local viewport coordinates and button state, preserving native checkbox activation',async()=>{
+  document.body.innerHTML='<label><input type="checkbox"> Mail</label>';
+  const el=document.querySelector('input')!;
+  vi.spyOn(el,'getBoundingClientRect').mockReturnValue({left:40,top:80,width:20,height:10,right:60,bottom:90} as DOMRect);
+  const events:MouseEvent[]=[];
+  for(const type of ['mousedown','mouseup','click'])el.addEventListener(type,e=>events.push(e as MouseEvent));
+  await runAction('click',{ref:refOf('Mail'),generation:1});
+  expect(events.map(e=>[e.type,e.clientX,e.clientY,e.buttons,e.detail,e.isTrusted])).toEqual([
+    ['mousedown',50,85,1,1,false],['mouseup',50,85,0,1,false],['click',50,85,0,1,false],
+  ]);
+  expect(el.checked).toBe(true);
+});
+it('discovers explicit inline and keyboard click candidates without treating every row as interactive',()=>{
+  document.body.innerHTML='<div onclick="void 0">Inline mail</div><div tabindex="0">Keyboard mail</div><div tabindex="-1">programmatic</div><div>plain</div>';
+  expect(snap().elements.map(e=>e.name)).toEqual(['Inline mail','Keyboard mail']);
+});
 
 it("fill updates React-like controlled state, not just the DOM", async () => {
   document.body.innerHTML = `<label for="n">이름</label><input id="n">`;
