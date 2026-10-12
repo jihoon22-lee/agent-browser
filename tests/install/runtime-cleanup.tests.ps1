@@ -48,6 +48,11 @@ try {
     Write-Output 'PASS failed runtime cleanup retains installation and running processes'
     $manifest=Read-Utf8Text (Join-Path $package 'package-manifest.json') | ConvertFrom-Json
     $manifest.Version='0.2.0'
+    $extensionPath=Join-Path $package 'extension\manifest.json'
+    $extension=Read-Utf8Text $extensionPath | ConvertFrom-Json
+    $extension.version=$manifest.Version
+    Write-Utf8Atomic $extensionPath (ConvertTo-Json $extension -Depth 10)
+    ($manifest.Files | Where-Object { $_.Path -eq 'extension/manifest.json' }).Sha256=Get-FileSha256 $extensionPath
     Write-Utf8Atomic (Join-Path $package 'package-manifest.json') (ConvertTo-Json $manifest -Depth 10)
     $null=& (Join-Path $package 'setup.ps1') -InstallDir $install -NoStartup -NoStart -Quiet
     $state=Read-InstallState $install

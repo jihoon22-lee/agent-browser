@@ -313,3 +313,124 @@ and [sanitized results](./reference/wsl-interop-review-results.json).
 No actual WSL shutdown, separate older-package VM, kernel leak reproduction,
 real Chrome/model request, operating install update, or remote Git action was
 performed. Integration should carry the implementation and its follow-up commit.
+## Windows GUI installer — 2026-10-12 02:41 UTC (in progress)
+
+Native WinForms entry point selected; GUI flows are not implemented or tested yet. WSL existing-JSONC replacement regression: 4 PASS; native cmd quoting/discovery smoke: 2 PASS; existing JSONC tests and diff check: PASS. Full installer regression invocation was blocked by Windows signature policy and did not run; no policy was changed. Details: [active plan](./plans/2026-10-12-windows-setup-ui.md). Production remains the separately verified v0.1.4 installation.
+
+### 02:54 UTC checkpoint
+
+Native WinForms GUI and transactional engine compile. Eight isolated native engine tests pass (install/update/uninstall, JSONC/identity/data preservation, concurrency and cancellation rollback). Actual mouse-click tests did not reach preview because Windows is locked; no GUI flow passed. The company no-mcp WSL fixture is prepared but its registration/auth checks are pending. Generic MCP warning classification is confirmed in source; missing registration is not established. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0254.md) for remaining work and edge-case review.
+
+### 03:04 UTC checkpoint
+
+Native integration: 12 PASS, including actual WSL no-mcp JSONC add/repeat/remove and OpenCode 1.18.29 plus authenticated Bridge round trip. GUI remains unverified: Windows now reports Default input desktop, but owned-window foreground activation failed and no mouse input was sent. MCP classification regression fails as expected before implementation. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0304.md).
+
+### 03:22 UTC checkpoint
+
+Five actual native GUI click flows passed from local candidate ZIP: preview/back/cancel, WSL install, managed profile save, repeat/update, uninstall with settings/data preservation. Native integration remains 12 PASS; Rust runtime suite 22 PASS; fresh Windows Bridge and GUI package build PASS. Foreground issue resolved with verified own-window mouse selection. Cross-version GUI update, duplicate-click/failure GUI checks, CI integration and final validation remain. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0322.md).
+
+### 03:40 UTC checkpoint
+
+Local version 0.1.5: actual GUI v0.1.4 published-binary upgrade, duplicate Apply, startup failure rollback/retry and uninstall PASS; native v0.1.5/actual WSL auth integration 13 PASS. Extension build/typecheck and 280 tests PASS; full Rust tests and clippy (existing warnings) PASS; package reproducibility PASS. Native tests added to Windows CI but no push/run. Installed-GUI self-uninstall, discovery/profile async UX review and final docs remain. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0340.md).
+
+### Final local completion — 2026-10-12
+
+Native Windows GUI implementation and final isolated verification complete; local/unpublished candidate 0.1.5. Installed-GUI self-uninstall, automatic discovery/selection/stale-response handling, pending profile validation close, duplicate ID rejection, double Apply/Save, occupied-port failure rollback/retry, masked pairing and existing Bridge start all passed actual GUI clicks from the final ZIP. Published 0.1.4 binary-based isolated upgrade to 0.1.5 and self-uninstall passed.
+
+Final native integration: 14 PASS including simultaneous Windows+WSL registrations and actual OpenCode 1.18.29 authentication; discovery/cmd probe: 2 PASS. Full Rust and extension verification from this same source cycle passed (extension 280 tests); actionlint, CI helpers, document links and package reproducibility passed. Final ZIP SHA256: `fb3cb446410f74b097e47ffbaaa622f68215b150e6251630a930ac9415e035ec`.
+
+Production v0.1.4 PID 74680 remains running; identity, pairing, data owner, profile definitions and global WSL settings preserved. Legacy PowerShell execution and native Windows OpenCode/company/nondefault-user/Chrome end-to-end limitations are explicitly recorded, not claimed as passed. No push, commit, PR, release, model call or operational update. See [final validation](./plans/2026-10-12-windows-setup-ui-final.md).
+
+### v0.1.5 release authorized — 2026-10-12 04:07 UTC
+
+User authorized commit/PR/review/CI/merge/tag/release and published-asset validation. Remote main is still `fb2bcdbb4672a09395c7d7cc2ee75e6796e897c1`; no intervening main changes or existing v0.1.5 release/tag were found. Personal operational v0.1.4 is excluded from the update. Earlier candidate hash and local-only status remain historical evidence, not the published artifact identity.
+
+### PR #5 review fixes — 2026-10-12 04:54 UTC
+
+All seven d3859a2 review findings were reproduced before changes. Windows native regressions now cover missing owned Startup shortcuts (enable/disable and preview races), Unicode Shell links, removal of installer-created empty settings while preserving user comments, persistent exact settings backups (including immediately before uninstall), committed cleanup warnings, unsupported .cmd profile paths, and PID-publication failure cleanup. Settings backups and source-path/hash metadata remain under the private data/settings-backups directory after uninstall; byte-identical registration retries add no backups.
+
+Bridge startup now assigns the suspended launcher to a non-breakaway Windows Job before it can create children. Failure cleanup owns that exact tree independently of PID-file/WMI success; healthy startup, marker-write failure, PID-publication failure, retry and later uninstall passed. No interop behavior or Rust runtime was changed in this review follow-up.
+
+Native Windows + actual WSL integration: 24 PASS (`native-review-final.log`), including OpenCode 1.18.29 MCP connection and authenticated Bridge 0.1.5 reply without a model/page operation. Latest ZIP GUI tests passed preview/Back/cancel, occupied-port rollback/retry, WSL registration, repeat update, and retained root-GUI handoff/self-uninstall (`gui-review5.log`). These tests use real WinForms controls via owned HWND button/selection events, with UI Automation reads; they are not physical mouse-click claims. Initial UI Automation focus errors and a WM_COMMAND-only test input that failed to toggle checkboxes were test-driver failures, and the incomplete fixtures were removed using their ownership records. Full profile-dialog automation did not complete during those failed attempts; prior physical-click coverage and the new native .cmd validation regression are separate evidence.
+
+Windows CI's new compiler step failed on relative slash-separated source paths in run 38202783136; preceding native Rust, isolated Chrome, PowerShell installer/package checks and package build passed. The workflow now resolves absolute Windows source paths and includes the review tests. Local actionlint, CI helper tests (3), Markdown links (26 tracked files) and diff checks pass. Latest-head remote CI/code/security review remain release gates.
+
+Review candidate ZIP has 32 files, SHA256 `0e9b447be1be8f36b1138d5ff5456a5b5b54d220c670b49caa381ef301a42630`. This is local validation evidence, not a published release identity. The company WSL interop issue remains explicitly excluded and unconfirmed. Personal operational v0.1.4 is not updated.
+### Second review and complete profile GUI verification — 2026-10-12 05:10 UTC
+
+Head 092979d passed Linux/Windows CI 38205663406 and completed code/security reviews; the code review found four additional P2 issues. All four failed isolated regressions before fixes (`review2-red.log`): discovery executed an unselected synthetic PATH candidate, an owned startup worker killed before commit left its Bridge alive, uninstall dropped a comment inside the created MCP object, and cancellation during Bridge startup committed instead of rolling back.
+
+The fixes defer candidate execution until explicit profile confirmation, set JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE until the process marker has been written, retain JSONC comments from removed owned spans, and check cancellation after startup before commit. Native regression 23 PASS (`review2-green.log`), then final Windows/WSL integration 28 PASS (`native-review3-wsl.log`), including actual OpenCode authentication and all 14 review regressions; native discovery plus explicitly selected WSL version probe 2 PASS (`native-core-review3.log`). No Rust runtime or company interop change is included.
+
+Complete latest GUI profile flow now PASS (`gui-profile-complete.log`): automatic discovery/input freshness, preview/Back/cancel, WSL registration, stale validation discarded, profile confirmation and actual save, duplicate ID rejection, close during validation, existing Bridge reuse, masked pairing, repeat update, retained-GUI handoff and uninstall/data preservation. Validation uses real WinForms controls with owned HWND BM_CLICK/selection events and UI Automation reads. Physical mouse delivery again failed at preview in this desktop session and is not claimed as passed. The earlier profile automation clicked while the Save button was still disabled; waiting for both validation completion and Save enabled resolved it. The application saved successfully when the enabled button was clicked directly, so no product save fix was needed.
+
+GUI candidate before this documentation update: 32 files, SHA256 `d8c482acec0968f23c9d9e467ee6f80ccbd71f095b449bfe5740ef838e673d10`. New-head CI and code/security reviews must pass before release; operational v0.1.4 stays unchanged.
+
+### Third review and final candidate verification — 2026-10-12 05:49 UTC
+
+Head c3b88ca passed Linux/Windows CI 38206765416 and completed code/security reviews. Seven further P2 findings were reproduced by eight failing cases on the old product (`review4-red2.log`): unowned CurrentExe launch, explicitly restoring a deleted MCP entry/file, automatic UNC PATH probing, recovery skipping later profiles, startup through a data junction, shared-writable application roots, and a lost registry failure warning. Earlier fixture-only ACL/quoting setup failures are not counted as product reproductions.
+
+Bridge launches now require an exact owned path/hash and a plain data directory. Discovery excludes network/device/relative PATH candidates before filesystem probes. Explicit re-registration can restore missing owned settings while preserving new user content; changed existing entries still conflict. Rollback attempts every stopped profile. New roots receive private ACLs before files, existing shared-writable roots are rejected, and registry errors remain visible in the committed result. The UNC regression checks the path filter without contacting an SMB server.
+
+Final Windows/WSL integration: **36 PASS**, comprising 14 existing cases and 22 review regressions (`review4-wsl-full.log`). Actual WSL OpenCode 1.18.29 and Bridge 0.1.5 authentication passed without models/page access. The new ZIP also passed complete native-control GUI verification (`gui-review4-complete.log`): discovery/input freshness, preview/Back/cancel, occupied-port rollback/retry, WSL registration, stale profile validation, confirmed save, duplicate ID rejection, pending-validation close, masked pairing, repeat update, retained-GUI handoff and self-uninstall with data/settings preserved. Physical mouse delivery is still not claimed as passed.
+
+Candidate ZIP before these documentation edits: 32 files, SHA256 `34ba8f9d1a702019f23b19f86a278c1bce12123aebea06b208e21c8907a097df`. The release will use the exact merged main CI package and will be downloaded and tested again. Personal v0.1.4 is preserved; company interop remains out of scope. New-head CI and code/security review are required before merge/publication.
+
+### Fourth review — 2026-10-12 06:12 UTC
+
+Head 6f4a270 passed Linux/Windows CI 38209480391; both exact-head reviews completed at 05:56 UTC and raised six code P2s plus one security P2. Eight new native cases failed before product changes (`review5-red.log`), and the packager version-mismatch case failed (`review5-package-red.log`). The owner/drive/path policies use isolated descriptors or enum/path inputs; no real second account or SMB share was created. The rollback case actually changed versions, canceled after Bridge startup, and reproduced the stale ownership marker blocking restoration.
+
+Installation paths now require a local drive, trusted owner and ancestors without ordinary-account replacement permissions. The tests use a new private Documents subfolder because the Codex workspace has explicit shared sandbox write grants; no user/parent ACL was changed to make them pass. Initial long fixture paths exceeded .NET Framework's path limit and were shortened. AppContainer package/capability grants are evaluated separately from account grants because Windows intersects those principals' permissions ([Microsoft's documented dual-principal model](https://learn.microsoft.com/en-us/windows/win32/secauthz/implementing-an-appcontainer)); ordinary account grants remain rejected. A read-only check of the actual default installation path failed before that refinement and passed afterward, without changing the operating installation.
+
+Captured package bytes are verified against the manifest immediately before inclusion in a plan. WSL executable paths are validated before probes. Existing startup enabled/disabled state and its custom folder load into the GUI. A successful owned Bridge stop removes its unchanged marker, permitting version-update cancellation to restore and restart the old Bridge. The WSL packager rejects an extension version different from the release version.
+
+Windows/WSL integration before the AppContainer-only refinement: 44 PASS (`review5-wsl-full.log`), including actual OpenCode 1.18.29 authentication with no model/page execution. Final native engine and real Form-control regressions after refinement: 40 PASS (`review5-final-native.log`, 31 review cases), with all prior cases retained. Standard-library packager regressions: 3 PASS. actionlint, Markdown links and diff checks pass. The latest GUI run before refinement passed through update; the driver then raced the deliberately exiting installed launcher. The verified hash-matching child GUI was closed normally, the driver's process-query race was fixed, and resume/update/self-uninstall passed (`gui-review5-resume.log`). This was a test-driver failure, not an application handoff failure.
+
+Final candidate ZIP: 32 files, SHA256 `4f30b2dcec8d5bf32fda91fbcddb3293722c320b87681fd0c02317888db42d76`. Complete native-control GUI verification on this final candidate PASS (`gui-review5-final.log`): discovery, preview/cancel, startup failure/retry, WSL registration, stale validation, confirmed profile save, duplicate protection, pending-validation close, masked pairing, update, retained launcher handoff and self-uninstall. Physical mouse input remains unverified in this desktop session. Final production audit at 06:11 UTC confirms v0.1.4 PID 74680 and installation identity, pairing, profile definitions, data owner and global WSL settings unchanged. Latest-head CI and both reviews remain mandatory before publication; company interop is excluded.
+
+### Owned process exit boundary — 2026-10-12 06:18 UTC
+
+A final boundary of the same version-rollback fix was reproduced: when the owned Bridge had already exited before Stop, its otherwise verified marker was retained (`review5-exited-marker-red.log`). Stop now clears that unchanged verified marker for both already-exited and successfully-stopped processes. Foreign/reused PID or changed marker checks still fail without clearing their evidence. Native regression **41 PASS**, including all 32 review cases (`review5-exited-marker-green.log`). Candidate ZIP SHA256 `afcf74247718d86d4d4c72c16fabc070b49ed96adec263c688d11e86e9acc167`,32files. Latest candidate native-control GUI preview/cancel, startup failure/retry, WSL registration, update, installed-GUI handoff and self-uninstall all PASS (`gui-review6.log`). The preceding final candidate also passed the complete profile-dialog flow. No merge or release has occurred.
+
+
+### Fifth review and security rerun — 2026-10-12 07:05 UTC
+
+Remote head remains `09caec518be826c3995e0476fecf3e64e8539607`; its Linux/Windows CI 38211907836 passed. The 06:31 code review raised five P2s. The requested retry comment was posted successfully at https://github.com/jihoon22-lee/agent-browser/pull/5#issuecomment-6119150335 after a new explicit delegation requested the retry. Code review completed at 06:51 and raised five more P2s; security review completed at 07:01 and repeated the data-owner issue. The earlier 06:26 security `Failed` run exposed no explanation, so its cause is still unknown; it is not counted as a clean review.
+
+Local fixes cover all ten distinct follow-up findings:
+
+- Uninstall tracks missing registered settings in its preview snapshot, rejecting recreation before Apply.
+- Empty managed-runtime maps no longer require launching a missing Bridge executable. Already-exited, owned PID records can be cleared without the deleted executable; live/unverified runtime records retain the installation.
+- Remove ignores the disabled new-registration checkbox and selections.
+- Native package verification and the shared PowerShell verifier used by the Windows builder reject extension/package version mismatch. Synthetic test package versions/hashes are internally consistent.
+- Legacy PowerShell transactions record the bytes actually written, require the same hash during rollback, preserve concurrent changes, continue unrelated restorations and retain a recovery path/hash journal plus backups on conflict.
+- Maintenance handoff uses `%LOCALAPPDATA%/AgentBrowser-Setup`, requiring the same trusted-owner/ancestor policy as installation roots before execution.
+- The install and update guide restores ZIP SHA256 comparison against separately published SHA256SUMS or the official asset digest before extraction/execution.
+- Automatic Windows executable discovery inspects components from the drive root and rejects reparse points before visiting descendants. This uses the [documented attribute behavior](https://devblogs.microsoft.com/oldnewthing/20100212-00/?p=14963): link attributes describe the link itself. No SMB server was contacted in tests.
+- Private directory ACL preparation rejects foreign owners, including a pre-existing empty data child; it does not silently retain owner rights after changing the DACL.
+- Windows executable and working-directory validation now precedes the version probe; relative, remote and reparse paths are rejected before execution.
+
+The native uninstall/UI/package cases failed five times before fixes (`review6-red.log`), then all 47 native cases passed. Complete native/actual WSL integration passed 52 cases (`review6-wsl-final.log`), including real OpenCode 1.18.29 authentication with Bridge 0.1.5 and no model/page action. An earlier invocation failed only because the test driver received a relative JS path; it was rerun with an absolute path and a fresh fixture. The exact interrupted fixture was uninstalled through its verified install ID.
+
+The four new owner/path cases each failed before fixes (`review7-red.log`); all 51 native cases then passed (`review7-green.log`). Owner checks use isolated security descriptors, the replaceable-ancestor test temporarily changes only its own fixture ACL and restores it, and discovery uses a local junction fixture. They are not a real second-user exploit or SMB authentication test. The relative Windows probe uses an isolated synthetic executable and also verifies that an explicitly selected valid absolute executable can be prepared.
+
+GUI candidate 7 passed complete discovery, preview/Back/cancel, occupied-port rollback/retry, WSL registration, stale profile validation/save/duplicate/pending close, masked pairing, update and installed-GUI self-uninstall (`gui-review7.log`). Final candidate 8 also passed discovery, preview/cancel, failure/retry, update and self-uninstall through its exact-hash per-user maintenance cache (`gui-review8.log`). GUI tests use owned native HWND button/selection events plus UI Automation reads, not physical mouse input.
+
+Legacy PowerShell 5.1 regressions were written for text/copy/delete rollback conflicts, continued unrelated recovery, version-mismatched packaging and actual WSL rollback. Local script execution was refused by host policy (`review6-wsl-rollback-red.log`); no policy bypass/change was used. The PowerShell 5.1 parser accepted the source, but this is syntax-only evidence. New PowerShell execution and latest-head CI remain pending. Standard-library package tests (3), CI helper tests (3), actionlint, Markdown links and diff checks passed. Rust/extension product source was not changed in these follow-ups; their prior remote-head CI pass is not presented as a latest-head CI run.
+
+Final local candidate: 32 files, SHA256 `e19171e688ef714c4228574e72e6967c3cc8392191bf9b15487c03d5fb52b29a`; internal hashes, extension version, Windows x64 Bridge/GUI PE and absence of runtime/private artifacts passed. This is an unpublished local candidate, not a release asset.
+
+Remote push of regression commit `c61094d` was rejected by automatic approval review because the original delegation withheld push approval and the later review request did not clearly authorize this exact repository/push. An exact repository/branch/PR/release approval question is pending; no workaround, push, merge, tag or release was performed after that rejection. The current remote findings therefore remain unresolved on GitHub until the local fixes can be pushed and reviewed. Personal operational v0.1.4 PID 74680, install identity, pairing, profiles, data owner and global WSL settings remain unchanged. The separate company WSL/active-tab/iframe work is excluded.
+
+Final current-source Windows/WSL integration: **56 PASS** (14 existing + 42 review cases), `review7-wsl-final.log`. The valid absolute Windows profile probe also passed. Rebuilding the final candidate into a separate directory produced the identical SHA256 above. No local script-policy exception was used.
+
+### Publication authorization restored — 2026-10-12 07:08 UTC
+
+The parent supplied the later explicit user deployment approvals. The same previously rejected push was retried once and approved; `c61094d` and `8aa6677` are now on PR #5. The earlier blocker is resolved. Latest-head CI/code/security reviews remain required before merge and a new v0.1.5 prerelease; the operating v0.1.4 and separate WSL/iframe/active-tab work remain excluded.
+
+
+### PowerShell CI execution follow-up — 2026-10-12 07:16 UTC
+
+Current-head Linux CI passed. Windows CI 38216139555 passed the new concurrent text/copy/delete rollback regression plus normal install/update/removal and live-process checks, then exposed a real integration omission: direct COM Startup shortcut creation did not record its written hash, so occupied-port rollback retained that shortcut as a supposed concurrent edit. The existing occupied-port regression is the failing test. Setup now creates the link in its transaction stage and publishes it through Copy-TransactionFile. Owned process-marker writes also use the transaction when setup provides one, and snapshot-only calls suppress their internal journal objects from command output. GUI/native product code is unchanged; targeted PowerShell CI is the required revalidation, with no redundant manual review request.
+
+Windows CI 38216816747 passed PowerShell install/update/rollback/uninstall, including the repaired occupied-port Startup cleanup. The next stage exposed a stale synthetic upgrade fixture: runtime-cleanup.tests.ps1 changed only the outer version to 0.2.0 while retaining extension 0.1.0. The fixture now updates the extension version/hash together. This follow-up changes tests only; it does not weaken the mixed-version rejection.

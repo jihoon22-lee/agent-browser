@@ -6,38 +6,36 @@ Windows Chrome 안에서 기존 OpenCode v1으로 작업하는 도구입니다. 
 
 ## 1. 설치와 로그인 자동 시작
 
-배포 zip을 다운로드 폴더 등 임시 위치에 모두 압축 해제합니다. `SHA256SUMS`가 함께 제공되면 `Get-FileHash <zip 경로> -Algorithm SHA256`으로 확인합니다. 해당 폴더에서 Windows PowerShell을 열고 실행합니다.
+[공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 ZIP과 같은 버전의 `SHA256SUMS`를 각각 다운로드합니다. **압축 해제와 실행 전에** 다음 명령의 SHA256 값을 별도로 받은 `SHA256SUMS`의 해당 ZIP 행(또는 GitHub 릴리스 자산의 SHA256 digest)과 비교하세요.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.5-windows-x64.zip
 ```
 
-압축 해제 위치와 설치 위치는 다릅니다. 사용자가 설치 경로에 직접 압축을 풀 필요가 없습니다. 기본 설치 위치는 `%LOCALAPPDATA%\AgentBrowser`입니다. 현재 사용자 Startup 폴더에 시작 바로가기를 등록하고 Bridge를 즉시 시작합니다. 이 명령의 실행 정책만 지정하며 PC의 전역 실행 정책을 바꾸지 않습니다.
+값이 다르면 실행하지 말고 공식 릴리스에서 다시 받으세요. 현재 실행 파일은 Authenticode 서명되지 않았으며, ZIP 내부 `package-manifest.json`만으로 다운로드 출처를 검증할 수 없습니다.
 
-설치 위치를 `D:\Multimedia\AgentBrowser`로 지정하려면 다음 명령을 사용합니다.
+해시가 일치하면 배포 ZIP을 별도 임시 폴더에 모두 압축 해제하고 **AgentBrowser-Setup.exe**를 실행합니다. 설치·업데이트·제거를 같은 창에서 선택합니다. 기본 .NET Framework를 사용하며 관리자 권한, 추가 패키지 다운로드, PowerShell 실행 정책 변경을 요구하지 않습니다.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir "D:\Multimedia\AgentBrowser"
-```
+1. 기존 설치 폴더를 확인하거나 새 전용 폴더를 선택합니다. 기본값은 `%LOCALAPPDATA%\AgentBrowser`입니다. 오른쪽 기존 설치 목록에서도 선택할 수 있습니다.
+2. Bridge 포트와 로그인 시 시작 여부를 확인합니다.
+3. 일반 OpenCode CLI에서도 browser MCP가 필요하면 **OpenCode 찾기**로 후보를 확인하고 설정 파일을 추가합니다. 여러 후보가 있으면 실제 사용할 실행 파일과 설정 경로를 선택합니다. 잘못 추가한 항목은 **선택 제거**로 뺍니다. Windows와 WSL을 각각 추가할 수 있습니다. 설정 파일에 mcp가 없어도 정상입니다. 모델·provider·server·주석과 다른 MCP를 보존합니다.
+4. **변경 내용 확인**에서 대상과 변경 사항을 읽고 **적용**을 누릅니다. 이전으로 돌아가거나 취소할 수 있습니다.
+5. 관리 서버는 **관리 프로필 설정**에서 별도로 준비합니다. 실행 환경·배포판·사용자·실행 파일과 작업 폴더를 확인한 뒤 저장합니다. 서버 시작은 Chrome 페어링 후 확장 Options에서 진행합니다.
 
-예를 들어 ZIP을 `D:\Multimedia\agent-browser-0.1.4-windows-x64`에 풀고, 위 명령으로 그와 **별도 폴더**인 `D:\Multimedia\AgentBrowser`에 설치합니다. Chrome에서 선택할 폴더는 `D:\Multimedia\AgentBrowser\extension`입니다. 이후 시작·페어링·제거 명령도 이 설치 경로를 사용합니다. 압축 해제 폴더와 설치 폴더를 같은 위치로 지정하지 않습니다.
+업데이트는 새 ZIP의 실행파일에서 기존 설치 폴더를 선택합니다. 제거는 배포 ZIP 또는 설치 폴더의 `app\<버전>\AgentBrowser-Setup.exe`에서 **제거**를 선택하고 대상을 확인합니다. 설치된 GUI는 자신의 파일을 잠그지 않도록 소유자·상위 폴더 권한·해시를 검증한 `%LOCALAPPDATA%\AgentBrowser-Setup` 아래 유지보수 실행본으로 열립니다. 기본 제거는 페어링·프로필 데이터를 보존합니다. Chrome 확장은 chrome://extensions에서 별도로 제거합니다.
 
-조직에서 파일 업로드를 허용하는 폴더와 Chrome의 로컬 확장 로드 허용 여부는 별도 조건입니다. 업로드 허용 경로라는 사실만으로 Chrome 확장 설치도 허용된다고 판단하지 않습니다.
+새 설치 폴더에는 현재 사용자 전용 쓰기 권한을 설정합니다. 다른 일반 사용자가 설치 폴더를 소유하거나, 설치 폴더에 쓰기 권한 또는 상위 폴더에 교체 권한이 있으면 설치·업데이트·제거를 중단합니다. 개인 전용 로컬 폴더를 선택하세요. 연결된 네트워크 드라이브는 지원하지 않습니다. 기존 폴더의 권한은 자동 변경하지 않습니다.
 
-로그인 자동 시작이 실패하면 설치 폴더의 `start-bridge.cmd`를 실행합니다. 설치·업데이트 전에 진행 중인 브라우저 작업을 중단합니다.
+실행이나 확장 로드가 회사 정책에 의해 차단되면 승인된 설치 방법을 확인하세요. 설치 관리자는 정책을 바꾸거나 우회하지 않습니다.
 
 ## 2. Chrome 확장 로드와 페어링
 
 1. 사용할 Windows Chrome 프로필에서 `chrome://extensions`를 엽니다.
 2. 개발자 모드를 켜고 **압축해제된 확장 프로그램 로드**를 선택합니다.
 3. 폴더 선택 창에서 **Alt+D**를 누르고 `%LOCALAPPDATA%\AgentBrowser\extension`을 입력한 뒤 Enter → **폴더 선택**을 누릅니다. 설치 위치를 바꿨다면 그 폴더 아래 `extension`을 선택합니다. 다운로드한 임시 압축 해제 폴더가 아닙니다.
-4. Windows 시작 메뉴에서 **PowerShell**을 열고 다음 명령으로 페어링 토큰을 표시합니다. 설치 위치를 바꿨다면 명령의 스크립트 경로도 바꿉니다.
+4. 설치 GUI에서 설치 폴더를 확인하고 **페어링 토큰**을 누릅니다. 설치 완료 화면이라면 **이전**으로 설정 화면에 돌아갑니다. **토큰 복사**를 누르면 토큰이 클립보드에 복사됩니다. 화면에는 토큰을 가려 표시합니다. Bridge가 꺼져 있다면 **Bridge 시작**을 누릅니다.
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\AgentBrowser\show-pairing.ps1"
-   ```
-
-5. `chrome://extensions`의 **AgentBrowser → 세부정보 → 확장 프로그램 옵션**을 엽니다. **Bridge 주소**에 `ws://127.0.0.1:4317/extension`, **페어링 토큰**에 출력된 64자리 토큰만 넣고 **저장 후 연결**을 누릅니다. 설치 시 포트를 바꿨다면 설치 결과에 나온 주소를 사용합니다. **Bridge에 연결되었습니다.**를 확인합니다. 토큰은 공유하지 않습니다.
+5. `chrome://extensions`의 **AgentBrowser → 세부정보 → 확장 프로그램 옵션**을 엽니다. **Bridge 주소**에 `ws://127.0.0.1:4317/extension`, **페어링 토큰**에 복사한 64자리 토큰만 넣고 **저장 후 연결**을 누릅니다. 설치 시 포트를 바꿨다면 설치 결과에 나온 주소를 사용합니다. **Bridge에 연결되었습니다.**를 확인합니다. 토큰은 공유하지 않습니다.
 6. Chrome 오른쪽 위 퍼즐 아이콘에서 **AgentBrowser**를 고정하고 아이콘을 눌러 사이드 패널을 엽니다. **대화 → 실행 설정**에서 실행 환경을 선택해 **OpenCode … 연결됨**을 확인합니다. 같은 화면에서 **모델·에이전트**를 고르고 **대화로 돌아가기 → 새 대화 시작** 후 메시지를 보냅니다. **세션 → 새 세션**으로도 대화를 만들 수 있습니다. 실행 환경이 없으면 아래 3절을 진행합니다.
 
 페어링은 최초 1회 절차입니다. 정상 연결 후에는 서버를 매번 직접 실행하지 않습니다. 확장 경로나 Chrome 프로필을 바꿔 페어링이 필요해지면 같은 절차로 다시 연결합니다.
@@ -54,36 +52,21 @@ Options에서 실행 환경을 추가합니다.
 
 프로필을 저장하고 패널의 **대화 → 실행 설정**에서 선택합니다. Bridge가 관리하는 서버에는 브라우저 MCP 설정을 별도 overlay로 제공하며 기존 모델·provider·인증·다른 MCP 설정을 덮어쓰지 않습니다. 외부 서버는 해당 서버의 설정에서 브라우저 MCP를 별도로 등록해야 합니다. API 연결이 실패하면 Options의 진단 결과와 `%LOCALAPPDATA%\AgentBrowser\data\logs`를 확인합니다.
 
-CLI에서도 브라우저 도구를 쓰려면 설치된 `examples\mcp-windows.json`의 실제 경로 설정을 사용합니다. 직접 병합하려면 파일을 먼저 백업합니다. 설치 스크립트가 지정한 파일의 `mcp.browser`만 병합하도록 할 수도 있습니다.
+일반 CLI에서도 브라우저 도구를 쓰려면 설치 GUI의 **일반 CLI에 browser MCP 등록**을 선택하고, Windows 또는 WSL의 실제 설정 파일을 추가한 뒤 미리보기와 적용을 진행합니다. 관리 서버용 프로필만 사용한다면 이 등록은 필요하지 않습니다. 전역 설정에 `mcp`가 없다는 사실만으로 관리 서버 연결 실패라고 판단하지 않습니다.
 
-```powershell
-.\setup.ps1 -OpenCodeConfig "$env:USERPROFILE\.config\opencode\opencode.jsonc"
-```
+탐색은 후보 경로만 나열하며 발견한 OpenCode 실행 파일을 자동 실행하지 않습니다. 관리 프로필에서 사용할 후보를 선택하고 **확인**을 눌렀을 때 버전을 조회합니다. 탐색은 실행 중인 일반 WSL 배포판의 기본 사용자를 확인합니다. 중지된 배포판을 자동 시작하지 않으며 Docker 내부 배포판은 제외합니다. 후보가 없으면 설치 관리자가 OpenCode나 WSL을 설치하지 않습니다. 사용할 배포판·사용자·실행 파일·작업 폴더를 직접 지정하고 확인하세요. 여러 WSL 사용자의 홈을 자동 순회하지 않습니다.
 
-WSL용 실제 경로 조각은 배포판을 명시하여 생성합니다. WSL 설정 파일도 명시했을 때에만 수정합니다.
-
-```powershell
-.\setup.ps1 -OpenCodeKind wsl -Distribution Ubuntu
-# 필요할 때만 명시적으로 설정 파일까지 지정:
-.\setup.ps1 -OpenCodeKind wsl -Distribution Ubuntu -OpenCodeConfig '\\wsl.localhost\Ubuntu\home\사용자\.config\opencode\opencode.jsonc'
-```
-
-이 명령들은 압축 해제한 배포 폴더에서 실행합니다. 이미 다른 프로그램이 `mcp.browser`를 사용하거나 해당 항목을 사용자가 수정했다면 덮어쓰지 않고 중단합니다. 원본 설정의 백업은 원본 파일 옆에 남깁니다. 사용자 전체 설정을 배포 파일이나 예제로 복사하지 않습니다.
+이 설치가 소유하지 않은 `mcp.browser` 또는 사용자가 수정한 소유 항목은 덮어쓰지 않습니다. 이전에 등록한 파일이나 browser 항목을 삭제했다면 해당 설정 파일을 다시 추가하여 명시적으로 재등록할 수 있습니다. 적용 중 실패·취소하면 이번 변경을 되돌리며, 동시에 사용자가 바꾼 파일은 덮어쓰지 않고 충돌을 표시합니다. 실패 후에는 **이전 → 변경 내용 확인 → 적용**으로 재시도합니다.
 
 ## 4. 업데이트와 제거
 
-새 zip을 별도 폴더에 압축 해제하고 새 `setup.ps1`을 실행합니다. 설치 경로를 변경했다면 이전과 같은 `-InstallDir`을 지정합니다. 페어링·프로필 데이터는 유지됩니다. 업데이트 후 `chrome://extensions`에서 AgentBrowser를 새로고침합니다.
+1절의 SHA256 비교로 새 ZIP을 검증한 뒤 별도 폴더에 모두 압축 해제하고 새 `AgentBrowser-Setup.exe`를 실행합니다. **업데이트**와 기존 설치 폴더를 선택합니다. 페어링·프로필·세션 데이터는 유지됩니다. 업데이트 후 `chrome://extensions`에서 AgentBrowser를 새로고침합니다.
 
-제거 전에 패널에서 진행 중인 작업을 멈춥니다. 제거 스크립트는 소유권이 확인된 Bridge 관리 OpenCode 서버를 중지한 뒤 Bridge와 설치 파일을 제거합니다. 다른 프로그램이 시작한 외부 OpenCode 서버는 종료하지 않고 기존 세션 데이터도 유지합니다. 업데이트는 관리 OpenCode 서버를 유지하며 새 Bridge가 다시 연결합니다.
+제거 전에 패널에서 진행 중인 작업을 멈춥니다. GUI의 **제거 → 변경 내용 확인 → 적용**을 사용합니다. 소유권이 확인된 관리 OpenCode 서버를 중지한 뒤 Bridge와 설치 파일, 시작 바로가기, 소유한 MCP 항목을 제거합니다. 다른 프로그램이 시작한 외부 서버와 다른 MCP·모델·인증·OpenCode 세션은 유지합니다. 데이터는 기본 보존하며 GUI에는 데이터 삭제 기능이 없습니다.
 
-```powershell
-# 설치 폴더에서 실행. 페어링·프로필 데이터는 기본 보존합니다.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1
-# 페어링·프로필 데이터까지 지우려는 경우에만 사용합니다.
-powershell -NoProfile -ExecutionPolicy Bypass -File .\uninstall.ps1 -RemoveData
-```
+설치 파일이나 소유한 MCP 항목이 수정되었으면 충돌을 보고하고 중단합니다. 수정한 내용을 확인한 뒤 충돌을 해소하고 다시 미리보기합니다. Chrome 확장은 `chrome://extensions`에서 별도로 제거합니다.
 
-Chrome 확장은 `chrome://extensions`에서 별도로 제거합니다. 제거 스크립트는 이 설치가 소유한 관리 OpenCode 서버·Bridge 프로세스·바로가기·파일·MCP 항목만 대상으로 합니다. 다른 MCP·모델·인증·OpenCode 세션은 유지됩니다. 설치 파일이나 소유한 MCP 항목이 수정되었으면 충돌을 보고하고 원래 상태를 보존합니다. 수정한 파일을 별도로 보관한 후 충돌을 해소하고 다시 실행할 수 있습니다.
+기존 PowerShell 스크립트는 호환성용으로 남아 있지만 GUI 설치 경로에 필요하지 않습니다. 여러 CLI 설정을 등록한 설치는 GUI로 유지·제거하세요. 실행 정책이나 조직 보안 설정을 변경하지 않습니다.
 
 ## 검증 범위
 

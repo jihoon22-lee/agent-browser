@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$PackageDir,
@@ -20,6 +20,7 @@ $manifest = Read-VerifiedPackage $PackageDir
 $root = Assert-InstallRoot $InstallDir
 if ((Get-FullPath $PackageDir) -eq $root) { throw 'Extract the release to a separate directory, then install into the dedicated AgentBrowser directory.' }
 $old = Read-InstallState $root
+if ($old -and @($old.Mcps).Count -gt 1) { throw 'This installation has multiple MCP targets. Use AgentBrowser-Setup.exe to update or remove all owned registrations safely.' }
 Assert-OwnedFiles $root $old
 if ($Port -eq 0) { if ($old) { $Port = [int]$old.Port } else { $Port = 4317 } }
 $dataDir = Join-Path $root 'data'
@@ -106,7 +107,7 @@ try {
     Assert-OwnedFiles $root $old
     Set-PrivateDataDirectory $dataDir $installId
     $transaction = New-FileTransaction $root
-    Save-TransactionFile $transaction (Join-Path $dataDir '.installer-bridge-process.json')
+    $null = Save-TransactionFile $transaction (Join-Path $dataDir '.installer-bridge-process.json')
     foreach ($copy in $copies) {
         if (-not (Test-Path -LiteralPath $copy.Target) -or (Get-FileSha256 $copy.Target) -ne $copy.Sha256) { Copy-TransactionFile $transaction $copy.Source $copy.Target }
     }
@@ -116,20 +117,22 @@ try {
     }
     if ($old -and $old.Startup -and $old.Startup.Path -ne $startupPath -and (Test-Path -LiteralPath $old.Startup.Path)) { Remove-TransactionFile $transaction $old.Startup.Path }
     if ($startupPath) {
-        Save-TransactionFile $transaction $startupPath
-        New-StartupShortcut $startupPath $root
-        $state.Startup = [pscustomobject]@{ Path=$startupPath; Sha256=(Get-FileSha256 $startupPath) }
+        $shortcutSource = Join-Path $transaction.Stage 'startup.lnk'
+        New-StartupShortcut $shortcutSource $root
+        $shortcutHash = Get-FileSha256 $shortcutSource
+        Copy-TransactionFile $transaction $shortcutSource $startupPath
+        $state.Startup = [pscustomobject]@{ Path=$startupPath; Sha256=$shortcutHash }
     }
     if ($mcpPlan -and $mcpPlan.Edit.Changed) {
         if ((Test-Path -LiteralPath $mcpPlan.Path) -ne $mcpPlan.Existed -or ($mcpPlan.Existed -and (Get-FileSha256 $mcpPlan.Path) -ne $mcpPlan.OriginalHash)) { throw 'OpenCode settings changed while setup was preparing; no settings were overwritten.' }
         if ($mcpPlan.Backup) { [IO.File]::Copy($mcpPlan.Path, $mcpPlan.Backup, $false) }
-        Set-TransactionText $transaction $mcpPlan.Path $mcpPlan.Edit.Text
+        Set-TransactionText $transaction $mcpPlan.Path $mcpPlan.Edit.Text $(if ($mcpPlan.Existed) { $mcpPlan.OriginalHash } else { 'missing' })
     }
     Set-TransactionText $transaction (Join-Path $root $script:AgentBrowserStateName) (ConvertTo-Json $state -Depth 40)
     $running = $null
     if (-not $NoStart) {
         if ($old -and ((Get-FullPath $old.CurrentExe) -ne (Get-FullPath $state.CurrentExe) -or [int]$old.Port -ne [int]$state.Port)) { $stoppedOld = Stop-OwnedBridge $old }
-        $running = Start-OwnedBridge $state
+        $running = Start-OwnedBridge $state -Transaction $transaction
         $startedNew = -not $running.reused
     }
     $committed = $true

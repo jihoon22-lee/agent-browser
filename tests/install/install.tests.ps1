@@ -34,6 +34,26 @@ function New-TestPackage([string]$Name, [string]$Version) {
 function Free-Port { $listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $listener.Start(); $number=$listener.LocalEndpoint.Port; $listener.Stop(); return $number }
 $success = $false
 try {
+
+    Case 'rollback preserves concurrent settings and restores unaffected files' {
+        foreach($mutation in @('text','copy','remove')) {
+            $transaction=New-FileTransaction $testRoot
+            $first=Join-Path $testRoot ('rollback-first-' + $mutation + '.json')
+            $conflict=Join-Path $testRoot ('rollback-conflict-' + $mutation + '.json')
+            $source=Join-Path $testRoot ('rollback-source-' + $mutation + '.json')
+            Write-Utf8Atomic $first 'first-original';Write-Utf8Atomic $conflict 'conflict-original';Write-Utf8Atomic $source 'installer-copy'
+            Set-TransactionText $transaction $first 'installer-first'
+            if($mutation -eq 'text'){Set-TransactionText $transaction $conflict 'installer-text'}
+            elseif($mutation -eq 'copy'){Copy-TransactionFile $transaction $source $conflict}
+            else {Remove-TransactionFile $transaction $conflict}
+            Write-Utf8Atomic $conflict 'concurrent-user-edit'
+            Assert-Throws { Undo-FileTransaction $transaction } 'Rollback did not report a concurrent edit'
+            Assert ((Read-Utf8Text $conflict) -eq 'concurrent-user-edit') 'Rollback overwrote a user edit'
+            Assert ((Read-Utf8Text $first) -eq 'first-original') 'Rollback skipped unaffected earlier changes'
+            Assert (Test-Path -LiteralPath $transaction.Journal[1].Backup) 'Recovery backup is missing'
+            Assert (Test-Path -LiteralPath (Join-Path $transaction.Stage 'recovery.json')) 'Recovery path/hash journal is missing'
+        }
+    }
     $package1 = New-TestPackage 'package 1' '0.1.0'
     $package2 = New-TestPackage 'package 2' '0.2.0'
     $install = Join-Path $testRoot '사용자 설치 & 공백'
