@@ -2,8 +2,8 @@
 
 ## 현재 단계
 
-**v0.1.3 리뷰 수정·검증 완료, [PR #3](https://github.com/jihoon22-lee/agent-browser/pull/3)에서 최종 CI·코드·보안 리뷰를 확인한다.**
-이 PC 설치본은 v0.1.2 그대로다. 사용자 승인 범위는 PR 후속 수정·병합·patch 태그·Release 게시까지이며, 실제 설치본 업데이트·운영 배포는 포함하지 않는다.
+**v0.1.4 Windows PowerShell 5.1 설치 진입점 로컬 검증 완료. PR CI·코드/보안 리뷰 후 릴리스한다.**
+기준은 main `ef444ce`이며 `feat/ps51-installer`의 별도 worktree에서 작업한다. 승인 범위는 정식 수정·PR·CI/코드/보안 리뷰·병합·v0.1.4 태그/Release까지다. 운영 설치본은 v0.1.3을 유지하며 이번 작업에서 업데이트하지 않는다.
 다음 개선 후보(검토 backlog): [M5 계획](./plans/2026-10-11-m5-usability-polish.md)의 "다음 개선 후보".
 
 **사용자 확인(2026-10-11)**: 사용자가 개인 PC의 WSL OpenCode로 실제 대화와 브라우저 제어가 동작함을 확인했다.
@@ -11,6 +11,14 @@
 실제 사용 중 발견한 문제는 이슈로 받아 처리한다. 이 결정은 이전 Zen 무료 모델 파일럿(HTTP 403, 도구 0건)을 통과로 바꾸지 않는다.
 
 이전 단계의 계획·재개 기록은 git 이력에 있다(M1 계획, M2–M4 계획, 배포 준비 계획, `m1-resume.md`).
+
+## v0.1.4 설치 진입점 회귀
+
+- Windows PowerShell 5.1.26100.9444에서 원본 v0.1.3 ZIP의 README `-File` 설치 오류를 재현했다. GitHub asset digest와 ZIP/SHA256SUMS가 일치했다.
+- `[CmdletBinding()]` + `-File`에서는 param의 `$PSScriptRoot`가 비고, 본문과 직접 `&` 호출에서는 정상이다. 실패 경로는 setup → Read-VerifiedPackage → Get-FullPath다. 프로세스 조회 전에 실패하며 CIM 빈 경로 후보는 이번 수정에서 제외했다.
+- 기존 package 테스트에 실제 자식 `powershell.exe -File` 설치·제거를 추가했다. setup 수정 전 설치 실패, setup만 수정한 뒤 uninstall 실패를 각각 확인하고 두 기본값을 본문으로 옮겼다. 명시한 경로 인수는 그대로 유지한다.
+- 제품 로직 변경은 `scripts/setup.ps1`, `scripts/uninstall.ps1`의 기본 경로 초기화뿐이다. 버전은 Cargo workspace/lockfile·Extension manifest에서 함께 0.1.4로 갱신한다.
+- 최종 로컬 0.1.4 Windows exe로 package 5개 그룹(실제 ZIP·생략/명시 -File 수명주기 포함), 기존 installer 12개가 통과했다. Extension 타입 검사/빌드, 제3자 고지 생성, 문서 helper 3개·Markdown 링크 20개, `git diff --check`도 통과했다. 로컬 Windows exe SHA-256은 `c36b17f1401adbeb044b3b8bcae58480eaf66078720859440849980b3de819e9`다. PR 최신 head의 CI/코드/보안 리뷰를 완료한 뒤 병합하고, main CI 패키지를 재다운로드·실설치 검증한 후 게시한다. 사내 PC 직접 실행·실제 모델 요청·운영 설치 업데이트는 수행하지 않는다.
 
 ## PR #3 3차 리뷰 수정 · v0.1.3
 

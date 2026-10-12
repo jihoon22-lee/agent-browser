@@ -1,7 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$PackageDir = $PSScriptRoot,
+    [string]$PackageDir,
     [string]$InstallDir = (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'AgentBrowser'),
     [string]$StartupDir = [Environment]::GetFolderPath('Startup'),
     [ValidateRange(0,65535)][int]$Port = 0,
@@ -13,6 +13,8 @@ param(
     [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 -File can evaluate advanced-script defaults before $PSScriptRoot is available.
+if (-not $PSBoundParameters.ContainsKey('PackageDir')) { $PackageDir = $PSScriptRoot }
 . (Join-Path $PSScriptRoot 'installer-common.ps1')
 $manifest = Read-VerifiedPackage $PackageDir
 $root = Assert-InstallRoot $InstallDir

@@ -8,6 +8,7 @@ Windows 네이티브와 WSL OpenCode 모두 같은 Windows Bridge를 사용합�
 [GitHub Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 Windows x64 zip을 받습니다.
 zip은 다운로드 폴더 등 **아무 임시 폴더에 압축 해제**하고 `setup.ps1`을 실행합니다.
 설치 프로그램이 고정 설치 경로에 파일을 복사합니다. 그 경로에 직접 압축을 풀 필요는 없습니다.
+기본 설치 위치는 `%LOCALAPPDATA%\AgentBrowser`이며, `D:\Multimedia\AgentBrowser` 같은 별도 위치는 `-InstallDir`로 지정합니다. Chrome에는 실제 설치 폴더 아래 `extension`을 로드합니다.
 
 설치만 마쳤다면 **Chrome 확장 로드 → 토큰 페어링 → 패널의 실행 환경 선택 → 새 세션** 순서로 진행합니다.
 실행할 버튼과 명령은 [설치·첫 연결 안내](README-install.md)와 [사용 안내](docs/user-guide.md)에 있습니다.

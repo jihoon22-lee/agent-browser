@@ -165,7 +165,7 @@ try {
             $unicodeStartup=Join-Path $testRoot ('startup launch ' + [char]::ConvertFromUtf32(0x1F9EA))
             $null=& (Join-Path $package1 'setup.ps1') -InstallDir $liveInstall -StartupDir $unicodeStartup -Port $port -NoStart -Quiet
             $liveState=Read-InstallState $liveInstall
-            Start-Process -FilePath (Join-Path $unicodeStartup 'AgentBrowser.lnk')
+            Start-Process -FilePath (Join-Path $unicodeStartup 'AgentBrowser.lnk') -WindowStyle Hidden
             $verified=$null
             for ($attempt=0; $attempt -lt 150; $attempt++) {
                 $verified=Get-VerifiedBridgeProcess $liveState
