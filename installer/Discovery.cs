@@ -20,6 +20,11 @@ namespace AgentBrowser.Installer {
     }
     internal static class Discovery {
         static bool Same(string a,string b) { return String.Equals(a,b,StringComparison.OrdinalIgnoreCase); }
+        public static bool IsLocalCandidatePath(string path) {
+            if(String.IsNullOrWhiteSpace(path)||path.StartsWith(@"\\")||path.StartsWith("//"))return false;
+            try {string root=Path.GetPathRoot(path);if(root==null||root.Length!=3||root[1]!=':'||root[2]!='\\')return false;var type=new DriveInfo(root).DriveType;return type==DriveType.Fixed||type==DriveType.Removable||type==DriveType.CDRom||type==DriveType.Ram;}
+            catch(ArgumentException){return false;}catch(IOException){return false;}
+        }
         public static void AddInstall(DiscoveryResult result,string path) {
             try {
                 if(String.IsNullOrEmpty(path)) return;
@@ -48,7 +53,7 @@ namespace AgentBrowser.Installer {
                 if(String.IsNullOrWhiteSpace(directory)) continue;
                 try { foreach(var name in new [] {"opencode.exe","opencode.cmd"}) candidates.Add(Path.Combine(directory.Trim('"'),name)); } catch(ArgumentException) { }
             }
-            foreach(var executable in candidates) if(File.Exists(executable)) {
+            foreach(var executable in candidates) if(IsLocalCandidatePath(executable)&&File.Exists(executable)) {
                 var candidate=new OpenCodeCandidate { Kind="windows",Home=home,Executable=Path.GetFullPath(executable) };
                 AddConfigFiles(candidate,Path.Combine(home,@".config\opencode"));
                 // Enumeration must not execute an unselected PATH candidate.

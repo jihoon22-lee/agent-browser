@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 namespace AgentBrowser.Installer {
-    internal sealed class JsonEdit { public string Text,EntryHash; public bool CreatedMcp,Changed; }
+    internal sealed class JsonEdit { public string Text,EntryHash; public bool CreatedMcp,Changed,ReRegistered; }
     internal static class Jsonc {
         sealed class Token { public string Kind,Raw,Value; public int Start,End; }
         sealed class Property { public string Name; public int Key,First,Last,Before=-1,After=-1; }
@@ -76,7 +76,7 @@ namespace AgentBrowser.Installer {
             }
             return text.Substring(0,start)+(comments.Length==0?"":"\n"+comments+"\n")+text.Substring(end);
         }
-        public static JsonEdit Edit(string text,object entry,string expected=null,bool remove=false,bool removeEmpty=false) {
+        public static JsonEdit Edit(string text,object entry,string expected=null,bool remove=false,bool removeEmpty=false,bool registerMissing=false) {
             Minify(text);var t=Tokens(text);if(t.Count==0||t[0].Kind!="{") throw new FormatException("OpenCode settings must be an object.");
             var mcp=Properties(t,0).FirstOrDefault(p=>p.Name=="mcp");
             var entries=mcp==null?new List<Property>():Properties(t,mcp.First);
@@ -84,7 +84,7 @@ namespace AgentBrowser.Installer {
             if(browser!=null) {
                 oldHash=NativeIO.TextHash(Minify(text.Substring(t[browser.First].Start,t[browser.Last].End-t[browser.First].Start)));
                 if(String.IsNullOrEmpty(expected)||oldHash!=expected) throw new InvalidOperationException("mcp.browser belongs to another installation or was changed. No settings were overwritten.");
-            } else if(!remove&&!String.IsNullOrEmpty(expected)) throw new InvalidOperationException("The owned mcp.browser entry was removed. Explicitly register it again.");
+            } else if(!remove&&!String.IsNullOrEmpty(expected)&&!registerMissing) throw new InvalidOperationException("The owned mcp.browser entry was removed. Explicitly register it again.");
             string edited=text;string hash=null;bool created=false;
             if(remove) {if(browser!=null) edited=Remove(text,t,removeEmpty&&entries.Count==1?mcp:browser);}
             else {
@@ -93,7 +93,7 @@ namespace AgentBrowser.Installer {
                 else if(mcp!=null) edited=Insert(text,t,mcp.First,"browser",value);
                 else {edited=Insert(text,t,0,"mcp","{\"browser\":"+value+"}");created=true;}
             }
-            Minify(edited);return new JsonEdit{Text=edited,EntryHash=hash,CreatedMcp=created,Changed=edited!=text};
+            Minify(edited);return new JsonEdit{Text=edited,EntryHash=hash,CreatedMcp=created,Changed=edited!=text,ReRegistered=browser==null&&!String.IsNullOrEmpty(expected)&&registerMissing};
         }
     }
 }

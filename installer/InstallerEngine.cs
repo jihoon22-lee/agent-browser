@@ -73,7 +73,13 @@ namespace AgentBrowser.Installer {
             string full=Full(path);if(full==Path.GetPathRoot(full).TrimEnd('\\')) throw new IOException("A drive root cannot be an installation folder.");
             foreach(var item in new [] {Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),Environment.GetFolderPath(Environment.SpecialFolder.Windows)}) if(Same(full,Full(item))) throw new IOException("Choose a dedicated subfolder.");
             if(full.StartsWith(@"\\",StringComparison.Ordinal)) throw new IOException("Bridge installation must be on a Windows local disk. WSL settings can use a WSL path.");
-            NativeIO.PlainPath(full);return full;
+            NativeIO.PlainPath(full);if(Directory.Exists(full))RequirePrivateInstallRoot(full);return full;
+        }
+        static void RequirePrivateInstallRoot(string root) {
+            var trusted=new HashSet<string>{WindowsIdentity.GetCurrent().User.Value,"S-1-5-18","S-1-5-32-544","S-1-3-0"};
+            var writes=FileSystemRights.WriteData|FileSystemRights.AppendData|FileSystemRights.WriteExtendedAttributes|FileSystemRights.WriteAttributes|FileSystemRights.Delete|FileSystemRights.DeleteSubdirectoriesAndFiles|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership;
+            foreach(FileSystemAccessRule rule in Directory.GetAccessControl(root,AccessControlSections.Access).GetAccessRules(true,true,typeof(SecurityIdentifier)))
+                if(rule.AccessControlType==AccessControlType.Allow&&(rule.FileSystemRights&writes)!=0&&!trusted.Contains(rule.IdentityReference.Value))throw new IOException("Shared write permissions are not supported for an application installation. Choose a private per-user folder.");
         }
         public static T Read<T>(string path) {NativeIO.PlainPath(path);return NativeIO.Json.Deserialize<T>(File.ReadAllText(path,NativeIO.Utf8));}
         public static InstallState State(string root) {
@@ -177,15 +183,17 @@ namespace AgentBrowser.Installer {
                 Add(p,dest,File.ReadAllBytes(NativeIO.SafePath(package,file.Path)));owned[relative]=file.Sha256.ToLowerInvariant();
             }
             var oldRecords=Registrations(p.Old);var requested=new List<McpRecord>(oldRecords);
-            foreach(var r in options.Registrations) {r.Path=Full(r.Path);if(!requested.Any(x=>Same(x.Path,r.Path))) requested.Add(r);}
+            var explicitPaths=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach(var r in options.Registrations) {r.Path=Full(r.Path);explicitPaths.Add(r.Path);int index=requested.FindIndex(x=>Same(x.Path,r.Path));if(index<0)requested.Add(r);else requested[index]=r;}
             var records=new List<McpRecord>();
             foreach(var record in requested) {
                 var wslTarget=NativeIO.MapWsl(record.Path);
                 if(wslTarget!=null&&(record.Kind!="wsl"||!Same(wslTarget.Distribution,record.Distribution)))throw new IOException("The selected WSL settings path and distribution do not match.");
                 var previous=oldRecords.FirstOrDefault(x=>Same(x.Path,record.Path));
                 bool existed=File.Exists(record.Path);byte[] originalBytes=existed?File.ReadAllBytes(record.Path):NativeIO.Utf8.GetBytes("{}");string original=NativeIO.Utf8.GetString(originalBytes);
-                var edit=Jsonc.Edit(original,Entry(next,record),previous==null?null:previous.EntryHash);
-                var updated=new McpRecord{Path=record.Path,Kind=record.Kind,Distribution=record.Distribution,User=record.User,EntryHash=edit.EntryHash,CreatedMcp=edit.CreatedMcp||(previous!=null&&previous.CreatedMcp),CreatedFile=!existed||(previous!=null&&previous.CreatedFile),Backups=previous==null?new string[0]:previous.Backups};
+                var edit=Jsonc.Edit(original,Entry(next,record),previous==null?null:previous.EntryHash,registerMissing:explicitPaths.Contains(record.Path));
+                bool retainCreation=previous!=null&&!edit.ReRegistered;
+                var updated=new McpRecord{Path=record.Path,Kind=record.Kind,Distribution=record.Distribution,User=record.User,EntryHash=edit.EntryHash,CreatedMcp=edit.CreatedMcp||(retainCreation&&previous.CreatedMcp),CreatedFile=!existed||(retainCreation&&previous.CreatedFile),Backups=previous==null?new string[0]:previous.Backups};
                 records.Add(updated);if(edit.Changed) {
                     if(existed) {
                         // Durable backups inherit the private data directory ACL and survive uninstall.
@@ -225,7 +233,7 @@ namespace AgentBrowser.Installer {
             } finally {System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);if(File.Exists(path)) File.Delete(path);}
         }
         public static string Apply(InstallPlan p,CancellationToken cancel,Action<string> progress) {
-            string root=p.Options.InstallDir,lockPath=Path.Combine(root,".agent-browser-install.lock");Directory.CreateDirectory(root);
+            string root=p.Options.InstallDir,lockPath=Path.Combine(root,".agent-browser-install.lock");cancel.ThrowIfCancellationRequested();bool existingRoot=Directory.Exists(root);Directory.CreateDirectory(root);if(!existingRoot)PrivateDirectory(root);RequirePrivateInstallRoot(root);
             bool restartOld=false,newStarted=false;var stoppedProfiles=new List<string>();FileTransaction transaction=null;bool complete=false;
             using(var fileLock=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)) {
                 try {
@@ -259,16 +267,20 @@ namespace AgentBrowser.Installer {
                     cancel.ThrowIfCancellationRequested();
                     complete=true;string warning="";
                     try {transaction.Cleanup();}catch(Exception) {warning="\r\n경고: 설치 변경은 완료됐지만 임시 복구 파일 정리는 실패했습니다. 보존된 경로: "+transaction.Stage;progress(warning);}
-                    try {using(var registry=Registry.CurrentUser.CreateSubKey(@"Software\AgentBrowser\Installations")) {if(p.Next==null) registry.DeleteSubKey(p.Old.InstallId,false);else using(var item=registry.CreateSubKey(p.Next.InstallId)) item.SetValue("Path",root);}} catch(Exception) {progress("설치는 완료됐지만 다음 실행의 설치 위치 자동 등록은 실패했습니다. 폴더를 직접 선택할 수 있습니다.");}
+                    try {using(var registry=Registry.CurrentUser.CreateSubKey(@"Software\AgentBrowser\Installations")) {if(p.Next==null) registry.DeleteSubKey(p.Old.InstallId,false);else using(var item=registry.CreateSubKey(p.Next.InstallId)) item.SetValue("Path",root);}} catch(Exception) {string registryWarning="\r\n경고: 파일 변경은 완료됐지만 설치 위치 등록 또는 제거가 실패했습니다. 다음 실행에서 폴더를 직접 선택할 수 있습니다.";warning+=registryWarning;progress(registryWarning);}
                     return (p.Next==null?"제거 완료. 페어링·프로필 데이터와 OpenCode 설정의 다른 항목을 보존했습니다.":"설치 완료: "+p.Next.Version+"\r\nChrome 확장 폴더: "+Path.Combine(root,"extension")+"\r\nChrome에서 확장을 로드 또는 새로고침하고 페어링하세요.")+warning;
                 } catch(Exception error) {
                     if(transaction!=null&&!complete) {
-                        try {if(newStarted) BridgeControl.Stop(p.Next);transaction.Rollback();if(restartOld) BridgeControl.Start(p.Old);foreach(var id in stoppedProfiles) BridgeControl.Invoke(p.Old,new [] {"runtime","start","--profile",id},60000);transaction.Cleanup();}
+                        try {if(newStarted) BridgeControl.Stop(p.Next);transaction.Rollback();if(restartOld) BridgeControl.Start(p.Old);RestartProfiles(p.Old,stoppedProfiles);transaction.Cleanup();}
                         catch(Exception rollback) {throw new IOException(error.Message+"\r\n일부 복구가 필요합니다. 복구 파일: "+transaction.Stage+"\r\n"+rollback.Message,error);}
                     }
                     throw;
                 }
             }
+        }
+        static void RestartProfiles(InstallState state,List<string> profiles) {
+            var errors=new List<string>();foreach(var id in profiles)try{BridgeControl.Invoke(state,new[]{"runtime","start","--profile",id},60000);}catch(Exception error){errors.Add(id+": "+error.Message);}
+            if(errors.Count>0)throw new IOException("Managed profile recovery failures: "+String.Join("; ",errors));
         }
     }
     internal sealed class FileTransaction {
@@ -293,7 +305,13 @@ namespace AgentBrowser.Installer {
         public void Cleanup() {NativeIO.PlainPath(Stage);foreach(var file in Directory.GetFiles(Stage)) {NativeIO.PlainPath(file);File.Delete(file);}Directory.Delete(Stage);}
     }
     internal static class BridgeControl {
-        public static string Invoke(InstallState state,string[] args,int timeout=20000) {return NativeIO.RunChecked(state.CurrentExe,args,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},timeout);}
+        static void ValidateLaunch(InstallState state) {
+            NativeIO.PlainPath(state.DataDir);
+            if(String.IsNullOrWhiteSpace(state.CurrentExe))throw new IOException("The current Bridge executable is missing.");
+            string exe=InstallerEngine.Full(state.CurrentExe);var owners=state.OwnedFiles.Where(f=>InstallerEngine.Same(NativeIO.SafePath(state.InstallDir,f.Path),exe)).ToArray();
+            if(owners.Length!=1||!File.Exists(exe)||!InstallerEngine.Same(NativeIO.FileHash(exe),owners[0].Sha256))throw new IOException("The current Bridge executable is not an exact owned file.");
+        }
+        public static string Invoke(InstallState state,string[] args,int timeout=20000) {ValidateLaunch(state);return NativeIO.RunChecked(state.CurrentExe,args,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},timeout);}
         static Dictionary<string,object> Marker(InstallState state) {string path=Path.Combine(state.DataDir,".installer-bridge-process.json");return File.Exists(path)?InstallerEngine.Read<Dictionary<string,object>>(path):null;}
         static ManagementObject Verify(InstallState state,Dictionary<string,object> marker) {
             if(marker==null) return null;
@@ -316,6 +334,7 @@ namespace AgentBrowser.Installer {
             return true;
         }
         public static void Start(InstallState state) {
+            ValidateLaunch(state);
             InstallerEngine.Owned(state);
             var existing=Marker(state);
             using(var verified=Verify(state,existing)) {if(verified!=null&&InstallerEngine.Same((string)existing["Executable"],state.CurrentExe)&&Convert.ToInt32(existing["Port"])==state.Port)return;}
@@ -336,6 +355,7 @@ namespace AgentBrowser.Installer {
             }
         }
         public static List<string> StopRuntimes(InstallState state,List<string> stopped=null) {
+            ValidateLaunch(state);
             var ids=stopped??new List<string>();if(!File.Exists(Path.Combine(state.DataDir,"runtime.json"))) return ids;
             var result=NativeIO.Run(state.CurrentExe,new [] {"runtime","stop-all","--json"},state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},120000);
             if(String.IsNullOrWhiteSpace(result.Output))throw new IOException("Managed runtime cleanup did not return a report; installation was retained.");
