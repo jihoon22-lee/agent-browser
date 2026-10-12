@@ -150,7 +150,9 @@ fn spawn_windows(executable: &str, args: &[String], directory: Option<&str>, env
     let mut block = Vec::<u16>::new();
     for (key,value) in merged.values() { block.extend(key.encode_wide()); block.push(b'=' as u16); block.extend(value.encode_wide()); block.push(0); }
     block.push(0);
-    let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+    // DETACHED_PROCESS makes Windows ignore CREATE_NO_WINDOW. Its console-less
+    // descendants may then allocate visible consoles (including WSL launchers).
+    let flags = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
     for extra in [CREATE_BREAKAWAY_FROM_JOB,0] {
         let mut line = command.clone(); let startup = STARTUPINFOW { cb:std::mem::size_of::<STARTUPINFOW>() as u32,..Default::default() }; let mut process = PROCESS_INFORMATION::default();
         // No inherited handles: in particular, keep caller/WSL/Node pipe handles out
@@ -231,6 +233,69 @@ mod quoting_tests {
         assert_eq!(windows_quote("한글 space\\"),"\"한글 space\\\\\"");
         assert_eq!(windows_quote("a\"b"),"\"a\\\"b\"");
         assert_eq!(windows_quote("a\\\" b"),"\"a\\\\\\\" b\"");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod hidden_console_tests {
+    use super::*;
+    const HELPER: &str = "runtime::process::hidden_console_tests::console_child_fixture";
+
+    #[test]
+    #[ignore = "subprocess fixture for background_launch_keeps_descendant_console_hidden"]
+    fn console_child_fixture() {
+        let Ok(report) = std::env::var("AGENT_BROWSER_CONSOLE_REPORT") else { return };
+        if std::env::var_os("AGENT_BROWSER_CONSOLE_LEAF").is_some() {
+            #[link(name = "kernel32")]
+            unsafe extern "system" { fn GetConsoleWindow() -> *mut std::ffi::c_void; }
+            #[link(name = "user32")]
+            unsafe extern "system" { fn IsWindowVisible(window: *mut std::ffi::c_void) -> i32; }
+            let visible = unsafe { IsWindowVisible(GetConsoleWindow()) != 0 };
+            std::fs::write(report, if visible { "visible" } else { "hidden" }).unwrap();
+        } else {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--ignored", "--exact", HELPER])
+                .env("AGENT_BROWSER_CONSOLE_LEAF", "1").status().unwrap();
+            assert!(status.success());
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+
+    #[test]
+    fn background_launch_keeps_descendant_console_hidden() {
+        let temp = tempfile::tempdir().unwrap();
+        let report = temp.path().join("console.txt");
+        let owner = spawn(std::env::current_exe().unwrap().to_str().unwrap(),
+            &["--ignored".into(), "--exact".into(), HELPER.into()], None,
+            &BTreeMap::from([("AGENT_BROWSER_CONSOLE_REPORT".into(), report.to_string_lossy().into_owned())])).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !report.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let observed = std::fs::read_to_string(report);
+        terminate(&owner);
+        assert_eq!(observed.unwrap(), "hidden", "Background launcher descendants must not open a console window");
+    }
+
+    #[test]
+    #[ignore = "Requires local WSL Ubuntu and Windows interop; launches only this synthetic helper"]
+    fn wsl_background_launch_keeps_interop_console_hidden() {
+        let temp = tempfile::tempdir().unwrap();
+        let report = temp.path().join("wsl-console.txt");
+        let helper = windows_to_wsl(std::env::current_exe().unwrap().to_str().unwrap()).unwrap();
+        let env = BTreeMap::from([
+            ("AGENT_BROWSER_CONSOLE_REPORT".into(), report.to_string_lossy().into_owned()),
+            ("WSLENV".into(), "AGENT_BROWSER_CONSOLE_REPORT".into()),
+        ]);
+        let args = ["--distribution", "Ubuntu", "--exec", &helper, "--ignored", "--exact", HELPER].map(str::to_owned);
+        let owner = spawn(&wsl_executable(), &args, None, &env).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while !report.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let observed = std::fs::read_to_string(report);
+        terminate(&owner);
+        assert_eq!(observed.unwrap(), "hidden", "WSL interop descendants must keep their console hidden");
     }
 }
 
