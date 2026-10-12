@@ -62,7 +62,7 @@ impl OperationGate {
     }
 
     fn request_matches(g:&GateInner,id:Option<&str>,client:&str)->Result<(),RpcError> {
-        if id.is_none() && g.stopped_clients.get(client).is_some_and(|until| *until > std::time::Instant::now()) {
+        if g.request.is_none() && id.is_none() && g.stopped_clients.get(client).is_some_and(|until| *until > std::time::Instant::now()) {
             return Err(RpcError::new(ErrorCode::Cancelled,Retry::Never,"A panel request was stopped. Unscoped attach is blocked for 30 seconds; wait for a new user request."));
         }
         match (&g.request,id) {
@@ -517,6 +517,12 @@ mod issue8_tests {
         g.end_request("private-request","browser").unwrap();
         assert!(g.check(&op.id).is_err());
         assert!(g.request_target(Some("private-request"),"browser",None).is_err());
+        g.begin_request("cancel-me","browser",Some(7)).unwrap();
+        g.cancel_request("cancel-me","browser").unwrap();
+        assert_eq!(g.request_target(None,"browser",None).unwrap_err().code,ErrorCode::Cancelled);
+        g.begin_request("after-stop","browser",Some(8)).unwrap();
+        assert_eq!(g.request_target(None,"browser",None).unwrap_err().retry,Retry::Safe);
+        assert_eq!(g.request_target(Some("cancel-me"),"browser",None).unwrap_err().retry,Retry::Never);
     }
     #[test]
     fn stop_cancels_the_operation_and_blocks_unscoped_reattach() {
