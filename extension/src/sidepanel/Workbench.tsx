@@ -16,7 +16,17 @@ type Props = { operation: Operation | null; stopHandler: RefObject<(operationId:
 export function Workbench({ operation, stopHandler, view, onViewChange }: Props) {
   const wb = useWorkbench();
   const [requestHeld,setRequestHeld]=useState(false);
-  useEffect(()=>{let active=true;void chrome.storage.local?.get("panelBrowserRequest").then(saved=>{const r=saved.panelBrowserRequest as any;if(active)setRequestHeld(r?.profileId===wb.profileId&&r?.directory===wb.directory&&r?.sessionId===wb.sessionId);});return ()=>{active=false;};},[wb.profileId,wb.directory,wb.sessionId]);
+  useEffect(()=>{
+    let active=true,revision=0;
+    const sync=(r:RequestLease|undefined)=>{if(active)setRequestHeld(r?.profileId===wb.profileId&&r?.directory===wb.directory&&r?.sessionId===wb.sessionId);};
+    const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{
+      if(area==='local'&&Object.hasOwn(changes,'panelBrowserRequest')){revision++;sync(changes.panelBrowserRequest?.newValue as RequestLease|undefined);}
+    };
+    chrome.storage.onChanged?.addListener(changed);
+    const initial=revision;
+    void chrome.storage.local?.get('panelBrowserRequest').then(saved=>{if(revision===initial)sync(saved.panelBrowserRequest as RequestLease|undefined);}).catch(()=>{});
+    return ()=>{active=false;chrome.storage.onChanged?.removeListener(changed);};
+  },[wb.profileId,wb.directory,wb.sessionId]);
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
   const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState("");
   const [favorites, setFavorites] = useState<string[]>([]);

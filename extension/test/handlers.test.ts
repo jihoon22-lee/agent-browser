@@ -463,3 +463,29 @@ it('F9 explains why an operation-created blank tab is preserved',async()=>{
   await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'UNSUPPORTED_PAGE',message:expect.stringContaining('Blank tabs cannot be safely checked')});
   expect(w.sent).toHaveLength(0);
 });
+it('review R1 never reads the outgoing HTTP document while navigation is pending',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());
+  Object.assign(w.tabs.get(1)!,{pendingUrl:'https://example.test/destination',status:'loading'});
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.snapshot')).then(r=>settled=r,e=>settled=e);
+  try{await vi.advanceTimersByTimeAsync(2100);
+    expect(w.sent).toHaveLength(0);
+    expect(settled).toMatchObject({code:'FRAME_UNAVAILABLE',retry:'safe'});
+  }finally{h.disconnect();await work;vi.useRealTimers();}
+});
+it('review R1 rejects a snapshot if a pending navigation begins during the read',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),send=w.api.sendToFrame;
+  w.api.sendToFrame=async(...args)=>{const result=await send(...args);w.tabs.get(1)!.pendingUrl='https://example.test/next';return result;};
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.snapshot')).then(r=>settled=r,e=>settled=e);
+  try{await vi.advanceTimersByTimeAsync(2100);expect(settled).toMatchObject({code:'FRAME_UNAVAILABLE'});}
+  finally{h.disconnect();await work;vi.useRealTimers();}
+});
+it('review R2 recognizes same-URL history entry changes',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  let key='entry-before';w.api.historyEntry=async()=>key;w.api.tabsGoBack=async()=>{key='entry-after';};
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.navigate',{action:'back'})).then(r=>settled=r,e=>settled=e);
+  try{await vi.advanceTimersByTimeAsync(1600);expect(settled).toMatchObject({executed:true,verified:{url:'https://example.test/1'}});}
+  finally{h.disconnect();await work;vi.useRealTimers();}
+});

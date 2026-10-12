@@ -656,3 +656,15 @@ it.each(['response','transport'])('F2 always posts abort when request-cancel fai
   expect(test.post).toHaveBeenCalledWith('/session/ses-one/abort',undefined);
   expect(host.textContent).toContain('Bridge disconnected');
 });
+it('review R3 updates Stop when the background removes the selected lease',async()=>{
+  const changed=new Set<(changes:any,area:string)=>void>();
+  (chrome.storage as any).onChanged={addListener:(fn:any)=>changed.add(fn),removeListener:(fn:any)=>changed.delete(fn)};
+  const localGet=chrome.storage.local.get as ReturnType<typeof vi.fn>,original=localGet.getMockImplementation() as ()=>Promise<Record<string,any>>;
+  const lease={requestId:'held',messageId:'msg-held',profileId:'native',directory:'/fixture',sessionId:'ses-one'};
+  let saved:any=lease;localGet.mockImplementation(async()=>({...await original(),panelBrowserRequest:saved}));
+  await render();expect(button('응답 중단').hidden).toBe(false);
+  saved=undefined;
+  await act(async()=>{for(const fn of changed)fn({panelBrowserRequest:{oldValue:lease}},'local');});
+  expect(button('응답 중단').hidden).toBe(true);
+  expect(test.post.mock.calls.some(([path])=>path.endsWith('/abort'))).toBe(false);
+});

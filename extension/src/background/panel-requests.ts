@@ -6,8 +6,12 @@ export function panelRequests(call:Call) {
   let tail:Promise<unknown>=Promise.resolve();
   const serial=<T>(work:()=>Promise<T>)=>{const next=tail.then(work);tail=next.catch(()=>{});return next;};
   const client=async (lease:RequestLease)=>{
-    const runtime=await call('runtime.status',{profileId:lease.profileId,includeConnection:true}).catch(()=>null);
-    if(runtime?.state!=='ready')return null;
+    const runtime=await call('runtime.status',{profileId:lease.profileId,includeConnection:true}).catch(error=>{
+      if(error?.code==='INVALID_PARAMS'&&error?.message==='Unknown runtime profile')return null;
+      throw error;
+    });
+    if(runtime===null||runtime?.state==='stopped'||runtime?.state==='error')return null;
+    if(runtime?.state!=='ready')throw Error('실행 환경의 상태를 아직 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
     return new OpenCodeV1Client({...runtime,directory:lease.directory});
   };
   async function end(lease:RequestLease,clientId:string,abort=false) {
@@ -87,7 +91,9 @@ export function panelRequests(call:Call) {
       const {clientId}=await chrome.storage.local.get('clientId');
       if(typeof clientId!=="string")throw Error("Browser client unavailable");
       await end(saved,clientId,true);
-      const api=await client(saved);
+      // User Stop already closed the gate and cleared the lease. The panel also
+      // attempts /abort using its captured connection if discovery is unavailable.
+      const api=await client(saved).catch(()=>null);
       if(!api)return true;
       try { await api.post(`/session/${encodeURIComponent(saved.sessionId)}/abort`); }
       catch(error) { if(!(error instanceof OpenCodeApiError && error.status===404))throw error; }

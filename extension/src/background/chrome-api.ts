@@ -33,6 +33,7 @@ export interface ChromeApi {
     tabsGoBack(id: number, documentId?: string): Promise<void>;
     tabsGoForward(id: number, documentId?: string): Promise<void>;
     tabsReload(id: number): Promise<void>;
+    historyEntry?(id:number,documentId:string):Promise<string|undefined>;
     captureVisibleTab(windowId: number): Promise<string>;
     listFrames(tabId: number): Promise<FrameInfo[]>;
     inject(tabId: number, frame: FrameInfo): Promise<FrameInfo>;
@@ -56,6 +57,13 @@ export const realChromeApi: ChromeApi = {
     // browser UI and can skip entries without trusted user activation (agent clicks).
     tabsGoBack: (id, documentId) => traverse(id,documentId,'back'),
     tabsGoForward: (id, documentId) => traverse(id,documentId,'forward'), tabsReload: id => chrome.tabs.reload(id),
+    historyEntry: async(id,documentId)=>{
+        const [result]=await chrome.scripting.executeScript({target:{tabId:id,documentIds:[documentId]},func:()=>{
+            const entry=(window as any).navigation?.currentEntry;
+            return typeof entry?.key==='string' ? entry.key : undefined;
+        }});
+        return result?.result;
+    },
     captureVisibleTab: windowId => chrome.tabs.captureVisibleTab(windowId, { format: 'png' }),
     listFrames: async (tabId) => (await chrome.webNavigation.getAllFrames({ tabId }) ?? []).map(f => ({ frameId: f.frameId, documentId: f.documentId, url: f.url })),
     inject: async (tabId, frame) => {

@@ -99,7 +99,7 @@ it('finishes only after an authoritative completed response in the owning sessio
 
 it.each(['deleted','stopped','error'])('F1 clears an unavailable %s lease without starting its runtime',async state=>{
   storage.panelBrowserRequest={...lease('one'),profileId:'old'};
-  call.mockImplementation(async method=>{if(method==='runtime.status'){if(state==='deleted')throw Object.assign(Error('unknown'),{code:'INVALID_PARAMS'});return {state};}return {};});
+  call.mockImplementation(async method=>{if(method==='runtime.status'){if(state==='deleted')throw Object.assign(Error('Unknown runtime profile'),{code:'INVALID_PARAMS'});return {state};}return {};});
   await panelRequests(call).prepare(lease('two'),null);
   expect(storage.panelBrowserRequest).toEqual(lease('two'));
   expect(call.mock.calls.some(([m])=>m==='runtime.ensure')).toBe(false);
@@ -115,4 +115,17 @@ it('F1 removes only the deleted profile lease',async()=>{
   storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
   await manager.removeProfile('other');expect(storage.panelBrowserRequest).toBeDefined();
   await manager.removeProfile('native');expect(storage.panelBrowserRequest).toBeUndefined();
+});
+it.each(['TIMEOUT','BROWSER_DISCONNECTED','INTERNAL'])('review R4 retains leases after transient discovery %s',async code=>{
+  storage.panelBrowserRequest=lease('one');
+  call.mockImplementation(async method=>{if(method==='runtime.status')throw Object.assign(Error('temporary'),{code});return {};});
+  await expect(panelRequests(call).reconcile()).rejects.toThrow('temporary');
+  expect(storage.panelBrowserRequest).toEqual(lease('one'));
+  expect(call.mock.calls.some(([m])=>m==='request.end')).toBe(false);
+});
+it('review R4 preserves a starting runtime lease without launching it',async()=>{
+  storage.panelBrowserRequest=lease('one');call.mockResolvedValue({state:'starting'});
+  await expect(panelRequests(call).prepare(lease('two'),null)).rejects.toThrow();
+  expect(storage.panelBrowserRequest).toEqual(lease('one'));
+  expect(call.mock.calls.some(([m])=>m==='runtime.ensure'||m==='request.end')).toBe(false);
 });

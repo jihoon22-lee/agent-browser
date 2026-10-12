@@ -67,3 +67,34 @@ test('F13 back at the first entry with a hidden cross-origin forward entry is un
   expect(result.error).toMatchObject({code:'ELEMENT_NOT_INTERACTABLE',details:{executed:false}});
   expect(result.executed).toBe('no');expect(Date.now()-start).toBeLessThan(5000);
 });
+test('R1 pending HTTP navigation never snapshots the outgoing page',async()=>{
+  const page=await world.open('board.html'),operationId=await world.attach(page);
+  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+  await page.route('**/issue8-pending',async route=>{await gate;await route.fulfill({contentType:'text/html',body:'<h1>Destination committed</h1><button>Destination action</button>'});});
+  const navigation=page.goto(world.fixture.base+'/issue8-pending');
+  try{
+    await expect.poll(()=>world.adminPage.evaluate(async url=>{
+      const tabs=await (globalThis as any).chrome.tabs.query({});return tabs.some((tab:any)=>tab.pendingUrl===url);
+    },world.fixture.base+'/issue8-pending')).toBe(true);
+    const result=await world.mcp.call('browser_snapshot',{operationId});
+    expect(result.error).toMatchObject({code:'FRAME_UNAVAILABLE',retry:'safe'});expect(result.data).toBeNull();
+  }finally{release();await navigation;}
+  expect((await world.ok('browser_snapshot',{operationId})).data.frames[0].text.content).toContain('Destination committed');
+});
+test('R2 same-URL SPA history changes are executed and true boundaries are not',async()=>{
+  const page=await world.open('board.html'),url=page.url();
+  await page.evaluate(()=>{
+    history.replaceState({step:0},'');history.pushState({step:1},'');history.pushState({step:2},'');
+    document.body.innerHTML='<h1>Step 2</h1>';
+    addEventListener('popstate',()=>{document.querySelector('h1')!.textContent='Step '+history.state.step;});
+  });
+  const operationId=await world.attach(page);await world.ok('browser_snapshot',{operationId});
+  expect((await world.ok('browser_navigate',{operationId,action:'back'})).executed).toBe('yes');
+  await expect(page.getByRole('heading',{name:'Step 1'})).toBeVisible();expect(page.url()).toBe(url);
+  await world.ok('browser_snapshot',{operationId});
+  expect((await world.ok('browser_navigate',{operationId,action:'forward'})).executed).toBe('yes');
+  await expect(page.getByRole('heading',{name:'Step 2'})).toBeVisible();
+  await world.ok('browser_snapshot',{operationId});
+  const boundary=await world.mcp.call('browser_navigate',{operationId,action:'forward'});
+  expect(boundary.error?.code).toBe('ELEMENT_NOT_INTERACTABLE');expect(boundary.executed).toBe('no');
+});

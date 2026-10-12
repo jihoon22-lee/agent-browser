@@ -43,6 +43,10 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
     let observed = false, initiated = false;
     const before = expectNavigation ? await getTab(api, id) : undefined;
     const beforeDocument = expectNavigation && isWeb(before?.url) ? (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId : undefined;
+    const beforeEntry = historyTraversal && beforeDocument && api.historyEntry
+        ? await interruptible(api.historyEntry(id,beforeDocument),signal) : undefined;
+    if(historyTraversal && api.historyEntry && !beforeEntry)
+        throw new ProtocolError('FRAME_UNAVAILABLE','Cannot identify the current history entry before traversal.','safe');
     const off = api.onTabUpdated((tid, change, tab) => {
         if (tid !== id) return;
         if (change.status === 'loading' || change.url) observed = true;
@@ -69,8 +73,13 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
                 aborted(signal);
                 const current = await getTab(api, id);
                 if(current.status==='loading')observed=true;
-                const changed = !expectNavigation || observed || current.url !== before?.url ||
+                let changed = !expectNavigation || observed || current.url !== before?.url ||
                     (beforeDocument!==undefined && (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId !== beforeDocument);
+                if(!changed && beforeEntry && beforeDocument){
+                    const entry=await interruptible(api.historyEntry!(id,beforeDocument).catch(()=>undefined),signal);
+                    if(!entry)throw new ProtocolError('EXECUTION_UNKNOWN','The history entry could not be verified after traversal. Inspect the page before continuing.','unsafe');
+                    changed=entry!==beforeEntry;
+                }
                 if (current.status === 'complete' && changed) return current;
                 if(historyTraversal&&!changed&&!initiated&&Date.now()-dispatchedAt>=1500)
                     throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','No history entry was observed in that direction. Inspect the page before another navigation.','never',{executed:false});

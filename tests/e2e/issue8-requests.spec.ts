@@ -49,3 +49,20 @@ test('F16 background completion frees a panel reservation for CLI without openin
   await expect.poll(saved,{timeout:40_000}).toBeUndefined();
   await world.ok('browser_tabs',{action:'attach',tabId:await world.tabId(page)});
 });
+test('R3 an open panel hides Stop after background lease removal without a message event',async()=>{
+  const {lease}=await prepare('panel-reconcile');
+  await world.adminPage.evaluate(async lease=>chrome.storage.local.set({lastProfileId:lease.profileId,['recentSession:'+lease.profileId]:lease.sessionId}),lease);
+  const page=await world.context.newPage();
+  await page.goto(`chrome-extension://${world.extensionId}/${world.manifest.side_panel.default_path}`);
+  await expect(page.getByText(/OpenCode 1\.18\.29 연결됨/)).toBeVisible();
+  await expect(page.getByRole('button',{name:'응답 중단',exact:true})).toBeVisible();
+  // Keep the panel's HTTP copy incomplete so only the background can finish
+  // this lease. The worker's own requests are outside this page route.
+  await page.route('**/session/*/message*',route=>route.fulfill({contentType:'application/json',body:'[]'}));
+  // Publish completion only through HTTP. No SSE/message event wakes the panel effect.
+  api.state.messages.get(lease.sessionId)!.push({info:{id:'reply',role:'assistant',parentID:lease.messageId,sessionID:lease.sessionId,time:{created:Date.now(),completed:Date.now()},finish:'stop'},parts:[]} as any);
+  api.state.statuses[lease.sessionId]={type:'idle'};
+  await expect.poll(saved,{timeout:40_000}).toBeUndefined();
+  await expect(page.getByRole('button',{name:'응답 중단',exact:true})).toBeHidden();
+  expect(api.state.requests.some(r=>r.path.endsWith('/abort'))).toBe(false);
+});

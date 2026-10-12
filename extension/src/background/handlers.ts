@@ -109,7 +109,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         }
         const tab = await getTab(api, Number(p.tabId));
         const goto = req.method === 'browser.navigate' && (p.action ?? 'goto') === 'goto';
-        if(req.method==='browser.snapshot'&&!isWeb(tab.url)&&(tab.status==='loading'||tab.pendingUrl)&&Date.now()<snapshotDeadline){
+        if(req.method==='browser.snapshot'&&(tab.pendingUrl||(!isWeb(tab.url)&&tab.status==='loading'))){
+            if(Date.now()>=snapshotDeadline)
+                throw new ProtocolError('FRAME_UNAVAILABLE','Navigation has not committed. Wait for the destination document before taking a snapshot.','safe');
             await interruptible(new Promise(r=>setTimeout(r,50)),signal);
             return dispatch(run,snapshotAttempt,snapshotDeadline);
         }
@@ -181,7 +183,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             }
             const live = await frames.list(tabId);
             const current = await getTab(api, tabId);
-            if (bindings.some(f => !live.some(now => now.frameId === f.frameId && now.documentId === f.documentId)) || current.url !== tab.url) {
+            if (bindings.some(f => !live.some(now => now.frameId === f.frameId && now.documentId === f.documentId)) || current.url !== tab.url || current.pendingUrl) {
                 if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1,snapshotDeadline);
                 throw new ProtocolError('FRAME_UNAVAILABLE', 'Navigation changed the snapshot repeatedly. Wait for the expected page state and take a fresh snapshot.', 'safe');
             }

@@ -2,6 +2,15 @@
 
 기준 `db397ea`, 브랜치 `feat/issue8-followup`. [이슈 #8](https://github.com/jihoon22-lee/agent-browser/issues/8) §2의 **WP2 → WP1 → WP3 → WP4 → WP5 구현 완료**. [계획](./plans/2026-10-12-issue8-followup.md)에 과제별 완료를 기록했다. 후속 사용자 요청에 따라 브랜치를 push하고 PR의 CI·리뷰 통과 후 main 병합을 진행한다. Release 게시와 운영 설치 변경은 이번 범위에 없다.
 
+## PR #9 첫 리뷰와 CI 후속
+
+- [첫 CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38244686625), head `c6ac10c`: Linux 통과. Windows는 전체 E2E·요청 대상·즐겨찾기 fixture를 통과한 뒤 별도 iframe 검사에서 실패했다. iframe URL을 성공으로 기대하던 과거 assertion을 WP3의 최상위 탭 URL 계약에 맞춰 갱신했다.
+- [코드 리뷰](https://github.com/jihoon22-lee/agent-browser/pull/9#pullrequestreview-5490314975)의 4개 지적을 회귀로 재현했다: pending HTTP 탐색 중 이전 DOM snapshot, 같은 URL의 SPA history 이동, background lease 삭제 후 열린 패널 Stop 상태, runtime.status 일시 실패 시 lease 유실.
+- pendingUrl이 있으면 HTTP 페이지라도 이전 문서 snapshot을 보류한다. history currentEntry.key를 비교해 같은 URL의 실제 이동을 감지한다. 패널은 storage 변경을 구독한다. 연결 단절/timeout/starting에서는 lease를 보존하며 stopped/error/명확한 삭제만 정리한다. status 응답 제한도 60초로 맞췄다.
+- 수정 전 실패 9건 확인. 수정 후 관련 단위 4파일 **178/178**, 빌드·E2E 타입 검사 통과. 실제 Windows 영향 E2E **21 통과 / BFCache opt-in 1 skip**, Linux 영향 E2E **13/13** 통과. 별도 Windows iframe 검사는 **3 frame 시나리오 / OOPIF 2개 경로 통과**.
+- 패널 자체 완료 처리를 배제한 강화 R3를 실제 Windows에서 추가 실행해 **1/1 통과(17.2초)**를 확인했다.
+- 변경된 최종 커밋의 원격 CI와 코드/보안 재리뷰를 확인한 후 병합한다.
+
 ## WP2 완료
 
 - F4: checkbox/radio는 checked, 나머지 input은 동일 속성을 가진 새 input에서 정규화한 기본값으로 비교한다. 파일 선택·실제 편집은 계속 보호한다.
