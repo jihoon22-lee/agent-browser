@@ -1,6 +1,6 @@
 [
   {
-    "description": "List Chrome tabs, attach a tab to start an operation (returns operationId), open a new tab in the operation, switch between the operation's tabs, close the current operation-created tab (never the attached original), or release the operation. After close, switch to a surviving tabId and snapshot. The operation tab stays fixed even if the user looks at another tab.",
+    "description": "List tabs; attach returns operationId; new opens an operation tab; switch selects an operation tab; close only closes the current operation-created tab, never the attached original; release ends the operation. After close, switch to a surviving tabId and snapshot. User focus does not change the target.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -20,7 +20,7 @@
           "type": "string"
         },
         "tabId": {
-          "description": "For attach (omit to use the user's current tab) and switch",
+          "description": "For attach (omit for request default, or current tab without a request) and switch",
           "type": "integer"
         },
         "url": {
@@ -29,7 +29,7 @@
         },
         "requestId": {
           "type": "string",
-          "description": "For attach: requestId supplied with the current panel request. Omit tabId to use its captured active tab; an explicit user target takes priority."
+          "description": "For attach: current panel requestId. Omit tabId for the captured active tab; explicit user target takes priority."
         }
       },
       "required": [
@@ -249,7 +249,7 @@
     "name": "browser_scroll"
   },
   {
-    "description": "Wait until any condition matches: text appears, text disappears, an element ref disappears, or the URL contains a string. Use snapshot frameRef for iframe text/URL conditions; otherwise uses refGone's frame or the top document. A frameRef stays bound to its document; take a fresh snapshot after navigation. Fails with TIMEOUT.",
+    "description": "Wait for any text/textGone/refGone/urlIncludes condition or TIMEOUT. For iframe text/URL use snapshot frameRef; otherwise use refGone's frame or top document. frameRef is document-bound: snapshot again after navigation.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

@@ -9,11 +9,11 @@ fn r#ref() -> Value { json!({"type":"string","description":"Element ref from the
 pub fn all() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
-            "List Chrome tabs, attach a tab to start an operation (returns operationId), open a new tab in the operation, switch between the operation's tabs, close the current operation-created tab (never the attached original), or release the operation. After close, switch to a surviving tabId and snapshot. The operation tab stays fixed even if the user looks at another tab.",
+            "List tabs; attach returns operationId; new opens an operation tab; switch selects an operation tab; close only closes the current operation-created tab, never the attached original; release ends the operation. After close, switch to a surviving tabId and snapshot. User focus does not change the target.",
             schema: json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["list","attach","new","switch","close","release"]},
-                "tabId":{"type":"integer","description":"For attach (omit to use the user's current tab) and switch"},
-                "requestId":{"type":"string","description":"For attach: requestId supplied with the current panel request. Omit tabId to use its captured active tab; an explicit user target takes priority."},
+                "tabId":{"type":"integer","description":"For attach (omit for request default, or current tab without a request) and switch"},
+                "requestId":{"type":"string","description":"For attach: current panel requestId. Omit tabId for the captured active tab; explicit user target takes priority."},
                 "url":{"type":"string","description":"For new: http(s) URL to open"},
                 "operationId": op()},
                 "required":["action"],"additionalProperties":false}) },
@@ -42,7 +42,7 @@ pub fn all() -> Vec<ToolDef> {
         ToolDef { name: "browser_scroll", description: "Scroll the page or a scrollable element (ref).",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["operationId","direction"],"additionalProperties":false}) },
-        ToolDef { name: "browser_wait", description: "Wait until any condition matches: text appears, text disappears, an element ref disappears, or the URL contains a string. Use snapshot frameRef for iframe text/URL conditions; otherwise uses refGone's frame or the top document. A frameRef stays bound to its document; take a fresh snapshot after navigation. Fails with TIMEOUT.",
+        ToolDef { name: "browser_wait", description: "Wait for any text/textGone/refGone/urlIncludes condition or TIMEOUT. For iframe text/URL use snapshot frameRef; otherwise use refGone's frame or top document. frameRef is document-bound: snapshot again after navigation.",
             schema: json!({"type":"object","properties":{"operationId":op(),"text":{"type":"string"},"textGone":{"type":"string"},
                 "refGone":{"type":"string"},"urlIncludes":{"type":"string"},"frameRef":{"type":"string","description":"Document-bound frameRef returned on a browser_snapshot frame."},
                 "timeoutMs":{"type":"integer","minimum":100,"maximum":30000,"default":5000}},
