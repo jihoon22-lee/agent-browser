@@ -42,10 +42,10 @@ impl Manager {
     }
 
     pub(super) async fn launch_wsl(&self, profile: &Profile, port: u16, instance: String, password: String, mut env: BTreeMap<String,String>, command: Vec<String>) -> Result<RuntimeRecord,RpcError> {
+        let owner = self.home.join("runtime").join(format!("{instance}.keeper"));
+        let mapped = process::windows_to_wsl(&owner.to_string_lossy()).ok_or_else(|| invalid("WSL runtimes require a Windows Bridge home on a drive mounted by WSL"))?;
         let bridge = std::env::current_exe().map_err(|_| failure("Cannot resolve the Bridge executable"))?.to_string_lossy().into_owned();
         let probe = process::windows_to_wsl(&bridge).ok_or_else(|| invalid("The Bridge executable must be on a Windows drive"))?;
-        let owner = self.home.join("runtime").join(format!("{instance}.keeper"));
-        let mapped = process::windows_to_wsl(&owner.to_string_lossy()).unwrap();
         let script = format!("{CANARY_FUNCTION}\n{KEEPER_SCRIPT}");
         let (launcher,owner_file) = self.spawn_wsl_owned(profile,&instance,"keeper",vec!["/bin/sh".into(),"-c".into(),script,"agent-browser-keeper".into(),mapped,instance.clone(),probe.clone()],&env)?;
         // This provisional record also covers a crash between keeper and server launch.

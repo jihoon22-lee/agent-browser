@@ -33,11 +33,13 @@ export interface ChromeApi {
     tabsGoBack(id: number, documentId?: string): Promise<void>;
     tabsGoForward(id: number, documentId?: string): Promise<void>;
     tabsReload(id: number): Promise<void>;
+    historyEntry?(id:number,documentId:string):Promise<string|undefined>;
     captureVisibleTab(windowId: number): Promise<string>;
     listFrames(tabId: number): Promise<FrameInfo[]>;
     inject(tabId: number, frame: FrameInfo): Promise<FrameInfo>;
     sendToFrame(tabId: number, frame: FrameInfo, msg: unknown): Promise<any>;
     onTabUpdated(fn: (id: number, change: chrome.tabs.OnUpdatedInfo, tab: chrome.tabs.Tab) => void): () => void;
+    onNavigationStarted?(fn: (tabId: number) => void): () => void;
     onTabActivated(fn: (info: chrome.tabs.OnActivatedInfo) => void): () => void;
     onTabRemoved(fn: (id: number) => void): () => void;
     onCreatedNavigationTarget(fn: (details: chrome.webNavigation.WebNavigationSourceCallbackDetails) => void): () => void;
@@ -55,6 +57,13 @@ export const realChromeApi: ChromeApi = {
     // browser UI and can skip entries without trusted user activation (agent clicks).
     tabsGoBack: (id, documentId) => traverse(id,documentId,'back'),
     tabsGoForward: (id, documentId) => traverse(id,documentId,'forward'), tabsReload: id => chrome.tabs.reload(id),
+    historyEntry: async(id,documentId)=>{
+        const [result]=await chrome.scripting.executeScript({target:{tabId:id,documentIds:[documentId]},func:()=>{
+            const entry=(window as any).navigation?.currentEntry;
+            return typeof entry?.key==='string' ? entry.key : undefined;
+        }});
+        return result?.result;
+    },
     captureVisibleTab: windowId => chrome.tabs.captureVisibleTab(windowId, { format: 'png' }),
     listFrames: async (tabId) => (await chrome.webNavigation.getAllFrames({ tabId }) ?? []).map(f => ({ frameId: f.frameId, documentId: f.documentId, url: f.url })),
     inject: async (tabId, frame) => {
@@ -65,6 +74,11 @@ export const realChromeApi: ChromeApi = {
     },
     sendToFrame: (tabId, frame, msg) => chrome.tabs.sendMessage(tabId, msg, { documentId: frame.documentId }),
     onTabUpdated: fn => { chrome.tabs.onUpdated.addListener(fn); return () => chrome.tabs.onUpdated.removeListener(fn); },
+    onNavigationStarted: fn => {
+        const listener=(details:{tabId:number;frameId:number})=>{if(details.frameId===0)fn(details.tabId);};
+        chrome.webNavigation.onBeforeNavigate.addListener(listener);
+        return ()=>chrome.webNavigation.onBeforeNavigate.removeListener(listener);
+    },
     onTabActivated: fn => { chrome.tabs.onActivated.addListener(fn); return () => chrome.tabs.onActivated.removeListener(fn); },
     onTabRemoved: fn => { chrome.tabs.onRemoved.addListener(fn); return () => chrome.tabs.onRemoved.removeListener(fn); },
     onCreatedNavigationTarget: fn => { chrome.webNavigation.onCreatedNavigationTarget.addListener(fn); return () => chrome.webNavigation.onCreatedNavigationTarget.removeListener(fn); },

@@ -6,15 +6,53 @@ export function panelRequests(call:Call) {
   let tail:Promise<unknown>=Promise.resolve();
   const serial=<T>(work:()=>Promise<T>)=>{const next=tail.then(work);tail=next.catch(()=>{});return next;};
   const client=async (lease:RequestLease)=>{
-    const runtime=await call('runtime.ensure',{profileId:lease.profileId});
-    if(runtime.state!=='ready')throw Error('이전 요청의 완료 상태를 확인하지 못했습니다. 해당 요청을 중단한 뒤 다시 시도하세요.');
+    const runtime=await call('runtime.status',{profileId:lease.profileId,includeConnection:true}).catch(error=>{
+      if(error?.code==='INVALID_PARAMS'&&error?.message==='Unknown runtime profile')return null;
+      throw error;
+    });
+    if(runtime===null||runtime?.state==='stopped'||runtime?.state==='error')return null;
+    if(runtime?.state!=='ready')throw Error('실행 환경의 상태를 아직 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
     return new OpenCodeV1Client({...runtime,directory:lease.directory});
   };
-  async function end(lease:RequestLease,clientId:string,clear=true) {
-    try { await call('request.end',{requestId:lease.requestId,clientId}); }
+  async function end(lease:RequestLease,clientId:string,abort=false) {
+    try { await call('request.end',{requestId:lease.requestId,clientId,...(abort?{abort:true}:{})}); }
     catch(error) { if((error as any)?.code!=='OPERATION_INVALID')throw error; }
-    if(clear)await chrome.storage.local.remove(KEY);
+    await chrome.storage.local.remove(KEY);
   }
+  async function completion(saved:RequestLease):Promise<{abort:boolean}|null> {
+    const api=await client(saved);
+    // An unavailable profile must not hold all other profiles hostage. Closing
+    // the Bridge gate is still mandatory before forgetting its durable lease.
+    if(!api)return {abort:true};
+    const [messages,statuses]=await Promise.all([api.get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`).catch(error=>{
+      if(error instanceof OpenCodeApiError&&error.status===404)return null;
+      throw error;
+    }),api.get<Record<string,any>>('/session/status')]);
+    if(['busy','retry'].includes(statuses[saved.sessionId]?.type)||(messages!==null&&!completedRequest(saved,messages)))return null;
+    return {abort:false};
+  }
+  async function complete(saved:RequestLease,clientId:string) {
+    const result=await completion(saved);
+    if(!result)return false;
+    await end(saved,clientId,result.abort);return true;
+  }
+  async function observeCompletion(scope?:Pick<RequestLease,'profileId'|'directory'|'sessionId'>) {
+    const data=await chrome.storage.local.get([KEY,'clientId']);
+    const saved=data[KEY] as RequestLease|undefined;
+    if(!saved||typeof data.clientId!=='string')return false;
+    const clientId=data.clientId;
+    if(scope&&(saved.profileId!==scope.profileId||saved.directory!==scope.directory||saved.sessionId!==scope.sessionId))return false;
+    // Network probes must never hold the mutation queue needed by Stop.
+    const result=await completion(saved);
+    if(!result)return false;
+    return serial(async()=>{
+      const current=await chrome.storage.local.get([KEY,'clientId']);
+      const active=current[KEY] as RequestLease|undefined;
+      if(current.clientId!==clientId||!active||active.requestId!==saved.requestId||active.messageId!==saved.messageId||active.profileId!==saved.profileId||active.directory!==saved.directory||active.sessionId!==saved.sessionId)return false;
+      await end(saved,clientId,result.abort);return true;
+    });
+  }
+  let polling=false;
   return {
     discard:(requestId:string)=>serial(async()=>{
       const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
@@ -28,15 +66,11 @@ export function panelRequests(call:Call) {
       if(typeof clientId!=='string')throw Error('브라우저 연결을 먼저 확인하세요.');
       const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
       if(saved){
-        const api=await client(saved);
-        const [messages,statuses]=await Promise.all([api.get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`).catch(error=>{
-          if(error instanceof OpenCodeApiError&&error.status===404)return null;
-          throw error;
-        }),api.get<Record<string,any>>('/session/status')]);
-        if(['busy','retry'].includes(statuses[saved.sessionId]?.type)||(messages!==null&&!completedRequest(saved,messages)))throw Error('이전 요청이 아직 실행 중이거나 완료를 확인하지 못했습니다. 완료를 기다리거나 해당 세션에서 응답을 중단하세요.');
-        await end(saved,clientId);
+        if(!await complete(saved,clientId))throw Error('이전 요청이 아직 실행 중이거나 완료를 확인하지 못했습니다. 완료를 기다리거나 해당 세션에서 응답을 중단하세요.');
       } else if(previousOperationId) {
-        const api=await client(lease),statuses=await api.get<Record<string,any>>('/session/status');
+        const api=await client(lease);
+        if(!api)throw Error('이전 작업의 실행 상태를 확인하지 못했습니다. 해당 작업을 중단한 뒤 다시 시도하세요.');
+        const statuses=await api.get<Record<string,any>>('/session/status');
         if(Object.values(statuses).some(s=>['busy','retry'].includes(s?.type)))throw Error('실행 중인 요청이 있어 이전 작업 탭을 해제하지 않았습니다.');
         await call('operation.abort',{operationId:previousOperationId});
       }
@@ -50,15 +84,16 @@ export function panelRequests(call:Call) {
       }
       return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target)};
     }),
-    finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>serial(async()=>{
-      const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
-      if(!saved||saved.profileId!==scope.profileId||saved.directory!==scope.directory||saved.sessionId!==scope.sessionId)return false;
-      const api=await client(saved);
-      const [messages,statuses]=await Promise.all([api.get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`),api.get<Record<string,any>>('/session/status')]);
-      if(['busy','retry'].includes(statuses[saved.sessionId]?.type)||!completedRequest(saved,messages))return false;
-      const {clientId}=await chrome.storage.local.get('clientId');
-      if(typeof clientId!=='string')return false;
-      await end(saved,clientId);return true;
+    finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>observeCompletion(scope),
+    reconcile:async()=>{
+      if(polling)return false;
+      polling=true;
+      try { return await observeCompletion(); } finally { polling=false; }
+    },
+    removeProfile:(profileId:string)=>serial(async()=>{
+      const data=await chrome.storage.local.get([KEY,'clientId']);
+      const saved=data[KEY] as RequestLease|undefined;
+      if(saved?.profileId===profileId&&typeof data.clientId==='string')await end(saved,data.clientId,true);
     }),
     cancel:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'> & {requestId?:string})=>serial(async()=>{
       const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
@@ -67,12 +102,14 @@ export function panelRequests(call:Call) {
       if(scope.requestId&&scope.requestId!==saved.requestId)return;
       const {clientId}=await chrome.storage.local.get('clientId');
       if(typeof clientId!=="string")throw Error("Browser client unavailable");
-      await end(saved,clientId,false);
-      const api=await client(saved);
+      await end(saved,clientId,true);
+      // User Stop already closed the gate and cleared the lease. The panel also
+      // attempts /abort using its captured connection if discovery is unavailable.
+      const api=await client(saved).catch(()=>null);
+      if(!api)return {handled:true,abortSent:false};
       try { await api.post(`/session/${encodeURIComponent(saved.sessionId)}/abort`); }
       catch(error) { if(!(error instanceof OpenCodeApiError && error.status===404))throw error; }
-      await chrome.storage.local.remove(KEY);
-      return true;
+      return {handled:true,abortSent:true};
     }),
   };
 }

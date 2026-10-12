@@ -204,6 +204,6 @@ $agentBrowserState = Get-Content -LiteralPath (Join-Path $agentBrowserInstall '.
 
 ## WSL은 응답하지만 브라우저 MCP가 준비되지 않음
 
-진단에서는 OpenCode HTTP 인증/health와 브라우저 MCP 연결 상태를 구분합니다. HTTP가 정상이어도 MCP 초기화가 실패하면 준비 완료가 아닙니다. 전용 keeper 소켓의 Windows canary가 실패하거나 소유권이 불명확하면 오류를 유지합니다. 해당 실행 환경을 명시적으로 중단한 뒤 다시 시작하고, 반복되면 Windows·WSL·커널·OpenCode 버전과 민감정보를 제거한 오류 코드를 확인하세요. 전역 OpenCode 설정, 운영 프로세스, WSL 전체 인스턴스를 임의로 지우거나 재시작하지 마세요.
+진단에서는 OpenCode HTTP 인증/health와 브라우저 MCP 연결 상태를 구분합니다. HTTP가 정상이어도 MCP 초기화가 실패하면 준비 완료가 아닙니다. 이 경우에도 doctor는 MCP 세부 원인(executable_missing, permission_denied, connection_timeout 등)을 표시합니다. WSL 프로필의 Bridge 데이터 home은 WSL이 마운트한 Windows 드라이브 경로여야 하며, 지원하지 않는 UNC/확장 경로는 INVALID_PARAMS로 반환합니다. 전용 keeper 소켓의 Windows canary가 실패하거나 소유권이 불명확하면 오류를 유지합니다. 해당 실행 환경을 명시적으로 중단한 뒤 다시 시작하고, 반복되면 Windows·WSL·커널·OpenCode 버전과 민감정보를 제거한 오류 코드를 확인하세요. 전역 OpenCode 설정, 운영 프로세스, WSL 전체 인스턴스를 임의로 지우거나 재시작하지 마세요.
 
 WSL 제어 호출은 같은 합성 fixture 비교에서 시작 6→2회, 일반 상태 확인 5회 합계 15→5회였습니다. 이는 전체 WSL 실행 횟수가 아니라 제어 호출 수이며, 별도 장기 keeper 세션 1개가 추가됩니다. 지연 시간 개선을 모든 PC에서 보장하는 수치는 아닙니다.

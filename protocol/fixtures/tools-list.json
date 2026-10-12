@@ -1,6 +1,6 @@
 [
   {
-    "description": "List tabs/windows, attach, new, switch, close or release. New needs no snapshot; omit operationId to start an operation. Omit url for about:blank. Close only operation-created tabs; switch back explicitly. Switch changes the operation target.",
+    "description": "List tabs/windows, attach, new, switch, close or release. New needs no snapshot; omit operationId to start an operation. Omit url for about:blank. Close only operation-created tabs; about:blank tabs cannot be closed. Switch back explicitly. Switch changes the operation target.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -292,7 +292,7 @@
     "name": "browser_scroll"
   },
   {
-    "description": "Wait for any text/textGone/refGone/urlIncludes match or TIMEOUT. Scope: snapshot frameRef, else refGone's frame, else top. frameRef binds to one document; snapshot after navigation.",
+    "description": "Wait for any text/textGone/refGone/urlIncludes match or TIMEOUT. URL always uses the tab. Content scope: frameRef, else refGone frame, else top. Snapshot after navigation.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

@@ -381,7 +381,7 @@ describe("BridgeConnection mutual authentication", () => {
 
 describe("management request deadlines", () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
-  it.each([["runtime.ensure", 120000], ["doctor.run", 120000], ["runtime.stop", 30000], ["profile.save", 30000], ["profile.delete", 30000]] as const)("allows %s its startup/management deadline", async (method, deadline) => {
+  it.each([["runtime.status", 60000], ["runtime.ensure", 120000], ["doctor.run", 120000], ["runtime.stop", 30000], ["profile.save", 30000], ["profile.delete", 30000]] as const)("allows %s its startup/management deadline", async (method, deadline) => {
     const { conn } = setup(); const ws = await authenticated(conn);
     const original = ws.send.bind(ws);
     ws.send = text => { original(text); const message = parseEnvelope(text); if (message.type === "req" && message.method === "heartbeat") ws.reply(makeOk(message.id, {})); };

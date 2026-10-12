@@ -25,7 +25,7 @@ type Pending = { complete: (env: Res) => void; fail: (error: ProtocolError) => v
 export const DEFAULT_BRIDGE_URL = "ws://127.0.0.1:4317/extension";
 const HEARTBEAT_MS = 20_000;
 const RESPONSE_TIMEOUT_MS = 10_000;
-const MANAGEMENT_TIMEOUT_MS: Record<string, number> = { "runtime.ensure": 120_000, "doctor.run": 120_000, "runtime.stop": 30_000, "profile.save": 30_000, "profile.delete": 30_000 };
+const MANAGEMENT_TIMEOUT_MS: Record<string, number> = { "runtime.status": 60_000, "runtime.ensure": 120_000, "doctor.run": 120_000, "runtime.stop": 30_000, "profile.save": 30_000, "profile.delete": 30_000 };
 const MAX_BACKOFF_MS = 30_000;
 
 export class BridgeConnection {

@@ -385,3 +385,126 @@ it('creates blank tabs without any page snapshot and routes a chosen window',asy
  expect(create).toHaveBeenCalledWith({url:'about:blank',active:false,windowId:10});
  expect(w.sent).toHaveLength(0);
 });
+
+it('F5 reads a stable readable document while the tab is still loading',async()=>{
+  vi.useFakeTimers();
+  const w=world(),h=createHandlers(w.api,memorySessionStore());w.tabs.get(1)!.status='loading';
+  let settled:any;
+  const work=h(request('browser.snapshot')).then(r=>settled=r,e=>settled=e);
+  try {await vi.advanceTimersByTimeAsync(3000);expect(settled).toMatchObject({loading:true,frames:[{text:{content:'fixture'}}]});}
+  finally {h.disconnect();await work;vi.useRealTimers();}
+});
+it('F6 reports the new tab before its page finishes loading',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  w.api.tabsCreate=async p=>{const t={id:9,windowId:10,url:p.url,status:'loading',active:false} as chrome.tabs.Tab;w.tabs.set(9,t);return t;};
+  w.api.sendToFrame=async()=>({ok:true,result:{url:'https://example.test/heavy'}});
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.click',{ref,newTab:true})).then(r=>settled=r,e=>settled=e);
+  try {await vi.advanceTimersByTimeAsync(1000);expect(settled).toMatchObject({executed:true,openedTabs:[{tabId:9,status:'loading'}]});}
+  finally {h.disconnect();await work;vi.useRealTimers();}
+});
+it('F7 refGone plus a tab URL condition survives content unload',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  w.api.sendToFrame=async()=>{throw Error('unloaded');};
+  const work=h(request('browser.wait',{refGone:ref,urlIncludes:'/done',timeoutMs:2000})).then(r=>r,e=>e);
+  await new Promise(r=>setTimeout(r,25));
+  Object.assign(w.tabs.get(1)!,{url:'https://example.test/done'});
+  for(const f of w.updates)f(1,{url:'https://example.test/done'},w.tabs.get(1)!);
+  expect(await work).toMatchObject({verified:{met:'urlIncludes'}});
+  expect(w.updates.size).toBe(0);
+});
+it('F13 unobserved history traversal returns a prompt unexecuted boundary',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.navigate',{action:'forward'})).then(r=>settled=r,e=>settled=e);
+  try {await vi.advanceTimersByTimeAsync(2100);expect(settled).toMatchObject({code:'ELEMENT_NOT_INTERACTABLE',details:{executed:false}});}
+  finally {h.disconnect();await work;vi.useRealTimers();}
+});
+it('F10 waits for observed navigation when starting from about:blank',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());
+  Object.assign(w.tabs.get(1)!,{url:'about:blank'});w.frames.set(1,[{frameId:0,documentId:'blank',url:'about:blank'}]);
+  w.api.tabsUpdate=async()=>({...w.tabs.get(1)!});
+  vi.useFakeTimers();let settled=false;
+  const work=h(request('browser.navigate',{url:'https://example.test/done'})).then(()=>settled=true,()=>{});
+  try {await vi.advanceTimersByTimeAsync(100);expect(settled).toBe(false);
+    Object.assign(w.tabs.get(1)!,{url:'https://example.test/done'});
+    for(const f of w.updates)f(1,{url:'https://example.test/done',status:'complete'},w.tabs.get(1)!);
+    await work;expect(settled).toBe(true);
+  }finally{h.disconnect();await work;vi.useRealTimers();}
+});
+it('F13 keeps waiting after a real navigation starts but loading takes longer',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  let started:((id:number)=>void)|undefined;
+  const off=vi.fn();w.api.onNavigationStarted=fn=>{started=fn;return off;};
+  w.api.tabsGoBack=async()=>{started?.(1);};
+  vi.useFakeTimers();let settled=false;
+  const work=h(request('browser.navigate',{action:'back'})).then(r=>{settled=true;return r;});
+  try{
+    await vi.advanceTimersByTimeAsync(2000);expect(settled).toBe(false);
+    Object.assign(w.tabs.get(1)!,{url:'https://example.test/previous'});
+    for(const f of w.updates)f(1,{status:'complete',url:'https://example.test/previous'},w.tabs.get(1)!);
+    await expect(work).resolves.toMatchObject({executed:true});expect(off).toHaveBeenCalledOnce();
+  }finally{h.disconnect();await work.catch(()=>{});vi.useRealTimers();}
+});
+it('F6 snapshot waits briefly for a newly created blank loading tab to commit',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());
+  Object.assign(w.tabs.get(1)!,{url:'about:blank',pendingUrl:'https://example.test/1',status:'loading'});
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.snapshot')).then(r=>settled=r,e=>settled=e);
+  try{
+    await vi.advanceTimersByTimeAsync(100);expect(settled).toBeUndefined();
+    Object.assign(w.tabs.get(1)!,{url:'https://example.test/1',pendingUrl:undefined});
+    await vi.advanceTimersByTimeAsync(300);await work;
+    expect(settled).toMatchObject({loading:true,frames:[{text:{content:'fixture'}}]});
+  }finally{h.disconnect();await work;vi.useRealTimers();}
+});
+it('F9 explains why an operation-created blank tab is preserved',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());w.tabs.get(1)!.url='about:blank';
+  await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'UNSUPPORTED_PAGE',message:expect.stringContaining('Blank tabs cannot be safely checked')});
+  expect(w.sent).toHaveLength(0);
+});
+it('review R1 never reads the outgoing HTTP document while navigation is pending',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());
+  Object.assign(w.tabs.get(1)!,{pendingUrl:'https://example.test/destination',status:'loading'});
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.snapshot')).then(r=>settled=r,e=>settled=e);
+  try{await vi.advanceTimersByTimeAsync(2100);
+    expect(w.sent).toHaveLength(0);
+    expect(settled).toMatchObject({code:'FRAME_UNAVAILABLE',retry:'safe'});
+  }finally{h.disconnect();await work;vi.useRealTimers();}
+});
+it('review R1 rejects a snapshot if a pending navigation begins during the read',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),send=w.api.sendToFrame;
+  w.api.sendToFrame=async(...args)=>{const result=await send(...args);w.tabs.get(1)!.pendingUrl='https://example.test/next';return result;};
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.snapshot')).then(r=>settled=r,e=>settled=e);
+  try{await vi.advanceTimersByTimeAsync(2100);expect(settled).toMatchObject({code:'FRAME_UNAVAILABLE'});}
+  finally{h.disconnect();await work;vi.useRealTimers();}
+});
+it('review R2 recognizes same-URL history entry changes',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  let key='entry-before';w.api.historyEntry=async()=>key;w.api.tabsGoBack=async()=>{key='entry-after';};
+  vi.useFakeTimers();let settled:any;
+  const work=h(request('browser.navigate',{action:'back'})).then(r=>settled=r,e=>settled=e);
+  try{await vi.advanceTimersByTimeAsync(1600);expect(settled).toMatchObject({executed:true,verified:{url:'https://example.test/1'}});}
+  finally{h.disconnect();await work;vi.useRealTimers();}
+});
+it.each(['back','forward'])('review R9 reports safe document loss before %s dispatch',async action=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  w.api.historyEntry=async()=>{throw Error('No document with id doc1');};
+  w.api.tabsGoBack=vi.fn();w.api.tabsGoForward=vi.fn();
+  try{
+    await expect(h(request('browser.navigate',{action}))).rejects.toMatchObject({code:'FRAME_UNAVAILABLE',retry:'safe',details:{executed:false}});
+    expect(w.api.tabsGoBack).not.toHaveBeenCalled();expect(w.api.tabsGoForward).not.toHaveBeenCalled();
+  }finally{h.disconnect();}
+});
+it.each(['refGone','frameRef'])('review R5 injection loss still observes the top URL with %s',async scope=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
+  w.api.inject=async()=>{throw Error('Document changed while injecting');};
+  const condition=scope==='refGone'?{refGone:snap.frames[0].elements[0].ref}:{frameRef:snap.frames[0].frameRef,text:'destination'};
+  const work=h(request('browser.wait',{...condition,urlIncludes:'/arrived',timeoutMs:1000})).then(r=>r,e=>e);
+  await new Promise(r=>setTimeout(r,25));
+  Object.assign(w.tabs.get(1)!,{url:'https://example.test/arrived'});
+  for(const listener of w.updates)listener(1,{url:'https://example.test/arrived'},w.tabs.get(1)!);
+  expect(await work).toMatchObject({verified:{met:'urlIncludes'}});expect(w.updates.size).toBe(0);
+});

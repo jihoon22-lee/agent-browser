@@ -16,7 +16,19 @@ type Props = { operation: Operation | null; stopHandler: RefObject<(operationId:
 export function Workbench({ operation, stopHandler, view, onViewChange }: Props) {
   const wb = useWorkbench();
   const [requestHeld,setRequestHeld]=useState(false);
-  useEffect(()=>{let active=true;void chrome.storage.local?.get("panelBrowserRequest").then(saved=>{const r=saved.panelBrowserRequest as any;if(active)setRequestHeld(r?.profileId===wb.profileId&&r?.directory===wb.directory&&r?.sessionId===wb.sessionId);});return ()=>{active=false;};},[wb.profileId,wb.directory,wb.sessionId]);
+  const [stopping,setStopping]=useState(false);
+  const stopLock=useRef(false);
+  useEffect(()=>{
+    let active=true,revision=0;
+    const sync=(r:RequestLease|undefined)=>{if(active)setRequestHeld(r?.profileId===wb.profileId&&r?.directory===wb.directory&&r?.sessionId===wb.sessionId);};
+    const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{
+      if(area==='local'&&Object.hasOwn(changes,'panelBrowserRequest')){revision++;sync(changes.panelBrowserRequest?.newValue as RequestLease|undefined);}
+    };
+    chrome.storage.onChanged?.addListener(changed);
+    const initial=revision;
+    void chrome.storage.local?.get('panelBrowserRequest').then(saved=>{if(revision===initial)sync(saved.panelBrowserRequest as RequestLease|undefined);}).catch(()=>{});
+    return ()=>{active=false;chrome.storage.onChanged?.removeListener(changed);};
+  },[wb.profileId,wb.directory,wb.sessionId]);
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
   const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState("");
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -322,16 +334,35 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         {mention !== undefined && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성"><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>{wb.agents.filter(item => !item.hidden && item.name.includes(mention)).map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
         {draft.startsWith("/") && !draft.includes(" ") && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)].filter(name => name.includes(draft.slice(1))).slice(0, 15).map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>}
         <div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-actions"><span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span><div><button className="primary" disabled={!wb.connected || !wb.sessionId || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
-          <button type="button" hidden={!running && !sending && !requestHeld} disabled={!wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => { const current=wb.captureScope(),selectedApi=api(),path=sessionPath();
+          <button type="button" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
+            if(stopLock.current)return;
+            stopLock.current=true;setStopping(true);
+            try {
+            const current=wb.captureScope(),selectedApi=api(),path=sessionPath();
             const attempt=submission.current?.key===draftKey?submission.current:undefined;
             if(attempt)attempt.cancelled=true;
-            const stopped=await chrome.runtime.sendMessage({kind:'request-cancel',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId,...(attempt?.requestId?{requestId:attempt.requestId}:{})}});
-            if(stopped?.ok===false)throw Error(stopped.error?.message);
-            if(stopped?.result===false||(!attempt?.requestId&&stopped?.result!==true)){
-              if(operation&&stopsOperation(operation.id))await bridgeRequest('operation.abort',{operationId:operation.id});
-              await selectedApi.post(path+'/abort');
+            const failures:string[]=[];
+            let stopped:any;
+            try {
+              stopped=await chrome.runtime.sendMessage({kind:'request-cancel',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId,...(attempt?.requestId?{requestId:attempt.requestId}:{})}});
+              if(stopped?.ok===false)throw Error(stopped.error?.message);
+            } catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
+            const handled=stopped?.ok===true&&(stopped.result===true||stopped.result?.handled===true);
+            if(!handled&&(stopped?.result===false||!attempt?.requestId)){
+              try { if(operation&&stopsOperation(operation.id))await bridgeRequest('operation.abort',{operationId:operation.id}); }
+              catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
             }
-            if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync(); })}>응답 중단</button></div></div>
+            // A successful background abort must not be sent again: another
+            // request may start as soon as that cancellation releases its lock.
+            // Bridge/cleanup/discovery failures still get a direct API attempt.
+            if(!(stopped?.ok===true&&stopped.result?.abortSent===true)){
+              try { await selectedApi.post(path+'/abort'); }
+              catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
+            }
+            if(failures.length)throw Error(failures.join(' · '));
+            if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync();
+            } finally { stopLock.current=false;setStopping(false); }
+          })}>응답 중단</button></div></div>
       </form>
     </section>;
   const usagePanel = <details className="workspace-section"><summary>사용량·컨텍스트</summary><dl className="usage"><dt>최근 호출</dt><dd>{tokenLine(usage.latest)}</dd><dt>현재 사용자 요청 합계</dt><dd>{tokenLine(usage.request)}</dd><dt>세션 누적</dt><dd>{tokenLine(usage.session)}</dd><dt>현재 컨텍스트</dt><dd>{usage.context.tokens === null ? "정보 없음" : `${usage.context.tokens.toLocaleString()} 토큰 · 최근 호출 기반 추정`}{usage.context.limit !== null ? ` / 모델 한도 ${usage.context.limit.toLocaleString()}` : " / 모델 한도 정보 없음"}{usage.context.modelChanged ? " · 모델 변경 후 새 호출 대기" : ""}</dd><dt>압축</dt><dd>{({ none: "없음", pending: "진행 중", completed: "완료" } as Data)[usage.compaction]}</dd></dl><button disabled={!model || !wb.sessionId || running} onClick={() => void perform(compact)}>지금 컨텍스트 압축</button></details>;

@@ -110,13 +110,13 @@ serve는 해당 연결의 요청 future만 정리하며, registry는 그 요청�
 | 메서드 | params | 동작 |
 |---|---|---|
 | `runtime.ensure` | `{profileId:string}` | 소유권·인증·v1 API를 확인해 재사용하거나 관리 서버 시작. 외부 서버는 연결만 확인 |
-| `runtime.status` | `{profileId:string}` | 서버를 시작하지 않고 현재 상태 확인 |
+| `runtime.status` | `{profileId:string, includeConnection?:boolean}` | 서버를 시작하지 않고 현재 상태 확인. 인증된 Extension이 includeConnection을 요청한 ready 응답만 HTTP 인증정보 포함 |
 | `runtime.stop` | `{profileId:string}` | 소유권이 확인된 관리 서버만 종료. `{stopped:boolean}` 반환 |
 | `doctor.run` | `{profileId?:string}` | 지정 프로필 또는 모든 프로필의 실행 파일·연결·MCP·모델 메타데이터 진단 |
 
 런타임 결과의 공통 필드는 `profileId`, `directory`, `state`, `owned`다. `state`는 `ready`, `stopped`, `starting`, `error`이고 연결 가능하면 `baseUrl`, `version`, `attachCommand`가 추가된다. 관리 서버 실패에는 `error` 설명이 추가된다. `runtime.ensure`는 정상 RPC 응답(`ok:true`) 안에 `state:"error"`를 반환할 수 있으므로 호출자는 두 상태를 구분해야 한다.
 
-`runtime.ensure`의 `ready` 결과에는 HTTP 클라이언트가 사용할 `username`, `password`가 포함될 수 있다. 이는 인증된 Extension에만 전달하며 URL·화면·로그·클립보드·브라우저 영구 저장에 넣지 않는다. `runtime.status`, 프로필 요약, 진단에는 비밀번호를 넣지 않는다. `attachCommand`는 비밀번호 대신 Bridge의 `--home ... attach --profile ...` 호출을 표시한다. CLI는 저장된 인증정보를 자식 OpenCode의 환경변수로 전달한다.
+`runtime.ensure`의 `ready` 결과에는 HTTP 클라이언트가 사용할 `username`, `password`가 포함될 수 있다. 이는 인증된 Extension에만 전달하며 URL·화면·로그·클립보드·브라우저 영구 저장에 넣지 않는다. `runtime.status` 기본 응답, 프로필 요약, 진단에는 비밀번호를 넣지 않는다. managed 서버의 HTTP health는 통과했으나 MCP가 실패하면 state:error/httpReady:true로 구분하고 doctor는 MCP 세부 진단을 계속한다. background 완료 확인은 `runtime.status {includeConnection:true}`로 실행 중 연결만 조회하며 인증정보는 메모리에서만 사용한다. `attachCommand`는 비밀번호 대신 Bridge의 `--home ... attach --profile ...` 호출을 표시한다. CLI는 저장된 인증정보를 자식 OpenCode의 환경변수로 전달한다.
 
 관리 서버는 인증 없는 health 요청이 401이고 인증된 `/global/health`가 v1 정상 상태이며 `/doc`에 필요한 v1 경로가 있을 때 사용한다. 프로세스가 남아 있지만 listener 소유권을 검증할 수 없으면 중복 서버를 시작하지 않고 오류를 반환한다. 관리 작업은 프로필별 프로세스 잠금으로 중복 실행을 막는다. 종료 확인 실패 시 소유권 기록을 유지한다.
 
@@ -148,22 +148,24 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 
 Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 브라우저의 새 사용자 요청을 예약한다. 하나의 요청만 예약할 수 있다. tabId 누락은 안전한 기본 대상이 없음을 뜻하며 attach 시 현재 탭으로 대체하지 않는다. `browser_tabs action=attach`의 선택적 requestId가 예약과 일치해야 한다. 명시적 tabId는 캡처된 기본값보다 우선한다. 기존 CLI는 예약이 없을 때 requestId 없이 attach할 수 있다.
 
-`request.end {requestId, clientId}`는 정확히 일치하는 예약과 그 operation을 해제하고 content 명령을 취소한다. 이전 operation으로 뒤늦게 들어온 도구 호출은 거부한다. Stop은 operation과 연결된 예약도 무효화한다. 완료 판단은 동일 OpenCode session/message 응답과 authoritative idle 상태로 확인하며, API 응답이 불명확하면 durable local storage의 예약 식별자를 보존한다.
+`request.end {requestId, clientId, abort?:boolean}`는 정확히 일치하는 예약을 끝내고 content 명령을 취소한다. 정상 완료는 Released, 사용자 Stop(`abort:true`)은 Aborted로 남겨 이전 operation 호출에 CANCELLED를 반환한다. Stop 후 같은 client의 requestId 없는 attach/new는 30초 동안 CANCELLED이며, 명시적인 새 사용자 requestId는 즉시 사용할 수 있다. 이 유한한 중단 표시가 Bridge 재시작이나 30초 이후까지 모든 늦은 호출을 막는다고 보장하지 않는다. MCP tool.cancel/응답 전송 실패의 operation abort는 예약과 캡처한 기본 탭을 유지한다. Extension의 operation.abort는 사용자 중단으로 예약도 끝낸다.
+
+background는 활성 worker에서 15초 주기, suspended worker에서는 1분 alarm으로 예약을 확인한다(Chrome 스케줄링에 따른 지연 가능). 패널이 닫혀도 같은 session/message의 완료 응답과 busy/retry가 아닌 상태를 확인하면 정상 해제한다. stopped/error 응답 또는 명확한 프로필 삭제 오류를 확인한 경우에만 runtime을 시작하지 않고 Bridge gate를 닫아 lease를 정리한다. 시작 중 상태, 연결 단절, timeout, 기타 조회 실패는 완료 증거가 아니므로 lease를 보존한다. runtime.status는 managed MCP 준비 확인을 위해 60초 응답 제한을 사용한다. 열린 패널은 storage 변경을 구독해 background 해제를 즉시 반영한다. Stop은 gate가 닫히면 런타임 발견/abort 실패와 무관하게 lease를 정리하고, background 취소는 handled/abortSent를 반환한다. 성공적으로 전송한 /abort는 패널에서 반복하지 않으며, Bridge 실패 또는 abortSent:false일 때는 패널이 선택된 OpenCode 세션의 /abort를 직접 시도한다.
 
 
 ### 프레임 대기
 
 `browser_snapshot`의 각 프레임은 `frameRef`(예: `s12f7`)를 반환한다. `browser_wait {operationId, frameRef, text}`는 그 snapshot에 결합된 tab/operation/document에서 조건을 검사한다. DOM 본문만 교체되면 유지되지만 프레임 제거·문서 이동·다른 작업/탭의 참조는 `STALE_ELEMENT`다. `refGone`과 함께 지정하면 같은 snapshot 프레임이어야 한다.
 
-조건은 OR이며, 명시적 frameRef의 URL 조건도 해당 문서에만 적용한다. frameRef를 생략하면 refGone의 프레임, 둘 다 없으면 최상위 문서를 사용한다. 최상위 URL 대기는 기존의 탭 이동 관찰을 유지한다. iframe의 문서 간 이동 후에는 새 snapshot을 요청한다. 다른 프레임의 같은 텍스트나 URL로 성공을 대신하지 않는다.
+조건은 OR이며 URL 조건은 frameRef/refGone 유무와 관계없이 탭의 최상위 URL을 관찰한다. 텍스트·refGone은 명시적 frameRef, 없으면 refGone의 프레임, 둘 다 없으면 최상위 문서를 사용한다. content 문서가 사라져도 URL 관찰은 timeout까지 유지한다. iframe의 문서 간 이동 후에는 새 snapshot을 요청한다. 다른 프레임의 같은 텍스트로 성공을 대신하지 않는다.
 
 
 ## 게시판 탐색과 탭 닫기
 
 - back/forward는 현재 top document를 고정한 isolated-world `history.back/forward`를 사용한다. Chrome의 `tabs.goBack/goForward`는 신뢰된 사용자 활성화가 없는 기록을 건너뛸 수 있어 합성 클릭 뒤 목록 복귀에 사용하지 않는다.
-- 탐색은 문서 ID/URL 또는 loading/complete 이벤트로 실제 전환을 관찰한다. API 승인 직후 이전 complete 상태만으로 성공하지 않는다. 30초 내 전환을 관찰하지 못하면 실행 여부가 명확한 timeout 또는 EXECUTION_UNKNOWN을 반환하며 자동 재실행하지 않는다. 같은 URL/문서에서 이벤트도 없는 no-op 이동은 timeout이 될 수 있다.
-- snapshot은 읽은 frame document ID와 반환 시점의 live 문서를 비교한다. top 문서 읽기 실패나 문서/URL 변경은 총 3번까지 읽기만 반복한다. 3번 모두 실패하면 safe FRAME_UNAVAILABLE이다. 부분 iframe 실패는 frameErrors로 유지한다.
-- refs는 실제 DOM 노드와 snapshot/frame/document/operation 경계에 묶인다. 노드가 연결돼 있어도 접근 가능한 이름·role·href·target·type·formaction이 바뀌면 STALE_ELEMENT다. pagehide에서 registry를 지워 BFCache 복원 후 옛 refs의 부활을 막는다. 값 입력 자체는 참조를 무효화하지 않는다.
+- 탐색은 문서 ID/URL 또는 loading/complete 이벤트로 실제 전환을 관찰한다. API 승인 직후 이전 complete 상태만으로 성공하지 않는다. 30초 내 전환을 관찰하지 못하면 실행 여부가 명확한 timeout 또는 EXECUTION_UNKNOWN을 반환하며 자동 재실행하지 않는다. back/forward는 Navigation API currentEntry.key도 비교해 URL이 같은 SPA 기록 이동을 식별한다. dispatch 뒤 1.5초 동안 기록 항목·탐색 시작·탭 loading·URL·문서 변화가 모두 없으면 ELEMENT_NOT_INTERACTABLE(executed:false)로 반환한다. 탐색이 시작된 경우에는 기존 30초 완료 대기를 유지한다.
+- snapshot은 읽은 frame document ID와 반환 시점의 live 문서를 비교한다. top 문서 읽기 실패나 문서/URL 변경은 총 3번까지 읽기만 반복한다. 3번 모두 실패하면 safe FRAME_UNAVAILABLE이다. 부분 iframe 실패는 frameErrors로 유지한다. loading 중에도 읽을 수 있는 DOM은 loading:true와 함께 반환한다. 새 탭의 첫 문서가 아직 준비되지 않았으면 최대 2초 범위에서 읽기만 재시도하며, 전체 load 완료를 기다리지 않는다. 현재 URL이 HTTP(S)여도 pendingUrl이 있으면 이전 문서를 읽거나 ref를 게시하지 않으며, 제한시간 내 목적지가 commit되지 않으면 safe FRAME_UNAVAILABLE을 반환한다.
+- refs는 실제 DOM 노드와 snapshot/frame/document/operation 경계에 묶인다. 노드가 연결돼 있어도 접근 가능한 이름·role·href·target·type·formaction이 바뀌면 STALE_ELEMENT다. pagehide에서 registry를 지워 BFCache 복원 후 옛 refs의 부활을 막는다. 값 입력 자체는 참조를 무효화하지 않는다. textarea의 live value와 달리 authored defaultValue 변경은 노드 재활용 신호로 유지한다.
 - SPA 렌더 완료나 지연 목록 준비는 load와 다르다. `browser_wait(text=예상 목록 텍스트)` → `browser_snapshot` → 이름/href로 재선택한다. 이전 index로 자동 클릭하거나 STALE을 무시하지 않는다.
 - `browser_tabs(action=close,operationId)`는 현재 operation의 **새로 생성/채택된 탭**만 닫는다. 최초 attach 탭과 외부 tabId는 거부한다. 닫기 전 현재 문서 snapshot을 요구하며 모든 접근 가능한 frame의 편집된 폼을 검사한다. 검사 불가 frame은 닫지 않는다.
 - 닫기는 `window.close`를 한 번 요청하여 Chrome의 beforeunload 및 script-close 제한을 유지한다. `tabs.remove`나 강제 종료로 대체하지 않는다. `tabs.onRemoved`만 성공 근거로 사용하며 3초 안에 확인되지 않으면 unsafe EXECUTION_UNKNOWN이다. 경고 창을 자동 승인하지 않는다.
@@ -183,3 +185,5 @@ Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 
 제한 페이지 attach는 메타데이터 대상 선정만 허용한다. attachable=false는 DOM 접근 불가 의미로 유지하고 snapshot/read는 계속 UNSUPPORTED_PAGE다. 명시적 HTTP(S) goto만 DOM snapshot 없이 허용한다. `browser_click newTab=true`는 ref의 일반 HTTP(S) anchor href를 읽어 새 탭을 생성하고 기존 작업에 채택한다. source click handler는 실행하지 않는다. JavaScript 버튼·download 링크는 거부한다.
 
 `browser_bookmarks`는 operationId 없이 선택된 연결 Chrome에서 list/search를 수행하는 읽기 도구다. 별도 변경/권한 요청 도구는 없다. 선택 bookmarks 권한이 없거나 읽기 중 철회되면 FORBIDDEN_METHOD다. 폴더 탐색은 list+folderId, 검색은 search+query, 페이지는 offset/limit를 사용한다. 결과·권한·제약은 [지원표](./browser-capabilities.md)에 명시한다.
+
+명시적 `browser_click(newTab:true)`은 Chrome이 탭 ID를 반환하면 즉시 openedTabs로 등록한다. 아직 URL이 비어 있거나 about:blank이면 검증된 HTTP(S) pendingUrl을 함께 전달하며, Bridge는 그 목적지와 원본 tab/frame을 확인해 operation에 편입한다. 후속 snapshot/wait로 문서 준비를 확인한다.
