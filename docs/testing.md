@@ -28,6 +28,12 @@ pnpm --filter agent-browser-e2e exec playwright install chromium
   Linux Bridge와 Playwright는 **테스트 의존성**이며 Windows 제품 배포물이나 사용자의 브라우저 제어 하네스가 아니다.
 - Windows/에이전트: 실제 Windows exe·Chrome·WSL interop·OpenCode Zen 검증은 별도 결과로 기록한다.
 
+## Windows PowerShell 5.1 배포 진입점 회귀
+
+`tests/install/package.tests.ps1`은 실제 `build-release.ps1` ZIP을 만들고 한글·공백 경로에 추출한다. Windows 시스템의 `WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File`을 자식 프로세스로 실행해 `PackageDir` 생략/명시 모두 검사한다. 별도 InstallDir·StartupDir·빈 포트를 사용하며 인증된 Bridge health, 재설치 InstallId/PID 유지, 설치된 `uninstall.ps1`의 InstallDir 생략/명시와 소유 프로세스·데이터·Startup 제거를 확인한다.
+
+직접 `& setup.ps1` 호출만으로 이 회귀를 대체하지 않는다. PowerShell 5.1의 advanced-script 매개변수 기본값은 `-File`에서 `$PSScriptRoot`가 비는 경우가 있으므로 기본 경로 초기화는 본문에서 수행한다. 실행 정책 옵션은 테스트 자식 프로세스에만 적용하며 전역 정책은 변경하지 않는다. Windows CI의 기존 package 단계에서도 이 검사가 실행된다.
+
 ## 결정적 시나리오 대응
 
 | E2E | handoff §17-A | 검증 |

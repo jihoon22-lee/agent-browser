@@ -14,7 +14,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
 
 압축 해제 위치와 설치 위치는 다릅니다. 사용자가 설치 경로에 직접 압축을 풀 필요가 없습니다. 기본 설치 위치는 `%LOCALAPPDATA%\AgentBrowser`입니다. 현재 사용자 Startup 폴더에 시작 바로가기를 등록하고 Bridge를 즉시 시작합니다. 이 명령의 실행 정책만 지정하며 PC의 전역 실행 정책을 바꾸지 않습니다.
 
-설치 위치를 바꾸려면 위 명령 뒤에 `-InstallDir "D:\Apps\AgentBrowser"`를 추가합니다. 이후 안내의 설치 경로도 그 위치로 바꿉니다.
+설치 위치를 `D:\Multimedia\AgentBrowser`로 지정하려면 다음 명령을 사용합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir "D:\Multimedia\AgentBrowser"
+```
+
+예를 들어 ZIP을 `D:\Multimedia\agent-browser-0.1.4-windows-x64`에 풀고, 위 명령으로 그와 **별도 폴더**인 `D:\Multimedia\AgentBrowser`에 설치합니다. Chrome에서 선택할 폴더는 `D:\Multimedia\AgentBrowser\extension`입니다. 이후 시작·페어링·제거 명령도 이 설치 경로를 사용합니다. 압축 해제 폴더와 설치 폴더를 같은 위치로 지정하지 않습니다.
+
+조직에서 파일 업로드를 허용하는 폴더와 Chrome의 로컬 확장 로드 허용 여부는 별도 조건입니다. 업로드 허용 경로라는 사실만으로 Chrome 확장 설치도 허용된다고 판단하지 않습니다.
 
 로그인 자동 시작이 실패하면 설치 폴더의 `start-bridge.cmd`를 실행합니다. 설치·업데이트 전에 진행 중인 브라우저 작업을 중단합니다.
 

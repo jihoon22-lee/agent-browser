@@ -31,10 +31,10 @@
 
 설치 폴더의 `start-bridge.cmd`를 실행하고 설정의 **Bridge 주소**를 확인합니다. 기본값은 `ws://127.0.0.1:4317/extension`입니다. 포트는 설치 출력과 같아야 하고 끝의 `/extension`도 필요합니다. OpenCode 서버 주소인 `http://127.0.0.1:4096`을 넣으면 안 됩니다.
 
-사용자 지정 설치 경로가 `D:\Tools\AgentBrowser`라면 Windows PowerShell에서 다음처럼 실행합니다. 실제 설치 경로로 바꾸세요.
+사용자 지정 설치 경로가 `D:\Multimedia\AgentBrowser`라면 Windows PowerShell에서 다음처럼 실행합니다. 실제 설치 경로로 바꾸세요.
 
 ```powershell
-$agentBrowserInstall = 'D:\Tools\AgentBrowser'
+$agentBrowserInstall = 'D:\Multimedia\AgentBrowser'
 powershell -NoProfile -ExecutionPolicy Bypass -File "$agentBrowserInstall\start-bridge.ps1" -InstallDir $agentBrowserInstall
 powershell -NoProfile -ExecutionPolicy Bypass -File "$agentBrowserInstall\show-pairing.ps1" -InstallDir $agentBrowserInstall
 ```
@@ -57,6 +57,12 @@ $agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser'
 4. 실제 작업할 Chrome 프로필인지 확인합니다. 다른 확장 설치와 다시 페어링하면 기존 연결에 영향을 줄 수 있습니다.
 
 토큰을 주소의 쿼리 문자열에 붙이지 마세요. 기존 토큰을 유지하면서 주소만 수정할 때는 토큰 입력란을 비워둘 수 있습니다. 토큰을 입력하지 않았는데 새로 페어링된 것으로 간주하지 않습니다.
+
+### 설치 시작 직후 GetFullPath 경로 형식 오류
+
+v0.1.3 이하에서 Windows PowerShell 5.1의 `powershell -File .\setup.ps1` 실행이 `GetFullPath`의 “경로의 형식이 잘못되었습니다” 오류로 중단될 수 있습니다. advanced script의 매개변수 기본값에서 `$PSScriptRoot`가 비는 결함이며 v0.1.4에서 설치·제거 스크립트의 기본 경로를 본문에서 초기화하도록 수정했습니다. v0.1.4 ZIP 전체를 별도 폴더에 풀고 [설치 안내](../README-install.md)의 명령으로 실행합니다.
+
+기존 v0.1.3 ZIP으로 진행해야 한다면 압축 해제 폴더에서 기존 설치 명령 끝에 `-PackageDir .`을 추가할 수 있습니다. 설치 위치를 바꾸는 옵션은 `-InstallDir "D:\Multimedia\AgentBrowser"`이며 `PackageDir`는 ZIP을 푼 원본 폴더를 뜻합니다. 이 오류를 해결하려고 전역 실행 정책이나 Chrome 정책을 변경할 필요는 없습니다.
 
 ### PowerShell이 스크립트 실행을 차단함
 
@@ -114,7 +120,7 @@ WSL interop이 막혀 있거나 Windows에서 WSL localhost로 접근할 수 없
 
 ```powershell
 # 압축 해제한 새 배포 폴더에서 실행합니다.
-$agentBrowserInstall = 'D:\Tools\AgentBrowser'
+$agentBrowserInstall = 'D:\Multimedia\AgentBrowser'
 powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir $agentBrowserInstall -Port 4321
 ```
 
@@ -176,7 +182,7 @@ Zen 무료 모델 목록 조회가 성공해도 실제 요청이 허용되는 �
 설정의 **진단 실행** 결과에서 실패한 항목과 오류 메시지만 먼저 확인합니다. Bridge에 연결되지 않아 UI 진단을 못 쓰면 설치 상태 파일로 현재 exe와 데이터 경로를 읽어 직접 진단할 수 있습니다.
 
 ```powershell
-$agentBrowserInstall = 'D:\Tools\AgentBrowser'
+$agentBrowserInstall = 'D:\Multimedia\AgentBrowser'
 $agentBrowserState = Get-Content -LiteralPath (Join-Path $agentBrowserInstall '.agent-browser-install.json') -Raw | ConvertFrom-Json
 & $agentBrowserState.CurrentExe --home $agentBrowserState.DataDir doctor --json
 ```

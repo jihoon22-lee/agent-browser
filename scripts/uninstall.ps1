@@ -1,11 +1,13 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$InstallDir = $PSScriptRoot,
+    [string]$InstallDir,
     [switch]$RemoveData,
     [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell 5.1 -File can evaluate advanced-script defaults before $PSScriptRoot is available.
+if (-not $PSBoundParameters.ContainsKey('InstallDir')) { $InstallDir = $PSScriptRoot }
 . (Join-Path $PSScriptRoot 'installer-common.ps1')
 $root = Assert-InstallRoot $InstallDir
 $state = Read-InstallState $root
