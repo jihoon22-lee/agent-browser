@@ -188,3 +188,34 @@ it('does not cache a failed shared runtime probe across a later completion check
   expect(call.mock.calls.filter(([m])=>m==='runtime.status')).toHaveLength(2);
   expect(storage.panelBrowserRequest).toEqual(lease('one'));
 });
+it('invalidates pending shared probes and blocks prepares while a profile mutation is active',async()=>{
+  storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
+  expect(typeof manager.manageProfile).toBe('function');
+  let release!:(value:any)=>void,mutated!:()=>void,started!:()=>void;
+  const probing=new Promise<void>(resolve=>{started=resolve;});
+  call.mockImplementationOnce(async()=>{started();return new Promise(resolve=>{release=resolve;});});
+  const poll=manager.finish(lease('one')).catch(error=>error);
+  await probing;
+  const prepare=manager.prepare(lease('two'),null).catch(error=>error);
+  for(let i=0;i<20;i++)await Promise.resolve();
+  const mutation=manager.manageProfile('native',()=>new Promise<void>(resolve=>{mutated=resolve;}));
+  release({state:'ready',baseUrl:'http://127.0.0.1:4444'});
+  expect(await prepare).toBeInstanceOf(Error);expect(await poll).toBeInstanceOf(Error);
+  await expect(manager.prepare(lease('two'),null)).rejects.toThrow();
+  expect(call.mock.calls.some(([m])=>m==='request.begin')).toBe(false);
+  mutated();await mutation;
+  api.get.mockImplementation(async path=>path==='/session/status'?{}:[{info:{role:'assistant',sessionID:'session-one',parentID:'msg-one',time:{completed:1},finish:'stop'}}]);
+  await expect(manager.prepare(lease('two'),null)).resolves.toMatchObject({requestId:'two'});
+  expect(call.mock.calls.filter(([m])=>m==='runtime.status')).toHaveLength(2);
+});
+it('closes a reservation if profile management starts while request.begin is in flight',async()=>{
+  const manager=panelRequests(call);expect(typeof manager.manageProfile).toBe('function');
+  let begun!:()=>void,release!:()=>void;
+  const beginning=new Promise<void>(resolve=>{begun=resolve;});
+  call.mockImplementation(async method=>{if(method==='request.begin'){begun();await new Promise<void>(resolve=>{release=resolve;});}return {};});
+  const prepare=manager.prepare(lease('one'),null).catch(error=>error);await beginning;
+  await manager.manageProfile('native',async()=>{});release();
+  expect(await prepare).toBeInstanceOf(Error);
+  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
+  expect(storage.panelBrowserRequest).toBeUndefined();
+});

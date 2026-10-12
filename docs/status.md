@@ -23,6 +23,8 @@
 - 실패 화면의 `실행 환경의 상태를 아직 확인하지 못했습니다`와 Bridge의 `status()` try_lock 경로로 원인을 확인했다. 직렬 큐 밖의 완료 확인과 새 요청 준비가 동시에 같은 runtime.status를 호출해 한쪽이 일시적인 starting을 받았다.
 - 경합을 재현하는 단위 테스트가 먼저 실패했다. 같은 프로필의 진행 중인 완료/준비 조회만 공유하고 정착된 결과·실패는 캐시하지 않는다. Stop은 공유 조회를 우회해 gate 종료 후 기존 직접 API fallback을 유지한다.
 - 관련 단위 2파일 **111/111** 후 실패 조회의 재사용 방지 회귀를 추가해 panel-requests **29/29**를 확인했다. Extension 빌드·E2E 타입 검사 통과. W05를 Linux **10/10**, 실제 Windows Chrome/MSVC Bridge **10/10** 반복해 통과했다. 새 최종 PR/main CI와 패키지 재생성 전에는 태그·Release를 게시하지 않는다.
+- [후속 PR #11](https://github.com/jihoon22-lee/agent-browser/pull/11)의 첫 head `c9f514e`는 [Linux·Windows CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38255585228)를 통과했다. 코드 리뷰에서 상태 조회 중 runtime.stop/profile.delete가 시작되면 이전 조회 결과를 재사용할 수 있는 경계가 추가됐다.
+- profile.save/delete·runtime.stop 시작/종료에 프로필 세대를 변경하고 진행 중인 공유 조회를 무효화한다. 관리 작업 중에는 새 prepare를 거부하며 request.begin 도중 세대가 바뀌면 생성한 예약을 종료한다. 새로운 guard 회귀 2건의 초기 실패 후 관련 단위 **114/114**, 빌드·E2E 타입 검사, 실제 Windows 요청/패널 E2E **20/20**가 통과했다. 새 head CI·재리뷰는 push 후 확인한다.
 
 ---
 

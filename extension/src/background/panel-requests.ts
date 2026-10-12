@@ -6,13 +6,17 @@ export function panelRequests(call:Call) {
   let tail:Promise<unknown>=Promise.resolve();
   const serial=<T>(work:()=>Promise<T>)=>{const next=tail.then(work);tail=next.catch(()=>{});return next;};
   const probes=new Map<string,Promise<any>>();
+  const management=new Map<string,{generation:number;active:number}>();
+  const state=(id:string)=>{let value=management.get(id);if(!value){value={generation:0,active:0};management.set(id,value);}return value;};
+  const check=(id:string,generation:number)=>{const current=state(id);if(current.active||current.generation!==generation)throw Error('실행 환경 설정이 변경 중이거나 변경됐습니다. 상태를 확인한 뒤 다시 요청하세요.');};
   const runtimeStatus=(profileId:string,shared:boolean)=>{
+    const generation=state(profileId).generation;check(profileId,generation);
     const pending=shared?probes.get(profileId):undefined;
     if(pending)return pending;
     const lookup=call('runtime.status',{profileId,includeConnection:true}).catch(error=>{
       if(error?.code==='INVALID_PARAMS'&&error?.message==='Unknown runtime profile')return null;
       throw error;
-    });
+    }).then(value=>{check(profileId,generation);return value;});
     if(!shared)return lookup;
     const tracked=lookup.finally(()=>{if(probes.get(profileId)===tracked)probes.delete(profileId);});
     probes.set(profileId,tracked);return tracked;
@@ -52,11 +56,13 @@ export function panelRequests(call:Call) {
     const saved=data[KEY] as RequestLease|undefined;
     if(!saved||typeof data.clientId!=='string')return false;
     const clientId=data.clientId;
+    const generation=state(saved.profileId).generation;check(saved.profileId,generation);
     if(scope&&(saved.profileId!==scope.profileId||saved.directory!==scope.directory||saved.sessionId!==scope.sessionId))return false;
     // Network probes must never hold the mutation queue needed by Stop.
     const result=await completion(saved);
     if(!result)return false;
     return serial(async()=>{
+      check(saved.profileId,generation);
       const current=await chrome.storage.local.get([KEY,'clientId']);
       const active=current[KEY] as RequestLease|undefined;
       if(current.clientId!==clientId||!active||active.requestId!==saved.requestId||active.messageId!==saved.messageId||active.profileId!==saved.profileId||active.directory!==saved.directory||active.sessionId!==saved.sessionId)return false;
@@ -65,6 +71,10 @@ export function panelRequests(call:Call) {
   }
   let polling=false;
   return {
+    manageProfile:async<T>(profileId:string,work:()=>Promise<T>)=>{
+      const current=state(profileId);current.generation++;current.active++;probes.delete(profileId);
+      try{return await work();}finally{current.generation++;current.active--;probes.delete(profileId);}
+    },
     discard:(requestId:string)=>serial(async()=>{
       const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
       if(!saved||saved.requestId!==requestId)return;
@@ -72,7 +82,10 @@ export function panelRequests(call:Call) {
       if(typeof clientId!=='string')throw Error('Browser client unavailable');
       await end(saved,clientId);
     }),
-    prepare:(lease:RequestLease,target:RequestTarget|null,previousOperationId?:string)=>serial(async()=>{
+    prepare:(lease:RequestLease,target:RequestTarget|null,previousOperationId?:string)=>{
+      const generation=state(lease.profileId).generation;
+      return serial(async()=>{
+      check(lease.profileId,generation);
       const {clientId}=await chrome.storage.local.get('clientId');
       if(typeof clientId!=='string')throw Error('브라우저 연결을 먼저 확인하세요.');
       const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
@@ -85,16 +98,22 @@ export function panelRequests(call:Call) {
         if(Object.values(statuses).some(s=>['busy','retry'].includes(s?.type)))throw Error('실행 중인 요청이 있어 이전 작업 탭을 해제하지 않았습니다.');
         await call('operation.abort',{operationId:previousOperationId});
       }
+      check(lease.profileId,generation);
       await chrome.storage.local.set({[KEY]:lease});
-      try { await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null}); }
+      try {
+        check(lease.profileId,generation);
+        await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null});
+        check(lease.profileId,generation);
+      }
       catch(error){
+        if(state(lease.profileId).generation!==generation||state(lease.profileId).active){await end(lease,clientId,true);throw error;}
         // A lost acknowledgement may have reserved the request. Keep its identity
         // so Stop can release it instead of silently forgetting the owner.
         if(['BROWSER_BUSY','OPERATION_INVALID','INVALID_PARAMS'].includes((error as any)?.code))await chrome.storage.local.remove(KEY);
         throw error;
       }
       return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target)};
-    }),
+    });},
     finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>observeCompletion(scope),
     reconcile:async()=>{
       if(polling)return false;

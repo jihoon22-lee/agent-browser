@@ -65,10 +65,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg?.kind === "bridge" && ["status.get", "operation.abort", "browser.use", "profile.list", "profile.save", "profile.delete", "runtime.ensure", "runtime.status", "runtime.stop", "doctor.run"].includes(msg.method)) {
-    conn.request(msg.method, msg.params ?? {}).then(async r => {
+    const work=()=>conn.request(msg.method, msg.params ?? {}).then(async r => {
       if(msg.method==='profile.delete')await requests.removeProfile(msg.params?.profileId);
       return r;
-    }).then((r) => sendResponse({ ok: true, result: r }), (e) => sendResponse({ ok: false, error: e instanceof ProtocolError ? e.toRpc() : { code: "INTERNAL", message: String(e), retry: "never" } }));
+    });
+    const profileId=msg.method==='profile.save'?msg.params?.profile?.id:msg.params?.profileId;
+    const result=['profile.save','profile.delete','runtime.stop'].includes(msg.method)&&typeof profileId==='string'
+      ? requests.manageProfile(profileId,work):work();
+    result.then((r) => sendResponse({ ok: true, result: r }), (e) => sendResponse({ ok: false, error: e instanceof ProtocolError ? e.toRpc() : { code: "INTERNAL", message: String(e), retry: "never" } }));
     return true;
   }
 });
