@@ -177,7 +177,10 @@ export class World {
         ...(customBrowser ? { executablePath: this.config.browserExecutable } : { channel: "chromium" }),
         headless: this.config.headless,
         // Playwright uses a debugging pipe. Branded Chrome loads unpacked extensions through CDP.
-        ...(customBrowser ? { ignoreDefaultArgs: ["--disable-extensions"] } : {}),
+        ...((customBrowser || process.env.AB_TEST_BFCACHE === '1') ? { ignoreDefaultArgs: [
+          ...(customBrowser ? ["--disable-extensions"] : []),
+          ...(process.env.AB_TEST_BFCACHE === '1' ? ["--disable-back-forward-cache"] : []),
+        ] } : {}),
         args: customBrowser ? ["--enable-unsafe-extension-debugging"]
           : [`--disable-extensions-except=${this.config.extensionDir}`, `--load-extension=${this.config.extensionDir}`],
       });

@@ -24,3 +24,12 @@ it("ignores cancellation from a different extension", async () => {
   listener({ kind: "cancel", operationId: "allowed", generation: 5 }, { id: "other-extension" }, () => {});
   expect(await command({ kind: "cmd", method: "wait", params: { operationId: "allowed", generation: 1, text: "ready" } })).toMatchObject({ ok: true });
 });
+
+it('pagehide invalidates references even if BFCache preserves the connected nodes', async () => {
+  const {newTable,resolveRef}=await import('../src/content/refs');
+  const button=document.createElement('button');button.textContent='Read';document.body.append(button);
+  const ref=newTable(99,0).add(button);expect(resolveRef(ref)).toBe(button);
+  window.dispatchEvent(new Event('pagehide'));
+  expect(button.isConnected).toBe(true);
+  expect(()=>resolveRef(ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
+});

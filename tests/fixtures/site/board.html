@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>Synthetic board</title>
+<body><main></main><script>
+window.restored = false;
+addEventListener('pageshow', e => { window.restored = e.persisted; });
+let page = 1, reversed = false;
+function render() {
+ const post = new URL(location.href).searchParams.get('post');
+ document.querySelector('main').innerHTML = post ? `<h1>Article ${post}</h1><p>Body ${post}</p>` :
+ `<h1>Board ready</h1><a id="first" href="?post=${page}">Post ${page}</a><a href="?post=9" target="_blank">New tab post</a><button onclick="spa()">SPA post</button><button onclick="sort()">Sort rows</button><button onclick="page++;render()">Next page</button><iframe src="detail.html?id=3"></iframe>`;
+}
+function spa() { history.pushState({}, '', '?post=7'); render(); }
+function sort() { const row=document.querySelector('#first'); row.href='?post=2';row.textContent='Post 2'; }
+addEventListener('popstate', () => { document.querySelector('main').innerHTML='<p>Loading board</p>';setTimeout(render,900); });
+render();
+</script>

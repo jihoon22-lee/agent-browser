@@ -9,23 +9,23 @@ fn r#ref() -> Value { json!({"type":"string","description":"Element ref from the
 pub fn all() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
-            "List Chrome tabs, attach a tab to start an operation (returns operationId), open a new tab in the operation, switch between the operation's tabs, or release the operation. The operation tab stays fixed even if the user looks at another tab.",
+            "List Chrome tabs, attach a tab to start an operation (returns operationId), open a new tab in the operation, switch between the operation's tabs, close the current operation-created tab (never the attached original), or release the operation. After close, switch to a surviving tabId and snapshot. The operation tab stays fixed even if the user looks at another tab.",
             schema: json!({"type":"object","properties":{
-                "action":{"type":"string","enum":["list","attach","new","switch","release"]},
+                "action":{"type":"string","enum":["list","attach","new","switch","close","release"]},
                 "tabId":{"type":"integer","description":"For attach (omit to use the user's current tab) and switch"},
                 "requestId":{"type":"string","description":"For attach: requestId supplied with the current panel request. Omit tabId to use its captured active tab; an explicit user target takes priority."},
                 "url":{"type":"string","description":"For new: http(s) URL to open"},
                 "operationId": op()},
                 "required":["action"],"additionalProperties":false}) },
         ToolDef { name: "browser_snapshot", description:
-            "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach before writing. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
+            "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach, navigation, tab switch or rerender before writing; identify targets by name/href, never old index. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
             schema: json!({"type":"object","properties":{"operationId":op(),
                 "maxChars":{"type":"integer","minimum":200,"maximum":20000,"default":4000},
                 "offset":{"type":"integer","minimum":0,"default":0},
                 "elementOffset":{"type":"integer","minimum":0,"default":0},
                 "frameOffset":{"type":"integer","minimum":0,"default":0}},
                 "required":["operationId"],"additionalProperties":false}) },
-        ToolDef { name: "browser_navigate", description: "Go to an http(s) URL, or go back, forward, or reload, in the operation tab. Waits for the page to load.",
+        ToolDef { name: "browser_navigate", description: "Go to an http(s) URL, or go back, forward, or reload, in the operation tab. Waits for navigation to complete. For delayed lists use browser_wait for expected text, then browser_snapshot before clicking.",
             schema: json!({"type":"object","properties":{"operationId":op(),
                 "action":{"type":"string","enum":["goto","back","forward","reload"],"default":"goto"},
                 "url":{"type":"string"}},"required":["operationId"],"additionalProperties":false}) },
@@ -59,7 +59,7 @@ pub fn all() -> Vec<ToolDef> {
 pub fn class_of(name: &str, args: &Value) -> CommandClass {
     match name {
         "browser_navigate" | "browser_click" | "browser_fill" | "browser_select" | "browser_press" | "browser_scroll" => CommandClass::Write,
-        "browser_tabs" if args["action"] == "new" => CommandClass::Write,
+        "browser_tabs" if args["action"] == "new" || args["action"] == "close" => CommandClass::Write,
         _ => CommandClass::Read,
     }
 }

@@ -291,3 +291,70 @@ it('R05 advances iframe text pages using the returned cursor and requested budge
     expect(next.frames[1].text.nextOffset).toBe(2400);
     expect(next.frames[1].text.content).toBe(text.slice(1200,2400));
 });
+
+it('retries only the snapshot when the top document changes during the read', async () => {
+  const w = world(), original = w.api.sendToFrame;
+  let reads = 0;
+  w.api.sendToFrame = async (tab, frame, msg: any) => {
+    const result = await original(tab, frame, msg);
+    if (msg.method === 'snapshot' && ++reads === 1) {
+      w.frames.get(1)![0]!.documentId = 'doc-new';
+      w.tabs.get(1)!.url = 'https://example.test/new';
+    }
+    return result;
+  };
+  const h = createHandlers(w.api, memorySessionStore());
+  const snap: any = await h(request('browser.snapshot'));
+  expect(reads).toBe(2);
+  expect(snap.frames[0].documentId).toBe('doc-new');
+  expect(snap.url).toBe('https://example.test/new');
+});
+it('bounds snapshot retries when navigation never settles', async () => {
+  const w = world(), original = w.api.sendToFrame;
+  let reads = 0;
+  w.api.sendToFrame = async (tab, frame, msg: any) => {
+    const result = await original(tab, frame, msg);
+    if (msg.method === 'snapshot') w.frames.get(1)![0]!.documentId = 'doc-' + ++reads;
+    return result;
+  };
+  const h = createHandlers(w.api, memorySessionStore());
+  await expect(h(request('browser.snapshot'))).rejects.toMatchObject({ code: 'FRAME_UNAVAILABLE', retry: 'safe' });
+  expect(reads).toBe(3);
+});
+
+it('does not return old complete state after Chrome acknowledges navigation', async () => {
+  const w = world(), h = createHandlers(w.api, memorySessionStore());
+  await firstRef(h);
+  w.api.tabsGoBack = async () => {
+    setTimeout(() => {
+      w.tabs.get(1)!.url = 'https://example.test/list';
+      w.frames.get(1)![0]!.documentId = 'returned-list';
+      for (const fn of w.updates) fn(1, {url:'https://example.test/list',status:'complete'}, w.tabs.get(1)!);
+    }, 80);
+  };
+  expect(await h(request('browser.navigate', {action:'back'}))).toMatchObject({verified:{url:'https://example.test/list'}});
+});
+
+it('deduplicates confirmed tab close and requires a fresh operation snapshot', async () => {
+  const w=world(), h=createHandlers(w.api,memorySessionStore());
+  await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'STALE_ELEMENT'});
+  await firstRef(h);
+  let removed: (id:number)=>void = ()=>{}, closes=0;
+  w.api.onTabRemoved=fn=>{removed=fn;return ()=>{};};
+  w.api.sendToFrame=async (_tab,_frame,msg:any)=>{
+    if(msg.method==='close') {closes++;removed(1);throw Error('document closed');}
+    return {ok:true,result:{}};
+  };
+  const req=request('browser.tabs.close',{},'close-once');
+  expect(await h(req)).toEqual({closed:true});
+  expect(await h(req)).toEqual({closed:true});
+  expect(closes).toBe(1);
+});
+it('edited child frame prevents close dispatch', async () => {
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  w.frames.get(1)!.push({frameId:2,documentId:'child',url:'https://example.test/form'});
+  const calls:string[]=[];
+  w.api.sendToFrame=async (_tab,frame,msg:any)=>{calls.push(msg.method);return {ok:frame.frameId!==2};};
+  await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+  expect(calls).toEqual(['close-check','close-check']);
+});

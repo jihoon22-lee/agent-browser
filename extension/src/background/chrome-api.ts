@@ -12,8 +12,8 @@ export interface ChromeApi {
     tabsGet(id: number): Promise<chrome.tabs.Tab>;
     tabsCreate(params: chrome.tabs.CreateProperties): Promise<chrome.tabs.Tab>;
     tabsUpdate(id: number, params: chrome.tabs.UpdateProperties): Promise<chrome.tabs.Tab>;
-    tabsGoBack(id: number): Promise<void>;
-    tabsGoForward(id: number): Promise<void>;
+    tabsGoBack(id: number, documentId?: string): Promise<void>;
+    tabsGoForward(id: number, documentId?: string): Promise<void>;
     tabsReload(id: number): Promise<void>;
     captureVisibleTab(windowId: number): Promise<string>;
     listFrames(tabId: number): Promise<FrameInfo[]>;
@@ -27,7 +27,14 @@ export interface ChromeApi {
 export const realChromeApi: ChromeApi = {
     tabsQuery: q => chrome.tabs.query(q), tabsGet: id => chrome.tabs.get(id), tabsCreate: p => chrome.tabs.create(p),
     tabsUpdate: async (id, p) => { const tab = await chrome.tabs.update(id, p); if (!tab)
-        throw new Error('Tab was closed'); return tab; }, tabsGoBack: id => chrome.tabs.goBack(id), tabsGoForward: id => chrome.tabs.goForward(id), tabsReload: id => chrome.tabs.reload(id),
+        throw new Error('Tab was closed'); return tab; }, // Traverse exactly one history entry. tabs.goBack/goForward behave like
+    // browser UI and can skip entries without trusted user activation (agent clicks).
+    tabsGoBack: async (id, documentId) => { await chrome.scripting.executeScript({
+        target: {tabId:id,...(documentId ? {documentIds:[documentId]} : {frameIds:[0]})}, func: () => history.back(),
+    }); },
+    tabsGoForward: async (id, documentId) => { await chrome.scripting.executeScript({
+        target: {tabId:id,...(documentId ? {documentIds:[documentId]} : {frameIds:[0]})}, func: () => history.forward(),
+    }); }, tabsReload: id => chrome.tabs.reload(id),
     captureVisibleTab: windowId => chrome.tabs.captureVisibleTab(windowId, { format: 'png' }),
     listFrames: async (tabId) => (await chrome.webNavigation.getAllFrames({ tabId }) ?? []).map(f => ({ frameId: f.frameId, documentId: f.documentId, url: f.url })),
     inject: async (tabId, frame) => {

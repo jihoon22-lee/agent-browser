@@ -386,6 +386,36 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 }
             }
         }
+        "close" => {
+            let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
+            // Target is the current operation tab; never accept an arbitrary tabId.
+            let queued = state.ops.with_checked(op_id, true, |op| {
+                if args.get("tabId").is_some() { return Err(invalid("close targets the current tab; switch first")); }
+                if !op.opened_tabs.contains(&op.current_tab) {
+                    return Err(RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never,
+                        "Only tabs created by this operation may be closed. The attached original is preserved."));
+                }
+                let params = json!({"operationId":op.id,"generation":op.generation,"tabId":op.current_tab});
+                let queued = state.registry.queue_command_for(&op.client_id,"browser.tabs.close",params,CommandClass::Write)?;
+                Ok((op.current_tab, queued))
+            });
+            let (tab_id, queued) = match queued {
+                Ok(value) => value,
+                Err(error) => return ToolOutcome::rejected(NAME,Some(op_id),error),
+            };
+            match queued.wait(DEFAULT_TIMEOUT).await {
+                Ok(data) if data["closed"] == true => {
+                    state.ops.remove_tab_for_operation(op_id, tab_id);
+                    let remaining = state.ops.check_active(op_id).ok();
+                    ToolOutcome::success(NAME,Some(op_id),true,Executed::Yes,json!({"closed":true}),
+                        json!({"tabId":tab_id,"operationTabs":remaining.as_ref().map(|op| &op.tabs),
+                            "abortedAfter":remaining.is_none(),
+                            "nextStep":"Use action=switch with a surviving operation tabId, then take a fresh snapshot."}))
+                }
+                Ok(_) => delivered_failure(Some(op_id),RpcError::new(ErrorCode::ExecutionUnknown,Retry::Unsafe,"Closure was not confirmed. Inspect tabs before retrying.")),
+                Err(error) => delivered_failure(Some(op_id),error),
+            }
+        }
         "release" => {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             match state.ops.release(op_id) {

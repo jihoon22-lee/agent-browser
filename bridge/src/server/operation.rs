@@ -12,6 +12,7 @@ pub struct Operation {
     pub id: String,
     pub generation: u64,
     pub tabs: Vec<i64>,
+    pub opened_tabs: Vec<i64>,
     pub current_tab: i64,
     pub client_id: String,
     pub state: OpState,
@@ -96,6 +97,7 @@ impl OperationGate {
             id: format!("op-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
             generation: g.generation,
             tabs: vec![tab_id],
+            opened_tabs: vec![],
             current_tab: tab_id,
             client_id: client_id.to_string(),
             state: OpState::Active,
@@ -165,7 +167,7 @@ impl OperationGate {
         let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
         if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
         g.owned_tabs.insert(tab);
-        let op = g.current.as_mut().unwrap(); if !op.tabs.contains(&tab) { op.tabs.push(tab); } Ok(())
+        let op = g.current.as_mut().unwrap(); if !op.tabs.contains(&tab) { op.tabs.push(tab); op.opened_tabs.push(tab); } Ok(())
     }
 
     pub fn add_and_switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
@@ -173,7 +175,7 @@ impl OperationGate {
         if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
         g.owned_tabs.insert(tab);
         let op = g.current.as_mut().unwrap();
-            if !op.tabs.contains(&tab) { op.tabs.push(tab); }
+            if !op.tabs.contains(&tab) { op.tabs.push(tab); op.opened_tabs.push(tab); }
             op.current_tab = tab;
             op.current_tab_closed = false;
         Ok(())
@@ -189,7 +191,7 @@ impl OperationGate {
         let tabs: Vec<_> = tabs.iter().copied().filter(|tab| *tab > 0 && *tab != source && !g.closed_tabs.contains(tab)).collect();
         g.owned_tabs.extend(tabs.iter().copied());
         let op = g.current.as_mut().unwrap();
-        for tab in &tabs { if !op.tabs.contains(tab) { op.tabs.push(*tab); } }
+        for tab in &tabs { if !op.tabs.contains(tab) { op.tabs.push(*tab); op.opened_tabs.push(*tab); } }
         // A concurrent explicit switch wins over an older click's new-tab result.
         if op.current_tab == source { if let Some(tab) = tabs.first() { op.current_tab = *tab; op.current_tab_closed = false; } }
         Ok(op.clone())
@@ -213,6 +215,7 @@ impl OperationGate {
         if g.current.is_some() { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut() {
             op.tabs.retain(|t| *t != tab);
+            op.opened_tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
         }
     }
@@ -222,6 +225,7 @@ impl OperationGate {
         if g.current.as_ref().is_some_and(|op| op.id == id) { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut().filter(|op| op.id == id) {
             op.tabs.retain(|t| *t != tab);
+            op.opened_tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
         }
     }
@@ -232,6 +236,7 @@ impl OperationGate {
         if g.current.as_ref().is_some_and(|op| op.client_id == client_id) { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut().filter(|op| op.client_id == client_id) {
             op.tabs.retain(|t| *t != tab);
+            op.opened_tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
         }
     }

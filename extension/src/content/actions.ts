@@ -1,5 +1,5 @@
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isRendered } from "./dom";
+import { accessibleName, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
@@ -73,6 +73,28 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
 
 async function executeAction(method: string, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
   switch (method) {
+    case "close-check":
+    case "close": {
+      // Preserve edited controls even on sites that forgot beforeunload. A custom
+      // editor cannot be certified clean, so leave it open as well.
+      const controls: Element[] = [];
+      walkDeep(document, el => { if (el.matches('input,textarea,select,[contenteditable]')) controls.push(el); });
+      const dirty = controls.some(el => {
+        if (el instanceof HTMLInputElement) return el.value !== el.defaultValue || el.checked !== el.defaultChecked || (el.files?.length ?? 0) > 0;
+        if (el instanceof HTMLTextAreaElement) return el.value !== el.defaultValue;
+        if (el instanceof HTMLSelectElement) {
+          const options = Array.from(el.options);
+          if (el.multiple) return options.some(o => o.selected !== o.defaultSelected);
+          let index = options.map(o => o.defaultSelected).lastIndexOf(true);
+          if (index < 0 && el.size <= 1) index = options.findIndex(o => !o.disabled && !o.closest('optgroup[disabled]'));
+          return el.selectedIndex !== index;
+        }
+        return (el as HTMLElement).isContentEditable;
+      });
+      if (dirty) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'Edited form controls or an editable region may contain unsaved data; preserve this tab.');
+      if (method === 'close') window.close();
+      return {executed: method === 'close'};
+    }
     case "click": {
       const el = resolveRef(String(p.ref));
       assertInteractable(el);

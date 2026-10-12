@@ -141,7 +141,7 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 | `never` | 입력이나 상태를 바꾸지 않으면 같은 결과다 |
 
 오류 코드 전체 목록은 `protocol/schema/error-codes.json`을 따른다. 응답 없음·연결 끊김·타임아웃 뒤의
-쓰기 명령(click/fill/select/press/navigate/scroll/tabs new)은 자동 재실행하지 않고 `EXECUTION_UNKNOWN`으로 끝낸다.
+쓰기 명령(click/fill/select/press/navigate/scroll/tabs new/close)은 자동 재실행하지 않고 `EXECUTION_UNKNOWN`으로 끝낸다.
 
 
 ### 패널 요청의 탭 예약
@@ -156,3 +156,18 @@ Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 
 `browser_snapshot`의 각 프레임은 `frameRef`(예: `s12f7`)를 반환한다. `browser_wait {operationId, frameRef, text}`는 그 snapshot에 결합된 tab/operation/document에서 조건을 검사한다. DOM 본문만 교체되면 유지되지만 프레임 제거·문서 이동·다른 작업/탭의 참조는 `STALE_ELEMENT`다. `refGone`과 함께 지정하면 같은 snapshot 프레임이어야 한다.
 
 조건은 OR이며, 명시적 frameRef의 URL 조건도 해당 문서에만 적용한다. frameRef를 생략하면 refGone의 프레임, 둘 다 없으면 최상위 문서를 사용한다. 최상위 URL 대기는 기존의 탭 이동 관찰을 유지한다. iframe의 문서 간 이동 후에는 새 snapshot을 요청한다. 다른 프레임의 같은 텍스트나 URL로 성공을 대신하지 않는다.
+
+
+## 게시판 탐색과 탭 닫기
+
+- back/forward는 현재 top document를 고정한 isolated-world `history.back/forward`를 사용한다. Chrome의 `tabs.goBack/goForward`는 신뢰된 사용자 활성화가 없는 기록을 건너뛸 수 있어 합성 클릭 뒤 목록 복귀에 사용하지 않는다.
+- 탐색은 문서 ID/URL 또는 loading/complete 이벤트로 실제 전환을 관찰한다. API 승인 직후 이전 complete 상태만으로 성공하지 않는다. 30초 내 전환을 관찰하지 못하면 실행 여부가 명확한 timeout 또는 EXECUTION_UNKNOWN을 반환하며 자동 재실행하지 않는다. 같은 URL/문서에서 이벤트도 없는 no-op 이동은 timeout이 될 수 있다.
+- snapshot은 읽은 frame document ID와 반환 시점의 live 문서를 비교한다. top 문서 읽기 실패나 문서/URL 변경은 총 3번까지 읽기만 반복한다. 3번 모두 실패하면 safe FRAME_UNAVAILABLE이다. 부분 iframe 실패는 frameErrors로 유지한다.
+- refs는 실제 DOM 노드와 snapshot/frame/document/operation 경계에 묶인다. 노드가 연결돼 있어도 접근 가능한 이름·role·href·target·type·formaction이 바뀌면 STALE_ELEMENT다. pagehide에서 registry를 지워 BFCache 복원 후 옛 refs의 부활을 막는다. 값 입력 자체는 참조를 무효화하지 않는다.
+- SPA 렌더 완료나 지연 목록 준비는 load와 다르다. `browser_wait(text=예상 목록 텍스트)` → `browser_snapshot` → 이름/href로 재선택한다. 이전 index로 자동 클릭하거나 STALE을 무시하지 않는다.
+- `browser_tabs(action=close,operationId)`는 현재 operation의 **새로 생성/채택된 탭**만 닫는다. 최초 attach 탭과 외부 tabId는 거부한다. 닫기 전 현재 문서 snapshot을 요구하며 모든 접근 가능한 frame의 편집된 폼을 검사한다. 검사 불가 frame은 닫지 않는다.
+- 닫기는 `window.close`를 한 번 요청하여 Chrome의 beforeunload 및 script-close 제한을 유지한다. `tabs.remove`나 강제 종료로 대체하지 않는다. `tabs.onRemoved`만 성공 근거로 사용하며 3초 안에 확인되지 않으면 unsafe EXECUTION_UNKNOWN이다. 경고 창을 자동 승인하지 않는다.
+- close 응답의 operationTabs 중 원래 목록 tabId로 `switch`한 다음 새 snapshot을 읽는다. 자동 복귀 대상을 추측하지 않는다. switch는 기존과 같이 작업 대상 전환이며 브라우저의 전경 활성화 기능과 다르다.
+- close는 mutation dedupe를 적용한다. 동일 requestId 재전송은 저장된 결과를 돌려주고 실제 닫기를 반복하지 않는다. 취소/연결 단절 후 불명확한 결과는 탭 목록과 페이지 상태부터 확인한다.
+
+한계: 임의 사이트의 JS closure만 바뀌고 DOM의 의미 정보가 같은 경우를 완전히 검출할 수 없다. 폼 검사는 일반 input/textarea/select 및 open Shadow DOM, editable 영역을 대상으로 하며 저장 완료를 판정하지 않는다. 사이트 자체 JS 상태, 닫힌 Shadow DOM/canvas 편집기, 브라우저가 경고를 제공하지 않는 비표준 편집 데이터의 저장 여부는 보장하지 않는다. beforeunload 창을 취소하거나 script-close가 거부되면 탭을 보존하고 사용자 판단을 요구한다.

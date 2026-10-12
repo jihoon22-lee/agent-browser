@@ -1,3 +1,4 @@
+import { resetRegistry } from "./refs";
 import { takeSnapshot } from "./snapshot";
 import { runAction } from "./actions";
 import { ProtocolError } from "../protocol/errors";
@@ -9,6 +10,8 @@ declare global { interface Window { __agentBrowserContent?: boolean } }
 if (!window.__agentBrowserContent) {
   window.__agentBrowserContent = true;
   const inputState = observeUserInput(window);
+  // BFCache restores the same document and JS heap: old refs must not revive.
+  window.addEventListener('pagehide', resetRegistry);
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id) return;
     if (msg?.kind === "input-state") {

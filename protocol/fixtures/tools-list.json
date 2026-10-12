@@ -1,6 +1,6 @@
 [
   {
-    "description": "List Chrome tabs, attach a tab to start an operation (returns operationId), open a new tab in the operation, switch between the operation's tabs, or release the operation. The operation tab stays fixed even if the user looks at another tab.",
+    "description": "List Chrome tabs, attach a tab to start an operation (returns operationId), open a new tab in the operation, switch between the operation's tabs, close the current operation-created tab (never the attached original), or release the operation. After close, switch to a surviving tabId and snapshot. The operation tab stays fixed even if the user looks at another tab.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -10,6 +10,7 @@
             "attach",
             "new",
             "switch",
+            "close",
             "release"
           ],
           "type": "string"
@@ -39,10 +40,20 @@
     "name": "browser_tabs"
   },
   {
-    "description": "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach before writing. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
+    "description": "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach, navigation, tab switch or rerender before writing; identify targets by name/href, never old index. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "elementOffset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "frameOffset": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer"
+        },
         "maxChars": {
           "default": 4000,
           "maximum": 20000,
@@ -57,16 +68,6 @@
         "operationId": {
           "description": "operationId returned by browser_tabs action=attach",
           "type": "string"
-        },
-        "elementOffset": {
-          "type": "integer",
-          "minimum": 0,
-          "default": 0
-        },
-        "frameOffset": {
-          "type": "integer",
-          "minimum": 0,
-          "default": 0
         }
       },
       "required": [
@@ -77,7 +78,7 @@
     "name": "browser_snapshot"
   },
   {
-    "description": "Go to an http(s) URL, or go back, forward, or reload, in the operation tab. Waits for the page to load.",
+    "description": "Go to an http(s) URL, or go back, forward, or reload, in the operation tab. Waits for navigation to complete. For delayed lists use browser_wait for expected text, then browser_snapshot before clicking.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

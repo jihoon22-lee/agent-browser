@@ -24,7 +24,56 @@ GUI PR #5와 분리된 Windows 작업 복사본에서 진행한다. 운영 설�
 
 # 진행 상태
 
-## 현재 단계
+## 게시판 탐색 안정성 — 별도 작업 로컬 검증 완료 (2026-10-12)
+
+- 시작 시 `git ls-remote origin HEAD refs/heads/main`으로 확인한 기준은 `fb2bcdbb4672a09395c7d7cc2ee75e6796e897c1`이다. 독립 브랜치 `fix/board-navigation-stability`, worktree `/home/jihoon/projects/agent-browser-board-navigation`에서 작업했다. 관련 `AGENTS.md`를 읽었으며 이 기준 저장소에 `.agents/skills`는 없었다.
+- 다른 GUI/WSL interop/iframe·활성 탭 작업은 합치지 않았다. 기존 체크아웃, 운영 설치, 사용자 Chrome 프로필, 전역 OpenCode 설정을 수정하지 않았다. 이번 승인 범위는 제품 코드·로컬 테스트·로컬 커밋이며 push/PR/병합/릴리스는 수행하지 않았다.
+
+### 확인한 결함과 수정
+
+1. 실제 Windows Chrome에서 합성 클릭 뒤 `tabs.goBack`이 목록을 건너뛰어 `about:blank`로 이동했다(history.length=3). SPA back도 첫 실행에서 같은 실패가 있었다. 문서 ID를 고정한 isolated-world history.back/forward로 정확히 한 항목씩 이동하도록 수정한 뒤 hard 왕복 4회와 SPA 지연 목록 시험이 통과했다.
+2. Chrome 탐색 API 승인 직후 이전 문서의 complete를 읽고 돌아올 수 있었다. 문서 ID/URL/탐색 이벤트의 실제 변화와 완료를 기다리며, 타임아웃/취소 시 자동 재실행하지 않는다.
+3. snapshot 도중 문서가 바뀌면 오래된 읽기 결과를 바인딩할 수 있었다. 반환 전 live document와 URL을 확인하고 읽기만 총 3번까지 반복한다. 읽기 교체/반복 상한 테스트 2개와 연결 DOM의 href/접근 가능한 이름 변경 테스트 2개는 수정 전 실패를 확인했다.
+4. 연결된 노드라도 이름·role·링크 대상 등이 바뀌면 옛 ref를 거부한다. pagehide에서 ref registry를 비우므로 실제 BFCache 복원 후에도 옛 refs는 STALE_ELEMENT다. index 자동 재선택은 없다.
+5. `browser_tabs action=close`를 추가했다. 작업에서 생성/채택한 현재 탭만 허용하며 최초 attach 탭은 보호한다. 현재 문서 snapshot과 모든 frame의 폼 검사를 요구한다. close는 한 번만 전달하며 Chrome onRemoved만 성공으로 확인한다. 3초 내 확인이 없으면 EXECUTION_UNKNOWN, 강제 닫기/자동 재시도 없음. 결과 operationTabs에서 원래 목록 tabId로 명시적으로 switch하고 새 snapshot을 읽는다.
+
+### 최종 실행 결과
+
+| 검사 | 관찰 결과 |
+|---|---|
+| Extension 전체 Vitest | 30파일, 289/289 통과 |
+| Extension TypeScript/Vite, E2E TypeScript | 통과 |
+| Rust 전체 `cargo test --offline --locked -p agent-browser-bridge` | 132 통과, 기존 프로세스 helper 1 ignored |
+| Windows Rust tool_router 테스트 exe 직접 실행 | 19/19 통과(새 close 작업 경계 포함) |
+| 실제 Windows Chrome 전체 E2E, AB_TEST_BFCACHE=1 | 55/55 통과: 기존 48 + 게시판 7 |
+| BFCache 별도 B07 | pageshow.persisted=true, notRestoredReasons=null. 복원된 연결 노드의 옛 ref 거부와 새 snapshot 성공 확인 |
+| 실제 닫기 경고 B06 | 합성 페이지의 beforeunload dialog를 관찰하고 dismiss; 탭 보존, EXECUTION_UNKNOWN 반환 |
+| Node fixture/runtime/interop/문서 helper | 14/14 통과 |
+| Clippy, Markdown 링크, git diff --check | 통과. Clippy는 기존 7곳의 경고 유지(원래 operation.rs 경고의 줄 번호만 이동) |
+
+실측 환경은 Windows Node 24.18.1, Chrome 154.0.8037.99, Windows MSVC release Bridge 0.1.4 소스 기반 로컬 빌드다. 최종 exe SHA-256: `8c0c90c3dded2e61b646ab9165490b36d06005ccd2f3b68ed79b80e092ad1300`. 버전·운영 설치·release asset은 변경하지 않았다.
+
+격리 Windows 시험 산출물은 `C:/Users/USER/Documents/Codex/2026-10-12/task-3/windows-test`, 로그는 그 상위 task-3의 `windows-full-final.log`, `windows-rust-tests.log`, `extension-final.log`, `rust-final.log`, `red-tests.log`, `back-diagnosis.log`, `clippy.log`에 있다. 하네스는 시험별 임시 profile/HOME와 자체 포트를 생성하고 자신이 시작한 프로세스만 정리한다.
+
+초기 게시판 실행은 2 실패/4 통과였고, 진단에서 실제 기록 건너뛰기를 확인한 뒤 수정했다. WSL에서만 환경변수를 설정한 최초 Windows 실행은 BFCache opt-in이 Windows 자식에 전달되지 않아 restored=false였다. 이를 통과로 집계하지 않고 Windows PowerShell에서 직접 환경을 설정한 최종 실행에서 실제 복원을 assert했다. 초기 E2E 타입 오류 한 건도 최종 실행 전에 수정했다.
+
+### 동작 검토와 남은 한계
+
+| 동작 | 지원/결정 |
+|---|---|
+| 탭 목록·새 탭·작업 탭 전환 | 기존 지원, 이번 실제 회귀 통과 |
+| back/forward/reload | 기존 도구를 보완, 정확한 한 항목 이동과 실제 완료 확인 |
+| 새 탭 글 읽기 → 닫기 → 원래 목록 복귀 | close 추가 + 기존 switch + fresh snapshot 조합을 실제 검증 |
+| 정렬·pagination·SPA·iframe 교체 | 옛 ref는 거부; 예상 텍스트 wait 후 새 snapshot으로 이름/href를 다시 확인 |
+| 닫기 경고·편집된 폼 | 경고 자동 승인은 없음. input/textarea/select/open Shadow DOM/iframe 편집 검사 실패 시 보존 |
+| 탭 전경 활성화 | switch는 작업 대상만 변경한다. 진행 중인 별도 활성 탭 작업과 중복 구현하지 않음 |
+| 향후 검토 | close-and-return 복합 동작, 안정된 목록 조건을 표현하는 wait 개선. 이번 검증된 명시적 조합으로 수행 가능 |
+
+실제 모델/OpenCode 판단, 사내 환경, 다른 Chrome 버전, 일반 사용자 사이트 데이터는 이번 시험에 포함되지 않았다. 닫힌 Shadow DOM/canvas 및 사이트 자체 메모리에만 있는 미저장 데이터는 일반 DOM 검사로 저장 여부를 보장할 수 없다. beforeunload 경고의 허용/거부 정책은 Chrome에 맡기며 우회하지 않는다. 같은 URL·같은 문서의 무관측 no-op history 이동은 timeout일 수 있다. DOM의 의미 정보가 동일한 채 JS closure만 바뀌는 임의 사이트의 논리까지 검증하지 않는다. load 완료가 지연 목록 준비를 뜻하지 않으므로 browser_wait와 새 snapshot이 계속 필요하다.
+
+현재 범위의 구현 blocker는 없다. 배포·다른 작업과의 통합은 별도 승인 범위다.
+
+## 기준 브랜치의 이전 단계
 
 **v0.1.4 Windows PowerShell 5.1 설치 진입점 로컬 검증 완료. PR CI·코드/보안 리뷰 후 릴리스한다.**
 기준은 main `ef444ce`이며 `feat/ps51-installer`의 별도 worktree에서 작업한다. 승인 범위는 정식 수정·PR·CI/코드/보안 리뷰·병합·v0.1.4 태그/Release까지다. 운영 설치본은 v0.1.3을 유지하며 이번 작업에서 업데이트하지 않는다.

@@ -390,3 +390,24 @@ async fn r01_cancel_crossing_attach_response_releases_only_that_operation() {
     let snapshot = tool(&mut mcp,"browser_snapshot",json!({"operationId":next["operationId"]})).await;
     assert_eq!(snapshot["ok"],true,"late cancellation must not stop a replacement operation");
 }
+
+#[tokio::test]
+async fn close_preserves_original_and_requires_switch_after_owned_tab_closes() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let seen = fake_extension(serve.port, cfg.token.clone(), |method,p| {
+        if method == "browser.tabs.close" { assert_eq!(p["tabId"],77); return Ok(json!({"closed":true})); }
+        if method == "browser.tabs.get" { return Ok(json!({"tabId":p["tabId"].as_i64().unwrap_or(42)})); }
+        default_reply(method,p)
+    }).await;
+    let mut mcp = mcp_client(serve.port,&cfg.token,"close-client").await;
+    let a=tool(&mut mcp,"browser_tabs",json!({"action":"attach"})).await;
+    let op=a["operationId"].as_str().unwrap();
+    let rejected=tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await;
+    assert_eq!(rejected["error"]["code"],"FORBIDDEN_METHOD");
+    assert!(!seen.lock().unwrap().iter().any(|m|m=="browser.tabs.close"));
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"new","operationId":op,"url":"https://example.test"})).await["ok"],true);
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op,"tabId":42})).await["error"]["code"],"INVALID_PARAMS");
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await["executed"],"yes");
+    assert_eq!(tool(&mut mcp,"browser_snapshot",json!({"operationId":op})).await["error"]["code"],"TAB_CLOSED");
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"switch","operationId":op,"tabId":42})).await["ok"],true);
+}

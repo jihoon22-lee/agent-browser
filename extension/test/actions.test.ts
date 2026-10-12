@@ -141,3 +141,14 @@ it.each(['<option disabled value="bad">Blocked</option>', '<optgroup disabled><o
   await expect(runAction('select', {ref: refOf('Choice'), option: 'bad', generation: 10})).rejects.toMatchObject({code: 'ELEMENT_NOT_INTERACTABLE'});
   expect(select.value).toBe('good'); expect(changed).not.toHaveBeenCalled();
 });
+
+it('close preflight accepts a clean implicit select but rejects edited shadow controls', async () => {
+  document.body.innerHTML='<select><option>One</option><option>Two</option></select><div id="host"></div>';
+  await expect(runAction('close-check',{})).resolves.toEqual({executed:false});
+  document.querySelector('select')!.selectedIndex=1;
+  await expect(runAction('close-check',{})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+  document.querySelector('select')!.selectedIndex=0;
+  const shadow=document.querySelector('#host')!.attachShadow({mode:'open'});
+  shadow.innerHTML='<input value="before">';shadow.querySelector('input')!.value='unsaved';
+  await expect(runAction('close-check',{})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+});
