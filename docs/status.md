@@ -226,3 +226,26 @@ canary·MCP initialize·합성 첫 도구 응답, caller/Bridge 종료 후 재�
 정상 시험 통과를 런타임 결함 부재로 해석하지 않는다. 별도 구형 WSL 패키지 VM 시험과
 커널 vsock 결함의 직접 재현은 미실행이며, 응용 계층 fault injection과 구분한다.
 운영 설치, GUI 작업 브랜치, 기존 사용자 세션, 전역 OpenCode 설정을 변경하지 않았다.
+
+## 2026-10-12 WSL interop follow-up review
+
+Review of `748f8d5` found and fixed two additional lifecycle defects: an exited
+server group leader hid a live owned child, and a missing keeper obscured a
+positively previous-boot server record. The former failed with the old native
+Windows binary while its child still returned HTTP 401; both new regressions
+pass with the fix. Foreign nonce ownership remains unknown and is never adopted.
+
+Final Linux Bridge suite: 139 passed, 0 failed, 1 ignored. Three targeted native
+Windows persistence/Stop tests passed. Actual Windows/WSL fixtures passed for
+orphan cleanup, previous-boot metadata, startup crash, ready-state crash/reuse,
+two independent concurrent CLI callers, keeper/socket faults, existing settings,
+real OpenCode 1.18.29 MCP initialize failure/recovery, protocol initialize, and
+the first synthetic browser_tabs response. A repeat status comparison measured
+15 versus 5 WSL control probes for five calls. Actual fixture `/usr/bin/node`
+is v22.22.1; other host Node versions are not the fixture executable version.
+
+See [review findings, exact observations and limits](./wsl-interop-review.md)
+and [sanitized results](./reference/wsl-interop-review-results.json).
+No actual WSL shutdown, separate older-package VM, kernel leak reproduction,
+real Chrome/model request, operating install update, or remote Git action was
+performed. Integration should carry the implementation and its follow-up commit.

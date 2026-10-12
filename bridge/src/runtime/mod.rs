@@ -512,6 +512,23 @@ async fn wsl_control(profile: &Profile, record: &RuntimeRecord, mode: &str) -> b
     wsl_control_status(profile, record, mode).await == Some(0)
 }
 const WSL_CONTROL: &str = r#"set -eu
+inspect_orphan_group() {
+  wanted_group=$1; wanted_nonce=$2; found_live=0
+  for member_stat in /proc/[0-9]*/stat; do
+    member_text=$(cat "$member_stat" 2>/dev/null) || continue
+    member_rest=${member_text##*) }; set -- $member_rest
+    [ "$3" = "$wanted_group" ] && [ "$1" != Z ] || continue
+    found_live=1; member_ticks=${20}
+    member_pid=${member_stat#/proc/}; member_pid=${member_pid%/stat}
+    tr '\000' '\n' </proc/$member_pid/environ 2>/dev/null | grep -Fqx "AGENT_BROWSER_RUNTIME_ID=$wanted_nonce" || continue
+    # Recheck after reading the nonce: never adopt a reused/moved member PID.
+    member_text=$(cat "$member_stat" 2>/dev/null) || continue
+    member_rest=${member_text##*) }; set -- $member_rest
+    [ "$3" = "$wanted_group" ] && [ "${20}" = "$member_ticks" ] && [ "$1" != Z ] && return 0
+  done
+  [ "$found_live" = 0 ] && return 11
+  return 12
+}
 validate_owner() {
   [ -f "$1" ] || return 12
   read -r pid ticks instance boot < "$1" || return 12
@@ -525,25 +542,32 @@ validate_owner() {
     case $boot in ????????-????-????-????-????????????) ;; *) return 12;; esac
     [ "$boot" = "$(cat /proc/sys/kernel/random/boot_id)" ] || return 11
   fi
-  [ -d /proc/$pid ] || return 11
+  if [ ! -d /proc/$pid ]; then
+    [ "${3:-}" != leader ] || return 11
+    inspect_orphan_group "$pid" "$2"; return $?
+  fi
   stat=$(cat /proc/$pid/stat) || return 12; rest=${stat##*) }
   actual=$(printf '%s\n' "$rest" | awk '{print $20}')
   group=$(printf '%s\n' "$rest" | awk '{print $3}')
   state=$(printf '%s\n' "$rest" | awk '{print $1}')
-  if [ "$actual" != "$ticks" ] || [ "$state" = Z ]; then return 11; fi
+  [ "$actual" = "$ticks" ] || return 11
+  if [ "$state" = Z ]; then
+    [ "${3:-}" != leader ] || return 11
+    inspect_orphan_group "$pid" "$2"; return $?
+  fi
   [ "$group" = "$pid" ] || return 12
   tr '\000' '\n' </proc/$pid/environ | grep -Fqx "AGENT_BROWSER_RUNTIME_ID=$2" || return 12
 }
-if [ "$3" = inspect ] && [ -n "${5:-}" ]; then
-  ( validate_owner "$5" "$2" || exit 12
-    read -r nonce socket < "$5.ready" || exit 12
-    [ "$nonce" = "$2" ] && [ "$socket" = "${6:-}" ] && [ -S "$socket" ]
-  ) || exit 12
-fi
 if validate_owner "$1" "$2"; then code=0; else code=$?; fi
 if [ "$3" = dead ]; then [ "$code" = 11 ]; exit $?; fi
 if [ "$code" != 0 ]; then
   case $3 in state|inspect) exit "$code";; *) exit 12;; esac
+fi
+if [ "$3" = inspect ] && [ -n "${5:-}" ]; then
+  ( validate_owner "$5" "$2" leader || exit 12
+    read -r nonce socket < "$5.ready" || exit 12
+    [ "$nonce" = "$2" ] && [ "$socket" = "${6:-}" ] && [ -S "$socket" ]
+  ) || exit 12
 fi
 if [ "$3" = listener ] || [ "$3" = inspect ]; then
   missing=1; [ "$3" != inspect ] || missing=20

@@ -1,8 +1,10 @@
 """Owned runtime fault/stdio checks only. Output excludes credentials and config."""
-import base64, json, os, pathlib, selectors, signal, socket, subprocess, sys, tempfile, time, urllib.request
+import base64, json, os, pathlib, selectors, signal, socket, subprocess, sys, tempfile, time, urllib.request, urllib.parse
 
 home = pathlib.Path(sys.argv[2])
-record = json.loads((home / 'runtime.json').read_text())['runtimes']['wsl']
+runtime_config = json.loads((home / 'runtime.json').read_text())
+record = runtime_config['runtimes']['wsl']
+profile = runtime_config['profiles']['wsl']
 keeper = record['wslKeeper']
 mode = sys.argv[1]
 
@@ -20,7 +22,7 @@ def own_identity(path):
 
 def config():
     auth = base64.b64encode((record['username'] + ':' + record['password']).encode()).decode()
-    url = record['baseUrl'] + '/config?directory=/tmp'
+    url = record['baseUrl'] + '/config?' + urllib.parse.urlencode({'directory':profile['directory']})
     with urllib.request.urlopen(urllib.request.Request(url, headers={'Authorization': 'Basic ' + auth}), timeout=10) as response:
         return json.load(response)['mcp']['browser']
 
@@ -30,11 +32,11 @@ def protocol():
     env['WSL_INTEROP'] = keeper['socket']
     probe = subprocess.run([mapped(record['bridgeExecutable']), '--version'], env=env, capture_output=True, timeout=8)
     assert probe.returncode == 0 and probe.stdout.startswith(b'browser-bridge ')
-    print(json.dumps({'stage': 'keeper-socket-windows-canary', 'ok': True}), flush=True)
+    print(json.dumps({'stage': 'keeper-socket-windows-canary', 'ok': True, 'version':probe.stdout.decode().strip()}), flush=True)
     mcp = config()
     assert mcp['environment']['WSL_INTEROP'] == keeper['socket']
     env.update(mcp['environment'])
-    child = subprocess.Popen(mcp['command'], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    child = subprocess.Popen(mcp['command'], cwd=mcp.get('cwd',profile['directory']), env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     poll = selectors.DefaultSelector(); poll.register(child.stdout, selectors.EVENT_READ)
     def send(value):
         child.stdin.write(json.dumps(value).encode() + b'\n'); child.stdin.flush()
@@ -48,14 +50,15 @@ def protocol():
         raise AssertionError('MCP response timeout')
     try:
         send({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'isolated-interop-fixture','version':'1'}}})
-        assert 'serverInfo' in receive(1)['result']
-        print(json.dumps({'stage':'native-bridge-mcp-initialize','ok':True}),flush=True)
+        initialized=receive(1)['result']; assert 'serverInfo' in initialized
+        print(json.dumps({'stage':'native-bridge-mcp-initialize','ok':True,'protocolVersion':initialized['protocolVersion'],'serverInfo':initialized['serverInfo']}),flush=True)
         send({'jsonrpc':'2.0','method':'notifications/initialized'})
+        began=time.monotonic()
         send({'jsonrpc':'2.0','id':2,'method':'tools/call','params':{'name':'browser_tabs','arguments':{'action':'list'}}})
         response=receive(2)
         assert not response['result'].get('isError',False), 'First synthetic tool returned an error'
         assert 'interop-synthetic' in json.dumps(response), 'Synthetic extension did not answer the first tool'
-        print(json.dumps({'stage':'first-tool-synthetic-extension-response','ok':True}),flush=True)
+        print(json.dumps({'stage':'first-tool-synthetic-extension-response','ok':True,'tool':'browser_tabs','requestId':2,'isError':False,'syntheticTitle':'interop-synthetic','elapsedMs':round((time.monotonic()-began)*1000)}),flush=True)
     finally:
         child.stdin.close()
         try: child.wait(timeout=5)
@@ -68,6 +71,16 @@ elif mode == 'kill-keeper':
     pid=own_identity(keeper['ownerFile'])
     os.killpg(pid,signal.SIGTERM)
     print(json.dumps({'stage':'owned-keeper-terminated','pid':pid,'ok':True}))
+elif mode == 'kill-server-leader':
+    pid=own_identity(record['wslOwnerFile'])
+    os.kill(pid,signal.SIGKILL)
+    print(json.dumps({'stage':'owned-server-leader-killed-child-left-for-stop','pid':pid,'ok':True}))
+elif mode == 'profile-env':
+    pid=own_identity(record['wslOwnerFile'])
+    variables=pathlib.Path(f'/proc/{pid}/environ').read_bytes().split(b'\0')
+    assert b'AB_PROFILE_SENTINEL=kept Korean value' in variables
+    assert pathlib.Path(f'/proc/{pid}/cwd').resolve() == pathlib.Path(profile['directory']).resolve()
+    print(json.dumps({'stage':'profile-environment-and-working-directory-preserved','ok':True}))
 elif mode == 'faults':
     own_identity(keeper['ownerFile'])
     mcp=config(); env=os.environ.copy(); env.update(mcp['environment'])

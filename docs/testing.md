@@ -361,3 +361,30 @@ fixture를 Windows 드라이브에 복사하거나 해당 배포판의 WSL UNC �
 `result.json`은 자격정보나 사용자 대화를 포함하지 않는 단계별 결과만 보관한다.
 기존 runtime.json, 로그, 사용자 Chrome 페이지를 fixture로 가져오지 않는다.
 커널 결함을 주장하려면 별도 근거가 필요하며, 자체 AF_UNIX handshake 정지를 그 재현으로 보고하지 않는다.
+
+## WSL interop follow-up review scenarios
+
+Use the same native Windows runner environment described above. The review
+fixtures additionally support these `RUNTIME_KIND=wsl` scenarios:
+
+- `previous-boot`: isolated previous-boot owner/keeper markers and absent process
+  identities; stopped then fresh start. Does not shut down the host WSL instance.
+- `orphan-leader`: kill only the nonce/start-tick-verified fixture server leader,
+  leave its synthetic HTTP child alive, then verify owned Stop closes the child.
+  The fixture has source-removal and 90-second self-termination safeguards.
+- `startup-crash`: delay only the fixture server launch, kill its own resident
+  Bridge after durable ownership, restart, verify retained instance, Stop, start.
+- `concurrent-callers`: run two separate native CLI starts against one isolated
+  home/profile; require one owned record and either shared readiness or an explicit
+  profile-lock rejection, then reuse after callers exit and cleanly stop.
+- `interop-review`: real OpenCode 1.18.29 with isolated HOME/XDG/project/config;
+  verify settings and environment preservation, inject a nonresponsive browser
+  MCP command through v1 POST /mcp, require HTTP-healthy/MCP-failed error state
+  and retained ownership, restore the command, initialize and run a synthetic tool.
+
+Review-only Linux regressions reside in `bridge/src/runtime/interop_tests.rs`:
+previous boot with absent keeper, exited leader with owned surviving child, and
+foreign-nonce orphan group refusal. Full suite command:
+`cargo test --locked --offline -p agent-browser-bridge`.
+Results and distinctions from real Chrome/model/kernel reproduction are recorded
+in [wsl-interop-review.md](./wsl-interop-review.md).
