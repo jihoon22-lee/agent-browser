@@ -496,7 +496,8 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             };
             let result=if method=="request.begin" {
                 state.ops.begin_request(request,client,params["tabId"].as_i64().filter(|n|*n>0)).map(|_|None)
-            } else { state.ops.end_request(request,client) };
+            } else if params["abort"] == true { state.ops.cancel_request(request,client) }
+            else { state.ops.end_request(request,client) };
             match result {
                 Ok(operation)=>{
                     if let Some(op)=operation {state.registry.notify_for(&op.client_id,"browser.cancel",json!({"operationId":op.id,"generation":op.generation}));}
@@ -507,7 +508,7 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
         },
         "operation.abort" => {
             let operation_id = params.get("operationId").and_then(Value::as_str);
-            match state.ops.abort(operation_id) {
+            match state.ops.abort_user(operation_id) {
                 Some(op) => {
                     // The closed operation's owner receives cancellation, never a later selection.
                     state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation }));
@@ -550,7 +551,7 @@ async fn management_request(state: &ServerState, method: &str, params: &Value) -
             let extension = state.cfg.lock().await.paired_extension_id.clone().ok_or_else(|| crate::runtime::profile::invalid("Pair a Chrome extension before starting OpenCode"))?;
             state.runtime.ensure(profile_id()?,&format!("chrome-extension://{extension}")).await
         }
-        "runtime.status" => state.runtime.status(profile_id()?).await,
+        "runtime.status" => if params["includeConnection"] == true { state.runtime.connection_status(profile_id()?).await } else { state.runtime.status(profile_id()?).await },
         "runtime.stop" => state.runtime.stop(profile_id()?).await,
         "doctor.run" => {
             let mut report = state.runtime.doctor(params.get("profileId").and_then(Value::as_str)).await?;

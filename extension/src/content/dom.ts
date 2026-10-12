@@ -30,7 +30,7 @@ export function roleOf(el: Element): string {
 
 const clean = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
 
-export function accessibleName(el: Element): string {
+export function accessibleName(el: Element, excludeEditableValue = false): string {
   const aria = clean(el.getAttribute("aria-label"));
   if (aria) return aria;
   const by = el.getAttribute("aria-labelledby");
@@ -47,7 +47,8 @@ export function accessibleName(el: Element): string {
   }
   const ph = clean(el.getAttribute("placeholder"));
   if (ph) return ph;
-  const text = clean((el as HTMLElement).innerText ?? el.textContent);
+  const editable = el instanceof HTMLInputElement || (el as HTMLElement).isContentEditable;
+  const text = excludeEditableValue && editable ? '' : clean((el as HTMLElement).innerText ?? el.textContent);
   if (text) return text;
   const title = clean(el.getAttribute("title"));
   if (title) return title;

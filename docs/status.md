@@ -1,3 +1,121 @@
+# v0.1.6 Windows preview 릴리스 준비 (2026-10-12)
+
+사용자 요청으로 문서·버전을 갱신하고 v0.1.6 태그와 GitHub prerelease를 게시한다. 기존 v0.1.5 태그·자산은 보존한다. 운영 설치 변경은 요청받지 않았으며 검증은 격리된 설치·Chrome 프로필에서 진행한다. [릴리스 계획](./plans/2026-10-12-release-0.1.6.md)을 따른다.
+
+- 기준: PR #9 병합 `ba5c979`. 기능 최종 `dd009ba`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38250547986)는 Linux·Windows 모두 성공했다.
+- Extension 단위 **392/392**, Linux E2E **86 통과/3 skipped**, Windows E2E **87 통과/2 skipped** 및 별도 bookmarks **2/2**, Rust·빌드·문서·설치·패키징·GUI 회귀 검사 통과. 코드·보안 리뷰는 추가 문제 없이 완료됐으며 리뷰 스레드 10개를 해결했다.
+- 버전·문서 변경 후 패키지 빌드, 최종 CI, 게시본 해시·격리 실행 검증은 아래에 실제 결과를 기록한다. 앞선 기능 검증을 새 버전의 실행 결과로 대체하지 않는다.
+
+## PR #7 통합 진행
+
+사용자가 PR #7도 함께 병합·릴리스하도록 요청했다. 관리 MCP 업데이트와 iframe 최종 편집 재검사를 기존 요청 수명·탐색·입력 수정과 함께 통합한다. PR #7의 기존 CI·리뷰는 통과했지만 최신 조합의 검증은 별도로 수행한다. 변경 기록과 상태 이력·회귀 테스트의 충돌을 양쪽 내용이 보존되도록 해결했다. 최종 태그와 패키지는 PR #7까지 포함한 main에서 생성한다.
+
+## v0.1.6 로컬 패키지 검증
+
+PR #7 통합 추가 검사: handlers/panel-requests 단위 **84/84**, 빌드·E2E 타입·문서 링크 통과. 실제 Windows 게시판 **10/10**(진짜 BFCache 복원과 iframe 중간 편집 보존 포함), 네이티브 관리 업데이트 경계 **6/6** 통과. 통합 ZIP은 35개 파일의 버전·해시·링크·제외 항목을 확인했다. 실제 격리 WSL OpenCode 업데이트는 재시작 경고로 실패했고 소유 runtime record 0개로 정리를 확인했다. 원인 진단 중이며 이 실행을 통과로 보고하지 않는다.
+
+아래 최초 후보는 main CI 후속 수정 전 산출물이다. 게시하지 않았으며 최종 태그와 ZIP은 후속 수정이 포함된 main에서 다시 생성한다.
+
+- Cargo workspace·lockfile의 Bridge와 Extension manifest를 **0.1.6**으로 맞췄다. CHANGELOG·설치 예시·중단/탐색/예약 안내를 갱신하고 PR #9 병합 기록을 반영했다. 문서 링크 검사와 기존 보조 테스트 3개, Python 패키지 테스트 3개가 통과했다.
+- `cargo xwin build --locked --release --target x86_64-pc-windows-msvc`와 Extension TypeScript/Vite 빌드, 잠긴 의존성 163개 고지 생성 완료. WSL 파일시스템 임시 exe 실행은 PermissionError로 실패해 Windows 개발 경로를 출력 디렉터리로 지정한 패키징을 사용했다.
+- Windows x64 PE와 실제 exe 버전, Extension/패키지 manifest 버전, ZIP 내부 35개 파일과 SHA-256, 배포 문서 링크·제외 항목을 확인했다. 별도 디렉터리의 두 빌드는 동일한 ZIP SHA-256 `82787c4000edaa052bc8f15494974a205b3fa8b73c911fdb4e3e1ee53e5e6c5c`였다.
+- 게시된 v0.1.5 ZIP의 해시를 검증한 뒤 별도 Windows 경로에서 새 v0.1.6 설치/재설치와 v0.1.5→v0.1.6 업데이트를 실행했다. 실제 Bridge 인증 시작, 버전·설치 ID·페어링·합성 데이터·JSONC 설정 보존, 제거 후 소유 MCP 정리와 데이터 보존이 통과했다. 설치 엔진 직접 호출 시험이며 GUI 클릭 시험으로 보고하지 않는다.
+- 임시 검증 드라이버의 클래스명 오류와 JSONC 개행까지 동일하다고 요구한 assertion을 수정한 뒤 새 fixture에서 최종 실행했다. 제품 코드는 변경하지 않았다. 운영 설치·전역 OpenCode 설정·모델은 사용하지 않았다.
+- 최종 릴리스 PR/CI와 태그·게시 결과는 이 준비 기록 이후 GitHub PR·Release에도 기록한다. 위 ZIP은 아직 로컬 후보이며 게시 완료를 의미하지 않는다.
+
+## v0.1.6 main CI 상태 조회 경합 후속
+
+- [PR #10](https://github.com/jihoon22-lee/agent-browser/pull/10)은 `b766f30`에서 [Linux·Windows CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38253381774)와 코드·보안 리뷰를 통과해 `633b9e4`로 병합됐다. 동일한 main의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38254371723)에서 Linux W05가 명령 결과를 받지 못해 실패했다. 재시도만으로 성공 처리하지 않았다.
+- 실패 화면의 `실행 환경의 상태를 아직 확인하지 못했습니다`와 Bridge의 `status()` try_lock 경로로 원인을 확인했다. 직렬 큐 밖의 완료 확인과 새 요청 준비가 동시에 같은 runtime.status를 호출해 한쪽이 일시적인 starting을 받았다.
+- 경합을 재현하는 단위 테스트가 먼저 실패했다. 같은 프로필의 진행 중인 완료/준비 조회만 공유하고 정착된 결과·실패는 캐시하지 않는다. Stop은 공유 조회를 우회해 gate 종료 후 기존 직접 API fallback을 유지한다.
+- 관련 단위 2파일 **111/111** 후 실패 조회의 재사용 방지 회귀를 추가해 panel-requests **29/29**를 확인했다. Extension 빌드·E2E 타입 검사 통과. W05를 Linux **10/10**, 실제 Windows Chrome/MSVC Bridge **10/10** 반복해 통과했다. 새 최종 PR/main CI와 패키지 재생성 전에는 태그·Release를 게시하지 않는다.
+- [후속 PR #11](https://github.com/jihoon22-lee/agent-browser/pull/11)의 첫 head `c9f514e`는 [Linux·Windows CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38255585228)를 통과했다. 코드 리뷰에서 상태 조회 중 runtime.stop/profile.delete가 시작되면 이전 조회 결과를 재사용할 수 있는 경계가 추가됐다.
+- profile.save/delete·runtime.stop 시작/종료에 프로필 세대를 변경하고 진행 중인 공유 조회를 무효화한다. 관리 작업 중에는 새 prepare를 거부하며 request.begin 도중 세대가 바뀌면 생성한 예약을 종료한다. 새로운 guard 회귀 2건의 초기 실패 후 관련 단위 **114/114**, 빌드·E2E 타입 검사, 실제 Windows 요청/패널 E2E **20/20**가 통과했다. 새 head CI·재리뷰는 push 후 확인한다.
+
+---
+
+# Issue #8 후속 수정 (2026-10-12)
+
+기준 `db397ea`, 브랜치 `feat/issue8-followup`. [이슈 #8](https://github.com/jihoon22-lee/agent-browser/issues/8) §2의 **WP2 → WP1 → WP3 → WP4 → WP5 구현 완료**. [계획](./plans/2026-10-12-issue8-followup.md)에 과제별 완료를 기록했다. PR #9는 최종 `dd009ba`의 Linux·Windows CI와 코드·보안 리뷰 통과 후 `ba5c979`로 병합됐고 이슈 #8은 종료됐다. 당시 Release는 범위 밖이었으며 이후 사용자가 v0.1.6 릴리스 작업을 요청했다.
+
+## PR #9 첫 리뷰와 CI 후속
+
+- [첫 CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38244686625), head `c6ac10c`: Linux 통과. Windows는 전체 E2E·요청 대상·즐겨찾기 fixture를 통과한 뒤 별도 iframe 검사에서 실패했다. iframe URL을 성공으로 기대하던 과거 assertion을 WP3의 최상위 탭 URL 계약에 맞춰 갱신했다.
+- [코드 리뷰](https://github.com/jihoon22-lee/agent-browser/pull/9#pullrequestreview-5490314975)의 4개 지적을 회귀로 재현했다: pending HTTP 탐색 중 이전 DOM snapshot, 같은 URL의 SPA history 이동, background lease 삭제 후 열린 패널 Stop 상태, runtime.status 일시 실패 시 lease 유실.
+- pendingUrl이 있으면 HTTP 페이지라도 이전 문서 snapshot을 보류한다. history currentEntry.key를 비교해 같은 URL의 실제 이동을 감지한다. 패널은 storage 변경을 구독한다. 연결 단절/timeout/starting에서는 lease를 보존하며 stopped/error/명확한 삭제만 정리한다. status 응답 제한도 60초로 맞췄다.
+- 수정 전 실패 9건 확인. 수정 후 관련 단위 4파일 **178/178**, 빌드·E2E 타입 검사 통과. 실제 Windows 영향 E2E **21 통과 / BFCache opt-in 1 skip**, Linux 영향 E2E **13/13** 통과. 별도 Windows iframe 검사는 **3 frame 시나리오 / OOPIF 2개 경로 통과**.
+- 패널 자체 완료 처리를 배제한 강화 R3를 실제 Windows에서 추가 실행해 **1/1 통과(17.2초)**를 확인했다.
+- 변경된 최종 커밋의 원격 CI와 코드/보안 재리뷰를 확인한 후 병합한다.
+
+## PR #9 두 번째 리뷰 후속
+
+- head `72af3c7`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38246158603)는 Linux·Windows 모두 통과했다. Extension 379/379, Linux Rust 157 통과/기존 helper 1 ignored, Linux E2E 83 통과/3 skipped, Windows E2E 84 통과/2 skipped 및 별도 bookmarks 2/2, iframe·설치·패키징·GUI 엔진 검사를 확인했다.
+- 두 번째 코드 리뷰의 textarea 재활용과 중복 abort를 수정했다. textarea authored defaultValue는 ref identity에 보존하며 live fill 값과 구분한다. background 취소는 handled/abortSent를 반환하고, 패널은 확인된 abort를 재전송하지 않는다. 발견/전송 실패는 직접 abort fallback을 유지한다.
+- 프레임 주입 실패 지적은 기존 frameRouter.inject가 일반 오류를 FRAME_UNAVAILABLE로 정규화하고 있어 재현되지 않았다. 일반 Document changed while injecting 오류를 refGone/frameRef 두 경로에 주입하는 회귀를 추가해 URL 대기가 계속되는 것을 확인했다.
+- 수정 전 3개 실패를 확인했다. 관련 단위 5파일 **192/192**, snapshot **11/11**, 빌드·E2E 타입 검사 통과. 실제 Windows 영향 E2E **27/27**, Linux 영향 E2E **14/14** 통과. 실제 Stop 1회에 /abort 1회와 textarea default 교체 후 STALE_ELEMENT를 확인했다.
+
+## PR #9 세 번째 리뷰 후속
+
+- head `58d8cc6`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38247920913)는 Linux·Windows 모두 통과했다. 코드·보안 재리뷰 완료 후 코드 리뷰에서 Stop 연속 클릭의 중복 abort 경계 1건이 추가됐다.
+- 같은 이벤트 주기의 두 번 클릭으로 취소가 2회 전송되는 회귀 2건을 먼저 확인했다. 동기 ref 잠금과 버튼 disabled 상태를 함께 적용하고, 직접 abort fallback·재동기화까지 잠금을 유지한다. finally에서 해제해 실패 후 명시적 재시도는 허용한다.
+- Workbench 단위 **83/83**, Extension TypeScript/Vite 빌드 통과. 실제 Windows Chrome/MSVC release Bridge에서 단일 클릭과 연속 두 번 클릭 모두 `/abort` 1회를 확인해 **2/2 통과**했다. 실패 후 재시도도 단위 테스트로 확인했다. 새 head의 원격 CI·재리뷰는 push 후 확인한다.
+
+## PR #9 네 번째 리뷰 후속
+
+- head `92e9c55`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38248963151)는 Linux·Windows 모두 통과했다. Extension **388/388**, Linux E2E **86 통과/3 skipped**, 실제 Windows E2E **87 통과/2 skipped** 및 별도 bookmarks **2/2**, 설치·패키징·GUI 엔진 검사 통과를 확인했다.
+- 추가 코드 리뷰 2건을 수정했다. history entry의 사전 조회 중 문서가 사라지면 탐색을 dispatch하지 않고 FRAME_UNAVAILABLE/safe/executed:false를 반환한다. background reconcile와 패널 finish의 네트워크 확인은 mutation queue 밖에서 실행하고, 종료 적용 직전에 client·request·message·세션 범위를 재검사한다. Stop은 지연된 확인 뒤에서 기다리지 않으며 오래된 확인 결과는 교체된 lease를 종료하지 않는다.
+- 수정 전 회귀 **4건 실패**를 확인했다. 수정 후 관련 단위 3파일 **160/160**, 빌드·E2E 타입 검사 통과. 실제 Windows 영향 E2E **15/15** 통과. 지연된 runtime 조회와 새 lease 보존 경계는 단위 mock 검증이며 실제 managed MCP hang을 재현했다고 보고하지 않는다. 새 head의 CI·재리뷰는 push 후 확인한다.
+
+## WP2 완료
+
+- F4: checkbox/radio는 checked, 나머지 input은 동일 속성을 가진 새 input에서 정규화한 기본값으로 비교한다. 파일 선택·실제 편집은 계속 보호한다.
+- F8: ref identity에서는 편집 내용 fallback을 제외한다. 이름 없는 contenteditable을 같은 ref로 두 번 fill하고 click할 수 있으며 비편집 버튼의 이름 변경은 stale로 유지한다.
+- F11: 포인터 전달 뒤 상호작용/ref 재검사 실패는 EXECUTION_UNKNOWN/unsafe다. mousedown 부수효과를 executed=no로 보고하지 않는다.
+- 먼저 추가한 회귀 13건이 실패함을 확인했다. 수정 후 관련 Vitest 3파일 49/49, Extension TypeScript/Vite 빌드와 E2E 타입 검사 통과.
+- `bash scripts/test-windows.sh -- issue8-content.spec.ts board-navigation.spec.ts -g 'F4|F8|F11|B08'`: 실제 Windows Node 24.18.1 / Chrome 154.0.8037.99 / MSVC release exe로 **8/8 통과**. 격리 headless 프로필과 합성 페이지만 사용했다.
+- 최초 Windows 실행은 fixture 임의 포트 6566에 대한 Chrome ERR_UNSAFE_PORT로 실패했다. 실행 목록에 새 spec을 등록한 최종 재실행 결과가 위 8/8이다. jsdom은 min/max range의 파싱 초기값을 50으로 남기는 차이가 있어 해당 경계는 실제 Chrome에서 검증했다.
+- WP2 시점에는 전체 마일스톤 검사를 실행하지 않았다. 이후 전체 결과는 아래 WP5 기록과 구분한다. 모델 호출, push/PR/Release, 운영 설치 변경은 하지 않았다.
+
+## WP1 완료
+
+- F1/F16: runtime.ensure 없이 실행 중 연결만 조회하고, 삭제/중단/오류 프로필은 gate 종료 후 lease를 정리한다. 프로필 삭제 경로와 background 15초 timer/1분 alarm에도 정리를 연결했다. 정상 완료는 동일 session/message와 서버 상태로 확인한다.
+- F2/F3/F12: 패널은 Bridge 실패와 무관하게 /abort를 시도하며 오류를 합쳐 표시한다. request.end abort:true는 CANCELLED로 종료하고 같은 client의 범위 없는 attach/new를 30초 거부한다. 명시적인 새 사용자 요청은 허용한다. MCP operation abort는 예약/대상 탭을 유지한다.
+- 실패 회귀: UI/lease 7건 실패 및 새 Rust 취소 API 부재를 확인했다. 구현 후 UI/lease 97/97, Rust operation 19/19와 conn 2/2 통과. 연결정보/doctor 비밀정보 분리 합성 HTTP 검사 1/1 통과(최초 sandbox loopback bind 거부 후 권한 있는 실행으로 검증).
+- Extension 빌드 및 E2E 타입 검사 통과. 초기 타입 오류는 명시적 storage lease 타입과 합성 메시지 created 시각으로 수정했다.
+- `bash scripts/test-windows.sh -- issue8-requests.spec.ts workbench.spec.ts`: 실제 Windows Chrome/Bridge **17/17 통과**. F16은 패널 없이 실제 background 주기로 16.6초 내 lease가 해제되고 CLI attach가 성공했다. 기존 작업 UI 13건도 통과했다.
+- 중단 표시의 30초 제한 및 Bridge 재시작 경계는 protocol.md에 명시했다. 실제 모델은 호출하지 않았다.
+
+## WP3 완료
+
+- F5/F6: readable DOM은 전체 load 없이 반환하고 loading 상태를 표시한다. 첫 문서 준비만 최대 2초 읽기 재시도한다. 명시적 newTab은 생성 즉시 pendingUrl과 함께 반환하며 Bridge가 HTTP(S) 목적지를 검증해 operation에 등록한다.
+- F7: refGone/frameRef 유무와 무관하게 최상위 탭 URL을 관찰하고 content 조건과 OR로 완료한다. frame binding 소유권 검사는 유지한다.
+- F13/F10: back/forward에서 1.5초간 탐색 시작/URL/문서/loading 변화가 없으면 executed:false 경계 오류를 반환한다. onBeforeNavigate는 시작 근거로만 사용하며 이전 complete 상태를 완료로 오인하지 않는다. about:blank 시작도 실제 이동 관찰 전에는 성공하지 않는다.
+- 기존 결함 5건, 시작/완료 구분 1건, 초기 blank snapshot 1건, Rust pendingUrl 편입 1건의 실패 회귀를 확인했다. 최종 handlers 42/42, Rust router 8/8, 빌드와 E2E 타입 검사 통과.
+- 실제 Windows 최종 코드: 게시판 8건 통과(BFCache opt-in 1건 skip); 별도 최종 실행 `issue8-timing.spec.ts browser-capabilities.spec.ts` **13/13 통과**. 무한 loading snapshot 약 0.3초, newTab 등록/후속 읽기 약 0.4초, 폼 OR wait 약 1초, 숨겨진 history가 있는 양쪽 경계 약 1.6–1.8초.
+- 첫 Windows 실행에서 빈 초기 URL 편입 누락과 시험 폼 GET query 덮어쓰기를 확인해 보완했다. 다음 실행의 C01은 fixture 포트 5061에서 접근 불가였고, 새 fixture 포트로 실행한 최종 13/13에서 통과했다. 이전 6566과 같은 임의 포트 제한 가능성이 있으며 제품 실패로 단정하지 않는다.
+
+## WP4 완료
+
+- F15: launch_wsl에서 home 경로 매핑을 먼저 검증하고 UNC/확장 경로를 panic 대신 INVALID_PARAMS로 반환한다. keeper/process를 만들기 전에 거부한다.
+- F14: managed HTTP 정상/MCP 실패를 state:error/httpReady:true로 구분한다. doctor가 이 상태에서도 /mcp를 조회해 executable_missing 등 세부 원인을 반환하고 원문 비밀정보는 계속 숨긴다.
+- 추가한 두 회귀의 수정 전 실패를 확인했다. Linux 합성 runtime 검사 **2/2**, cargo-xwin으로 빌드해 Windows 개발 폴더에 복사한 native 테스트 exe의 같은 검사 **2/2 통과**. 실제 Windows listener 소유권 검사와 합성 Basic-auth HTTP/MCP 응답을 사용했다.
+- F15 Windows 테스트는 UNC/확장 경로를 거부하는 사전 검증이다. 원격 공유나 실제 WSL 실행을 수행했다고 주장하지 않는다. F14는 합성 MCP ENOENT이며 실제 모델/OpenCode 프로세스를 실행하지 않았다.
+
+## WP5 완료
+
+- about:blank close의 UNSUPPORTED_PAGE 계약을 유지하며 전용 안내를 추가했다. browser_tabs 설명과 계약 fixture에 빈 탭 예외를 명시했다. browser_wait 설명도 WP3의 최상위 탭 URL 조건과 맞췄다.
+- 메시지·도구 설명 회귀 2건의 수정 전 실패를 확인했다. handlers 43/43, Rust 도구 계약/설명/6,000자 예산 3/3 통과. 실제 Windows C07도 계속 통과했다.
+- 전체 검증: Extension **34파일 370/370**, Rust 전체 검사 통과, Node 보조 **28/28**, 빌드·E2E 타입 검사·문서 링크 검사 통과. Clippy는 종료 0(스타일/복잡도 경고 유지). 링크 검사는 초기 sandbox의 git spawn EPERM 후 읽기 권한 있는 실행에서 30개 파일 통과.
+- `AB_TEST_BFCACHE=1`을 WSLENV로 Windows Node에 전달한 `scripts/test-windows.sh`: **81 통과 / 별도 bookmarks 권한 fixture 2 skipped**. 실제 BFCache persisted=true 확인. Windows Chrome 154.0.8037.99와 새 MSVC release exe를 사용했다.
+- Linux Chromium 156.0.8078.4 / Linux 시험용 Bridge / Node 24.18.0의 전체 E2E도 **81 통과 / bookmarks 권한 fixture 2 skipped**, 실제 BFCache 복원 확인. Linux와 Windows 결과는 별도 실행이다.
+- 최종 호환성 검토에서 alarm 간격을 기존 최소 Chrome 116에 맞는 1분으로 조정했다(활성 worker의 15초 timer 유지). 이 한 줄 변경 후 재빌드와 직접 영향받는 실제 Windows F16 **1/1 재검증 통과(16.8초)**. Chrome 116 자체에서 실행한 검증은 아니다.
+
+---
+
+## PR #7 통합 전 독립 검증 기록
+
+아래 기록은 PR #7 작성 당시의 결과와 제약이다. checkbox 기본값 판정 등 이후 PR #9에서 해결한 사항과 현재 통합 결과는 위 릴리스 기록을 따른다.
+
 # v0.1.6 후속 패치 준비 — 관리 MCP 업데이트 (2026-10-12)
 
 - 기존 v0.1.5 `db397ea`와 게시 자산은 변경하지 않는다. 같은 후속 작업 공간에서 탭 닫기 수정 `8cedffc`를 기반으로 설치기 수정과 0.1.6 버전을 통합했다.

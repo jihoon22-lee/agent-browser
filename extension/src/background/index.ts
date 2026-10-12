@@ -27,7 +27,16 @@ chrome.runtime.onInstalled.addListener(() => {
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   conn.ensure();
 });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === "bridge-keepalive") conn.ensure(); });
+// Alarms wake a suspended worker; the timer makes completion prompt while the
+// WebSocket keeps it alive. Neither path starts an unavailable OpenCode profile.
+const reconcile=()=>{ if(lastStatus.state==='connected')void requests.reconcile().catch(()=>{}); };
+// Keep the alarm compatible with the existing minimum Chrome 116.
+void chrome.alarms.create('panel-request-reconcile',{periodInMinutes:1});
+setInterval(reconcile,15_000);
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === "bridge-keepalive") conn.ensure();
+  if (a.name === 'panel-request-reconcile') reconcile();
+});
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && (changes.pairingToken || changes.bridgeUrl)) { conn.stop(); conn.start(); }
 });
@@ -56,7 +65,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg?.kind === "bridge" && ["status.get", "operation.abort", "browser.use", "profile.list", "profile.save", "profile.delete", "runtime.ensure", "runtime.status", "runtime.stop", "doctor.run"].includes(msg.method)) {
-    conn.request(msg.method, msg.params ?? {}).then((r) => sendResponse({ ok: true, result: r }), (e) => sendResponse({ ok: false, error: e instanceof ProtocolError ? e.toRpc() : { code: "INTERNAL", message: String(e), retry: "never" } }));
+    const work=()=>conn.request(msg.method, msg.params ?? {}).then(async r => {
+      if(msg.method==='profile.delete')await requests.removeProfile(msg.params?.profileId);
+      return r;
+    });
+    const profileId=msg.method==='profile.save'?msg.params?.profile?.id:msg.params?.profileId;
+    const result=['profile.save','profile.delete','runtime.stop'].includes(msg.method)&&typeof profileId==='string'
+      ? requests.manageProfile(profileId,work):work();
+    result.then((r) => sendResponse({ ok: true, result: r }), (e) => sendResponse({ ok: false, error: e instanceof ProtocolError ? e.toRpc() : { code: "INTERNAL", message: String(e), retry: "never" } }));
     return true;
   }
 });

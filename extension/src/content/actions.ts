@@ -87,7 +87,16 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const controls: Element[] = [];
       walkDeep(document, el => { if (el.matches('input,textarea,select,[contenteditable]')) controls.push(el); });
       const dirty = controls.some(el => {
-        if (el instanceof HTMLInputElement) return el.value !== el.defaultValue || el.checked !== el.defaultChecked || (el.files?.length ?? 0) > 0;
+        if (el instanceof HTMLInputElement) {
+          if (el.type === 'checkbox' || el.type === 'radio') return el.checked !== el.defaultChecked;
+          if (el.type === 'file') return (el.files?.length ?? 0) > 0;
+          // Let the browser normalize the authored value with the same type and
+          // constraints, without copying the live input's dirty value flag.
+          const baseline = document.createElement('input');
+          for (const attr of el.attributes) baseline.setAttribute(attr.name, attr.value);
+          baseline.value = el.getAttribute('value') ?? '';
+          return el.value !== baseline.value;
+        }
         if (el instanceof HTMLTextAreaElement) return el.value !== el.defaultValue;
         if (el instanceof HTMLSelectElement) {
           const options = Array.from(el.options);
@@ -115,10 +124,15 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         const down=type.endsWith('down');
         el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:down?1:0,pointerId:1,pointerType:'mouse',isPrimary:true,pressure:down?0.5:0}));
       }
-      assertInteractable(el);
-      // Pointer handlers can recycle a row or change href synchronously. Do not
-      // transfer the original ref to the new target immediately before dispatch.
-      resolveRef(String(p.ref));
+      try {
+        assertInteractable(el);
+        // Pointer handlers can recycle a row or change href synchronously.
+        resolveRef(String(p.ref));
+      } catch (error) {
+        throw new ProtocolError('EXECUTION_UNKNOWN',
+          'Pointer events were delivered, but the target changed before click. Inspect the page before continuing.',
+          'unsafe', { cause: error instanceof ProtocolError ? error.code : 'INTERNAL' });
+      }
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
       el.dispatchEvent(new MouseEvent('click',{...base,...clickPoint(el),buttons:0}));

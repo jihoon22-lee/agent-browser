@@ -9,7 +9,7 @@ Windows Chrome 안에서 기존 OpenCode v1으로 작업하는 도구입니다. 
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 ZIP과 같은 버전의 `SHA256SUMS`를 각각 다운로드합니다. **압축 해제와 실행 전에** 다음 명령의 SHA256 값을 별도로 받은 `SHA256SUMS`의 해당 ZIP 행(또는 GitHub 릴리스 자산의 SHA256 digest)과 비교하세요.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.5-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.6-windows-x64.zip
 ```
 
 값이 다르면 실행하지 말고 공식 릴리스에서 다시 받으세요. 현재 실행 파일은 Authenticode 서명되지 않았으며, ZIP 내부 `package-manifest.json`만으로 다운로드 출처를 검증할 수 없습니다.
@@ -75,6 +75,6 @@ Options에서 실행 환경을 추가합니다.
 Bridge 포트를 변경했거나 관리 서버가 사용하던 Bridge exe를 별도로 삭제한 경우,
 기존 OpenCode의 MCP 설정과 현재 Bridge가 맞지 않을 수 있습니다. 이때 준비 완료로 표시하지 않고
 오류를 표시합니다. Options에서 해당 프로필의 **서버 중지** 후 다시 시작하면 새 MCP 설정이 적용됩니다.
-일반 업데이트는 이전 exe 경로를 보존하므로 실행 중 관리 서버를 유지할 수 있습니다.
+GUI 업데이트로 Bridge 실행 경로나 포트가 바뀌면 유휴 상태의 관리 서버를 중지하고 새 MCP 경로로 다시 시작합니다. 실행 중인 작업이 있거나 상태를 확인하지 못하면 파일을 바꾸기 전에 업데이트를 보류합니다. **설치 후 시작**을 끄면 관리 서버도 중지된 상태로 남으며 다음 명시적 시작에서 새 MCP를 사용합니다. 외부 서버와 경로·포트가 같은 재적용은 유지합니다.
 
 제품 라이선스는 [MIT](LICENSE)이며 제3자 고지는 같은 폴더의 `THIRD_PARTY_NOTICES`에 있습니다. 데이터 처리와 신고 범위는 [보안 안내](SECURITY.md)를 확인하세요.

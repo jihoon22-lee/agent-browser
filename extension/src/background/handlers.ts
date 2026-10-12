@@ -83,7 +83,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         if (!(await store.hasSnapshot(String(p.operationId),tabId,documentId)))
             throw new ProtocolError('STALE_ELEMENT','Take a fresh browser_snapshot for this operation before writing.');
     }
-    async function dispatch(run: Running, snapshotAttempt = 0): Promise<unknown> {
+    async function dispatch(run: Running, snapshotAttempt = 0, snapshotDeadline = Date.now()+2000): Promise<unknown> {
         const { req, controller } = run, p = req.params, signal = controller.signal;
         await check(req, signal);
         if (req.method === 'browser.bookmarks') return readBookmarks(api.bookmarks,p);
@@ -109,6 +109,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         }
         const tab = await getTab(api, Number(p.tabId));
         const goto = req.method === 'browser.navigate' && (p.action ?? 'goto') === 'goto';
+        if(req.method==='browser.snapshot'&&(tab.pendingUrl||(!isWeb(tab.url)&&tab.status==='loading'))){
+            if(Date.now()>=snapshotDeadline)
+                throw new ProtocolError('FRAME_UNAVAILABLE','Navigation has not committed. Wait for the destination document before taking a snapshot.','safe');
+            await interruptible(new Promise(r=>setTimeout(r,50)),signal);
+            return dispatch(run,snapshotAttempt,snapshotDeadline);
+        }
+        if(req.method==='browser.tabs.close'&&tab.url==='about:blank')
+            throw new ProtocolError('UNSUPPORTED_PAGE','Blank tabs cannot be safely checked and are left open; navigate to an HTTP(S) page before closing, or leave the tab open.');
         if (!goto) requireWeb(tab.url);
         await check(req, signal);
         const tabId = tab.id!;
@@ -153,7 +161,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             } finally { off(); clearTimeout(timer); }
         }
         if (req.method === 'browser.snapshot') {
-            if (tab.status === 'loading') await loadedTab(api, tabId, async () => {}, signal);
+            // A slow subresource must not prevent reading an already available DOM.
             const snapshotId = await store.nextSnapshotId(), results: unknown[] = [], errors: FrameError[] = [], bindings: FrameInfo[] = [];
             const allFrames = (await frames.list(tabId)).map(f => ({...f})).sort((a,b)=>a.frameId-b.frameId);
             const frameOffset = Math.max(0,Number(p.frameOffset??0));
@@ -179,17 +187,21 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 }
             }
             if(frameOffset===0&&!bindings.some(f=>f.frameId===0)) {
-                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1);
+                if(tab.status==='loading'&&Date.now()<snapshotDeadline){
+                    await interruptible(new Promise(r=>setTimeout(r,50)),signal);
+                    return dispatch(run,snapshotAttempt,snapshotDeadline);
+                }
+                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1,snapshotDeadline);
                 throw new ProtocolError('FRAME_UNAVAILABLE','The top document could not be read.','safe',{frameErrors:errors});
             }
             const live = await frames.list(tabId);
             const current = await getTab(api, tabId);
-            if (bindings.some(f => !live.some(now => now.frameId === f.frameId && now.documentId === f.documentId)) || current.url !== tab.url || current.status === 'loading') {
-                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1);
+            if (bindings.some(f => !live.some(now => now.frameId === f.frameId && now.documentId === f.documentId)) || current.url !== tab.url || current.pendingUrl) {
+                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1,snapshotDeadline);
                 throw new ProtocolError('FRAME_UNAVAILABLE', 'Navigation changed the snapshot repeatedly. Wait for the expected page state and take a fresh snapshot.', 'safe');
             }
             await store.bind(snapshotId,bindings.map(f=>({...f,tabId,operationId:String(p.operationId)})));
-            return {snapshotId,url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
+            return {snapshotId,loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
                 note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results.'};
@@ -205,7 +217,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
             if (isWeb(tab.url)) await requireSnapshot(p,tabId,document?.documentId);
-            const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true);
+            const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true, action==='back'||action==='forward');
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
         if (req.method === 'browser.screenshot') {
@@ -232,7 +244,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         if (CONTENT.has(req.method)) {
             const ref = typeof p.ref === 'string' ? p.ref : typeof p.refGone === 'string' ? p.refGone : undefined;
             const frameRef=req.method==='browser.wait'&&typeof p.frameRef==='string'?p.frameRef:undefined;
-            if(frameRef!==undefined)await frames.resolve(tabId,ref,String(p.operationId),frameRef);
+            if(frameRef!==undefined)await frames.bound(tabId,ref,String(p.operationId),frameRef);
             if (typeof p.refGone === 'string') {
                 const parsed = RefTable.parse(p.refGone);
                 const binding = parsed ? await store.binding(parsed.snapshotId, parsed.frameId) : undefined;
@@ -249,7 +261,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 await check(req, signal);
                 return frame;
             };
-            if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string' && !frameRef && !ref)
+            if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
             if (req.method === 'browser.click' && p.newTab === true) {
@@ -259,8 +271,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 await check(req,signal); run.started=true;
                 const created=await api.tabsCreate({url,active:false,windowId:tab.windowId,openerTabId:tabId});
                 if (!created.id) throw new ProtocolError('EXECUTION_UNKNOWN','New tab ID was not returned. Inspect tabs before retrying.','unsafe');
-                const loaded=await loadedTab(api,created.id,async()=>{},signal);
-                return {executed:true,openedTabs:[{...describeTab(loaded),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
+                // Register the created tab with the operation immediately. Loading
+                // and page readiness are observed by later snapshot/wait calls.
+                return {executed:true,openedTabs:[{...describeTab(created),pendingUrl:created.pendingUrl??(!isWeb(created.url)?url:undefined),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
             }
             return send(tabId, frame, req.method.slice('browser.'.length), p, run);
         }
@@ -268,7 +281,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
     }
     async function urlWait(tabId: number, p: Record<string, unknown>, run: Running, prepare: () => Promise<FrameInfo>) {
         const signal = run.controller.signal;
-        let frame: FrameInfo | undefined;
+        let frame: FrameInfo | undefined, finished=false;
         let resolve!: (r: unknown) => void, reject!: (e: unknown) => void;
         const url = new Promise((r, j) => { resolve = r; reject = j; });
         const match = (t: chrome.tabs.Tab) => { if (t.url?.includes(String(p.urlIncludes)))
@@ -282,7 +295,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             const content = (async () => {
                 if (p.text === undefined && p.textGone === undefined && p.refGone === undefined) return url;
                 frame = await prepare();
-                return send(tabId, frame, 'wait', p, run);
+                if(finished)return url;
+                // URL is always the tab URL, even when content conditions use an iframe.
+                const {urlIncludes:_url,...contentParams}=p;
+                return send(tabId, frame, 'wait', contentParams, run);
             })().catch(e => {
                 if (['STALE_ELEMENT', 'FRAME_UNAVAILABLE'].includes(asError(e).code)) return url;
                 throw e;
@@ -290,6 +306,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             return await interruptible(Promise.race([url, content]), signal);
         }
         finally {
+            finished=true;
             off();
             clearTimeout(timer);
             if (frame) void api.sendToFrame(tabId, frame, { kind: 'cancel', requestId: run.req.id }).catch(() => { });

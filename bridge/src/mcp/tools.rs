@@ -9,7 +9,7 @@ fn r#ref() -> Value { json!({"type":"string","description":"Latest snapshot ref,
 pub fn all() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
-            "List tabs/windows, attach, new, switch, close or release. New needs no snapshot; omit operationId to start an operation. Omit url for about:blank. Close only operation-created tabs; switch back explicitly. Switch changes the operation target.",
+            "List tabs/windows, attach, new, switch, close or release. New needs no snapshot; omit operationId to start an operation. Omit url for about:blank. Close only operation-created tabs; about:blank tabs cannot be closed. Switch back explicitly. Switch changes the operation target.",
             schema: json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["list","windows","attach","new","switch","close","release"]},
                 "tabId":{"type":"integer","description":"Attach target (omit for request default), or switch target"},
@@ -49,7 +49,7 @@ pub fn all() -> Vec<ToolDef> {
         ToolDef { name: "browser_scroll", description: "Scroll the page or a scrollable element (ref).",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["operationId","direction"],"additionalProperties":false}) },
-        ToolDef { name: "browser_wait", description: "Wait for any text/textGone/refGone/urlIncludes match or TIMEOUT. Scope: snapshot frameRef, else refGone's frame, else top. frameRef binds to one document; snapshot after navigation.",
+        ToolDef { name: "browser_wait", description: "Wait for any text/textGone/refGone/urlIncludes match or TIMEOUT. URL always uses the tab. Content scope: frameRef, else refGone frame, else top. Snapshot after navigation.",
             schema: json!({"type":"object","properties":{"operationId":op(),"text":{"type":"string"},"textGone":{"type":"string"},
                 "refGone":{"type":"string"},"urlIncludes":{"type":"string"},"frameRef":{"type":"string","description":"Document-bound frameRef returned on a browser_snapshot frame."},
                 "timeoutMs":{"type":"integer","minimum":100,"maximum":30000,"default":5000}},
@@ -92,5 +92,15 @@ mod tests {
     fn total_schema_size_stays_small_for_free_models() {
         let size: usize = super::all().iter().map(|t| t.description.len() + t.schema.to_string().len()).sum();
         assert!(size < 6000, "tool definitions grew to {size} chars");
+    }
+}
+
+#[cfg(test)]
+mod issue8_tests {
+    #[test]
+    fn blank_tab_close_exception_is_visible_in_the_tool_description() {
+        let tools=super::all();
+        let tabs=tools.iter().find(|tool|tool.name=="browser_tabs").unwrap();
+        assert!(tabs.description.contains("about:blank tabs cannot be closed"));
     }
 }

@@ -642,3 +642,78 @@ it('review tombstoned roots keep the next page reachable', async () => {
   expect([...host.querySelectorAll('.session-tree > li strong')].map(element => element.textContent)).toEqual(sessions.slice(1).map(session => session.title));
   expect(button('더 보기')).toBeUndefined();
 });
+
+it.each(['response','transport'])('F2 always posts abort when request-cancel fails (%s)',async failure=>{
+  await render();await draftValue('long task');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>{
+    if(message.kind!=='request-cancel')return original(message);
+    if(failure==='transport')throw Error('Bridge disconnected');
+    return {ok:false,error:{message:'Bridge disconnected'}};
+  });
+  test.post.mockClear();
+  await act(async()=>button('응답 중단').click());
+  expect(test.post).toHaveBeenCalledWith('/session/ses-one/abort',undefined);
+  expect(host.textContent).toContain('Bridge disconnected');
+});
+it('review R3 updates Stop when the background removes the selected lease',async()=>{
+  const changed=new Set<(changes:any,area:string)=>void>();
+  (chrome.storage as any).onChanged={addListener:(fn:any)=>changed.add(fn),removeListener:(fn:any)=>changed.delete(fn)};
+  const localGet=chrome.storage.local.get as ReturnType<typeof vi.fn>,original=localGet.getMockImplementation() as ()=>Promise<Record<string,any>>;
+  const lease={requestId:'held',messageId:'msg-held',profileId:'native',directory:'/fixture',sessionId:'ses-one'};
+  let saved:any=lease;localGet.mockImplementation(async()=>({...await original(),panelBrowserRequest:saved}));
+  await render();expect(button('응답 중단').hidden).toBe(false);
+  saved=undefined;
+  await act(async()=>{for(const fn of changed)fn({panelBrowserRequest:{oldValue:lease}},'local');});
+  expect(button('응답 중단').hidden).toBe(true);
+  expect(test.post.mock.calls.some(([path])=>path.endsWith('/abort'))).toBe(false);
+});
+it('review R7 does not repeat the session abort already completed by the background',async()=>{
+  await render();await draftValue('stop once');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:{handled:true,abortSent:true}}:original(message));
+  test.post.mockClear();await act(async()=>button('응답 중단').click());
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(0);
+});
+it('review R7 falls back once when the gate closed but no background abort was sent',async()=>{
+  await render();await draftValue('stop offline');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:{handled:true,abortSent:false}}:original(message));
+  test.post.mockClear();await act(async()=>button('응답 중단').click());
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(1);
+});
+it.each([true,false])('review R8 serializes rapid Stop clicks including fallback (background abort=%s)',async abortSent=>{
+  await render();
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  let finish!:(value:any)=>void;
+  runtime.mockImplementation((message:any)=>message.kind==='request-cancel'?new Promise(resolve=>{finish=resolve;}):original(message));
+  const stop=button('응답 중단');
+  await act(async()=>{stop.click();stop.click();});
+  expect(runtime.mock.calls.filter(([m])=>m.kind==='request-cancel')).toHaveLength(1);
+  expect(stop.disabled).toBe(true);
+  let finishAbort!:()=>void;
+  test.post.mockImplementation(async(path:string)=>{if(path.endsWith('/abort'))await new Promise<void>(resolve=>{finishAbort=resolve;});return true;});
+  await act(async()=>finish({ok:true,result:{handled:true,abortSent}}));
+  if(!abortSent){
+    expect(stop.disabled).toBe(true);
+    await act(async()=>stop.click());
+    expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(1);
+    await act(async()=>finishAbort());
+  }
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(abortSent?0:1);
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  expect(stop.disabled).toBe(false);
+});
+it('review R8 releases the Stop guard after abort failure so the user can retry',async()=>{
+  await render();
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:false}:original(message));
+  test.post.mockRejectedValueOnce(Error('abort unavailable'));
+  await act(async()=>button('응답 중단').click());
+  expect(host.textContent).toContain('abort unavailable');
+  expect(button('응답 중단').disabled).toBe(false);
+  await act(async()=>button('응답 중단').click());
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(2);
+});

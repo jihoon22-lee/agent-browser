@@ -15,7 +15,7 @@
 | 창별 대상 선택 | windows로 일반 창 ID·focused·state 확인, list/new에 windowId 지정 | 창 생성·닫기·크기 변경 도구는 이번 범위 밖. 새 권한 없음 |
 | 기존 탭 연결 | attach에 tabId 지정. 제한 페이지도 메타데이터 연결 후 일반 URL로 이동 가능 | chrome:// 등의 DOM/스크린샷 접근은 허용하지 않음 |
 | 작업 탭 전환 | switch에 작업 소유 tabId | 사용자 전경 포커스를 바꾸지 않으며 진행 중인 요청 대상은 고정 |
-| 탭 닫기 | close로 현재 작업에서 생성한 웹 탭만, 원래 attach 탭은 보호 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외. 강제 닫기 없음 |
+| 탭 닫기 | close로 현재 작업에서 생성한 웹 탭만, 원래 attach 탭은 보호 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
 | 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
 | back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰 | 일반 페이지 쓰기는 snapshot 필요. 빈/제한 페이지에서 HTTP(S) goto는 DOM 읽기 없이 가능 |
 | snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM | 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
@@ -30,6 +30,10 @@
 | 업로드 | 미지원임을 명시적으로 반환 | OS 파일 선택창·로컬 경로·파일 내용 읽기를 우회하지 않음. 별도 승인된 파일 선택 설계 필요 |
 
 새 탭은 background 생성이 기본이며 작업의 currentTab이 새 탭으로 바뀐다. 사용자 전경 탭을 임의로 바꾸지 않는다. 패널 요청 중 단독 new는 현재 requestId를 요구한다. 안전한 기본 탭이 없어도 명시적인 새 탭 생성은 가능하고, 새 operation은 해당 요청에 속한다.
+
+명시적 새 탭 열기는 생성 직후 작업에 포함한다. 페이지의 하위 리소스가 계속 로딩돼도 읽을 수 있는 DOM은 snapshot으로 반환하지만, 새 문서로 이동 중이면 이전 DOM을 반환하지 않는다. wait의 URL 조건은 최상위 탭 주소이며 요소 조건과 함께 지정하면 어느 하나가 충족될 때 끝난다. iframe 내부 주소를 최상위 탭 주소로 취급하지 않는다.
+
+뒤로·앞으로 이동은 같은 URL의 방문 기록도 구분한다. 기록의 끝에서 이동이 관찰되지 않으면 약 1.5초 뒤 미실행 오류를 반환한다. 실제 이동이 시작됐지만 끝나지 않은 경우는 별도의 로딩 제한시간을 따른다. 문서 교체로 사전 확인이 실패하면 새 snapshot을 읽고 다시 판단한다.
 
 ## 즐겨찾기 선택 권한의 정확한 영향
 

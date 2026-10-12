@@ -80,7 +80,8 @@ try{
   assert.equal((await call('browser_wait',{operationId,text:'coordinate body',timeoutMs:100})).error.code,'TIMEOUT');
   let fresh=await ok('browser_snapshot',{operationId}),frame=fresh.data.frames.find(fr=>fr.frameId===f.frameId);
   assert.equal((await call('browser_wait',{operationId,frameRef:frame.frameRef,text:'top-only',timeoutMs:100})).error.code,'TIMEOUT');
-  await ok('browser_wait',{operationId,frameRef:frame.frameRef,urlIncludes:'/mail',timeoutMs:100});
+  assert.equal((await call('browser_wait',{operationId,frameRef:frame.frameRef,urlIncludes:'/mail',timeoutMs:100})).error.code,'TIMEOUT');
+  await ok('browser_wait',{operationId,frameRef:frame.frameRef,urlIncludes:new URL(page.url()).pathname,timeoutMs:100});
   await ok('browser_click',{operationId,ref:frame.elements.find(e=>e.name==='Native checkbox').ref});
   fresh=await ok('browser_snapshot',{operationId});frame=fresh.data.frames.find(fr=>fr.frameId===f.frameId);
   assert.equal(frame.elements.find(e=>e.name==='Native checkbox').checked,true);

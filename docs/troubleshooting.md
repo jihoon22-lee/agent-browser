@@ -201,9 +201,11 @@ $agentBrowserState = Get-Content -LiteralPath (Join-Path $agentBrowserInstall '.
 
 전송 여부가 불확실한 네트워크 오류는 자동 재전송하지 않습니다. 해당 세션에서 응답 중단을 누르고 다시 요청합니다. 중단은 먼저 브라우저 예약을 닫습니다. OpenCode 중단 API까지 실패하면 오류와 요청 신원을 유지하므로 연결 복구 후 중단을 재시도할 수 있습니다. 완료 응답이 없는 idle 상태만으로 다른 요청의 예약을 빼앗지 않습니다.
 
+v0.1.6부터 완료된 요청은 패널이 닫힌 동안에도 확인해 정리합니다. 삭제·중지·오류 상태의 실행 환경은 예약을 정리하지만 일시적인 통신 오류나 시작 중 상태에서는 보존합니다. Stop을 처리하는 동안에는 중복 클릭을 막습니다. 이전 요청을 중단한 직후 같은 연결에서 요청 ID 없는 새 브라우저 작업은 30초 동안 거부될 수 있으므로 패널에서 새 요청을 명시적으로 시작하세요.
+
 
 ## WSL은 응답하지만 브라우저 MCP가 준비되지 않음
 
-진단에서는 OpenCode HTTP 인증/health와 브라우저 MCP 연결 상태를 구분합니다. HTTP가 정상이어도 MCP 초기화가 실패하면 준비 완료가 아닙니다. 전용 keeper 소켓의 Windows canary가 실패하거나 소유권이 불명확하면 오류를 유지합니다. 해당 실행 환경을 명시적으로 중단한 뒤 다시 시작하고, 반복되면 Windows·WSL·커널·OpenCode 버전과 민감정보를 제거한 오류 코드를 확인하세요. 전역 OpenCode 설정, 운영 프로세스, WSL 전체 인스턴스를 임의로 지우거나 재시작하지 마세요.
+진단에서는 OpenCode HTTP 인증/health와 브라우저 MCP 연결 상태를 구분합니다. HTTP가 정상이어도 MCP 초기화가 실패하면 준비 완료가 아닙니다. 이 경우에도 doctor는 MCP 세부 원인(executable_missing, permission_denied, connection_timeout 등)을 표시합니다. WSL 프로필의 Bridge 데이터 home은 WSL이 마운트한 Windows 드라이브 경로여야 하며, 지원하지 않는 UNC/확장 경로는 INVALID_PARAMS로 반환합니다. 전용 keeper 소켓의 Windows canary가 실패하거나 소유권이 불명확하면 오류를 유지합니다. 해당 실행 환경을 명시적으로 중단한 뒤 다시 시작하고, 반복되면 Windows·WSL·커널·OpenCode 버전과 민감정보를 제거한 오류 코드를 확인하세요. 전역 OpenCode 설정, 운영 프로세스, WSL 전체 인스턴스를 임의로 지우거나 재시작하지 마세요.
 
 WSL 제어 호출은 같은 합성 fixture 비교에서 시작 6→2회, 일반 상태 확인 5회 합계 15→5회였습니다. 이는 전체 WSL 실행 횟수가 아니라 제어 호출 수이며, 별도 장기 keeper 세션 1개가 추가됩니다. 지연 시간 개선을 모든 PC에서 보장하는 수치는 아닙니다.

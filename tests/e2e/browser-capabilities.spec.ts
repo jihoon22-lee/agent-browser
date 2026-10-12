@@ -60,6 +60,6 @@ test('C07 empty tab permission boundary is explicit and never bypassed',async()=
  },created.data.tab.tabId);
  console.log('EMPTY TAB probe '+JSON.stringify(probe));expect(probe.error).toContain('about:blank');
  expect((await world.mcp.call('browser_snapshot',{operationId:created.operationId})).error?.code).toBe('UNSUPPORTED_PAGE');
- expect((await world.mcp.call('browser_tabs',{action:'close',operationId:created.operationId})).error?.code).toBe('UNSUPPORTED_PAGE');
+ expect((await world.mcp.call('browser_tabs',{action:'close',operationId:created.operationId})).error).toMatchObject({code:'UNSUPPORTED_PAGE',message:expect.stringContaining('Blank tabs cannot be safely checked')});
  const listed=await world.ok('browser_tabs',{action:'list'});expect(listed.data.tabs.some((tab:any)=>tab.tabId===created.data.tab.tabId)).toBe(true);
 });
