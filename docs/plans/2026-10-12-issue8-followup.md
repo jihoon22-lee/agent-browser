@@ -15,4 +15,6 @@
 
 최종 검증 완료: Extension 370, Rust 전체, Node 28, Linux/Windows E2E 각각 81 통과(각 bookmarks opt-in 2 skipped). 마지막 Chrome 116 alarm 호환성 조정은 빌드와 Windows F16 재검증으로 확인했다. 상세 실패·수정·통과 기록은 status.md를 따른다.
 
-- [ ] PR의 최종 커밋 CI와 코드/보안 리뷰 결과를 확인하고 main에 병합한다.
+- [x] PR #9의 최종 `dd009ba`에서 Linux·Windows CI와 코드·보안 리뷰를 통과하고 `ba5c979`로 main에 병합했다. 이슈 #8은 종료됐다.
+
+후속 사용자 요청으로 문서·버전 갱신과 태그·Release 게시가 승인됐다. 릴리스 작업은 별도 [v0.1.6 계획](./2026-10-12-release-0.1.6.md)을 따른다.
