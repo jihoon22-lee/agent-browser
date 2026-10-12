@@ -84,6 +84,13 @@ namespace AgentBrowser.Installer {
             for(var directory=new DirectoryInfo(root);directory!=null;directory=directory.Parent)
                 if(directory.Exists)RequireDirectorySecurity(directory.GetAccessControl(AccessControlSections.Access|AccessControlSections.Owner),Same(directory.FullName,root));
         }
+        static void RequirePrivateDestination(string root,string path) {
+            for(var directory=new DirectoryInfo(Path.GetDirectoryName(path));directory!=null;directory=directory.Parent) {
+                if(directory.Exists)RequireDirectorySecurity(directory.GetAccessControl(AccessControlSections.Access|AccessControlSections.Owner),true);
+                if(Same(directory.FullName,root))return;
+            }
+            throw new IOException("A package destination is outside its installation folder.");
+        }
         internal static void RequireDirectorySecurity(DirectorySecurity acl,bool installRoot) {
             RequireTrustedOwner(acl);
             var writes=FileSystemRights.Delete|FileSystemRights.DeleteSubdirectoriesAndFiles|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership;
@@ -202,6 +209,7 @@ namespace AgentBrowser.Installer {
             foreach(var file in manifest.Files) {
                 string relative=file.Path;if(relative=="browser-bridge.exe"||relative=="AgentBrowser-Setup.exe") relative="app/"+tag+"/"+relative;
                 string dest=NativeIO.SafePath(root,relative);
+                RequirePrivateDestination(root,dest);
                 if(File.Exists(dest)&&!owned.ContainsKey(relative)) throw new IOException("An unowned file blocks installation: "+dest);
                 Add(p,dest,CapturePackageFile(package,file));owned[relative]=file.Sha256.ToLowerInvariant();
             }
@@ -266,6 +274,7 @@ namespace AgentBrowser.Installer {
                 try {
                     if(HashOrMissing(Path.Combine(root,StateName))!=p.StateHash) throw new IOException("Installation changed after preview. Preview it again.");
                     Owned(p.Old);
+                    if(p.Next!=null)foreach(var file in p.Next.OwnedFiles)RequirePrivateDestination(root,NativeIO.SafePath(root,file.Path));
                     if(p.Old!=null) {var ownerRecord=Read<Dictionary<string,string>>(Path.Combine(p.Old.DataDir,".agent-browser-data-owner.json"));if(ownerRecord["Product"]!=Product||ownerRecord["InstallId"]!=p.Old.InstallId)throw new IOException("Existing data ownership changed. No process or data was changed.");}
                     foreach(var change in p.Changes) if(HashOrMissing(change.Path)!=change.Expected) throw new IOException("A file changed after preview: "+change.Path);
                     cancel.ThrowIfCancellationRequested();transaction=new FileTransaction(root);
@@ -318,16 +327,19 @@ namespace AgentBrowser.Installer {
             NativeIO.PlainPath(change.Path);if(InstallerEngine.HashOrMissing(change.Path)!=change.Expected) throw new IOException("A file changed before applying: "+change.Path);
             var entry=new Saved{Path=change.Path,Existed=File.Exists(change.Path),Backup=Path.Combine(Stage,saved.Count+".backup"),User=change.User};
             if(entry.Existed) File.Copy(change.Path,entry.Backup,false);
-            if(change.Bytes==null) {if(File.Exists(change.Path)) File.Delete(change.Path);}else NativeIO.WriteAtomic(change.Path,change.Bytes,change.Expected,change.User);
+            if(change.Bytes==null) {NativeIO.DeleteExpected(change.Path,change.Expected,change.User);}else NativeIO.WriteAtomic(change.Path,change.Bytes,change.Expected,change.User);
             entry.Written=change.Bytes==null?"missing":NativeIO.Hash(change.Bytes);saved.Add(entry);
             File.WriteAllText(Path.Combine(Stage,"journal.json"),NativeIO.Json.Serialize(saved),NativeIO.Utf8);
         }
         public void Rollback() {
+            var errors=new List<string>();
             for(int i=saved.Count-1;i>=0;i--) {
-                var e=saved[i];NativeIO.PlainPath(e.Path);
+                var e=saved[i];try {NativeIO.PlainPath(e.Path);
                 if(InstallerEngine.HashOrMissing(e.Path)!=e.Written) throw new IOException("A concurrently changed file was preserved: "+e.Path);
-                if(e.Existed) NativeIO.WriteAtomic(e.Path,File.ReadAllBytes(e.Backup),e.Written,e.User);else if(File.Exists(e.Path)) File.Delete(e.Path);
+                if(e.Existed) NativeIO.WriteAtomic(e.Path,File.ReadAllBytes(e.Backup),e.Written,e.User);else NativeIO.DeleteExpected(e.Path,e.Written,e.User);
+                }catch(Exception error){errors.Add(e.Path+": "+error.Message);}
             }
+            if(errors.Count>0)throw new IOException("Some files require recovery; other files were restored. "+String.Join("; ",errors));
         }
         public void Cleanup() {NativeIO.PlainPath(Stage);foreach(var file in Directory.GetFiles(Stage)) {NativeIO.PlainPath(file);File.Delete(file);}Directory.Delete(Stage);}
     }

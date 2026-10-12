@@ -176,6 +176,44 @@ mv -fT -- ""$temporary"" ""$target""
                 }
             } finally { if(File.Exists(temp)) File.Delete(temp); }
         }
+        [StructLayout(LayoutKind.Sequential)] struct Disposition { public byte DeleteFile; }
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle file,int kind,ref Disposition information,int size);
+        public static void DeleteExpected(string path,string expected,string wslUser=null) {
+            PlainPath(path);
+            if(expected!="missing"&&!Regex.IsMatch(expected??"","^[a-f0-9]{64}$"))throw new IOException("Invalid settings concurrency hash.");
+            var target=MapWsl(path);
+            if(target!=null) {
+                var args=new List<string>{"--distribution",target.Distribution};
+                if(!String.IsNullOrEmpty(wslUser)){args.Add("--user");args.Add(wslUser);}
+                const string script=@"set -eu
+target=$1
+expected=$2
+[ ! -L ""$target"" ] || { echo 'Settings symlink changed; no settings were removed.' >&2; exit 41; }
+if [ ""$expected"" = missing ]; then
+    [ ! -e ""$target"" ] || { echo 'Settings appeared; no settings were removed.' >&2; exit 42; }
+else
+    [ -f ""$target"" ] || { echo 'Settings disappeared; no settings were removed.' >&2; exit 43; }
+    actual=$(sha256sum -- ""$target"")
+    actual=${actual%% *}
+    [ ""$actual"" = ""$expected"" ] || { echo 'Settings changed; no settings were removed.' >&2; exit 44; }
+    rm -- ""$target""
+fi
+";
+                args.AddRange(new[]{"--exec","/bin/sh","-c",script.Replace("\r\n","\n"),"agent-browser-delete",target.Path,expected});RunChecked(WslExe,args);return;
+            }
+            // Keep writers and replacers excluded from the hash through deletion.
+            // DELETE + GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, OPEN_REPARSE_POINT.
+            using(var handle=CreateFile(path,0x80010000,1,IntPtr.Zero,3,0x00200000,IntPtr.Zero)) {
+                if(handle.IsInvalid){int error=Marshal.GetLastWin32Error();if(expected=="missing"&&(error==2||error==3))return;throw new IOException("Cannot safely remove file: "+path,new System.ComponentModel.Win32Exception(error));}
+                using(var stream=new FileStream(handle,FileAccess.Read))using(var hash=SHA256.Create()) {
+                    string actual=BitConverter.ToString(hash.ComputeHash(stream)).Replace("-","").ToLowerInvariant();
+                    if(actual!=expected)throw new IOException("A concurrently changed file was preserved: "+path);
+                    var disposition=new Disposition{DeleteFile=1};
+                    if(!SetFileInformationByHandle(handle,4,ref disposition,Marshal.SizeOf(typeof(Disposition))))throw new IOException("Cannot remove verified file: "+path,new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+                }
+            }
+        }
         public static void WriteText(string path,string text,string expected=null,string wslUser=null) { WriteAtomic(path,Utf8.GetBytes(text),expected,wslUser); }
     }
 }
