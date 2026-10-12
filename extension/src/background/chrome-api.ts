@@ -38,6 +38,7 @@ export interface ChromeApi {
     inject(tabId: number, frame: FrameInfo): Promise<FrameInfo>;
     sendToFrame(tabId: number, frame: FrameInfo, msg: unknown): Promise<any>;
     onTabUpdated(fn: (id: number, change: chrome.tabs.OnUpdatedInfo, tab: chrome.tabs.Tab) => void): () => void;
+    onNavigationStarted?(fn: (tabId: number) => void): () => void;
     onTabActivated(fn: (info: chrome.tabs.OnActivatedInfo) => void): () => void;
     onTabRemoved(fn: (id: number) => void): () => void;
     onCreatedNavigationTarget(fn: (details: chrome.webNavigation.WebNavigationSourceCallbackDetails) => void): () => void;
@@ -65,6 +66,11 @@ export const realChromeApi: ChromeApi = {
     },
     sendToFrame: (tabId, frame, msg) => chrome.tabs.sendMessage(tabId, msg, { documentId: frame.documentId }),
     onTabUpdated: fn => { chrome.tabs.onUpdated.addListener(fn); return () => chrome.tabs.onUpdated.removeListener(fn); },
+    onNavigationStarted: fn => {
+        const listener=(details:{tabId:number;frameId:number})=>{if(details.frameId===0)fn(details.tabId);};
+        chrome.webNavigation.onBeforeNavigate.addListener(listener);
+        return ()=>chrome.webNavigation.onBeforeNavigate.removeListener(listener);
+    },
     onTabActivated: fn => { chrome.tabs.onActivated.addListener(fn); return () => chrome.tabs.onActivated.removeListener(fn); },
     onTabRemoved: fn => { chrome.tabs.onRemoved.addListener(fn); return () => chrome.tabs.onRemoved.removeListener(fn); },
     onCreatedNavigationTarget: fn => { chrome.webNavigation.onCreatedNavigationTarget.addListener(fn); return () => chrome.webNavigation.onCreatedNavigationTarget.removeListener(fn); },

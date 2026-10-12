@@ -37,10 +37,10 @@ export function interruptible<T>(work: Promise<T>, signal: AbortSignal): Promise
     });
 }
 /** Subscribe before the mutation so a fast navigation cannot lose its completion event. */
-export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<unknown>, signal: AbortSignal, expectNavigation = false): Promise<chrome.tabs.Tab> {
+export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<unknown>, signal: AbortSignal, expectNavigation = false, historyTraversal = false): Promise<chrome.tabs.Tab> {
     let resolve!: (t: chrome.tabs.Tab) => void;
     const completed = new Promise<chrome.tabs.Tab>(r => { resolve = r; });
-    let observed = false;
+    let observed = false, initiated = false;
     const before = expectNavigation ? await getTab(api, id) : undefined;
     const beforeDocument = expectNavigation && isWeb(before?.url) ? (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId : undefined;
     const off = api.onTabUpdated((tid, change, tab) => {
@@ -48,6 +48,7 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
         if (change.status === 'loading' || change.url) observed = true;
         if (change.status === 'complete' && (!expectNavigation || observed)) resolve(tab);
     });
+    const offNavigation=api.onNavigationStarted?.(tabId=>{if(tabId===id)initiated=true;});
     let timer: ReturnType<typeof setTimeout> | undefined;
     let acknowledged = false, finished = false;
     const deadline = new Promise<never>((_, reject) => {
@@ -60,15 +61,19 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
             aborted(signal);
             await act();
             acknowledged = true;
+            const dispatchedAt=Date.now();
             aborted(signal);
             // Chrome may acknowledge before changing tabs.status. Do not return
             // the previous document's complete state as the navigation result.
             while (!finished) {
                 aborted(signal);
                 const current = await getTab(api, id);
+                if(current.status==='loading')observed=true;
                 const changed = !expectNavigation || observed || current.url !== before?.url ||
-                    (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId !== beforeDocument;
+                    (beforeDocument!==undefined && (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId !== beforeDocument);
                 if (current.status === 'complete' && changed) return current;
+                if(historyTraversal&&!changed&&!initiated&&Date.now()-dispatchedAt>=1500)
+                    throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','No history entry was observed in that direction. Inspect the page before another navigation.','never',{executed:false});
                 const result = await Promise.race([completed, new Promise<null>(r => setTimeout(() => r(null), 25))]);
                 if (result) return result;
             }
@@ -78,6 +83,6 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
     } finally {
         finished = true;
         clearTimeout(timer);
-        off();
+        off();offNavigation?.();
     }
 }

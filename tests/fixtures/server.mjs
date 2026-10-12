@@ -40,6 +40,10 @@ function handler(req, res) {
       await new Promise((r) => setTimeout(r, delay));
       return send(res, 200, { ok: true, duplicate: n > 1 });
     }
+    // Synthetic page with a readable DOM and a resource that never completes.
+    if (url.pathname === '/issue8-slow-resource') {
+      res.writeHead(200, {'content-type':'image/png'});res.write('pending');return;
+    }
     if (req.method !== "GET") return send(res, 405, { error: "method" });
     const rel = normalize(decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname)).replace(/^([/\\])+/, "");
     if (rel.startsWith("..")) return send(res, 404, "not found", "text/plain");

@@ -21,6 +21,15 @@
 - `bash scripts/test-windows.sh -- issue8-requests.spec.ts workbench.spec.ts`: 실제 Windows Chrome/Bridge **17/17 통과**. F16은 패널 없이 실제 background 주기로 16.6초 내 lease가 해제되고 CLI attach가 성공했다. 기존 작업 UI 13건도 통과했다.
 - 중단 표시의 30초 제한 및 Bridge 재시작 경계는 protocol.md에 명시했다. 실제 모델은 호출하지 않았다.
 
+## WP3 완료
+
+- F5/F6: readable DOM은 전체 load 없이 반환하고 loading 상태를 표시한다. 첫 문서 준비만 최대 2초 읽기 재시도한다. 명시적 newTab은 생성 즉시 pendingUrl과 함께 반환하며 Bridge가 HTTP(S) 목적지를 검증해 operation에 등록한다.
+- F7: refGone/frameRef 유무와 무관하게 최상위 탭 URL을 관찰하고 content 조건과 OR로 완료한다. frame binding 소유권 검사는 유지한다.
+- F13/F10: back/forward에서 1.5초간 탐색 시작/URL/문서/loading 변화가 없으면 executed:false 경계 오류를 반환한다. onBeforeNavigate는 시작 근거로만 사용하며 이전 complete 상태를 완료로 오인하지 않는다. about:blank 시작도 실제 이동 관찰 전에는 성공하지 않는다.
+- 기존 결함 5건, 시작/완료 구분 1건, 초기 blank snapshot 1건, Rust pendingUrl 편입 1건의 실패 회귀를 확인했다. 최종 handlers 42/42, Rust router 8/8, 빌드와 E2E 타입 검사 통과.
+- 실제 Windows 최종 코드: 게시판 8건 통과(BFCache opt-in 1건 skip); 별도 최종 실행 `issue8-timing.spec.ts browser-capabilities.spec.ts` **13/13 통과**. 무한 loading snapshot 약 0.3초, newTab 등록/후속 읽기 약 0.4초, 폼 OR wait 약 1초, 숨겨진 history가 있는 양쪽 경계 약 1.6–1.8초.
+- 첫 Windows 실행에서 빈 초기 URL 편입 누락과 시험 폼 GET query 덮어쓰기를 확인해 보완했다. 다음 실행의 C01은 fixture 포트 5061에서 접근 불가였고, 새 fixture 포트로 실행한 최종 13/13에서 통과했다. 이전 6566과 같은 임의 포트 제한 가능성이 있으며 제품 실패로 단정하지 않는다.
+
 ---
 
 # v0.1.5 단일 통합 릴리스 준비

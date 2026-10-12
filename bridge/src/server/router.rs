@@ -261,7 +261,8 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             if matches!(name,"browser_click"|"browser_press") {
                 let mut adopted = None;
                 if let Some(children) = data.get_mut("openedTabs").and_then(Value::as_array_mut) {
-                    let ids: Vec<_> = children.iter().take(16).filter(|tab| tab["sourceTabId"].as_i64() == Some(origin.current_tab) && tab["sourceFrameId"].as_i64().is_some_and(|frame| frame >= 0) && tab["url"].as_str().is_some_and(|url| check_url(url).is_ok())).filter_map(|tab| tab["tabId"].as_i64()).collect();
+                    let ids: Vec<_> = children.iter().take(16).filter(|tab| tab["sourceTabId"].as_i64() == Some(origin.current_tab) && tab["sourceFrameId"].as_i64().is_some_and(|frame| frame >= 0) && (tab["url"].as_str().is_some_and(|url| check_url(url).is_ok()) ||
+                        (matches!(tab["url"].as_str(),Some(""|"about:blank")) && tab["pendingUrl"].as_str().is_some_and(|url|check_url(url).is_ok())))).filter_map(|tab| tab["tabId"].as_i64()).collect();
                     if !aborted { adopted = state.ops.adopt_children(op_id,origin.generation,&origin.client_id,origin.current_tab,&ids).ok(); }
                     for child in children { if child.is_object() { child["adopted"] = json!(adopted.as_ref().is_some_and(|op| child["tabId"].as_i64().is_some_and(|id| ids.contains(&id) && op.tabs.contains(&id)))); } }
                 }
@@ -607,5 +608,23 @@ mod tests {
         assert_eq!(timeout_for("browser_navigate", &json!({})), Duration::from_secs(35));
         assert_eq!(timeout_for("browser_tabs", &json!({"action":"new"})), Duration::from_secs(35));
         assert_eq!(timeout_for("browser_tabs", &json!({"action":"list"})), Duration::from_secs(15));
+    }
+}
+
+#[cfg(test)]
+mod issue8_tests {
+    use super::*;
+    #[test]
+    fn adopts_an_explicit_new_tab_while_its_http_navigation_is_pending() {
+        let home=tempfile::tempdir().unwrap();
+        let state=ServerState::new(home.path().into(),crate::config::load_or_init(home.path()).unwrap());
+        let op=state.ops.attach(1,"browser").unwrap();
+        let result=finish(&state,"browser_click",&op.id,CommandClass::Write,&op,Ok(json!({"executed":true,"openedTabs":[
+            {"tabId":2,"url":"","pendingUrl":"https://example.test/heavy","sourceTabId":1,"sourceFrameId":0},
+            {"tabId":3,"url":"","pendingUrl":"chrome://settings","sourceTabId":1,"sourceFrameId":0}
+        ]})));
+        assert_eq!(result.data["openedTabs"][0]["adopted"],true);
+        assert_eq!(result.data["openedTabs"][1]["adopted"],false);
+        assert_eq!(state.ops.current().unwrap().tabs,vec![1,2]);
     }
 }
