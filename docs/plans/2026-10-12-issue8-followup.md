@@ -9,6 +9,6 @@
 - [x] WP1: F1/F2/F3/F16/F12 Stop과 lease 수명. 정상 완료/사용자 중단/MCP operation 취소를 구분하고 패널 없이 완료를 정리한다.
 - [x] WP3: F5/F6/F7/F13 및 F10. router 제한 내 snapshot/newTab 결과, 탭 URL과 content OR 대기, 짧은 history no-op 판정.
 - [x] WP4: F15/F14. WSL 경로 오류 반환과 MCP 실패 상태의 세부 진단.
-- [ ] WP5: F9. about:blank close 계약은 유지하고 설명과 오류 메시지를 맞춘다.
+- [x] WP5: F9. about:blank close 계약은 유지하고 설명과 오류 메시지를 맞춘다.
 
 실행 결과와 미검증은 `docs/status.md`에 기록한다. push/PR/Release/운영 설치 변경은 요청 범위에 없다.

@@ -37,6 +37,14 @@
 - 추가한 두 회귀의 수정 전 실패를 확인했다. Linux 합성 runtime 검사 **2/2**, cargo-xwin으로 빌드해 Windows 개발 폴더에 복사한 native 테스트 exe의 같은 검사 **2/2 통과**. 실제 Windows listener 소유권 검사와 합성 Basic-auth HTTP/MCP 응답을 사용했다.
 - F15 Windows 테스트는 UNC/확장 경로를 거부하는 사전 검증이다. 원격 공유나 실제 WSL 실행을 수행했다고 주장하지 않는다. F14는 합성 MCP ENOENT이며 실제 모델/OpenCode 프로세스를 실행하지 않았다.
 
+## WP5 완료
+
+- about:blank close의 UNSUPPORTED_PAGE 계약을 유지하며 전용 안내를 추가했다. browser_tabs 설명과 계약 fixture에 빈 탭 예외를 명시했다. browser_wait 설명도 WP3의 최상위 탭 URL 조건과 맞췄다.
+- 메시지·도구 설명 회귀 2건의 수정 전 실패를 확인했다. handlers 43/43, Rust 도구 계약/설명/6,000자 예산 3/3 통과. 실제 Windows C07도 계속 통과했다.
+- 전체 검증: Extension **34파일 370/370**, Rust 전체 검사 통과, Node 보조 **28/28**, 빌드·E2E 타입 검사·문서 링크 검사 통과. Clippy는 종료 0(기존 스타일 경고와 새 중단 처리의 접을 수 있는 if 경고). 링크 검사는 초기 sandbox의 git spawn EPERM 후 읽기 권한 있는 실행에서 30개 파일 통과.
+- `AB_TEST_BFCACHE=1`을 WSLENV로 Windows Node에 전달한 `scripts/test-windows.sh`: **81 통과 / 별도 bookmarks 권한 fixture 2 skipped**. 실제 BFCache persisted=true 확인. Windows Chrome 154.0.8037.99와 새 MSVC release exe를 사용했다.
+- Linux Chromium 전체 E2E는 별도로 진행 중이다. 전체 결과를 Windows 증거로 대체하지 않는다.
+
 ---
 
 # v0.1.5 단일 통합 릴리스 준비

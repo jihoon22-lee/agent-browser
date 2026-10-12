@@ -113,6 +113,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             await interruptible(new Promise(r=>setTimeout(r,50)),signal);
             return dispatch(run,snapshotAttempt,snapshotDeadline);
         }
+        if(req.method==='browser.tabs.close'&&tab.url==='about:blank')
+            throw new ProtocolError('UNSUPPORTED_PAGE','Blank tabs cannot be safely checked and are left open; navigate to an HTTP(S) page before closing, or leave the tab open.');
         if (!goto) requireWeb(tab.url);
         await check(req, signal);
         const tabId = tab.id!;

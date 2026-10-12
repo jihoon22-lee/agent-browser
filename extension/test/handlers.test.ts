@@ -458,3 +458,8 @@ it('F6 snapshot waits briefly for a newly created blank loading tab to commit',a
     expect(settled).toMatchObject({loading:true,frames:[{text:{content:'fixture'}}]});
   }finally{h.disconnect();await work;vi.useRealTimers();}
 });
+it('F9 explains why an operation-created blank tab is preserved',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());w.tabs.get(1)!.url='about:blank';
+  await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'UNSUPPORTED_PAGE',message:expect.stringContaining('Blank tabs cannot be safely checked')});
+  expect(w.sent).toHaveLength(0);
+});
