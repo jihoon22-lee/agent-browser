@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$Version,
@@ -48,6 +48,20 @@ $zipPath=Join-Path $OutDir ('agent-browser-' + $Version + '-windows-x64.zip')
 $tempZip=$zipPath + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
 try {
     Copy-Item -LiteralPath $BridgeExe -Destination (Join-Path $stage 'browser-bridge.exe')
+    $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+    if (-not (Test-Path -LiteralPath $compiler)) { throw 'The built-in .NET Framework compiler is unavailable; no dependency was installed.' }
+    $sources=@('NativeIO.cs','Discovery.cs','Jsonc.cs','InstallerEngine.cs','ProfileForm.cs','SetupForm.cs') | ForEach-Object { Join-Path $repo ('installer\' + $_) }
+    $guiCache=Join-Path $repo 'target\installer'; $null=New-Item -ItemType Directory -Path $guiCache -Force
+    $guiExe=Join-Path $guiCache 'AgentBrowser-Setup.exe'; $guiStamp=Join-Path $guiCache 'build-powershell.json'
+    $sourceHash=Get-TextHash ((@((Get-FileSha256 $compiler)) + @($sources | ForEach-Object { Get-FileSha256 $_ })) -join [Environment]::NewLine)
+    $previous=$null; if (Test-Path -LiteralPath $guiStamp) { $previous=(Read-Utf8Text $guiStamp) | ConvertFrom-Json }
+    if (-not (Test-Path -LiteralPath $guiExe) -or -not $previous -or $previous.Source -ne $sourceHash -or $previous.Binary -ne (Get-FileSha256 $guiExe)) {
+        & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ ('/out:' + $guiExe) /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Management.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll @sources
+        if ($LASTEXITCODE -ne 0) { throw 'Native GUI installer build failed.' }
+        Write-Utf8Atomic $guiStamp (ConvertTo-Json @{ Source=$sourceHash; Binary=(Get-FileSha256 $guiExe) })
+    }
+    Copy-Item -LiteralPath $guiExe -Destination (Join-Path $stage 'AgentBrowser-Setup.exe')
+
     $extensionRoot=Get-FullPath $ExtensionDir
     $queue=New-Object 'System.Collections.Generic.Queue[string]'; $queue.Enqueue($extensionRoot)
     while ($queue.Count) {

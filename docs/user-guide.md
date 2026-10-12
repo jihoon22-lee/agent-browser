@@ -29,19 +29,15 @@ AgentBrowser는 기존 OpenCode v1 에이전트가 Windows Chrome의 페이지�
 
 Windows에 로그인한 뒤 Chrome에서 AgentBrowser 아이콘을 눌러 사이드 패널을 엽니다. 상단이 **연결됨**이고 실행 환경 이름 아래에 OpenCode 연결 상태가 표시되면 [첫 브라우저 작업](#3-첫-브라우저-작업)을 시작할 수 있습니다.
 
-확장 아이콘이 보이지 않으면 Chrome 도구 모음의 확장 프로그램 메뉴에서 AgentBrowser를 고정합니다. Bridge가 시작되지 않았으면 설치 폴더의 `start-bridge.cmd`를 실행합니다. 매번 OpenCode 서버를 터미널에서 따로 시작할 필요는 없습니다.
+확장 아이콘이 보이지 않으면 Chrome 도구 모음의 확장 프로그램 메뉴에서 AgentBrowser를 고정합니다. Bridge가 시작되지 않았으면 설치 GUI에서 같은 설치 폴더를 선택하고 **Bridge 시작**을 누릅니다. 매번 OpenCode 서버를 터미널에서 따로 시작할 필요는 없습니다.
 
 ### 새로 설치하는 경우
 
 Windows x64, Chrome 116 이상, 기존 OpenCode v1 설치가 필요합니다. Windows 네이티브 OpenCode 사용자는 WSL을 설치할 필요가 없습니다. AgentBrowser 실행에는 Node.js·Rust·Python이 필요하지 않습니다.
 
-1. 배포 ZIP을 임시 폴더에 모두 압축 해제하고 [설치 안내](../README-install.md)에 따라 `setup.ps1`을 실행합니다. 기본 설치 위치는 `%LOCALAPPDATA%\AgentBrowser`입니다.
+1. 배포 ZIP을 임시 폴더에 모두 압축 해제하고 [설치 안내](../README-install.md)에 따라 `AgentBrowser-Setup.exe`를 실행합니다. 기본 설치 위치는 `%LOCALAPPDATA%\AgentBrowser`입니다.
 2. 사용할 Chrome 프로필에서 `chrome://extensions`를 엽니다. **개발자 모드**를 켜고 **압축해제된 확장 프로그램 로드**로 설치 폴더의 `extension`을 선택합니다. 임시 압축 해제 폴더를 선택하지 않습니다.
-3. 설치 폴더의 `show-pairing.ps1`을 실행합니다. 기본 설치라면 Windows PowerShell에서 다음 명령을 쓸 수 있습니다.
-
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File "$env:LOCALAPPDATA\AgentBrowser\show-pairing.ps1"
-   ```
+3. 설치 GUI에서 **페어링 토큰 → 토큰 복사**를 누릅니다. 주소도 함께 확인합니다.
 
 4. 확장 아이콘으로 사이드 패널을 열고 **설정**을 누릅니다. 패널을 열기 전에는 Chrome 확장의 **확장 프로그램 옵션**에서도 접근할 수 있습니다.
 5. **Bridge 페어링**의 **Bridge 주소**와 **페어링 토큰**에 표시된 값을 입력하고 **저장 후 연결**을 누릅니다. 기본 주소는 `ws://127.0.0.1:4317/extension`이며 설치 때 포트를 바꿨다면 실제 출력 주소를 사용합니다.
@@ -51,7 +47,7 @@ Windows x64, Chrome 116 이상, 기존 OpenCode v1 설치가 필요합니다. Wi
 
 ## 2. OpenCode 실행 환경 등록하기
 
-설정의 **OpenCode 실행 환경**에서 **프로필 추가**를 누릅니다. 프로필은 어떤 OpenCode를 어느 작업 디렉터리에서 실행할지 저장하는 설정입니다.
+설치 GUI의 **관리 프로필 설정**에서 실행 파일과 작업 폴더를 확인해 새 프로필을 저장할 수 있습니다. 또는 확장 설정의 **OpenCode 실행 환경**에서 **프로필 추가**를 누릅니다. 기존 프로필 수정과 서버 시작은 확장 Options에서 진행합니다. 프로필은 어떤 OpenCode를 어느 작업 디렉터리에서 실행할지 저장하는 설정입니다.
 
 | 항목 | 입력 내용 |
 |---|---|

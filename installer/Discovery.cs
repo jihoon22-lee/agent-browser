@@ -1,0 +1,111 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using Microsoft.Win32;
+
+namespace AgentBrowser.Installer {
+    internal sealed class OpenCodeCandidate {
+        public string Kind, Distribution, User, Home, Executable, Version, Error;
+        public readonly List<string> Settings = new List<string>();
+        public override string ToString() { return (Kind=="wsl" ? "WSL · "+Distribution+" · "+User : "Windows")+" · "+Executable; }
+    }
+    internal sealed class DiscoveryResult {
+        public readonly List<string> Installs = new List<string>();
+        public readonly List<string> Distributions = new List<string>();
+        public readonly List<OpenCodeCandidate> OpenCode = new List<OpenCodeCandidate>();
+        public readonly List<string> Notices = new List<string>();
+    }
+    internal static class Discovery {
+        static bool Same(string a,string b) { return String.Equals(a,b,StringComparison.OrdinalIgnoreCase); }
+        public static void AddInstall(DiscoveryResult result,string path) {
+            try {
+                if(String.IsNullOrEmpty(path)) return;
+                path=Path.GetFullPath(path).TrimEnd('\\');
+                NativeIO.PlainPath(path);
+                var marker=Path.Combine(path,".agent-browser-install.json");
+                if(!File.Exists(marker)) return;
+                var state=NativeIO.Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(marker));
+                if((string)state["Product"]!="agent-browser.user-install.v1"||!Same(Path.GetFullPath((string)state["InstallDir"]).TrimEnd('\\'),path)) return;
+                if(!result.Installs.Any(p=>Same(p,path))) result.Installs.Add(path);
+            } catch(Exception error) { result.Notices.Add("설치 상태를 확인하지 못했습니다: "+path+" · "+error.Message); }
+        }
+        public static DiscoveryResult Find() {
+            var result=new DiscoveryResult();
+            AddInstall(result,Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentBrowser"));
+            // These product-owned registry entries only identify install roots.
+            // Never enumerate Chrome profiles or arbitrary home directories.
+            using(var root=Registry.CurrentUser.OpenSubKey(@"Software\AgentBrowser\Installations")) {
+                if(root!=null) foreach(var id in root.GetSubKeyNames()) using(var key=root.OpenSubKey(id)) AddInstall(result,key==null?null:key.GetValue("Path") as string);
+            }
+            var candidates=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var home=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            candidates.Add(Path.Combine(home,@".opencode\bin\opencode.exe"));
+            candidates.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),@"Programs\opencode\opencode.exe"));
+            foreach(var directory in (Environment.GetEnvironmentVariable("PATH")??"").Split(';')) {
+                if(String.IsNullOrWhiteSpace(directory)) continue;
+                try { foreach(var name in new [] {"opencode.exe","opencode.cmd"}) candidates.Add(Path.Combine(directory.Trim('"'),name)); } catch(ArgumentException) { }
+            }
+            foreach(var executable in candidates) if(File.Exists(executable)) {
+                var candidate=new OpenCodeCandidate { Kind="windows",Home=home,Executable=Path.GetFullPath(executable) };
+                AddConfigFiles(candidate,Path.Combine(home,@".config\opencode"));
+                try { candidate.Version=Version(candidate); } catch(Exception error) { candidate.Error=error.Message; }
+                result.OpenCode.Add(candidate);
+            }
+            if(!File.Exists(NativeIO.WslExe)) { result.Notices.Add("WSL을 찾지 못했습니다. Windows 설치만 진행하거나 WSL 설정을 나중에 추가할 수 있습니다."); return result; }
+            try {
+                // wsl --list emits UTF-16LE on native Windows, unlike Linux --exec output.
+                var listing=NativeIO.Run(NativeIO.WslExe,new [] {"--list","--quiet"},null,null,15000,Encoding.Unicode);
+                if(listing.ExitCode!=0) { result.Notices.Add("WSL 배포판을 확인하지 못했습니다. WSL 또는 회사 정책 상태를 확인하세요."); return result; }
+                var runningResult=NativeIO.Run(NativeIO.WslExe,new [] {"--list","--running","--quiet"},null,null,15000,Encoding.Unicode);
+                var running=new HashSet<string>((runningResult.ExitCode==0?runningResult.Output:"").Split(new [] {'\r','\n'},StringSplitOptions.RemoveEmptyEntries).Select(s=>s.Trim('\0',' ','\t')),StringComparer.OrdinalIgnoreCase);
+                foreach(var value in listing.Output.Split(new [] {'\r','\n'},StringSplitOptions.RemoveEmptyEntries)) {
+                    var distribution=value.Trim('\0',' ','\t');if(distribution.Length==0) continue;
+                    if(distribution.StartsWith("docker-desktop",StringComparison.OrdinalIgnoreCase)) continue;
+                    result.Distributions.Add(distribution);
+                    if(!running.Contains(distribution)) {result.Notices.Add(distribution+": 중지된 배포판은 자동 시작하지 않았습니다. 사용할 배포판과 경로를 직접 선택하면 확인할 수 있습니다.");continue;}
+                    try { result.OpenCode.AddRange(FindWsl(distribution,null)); }
+                    catch(Exception error) { result.Notices.Add(distribution+": "+error.Message); }
+                }
+                if(result.Distributions.Count==0) result.Notices.Add("등록된 WSL 배포판이 없습니다. WSL 설치를 자동으로 실행하지 않습니다.");
+            } catch(Exception error) { result.Notices.Add("WSL 검색을 완료하지 못했습니다: "+error.Message); }
+            return result;
+        }
+        static void AddConfigFiles(OpenCodeCandidate candidate,string directory) {
+            foreach(var name in new [] {"opencode.json","opencode.jsonc"}) {var path=Path.Combine(directory,name);if(File.Exists(path)) candidate.Settings.Add(path);}
+        }
+        public static string Version(OpenCodeCandidate candidate) {
+            string version;
+            if(candidate.Kind=="wsl") {
+                var args=new List<string>{"--distribution",candidate.Distribution};
+                if(!String.IsNullOrEmpty(candidate.User)) args.AddRange(new [] {"--user",candidate.User});
+                args.AddRange(new [] {"--exec",candidate.Executable,"--version"});
+                version=NativeIO.RunChecked(NativeIO.WslExe,args,timeout:15000);
+            } else if(candidate.Executable.EndsWith(".cmd",StringComparison.OrdinalIgnoreCase)) {
+                // A fixed shell command uses an environment variable, never interpolates
+                // a user path into shell syntax, and disables delayed expansion.
+                version=NativeIO.CmdVersion(candidate.Executable);
+            } else version=NativeIO.RunChecked(candidate.Executable,new [] {"--version"});
+            if(!System.Text.RegularExpressions.Regex.IsMatch(version,@"^1\.[0-9A-Za-z.+-]+$")) throw new IOException("OpenCode v1 실행파일인지 확인하지 못했습니다.");
+            return version;
+        }
+        public static List<OpenCodeCandidate> FindWsl(string distribution,string user) {
+            const string probe="set -eu\nprintf 'USER\\t%s\\n' \"$(id -un)\"\nprintf 'HOME\\t%s\\n' \"$HOME\"\np=$(command -v opencode || true); [ -z \"$p\" ] || printf 'EXE\\t%s\\n' \"$p\"\nfor p in \"$HOME/.opencode/bin/opencode\" \"$HOME/.local/bin/opencode\"; do [ ! -x \"$p\" ] || printf 'EXE\\t%s\\n' \"$p\"; done\nc=${XDG_CONFIG_HOME:-$HOME/.config}/opencode\nfor p in \"$c/opencode.json\" \"$c/opencode.jsonc\"; do [ ! -f \"$p\" ] || printf 'CFG\\t%s\\n' \"$p\"; done\n";
+            var args=new List<string>{"--distribution",distribution};if(!String.IsNullOrEmpty(user)) args.AddRange(new [] {"--user",user});args.AddRange(new [] {"--exec","/bin/sh","-c",probe});
+            var text=NativeIO.RunChecked(NativeIO.WslExe,args);
+            var executables=new HashSet<string>();var configs=new List<string>();string actualUser=null,home=null;
+            foreach(var line in text.Split('\n')) {var parts=line.TrimEnd('\r').Split(new [] {'\t'},2);if(parts.Length!=2) continue;switch(parts[0]) {case "USER":actualUser=parts[1];break;case "HOME":home=parts[1];break;case "EXE":executables.Add(parts[1]);break;case "CFG":configs.Add(parts[1]);break;}}
+            if(String.IsNullOrEmpty(actualUser)||String.IsNullOrEmpty(home)||!home.StartsWith("/")) throw new IOException("WSL 사용자와 홈 경로를 확인하지 못했습니다.");
+            var found=new List<OpenCodeCandidate>();
+            foreach(var exe in executables) {
+                var item=new OpenCodeCandidate { Kind="wsl",Distribution=distribution,User=actualUser,Home=home,Executable=exe };
+                foreach(var path in configs) item.Settings.Add(@"\\wsl.localhost\"+distribution+path.Replace('/','\\'));
+                try { item.Version=Version(item); } catch(Exception error) { item.Error=error.Message; }
+                found.Add(item);
+            }
+            return found;
+        }
+    }
+}

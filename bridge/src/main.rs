@@ -44,7 +44,7 @@ enum RuntimeCommand {
 #[derive(Subcommand)]
 enum ProfileCommand {
     List { #[arg(long)] json: bool },
-    Save { #[arg(long)] file: std::path::PathBuf, #[arg(long = "default")] make_default: bool },
+    Save { #[arg(long)] file: std::path::PathBuf, #[arg(long = "default")] make_default: bool, #[arg(long)] create_only: bool },
     Delete { #[arg(long)] id: String },
 }
 
@@ -88,10 +88,10 @@ fn main() -> anyhow::Result<()> {
             let result = match command {
                 Command::Doctor { profile,.. } => runtime.block_on(manager.doctor(profile.as_deref())),
                 Command::Profile { command: ProfileCommand::List { .. } } => manager.list(),
-                Command::Profile { command: ProfileCommand::Save { file,make_default } } => {
+                Command::Profile { command: ProfileCommand::Save { file,make_default,create_only } } => {
                     let bytes = std::fs::read(file)?;
                     let profile = serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("Invalid profile JSON"))?;
-                    manager.save(profile,make_default)
+                    if create_only { manager.save_new(profile,make_default) } else { manager.save(profile,make_default) }
                 }
                 Command::Profile { command: ProfileCommand::Delete { id } } => runtime.block_on(manager.delete(&id)),
                 _ => unreachable!(),

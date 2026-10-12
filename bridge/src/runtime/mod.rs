@@ -1,3 +1,4 @@
+mod diagnostics;
 pub mod profile;
 mod process;
 mod storage;
@@ -61,10 +62,13 @@ impl Manager {
         let config = self.store.read()?;
         Ok(json!({"profiles":config.profiles.values().map(Profile::summary).collect::<Vec<_>>(),"defaultProfileId":config.default_profile_id}))
     }
-    pub fn save(&self, mut profile: Profile, make_default: bool) -> Result<Value, RpcError> {
+    pub fn save(&self, profile: Profile, make_default: bool) -> Result<Value, RpcError> { self.save_mode(profile,make_default,false) }
+    pub fn save_new(&self, profile: Profile, make_default: bool) -> Result<Value, RpcError> { self.save_mode(profile,make_default,true) }
+    fn save_mode(&self, mut profile: Profile, make_default: bool, create_only: bool) -> Result<Value, RpcError> {
         profile.validate()?;
         let _operation = self.operation_lock(&profile.id)?;
         self.store.update(|config| {
+            if create_only && config.profiles.contains_key(&profile.id) { return Err(invalid("This profile id already exists; no profile was changed")); }
             if config.runtimes.contains_key(&profile.id) { return Err(invalid("Stop the managed runtime before editing its profile")); }
             if let Some(old) = config.profiles.get(&profile.id) { profile.preserve_secrets(old); }
             if make_default || config.default_profile_id.is_none() { config.default_profile_id = Some(profile.id.clone()); }
@@ -315,8 +319,7 @@ impl Manager {
             checks.push(json!({"id":"opencode","profileId":id,"status":if status["state"] == "ready" {"ok"} else if status["state"] == "stopped" || status["state"] == "starting" {"warning"} else {"error"},"message":status["error"].as_str().unwrap_or(status["state"].as_str().unwrap_or("unknown")),"runtime":status}));
             if status["state"] == "ready" {
                 let mcp = self.diagnostic_api(&profile,"mcp").await;
-                let connected = mcp.as_ref().is_ok_and(|value| value["browser"]["status"] == "connected");
-                checks.push(json!({"id":"mcp","profileId":id,"status":if connected {"ok"} else {"warning"},"message":if connected {"browser MCP is connected to OpenCode"} else {"browser MCP is unavailable or not connected; inspect its registration and Bridge executable path"}}));
+                checks.push(diagnostics::mcp_check(&id,profile.kind != Kind::External,mcp.as_ref()));
                 let providers = self.diagnostic_api(&profile,"provider").await;
                 let (provider_count,model_count) = providers.as_ref().map(|value| {
                     let connected = value["connected"].as_array().cloned().unwrap_or_default();
@@ -344,8 +347,8 @@ impl Manager {
         url.query_pairs_mut().append_pair("directory",&profile.directory);
         let mut request = client.get(url).timeout(Duration::from_secs(12));
         if let Some(password) = password.filter(|value| !value.is_empty()) { request = request.basic_auth(username.unwrap_or_else(|| "opencode".into()),Some(password)); }
-        let response = request.send().await.map_err(|_| failure("Runtime diagnostic API is unavailable"))?;
-        if !response.status().is_success() { return Err(failure("Runtime diagnostic API returned an error")); }
+        let response = request.send().await.map_err(|error| failure("Runtime diagnostic API is unavailable").with_details(json!({"reason":if error.is_timeout() {"timeout"} else {"network"}})))?;
+        if !response.status().is_success() { return Err(failure("Runtime diagnostic API returned an error").with_details(json!({"httpStatus":response.status().as_u16()}))); }
         limited_json(response,8 * 1024 * 1024).await
     }
 
@@ -559,6 +562,19 @@ async fn limited_json(mut response: reqwest::Response, limit: usize) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn installer_create_only_does_not_replace_an_existing_profile() {
+        let home=tempfile::tempdir().unwrap();
+        let first=Manager::new(home.path().into(),4317);
+        let second=Manager::new(home.path().into(),4317);
+        let profile: Profile=serde_json::from_value(json!({"id":"existing","name":"Original","kind":"external","directory":"/fixture","baseUrl":"https://example.test","password":"original-secret"})).unwrap();
+        first.save_new(profile.clone(),false).unwrap();
+        let mut changed=profile;changed.name="Changed".into();changed.password=Some("replacement-secret".into());
+        assert!(second.save_new(changed,false).is_err());
+        assert_eq!(first.list().unwrap()["profiles"][0]["name"],"Original");
+        assert_eq!(first.profile("existing").unwrap().password.as_deref(),Some("original-secret"));
+    }
+
     #[tokio::test]
     async fn review_status_holds_profile_locks_until_inspection_finishes() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};

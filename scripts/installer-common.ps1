@@ -40,16 +40,58 @@ function Join-SafePath([string]$Root, [string]$Relative) {
     return $path
 }
 function Read-Utf8Text([string]$Path) { return [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
-function Write-Utf8Atomic([string]$Path, [string]$Text) {
+function Get-WslFileTarget([string]$Path) {
+    if ($Path -match '(?i)^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)\\(.+)$') {
+        return [pscustomobject]@{ Distribution=$Matches[1]; LinuxPath=('/' + $Matches[2].Replace('\','/')) }
+    }
+    return $null
+}
+function Write-BytesAtomic([string]$Path, [byte[]]$Bytes, [string]$ExpectedSha256='') {
     $parent = [IO.Path]::GetDirectoryName($Path)
     if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
     Assert-PlainPath $Path
+    if (-not $ExpectedSha256) { $ExpectedSha256 = if (Test-Path -LiteralPath $Path) { Get-FileSha256 $Path } else { 'missing' } }
+    if ($ExpectedSha256 -ne 'missing' -and $ExpectedSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid settings concurrency hash.' }
     $temp = Join-Path $parent ('.agent-browser-' + [guid]::NewGuid().ToString('N') + '.tmp')
     try {
-        [IO.File]::WriteAllText($temp, $Text, $script:Utf8NoBom)
-        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
-        else { [IO.File]::Move($temp, $Path) }
+        [IO.File]::WriteAllBytes($temp, $Bytes)
+        $target = Get-WslFileTarget $Path
+        if ($target) {
+            # ReplaceFile is unsupported by WSL's UNC file provider. Rename on
+            # the Linux filesystem without deleting/truncating the destination;
+            # preserve its owner, group and mode before publishing the temp file.
+            $temporary = Get-WslFileTarget $temp
+            $script = @'
+set -eu
+target=$1
+temporary=$2
+expected=$3
+[ ! -L "$target" ] && [ ! -L "$temporary" ] || { echo 'Settings symlink changed; no settings were overwritten.' >&2; exit 41; }
+if [ "$expected" = missing ]; then
+    [ ! -e "$target" ] || { echo 'Settings appeared while preparing; no settings were overwritten.' >&2; exit 42; }
+else
+    [ -f "$target" ] || { echo 'Settings disappeared while preparing; no settings were overwritten.' >&2; exit 43; }
+    actual=$(sha256sum -- "$target")
+    actual=${actual%% *}
+    [ "$actual" = "$expected" ] || { echo 'Settings changed while preparing; no settings were overwritten.' >&2; exit 44; }
+    chown --reference="$target" -- "$temporary"
+    chmod --reference="$target" -- "$temporary"
+fi
+mv -fT -- "$temporary" "$target"
+'@
+            $script = $script.Replace("`r`n", "`n")
+            $wsl = Join-Path ([Environment]::GetFolderPath('System')) 'wsl.exe'
+            $null = Invoke-NativeCapture $wsl @('--distribution',$target.Distribution,'--exec','/bin/sh','-c',$script,'agent-browser-write',$target.LinuxPath,$temporary.LinuxPath,$ExpectedSha256.ToLowerInvariant()) ([IO.Path]::GetTempPath()) @{} 15000
+        } else {
+            $actual = if (Test-Path -LiteralPath $Path) { Get-FileSha256 $Path } else { 'missing' }
+            if ($actual -ne $ExpectedSha256) { throw 'Settings changed while preparing; no settings were overwritten.' }
+            if ($actual -eq 'missing') { [IO.File]::Move($temp, $Path) }
+            else { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+        }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}
+function Write-Utf8Atomic([string]$Path, [string]$Text, [string]$ExpectedSha256='') {
+    Write-BytesAtomic $Path ($script:Utf8NoBom.GetBytes($Text)) $ExpectedSha256
 }
 function Read-InstallState([string]$Root) {
     $path = Join-Path $Root $script:AgentBrowserStateName
@@ -235,7 +277,7 @@ function Save-TransactionFile($Transaction, [string]$Path) {
     }
     $Transaction.Journal.Add([pscustomobject]@{ Path=$Path; Existed=$exists; Backup=$backup })
 }
-function Set-TransactionText($Transaction, [string]$Path, [string]$Text) { Save-TransactionFile $Transaction $Path; Write-Utf8Atomic $Path $Text }
+function Set-TransactionText($Transaction, [string]$Path, [string]$Text, [string]$ExpectedSha256='') { Save-TransactionFile $Transaction $Path; Write-Utf8Atomic $Path $Text $ExpectedSha256 }
 function Copy-TransactionFile($Transaction, [string]$Source, [string]$Destination) {
     Save-TransactionFile $Transaction $Destination
     $parent = [IO.Path]::GetDirectoryName($Destination)
@@ -252,7 +294,8 @@ function Undo-FileTransaction($Transaction) {
         if ($entry.Existed) {
             $parent = [IO.Path]::GetDirectoryName($entry.Path)
             if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
-            [IO.File]::Copy($entry.Backup, $entry.Path, $true)
+            if (Get-WslFileTarget $entry.Path) { Write-BytesAtomic $entry.Path ([IO.File]::ReadAllBytes($entry.Backup)) }
+            else { [IO.File]::Copy($entry.Backup, $entry.Path, $true) }
         } elseif (Test-Path -LiteralPath $entry.Path) { Remove-Item -LiteralPath $entry.Path -Force }
     }
 }

@@ -151,6 +151,17 @@ jobs:
       - name: Build reviewable Windows package (does not publish a Release)
         shell: powershell
         run: .\scripts\build-release.ps1 -SkipBuild
+      - name: Native GUI engine install/update/rollback/uninstall regressions
+        run: |
+          $fixture=Join-Path $env:RUNNER_TEMP ('native-installer-' + [guid]::NewGuid().ToString('N'))
+          $package=Join-Path $fixture 'package'
+          Expand-Archive -LiteralPath (Get-ChildItem release/agent-browser-*-windows-x64.zip | Select-Object -First 1).FullName -DestinationPath $package
+          $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $testExe=Join-Path $fixture 'NativeEngineTests.exe'
+          & $compiler /nologo /codepage:65001 /target:exe ('/out:' + $testExe) /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Management.dll /r:System.IO.Compression.FileSystem.dll installer/NativeIO.cs installer/Discovery.cs installer/Jsonc.cs installer/InstallerEngine.cs tests/install/NativeEngineTests.cs
+          if ($LASTEXITCODE -ne 0) { throw 'Native installer test compilation failed' }
+          & $testExe $package (Join-Path $package 'AgentBrowser-Setup.exe') (Join-Path $fixture 'cases')
+          if ($LASTEXITCODE -ne 0) { throw 'Native installer regression failed' }
       - name: Upload Windows package and checksum
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -185,3 +185,35 @@ Clippy의 남은 경고는 기준 main의 동일 코드와 대조했다. `conn.r
 - 전역 `~/.cargo/config.toml`의 `build.target-dir`이 다른 프로젝트 캐시를 가리킨다. 이 저장소는 `.cargo/config.toml`로 `target/`을 쓴다.
 - 전역 OpenCode 설정에는 기존 MCP(playwright 등)가 있다. 수정하지 않고 테스트는 별도 설정으로 격리한다.
 - 실제 사용자 설치의 Bridge는 사용을 위해 실행 상태로 유지한다. 검증용 프로세스는 테스트가 끝나면 종료한다.
+
+## Windows GUI installer — 2026-10-12 02:41 UTC (in progress)
+
+Native WinForms entry point selected; GUI flows are not implemented or tested yet. WSL existing-JSONC replacement regression: 4 PASS; native cmd quoting/discovery smoke: 2 PASS; existing JSONC tests and diff check: PASS. Full installer regression invocation was blocked by Windows signature policy and did not run; no policy was changed. Details: [active plan](./plans/2026-10-12-windows-setup-ui.md). Production remains the separately verified v0.1.4 installation.
+
+### 02:54 UTC checkpoint
+
+Native WinForms GUI and transactional engine compile. Eight isolated native engine tests pass (install/update/uninstall, JSONC/identity/data preservation, concurrency and cancellation rollback). Actual mouse-click tests did not reach preview because Windows is locked; no GUI flow passed. The company no-mcp WSL fixture is prepared but its registration/auth checks are pending. Generic MCP warning classification is confirmed in source; missing registration is not established. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0254.md) for remaining work and edge-case review.
+
+### 03:04 UTC checkpoint
+
+Native integration: 12 PASS, including actual WSL no-mcp JSONC add/repeat/remove and OpenCode 1.18.29 plus authenticated Bridge round trip. GUI remains unverified: Windows now reports Default input desktop, but owned-window foreground activation failed and no mouse input was sent. MCP classification regression fails as expected before implementation. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0304.md).
+
+### 03:22 UTC checkpoint
+
+Five actual native GUI click flows passed from local candidate ZIP: preview/back/cancel, WSL install, managed profile save, repeat/update, uninstall with settings/data preservation. Native integration remains 12 PASS; Rust runtime suite 22 PASS; fresh Windows Bridge and GUI package build PASS. Foreground issue resolved with verified own-window mouse selection. Cross-version GUI update, duplicate-click/failure GUI checks, CI integration and final validation remain. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0322.md).
+
+### 03:40 UTC checkpoint
+
+Local version 0.1.5: actual GUI v0.1.4 published-binary upgrade, duplicate Apply, startup failure rollback/retry and uninstall PASS; native v0.1.5/actual WSL auth integration 13 PASS. Extension build/typecheck and 280 tests PASS; full Rust tests and clippy (existing warnings) PASS; package reproducibility PASS. Native tests added to Windows CI but no push/run. Installed-GUI self-uninstall, discovery/profile async UX review and final docs remain. See [checkpoint](./plans/2026-10-12-windows-setup-ui-checkpoint-0340.md).
+
+### Final local completion — 2026-10-12
+
+Native Windows GUI implementation and final isolated verification complete; local/unpublished candidate 0.1.5. Installed-GUI self-uninstall, automatic discovery/selection/stale-response handling, pending profile validation close, duplicate ID rejection, double Apply/Save, occupied-port failure rollback/retry, masked pairing and existing Bridge start all passed actual GUI clicks from the final ZIP. Published 0.1.4 binary-based isolated upgrade to 0.1.5 and self-uninstall passed.
+
+Final native integration: 14 PASS including simultaneous Windows+WSL registrations and actual OpenCode 1.18.29 authentication; discovery/cmd probe: 2 PASS. Full Rust and extension verification from this same source cycle passed (extension 280 tests); actionlint, CI helpers, document links and package reproducibility passed. Final ZIP SHA256: `fb3cb446410f74b097e47ffbaaa622f68215b150e6251630a930ac9415e035ec`.
+
+Production v0.1.4 PID 74680 remains running; identity, pairing, data owner, profile definitions and global WSL settings preserved. Legacy PowerShell execution and native Windows OpenCode/company/nondefault-user/Chrome end-to-end limitations are explicitly recorded, not claimed as passed. No push, commit, PR, release, model call or operational update. See [final validation](./plans/2026-10-12-windows-setup-ui-final.md).
+
+### v0.1.5 release authorized — 2026-10-12 04:07 UTC
+
+User authorized commit/PR/review/CI/merge/tag/release and published-asset validation. Remote main is still `fb2bcdbb4672a09395c7d7cc2ee75e6796e897c1`; no intervening main changes or existing v0.1.5 release/tag were found. Personal operational v0.1.4 is excluded from the update. Earlier candidate hash and local-only status remain historical evidence, not the published artifact identity.

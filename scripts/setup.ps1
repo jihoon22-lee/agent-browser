@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$PackageDir,
@@ -20,6 +20,7 @@ $manifest = Read-VerifiedPackage $PackageDir
 $root = Assert-InstallRoot $InstallDir
 if ((Get-FullPath $PackageDir) -eq $root) { throw 'Extract the release to a separate directory, then install into the dedicated AgentBrowser directory.' }
 $old = Read-InstallState $root
+if ($old -and @($old.Mcps).Count -gt 1) { throw 'This installation has multiple MCP targets. Use AgentBrowser-Setup.exe to update or remove all owned registrations safely.' }
 Assert-OwnedFiles $root $old
 if ($Port -eq 0) { if ($old) { $Port = [int]$old.Port } else { $Port = 4317 } }
 $dataDir = Join-Path $root 'data'
@@ -123,7 +124,7 @@ try {
     if ($mcpPlan -and $mcpPlan.Edit.Changed) {
         if ((Test-Path -LiteralPath $mcpPlan.Path) -ne $mcpPlan.Existed -or ($mcpPlan.Existed -and (Get-FileSha256 $mcpPlan.Path) -ne $mcpPlan.OriginalHash)) { throw 'OpenCode settings changed while setup was preparing; no settings were overwritten.' }
         if ($mcpPlan.Backup) { [IO.File]::Copy($mcpPlan.Path, $mcpPlan.Backup, $false) }
-        Set-TransactionText $transaction $mcpPlan.Path $mcpPlan.Edit.Text
+        Set-TransactionText $transaction $mcpPlan.Path $mcpPlan.Edit.Text $(if ($mcpPlan.Existed) { $mcpPlan.OriginalHash } else { 'missing' })
     }
     Set-TransactionText $transaction (Join-Path $root $script:AgentBrowserStateName) (ConvertTo-Json $state -Depth 40)
     $running = $null

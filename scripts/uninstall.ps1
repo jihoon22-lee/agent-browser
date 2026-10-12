@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 [CmdletBinding()]
 param(
     [string]$InstallDir,
@@ -11,6 +11,7 @@ if (-not $PSBoundParameters.ContainsKey('InstallDir')) { $InstallDir = $PSScript
 . (Join-Path $PSScriptRoot 'installer-common.ps1')
 $root = Assert-InstallRoot $InstallDir
 $state = Read-InstallState $root
+if ($state -and @($state.Mcps).Count -gt 1) { throw 'This installation has multiple MCP targets. Use AgentBrowser-Setup.exe to update or remove all owned registrations safely.' }
 if (-not $state) {
     if (-not $Quiet) { Write-Host 'No owned installation marker was found. No files or settings were removed.' }
     return [pscustomobject]@{ Removed=$false; AlreadyRemoved=$true; InstallDir=$root }
@@ -72,7 +73,7 @@ try {
         $backup = $mcpPlan.Path + '.agent-browser-uninstall-' + [guid]::NewGuid().ToString('N') + '.bak'
         [IO.File]::Copy($mcpPlan.Path, $backup, $false)
         if ($mcpPlan.RemoveFile) { Remove-TransactionFile $transaction $mcpPlan.Path }
-        else { Set-TransactionText $transaction $mcpPlan.Path $mcpPlan.Edit.Text }
+        else { Set-TransactionText $transaction $mcpPlan.Path $mcpPlan.Edit.Text $mcpPlan.OriginalHash }
     }
     foreach ($file in $state.OwnedFiles) {
         $path = Join-SafePath $root $file.Path
