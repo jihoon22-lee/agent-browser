@@ -12,6 +12,15 @@
 - 최초 Windows 실행은 fixture 임의 포트 6566에 대한 Chrome ERR_UNSAFE_PORT로 실패했다. 실행 목록에 새 spec을 등록한 최종 재실행 결과가 위 8/8이다. jsdom은 min/max range의 파싱 초기값을 50으로 남기는 차이가 있어 해당 경계는 실제 Chrome에서 검증했다.
 - 전체 마일스톤 검사는 아직 실행하지 않았다. 모델 호출, push/PR/Release, 운영 설치 변경은 하지 않았다.
 
+## WP1 완료
+
+- F1/F16: runtime.ensure 없이 실행 중 연결만 조회하고, 삭제/중단/오류 프로필은 gate 종료 후 lease를 정리한다. 프로필 삭제 경로와 background 15초 timer/30초 alarm에도 정리를 연결했다. 정상 완료는 동일 session/message와 서버 상태로 확인한다.
+- F2/F3/F12: 패널은 Bridge 실패와 무관하게 /abort를 시도하며 오류를 합쳐 표시한다. request.end abort:true는 CANCELLED로 종료하고 같은 client의 범위 없는 attach/new를 30초 거부한다. 명시적인 새 사용자 요청은 허용한다. MCP operation abort는 예약/대상 탭을 유지한다.
+- 실패 회귀: UI/lease 7건 실패 및 새 Rust 취소 API 부재를 확인했다. 구현 후 UI/lease 97/97, Rust operation 19/19와 conn 2/2 통과. 연결정보/doctor 비밀정보 분리 합성 HTTP 검사 1/1 통과(최초 sandbox loopback bind 거부 후 권한 있는 실행으로 검증).
+- Extension 빌드 및 E2E 타입 검사 통과. 초기 타입 오류는 명시적 storage lease 타입과 합성 메시지 created 시각으로 수정했다.
+- `bash scripts/test-windows.sh -- issue8-requests.spec.ts workbench.spec.ts`: 실제 Windows Chrome/Bridge **17/17 통과**. F16은 패널 없이 실제 background 주기로 16.6초 내 lease가 해제되고 CLI attach가 성공했다. 기존 작업 UI 13건도 통과했다.
+- 중단 표시의 30초 제한 및 Bridge 재시작 경계는 protocol.md에 명시했다. 실제 모델은 호출하지 않았다.
+
 ---
 
 # v0.1.5 단일 통합 릴리스 준비

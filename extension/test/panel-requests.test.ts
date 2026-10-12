@@ -6,7 +6,7 @@ const lease=(id:string)=>({requestId:id,messageId:'msg-'+id,sessionId:'session-'
 let storage:Record<string,any>,call:ReturnType<typeof vi.fn<(method:string,params:Record<string,unknown>)=>Promise<any>>>;
 beforeEach(()=>{
   storage={};api.get.mockReset().mockResolvedValue([]);api.post.mockReset().mockResolvedValue({});
-  call=vi.fn(async(method:string,_params:Record<string,unknown>)=>method==='runtime.ensure'?{state:'ready',baseUrl:'http://127.0.0.1:4444'}:{});
+  call=vi.fn(async(method:string,_params:Record<string,unknown>)=>method==='runtime.status'?{state:'ready',baseUrl:'http://127.0.0.1:4444'}:{});
   vi.stubGlobal('chrome',{storage:{local:{get:async()=>({clientId:'browser',...structuredClone(storage)}),set:async(v:any)=>Object.assign(storage,v),remove:async(k:string)=>{delete storage[k]}}}});
 });
 afterEach(()=>vi.unstubAllGlobals());
@@ -16,7 +16,7 @@ it('can stop a reservation after Chrome session storage is cleared on restart',a
   (chrome.storage as any).session={get:async()=>structuredClone(transient),set:async(v:any)=>Object.assign(transient,v),remove:async(k:string)=>{delete transient[k];}};
   await panelRequests(call).prepare(lease('one'),null);transient={};
   await panelRequests(call).cancel(lease('one'));
-  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser'});
+  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
 });
 it('releases a deleted session after closing its gate even when abort returns 404',async()=>{
   storage.panelBrowserRequest=lease('one');api.post.mockRejectedValueOnce(new OpenCodeApiError(404,'deleted'));
@@ -37,10 +37,10 @@ it('ignores a delayed cancellation for an older request in the same session',asy
 });
 it('closes the browser gate even when runtime discovery fails during cancellation',async()=>{
   storage.panelBrowserRequest=lease('one');
-  call.mockImplementation(async method=>{if(method==='runtime.ensure')throw Error('offline');return {};});
-  await expect(panelRequests(call).cancel(lease('one'))).rejects.toThrow('offline');
-  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser'});
-  expect(storage.panelBrowserRequest).toEqual(lease('one'));
+  call.mockImplementation(async method=>{if(method==='runtime.status')throw Error('offline');return {};});
+  await expect(panelRequests(call).cancel(lease('one'))).resolves.toBe(true);
+  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
+  expect(storage.panelBrowserRequest).toBeUndefined();
 });
 it('pins submission target and serializes concurrent session requests',async()=>{
   const manager=panelRequests(call);
@@ -69,7 +69,7 @@ it('does not cancel another selected session and closes the owner gate before ab
   storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
   await manager.cancel(lease('two'));expect(api.post).not.toHaveBeenCalled();
   await manager.cancel(lease('one'));expect(api.post).toHaveBeenCalledWith('/session/session-one/abort');
-  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser'});
+  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
   expect(storage.panelBrowserRequest).toBeUndefined();
   expect(call.mock.invocationCallOrder.at(-1)).toBeLessThan(api.post.mock.invocationCallOrder[0]!);
 });
@@ -95,4 +95,24 @@ it('finishes only after an authoritative completed response in the owning sessio
   api.get.mockImplementation(async(path:string)=>path==='/session/status'?{}:[{info:{role:'assistant',sessionID:'session-one',parentID:'msg-one',time:{completed:1},finish:'stop'}}]);
   expect(await manager.finish(lease('one'))).toBe(true);
   expect(storage.panelBrowserRequest).toBeUndefined();
+});
+
+it.each(['deleted','stopped','error'])('F1 clears an unavailable %s lease without starting its runtime',async state=>{
+  storage.panelBrowserRequest={...lease('one'),profileId:'old'};
+  call.mockImplementation(async method=>{if(method==='runtime.status'){if(state==='deleted')throw Object.assign(Error('unknown'),{code:'INVALID_PARAMS'});return {state};}return {};});
+  await panelRequests(call).prepare(lease('two'),null);
+  expect(storage.panelBrowserRequest).toEqual(lease('two'));
+  expect(call.mock.calls.some(([m])=>m==='runtime.ensure')).toBe(false);
+});
+it('F16 reconciles completed work without a panel and retains an incomplete request',async()=>{
+  storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
+  expect(await manager.reconcile()).toBe(false);
+  api.get.mockImplementation(async path=>path==='/session/status'?{}:[{info:{role:'assistant',sessionID:'session-one',parentID:'msg-one',time:{completed:1},finish:'stop'}}]);
+  expect(await manager.reconcile()).toBe(true);
+  expect(storage.panelBrowserRequest).toBeUndefined();
+});
+it('F1 removes only the deleted profile lease',async()=>{
+  storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
+  await manager.removeProfile('other');expect(storage.panelBrowserRequest).toBeDefined();
+  await manager.removeProfile('native');expect(storage.panelBrowserRequest).toBeUndefined();
 });

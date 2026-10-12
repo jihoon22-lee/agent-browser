@@ -642,3 +642,17 @@ it('review tombstoned roots keep the next page reachable', async () => {
   expect([...host.querySelectorAll('.session-tree > li strong')].map(element => element.textContent)).toEqual(sessions.slice(1).map(session => session.title));
   expect(button('더 보기')).toBeUndefined();
 });
+
+it.each(['response','transport'])('F2 always posts abort when request-cancel fails (%s)',async failure=>{
+  await render();await draftValue('long task');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>{
+    if(message.kind!=='request-cancel')return original(message);
+    if(failure==='transport')throw Error('Bridge disconnected');
+    return {ok:false,error:{message:'Bridge disconnected'}};
+  });
+  test.post.mockClear();
+  await act(async()=>button('응답 중단').click());
+  expect(test.post).toHaveBeenCalledWith('/session/ses-one/abort',undefined);
+  expect(host.textContent).toContain('Bridge disconnected');
+});

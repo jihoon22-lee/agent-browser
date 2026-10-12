@@ -326,6 +326,27 @@ impl Manager {
         }
         Ok(json!({"profileId":id,"state":"stopped","directory":profile.directory,"owned":false}))
     }
+    /// Extension-only connection discovery. Never launches a stopped runtime;
+    /// ordinary status and doctor continue to omit credentials.
+    pub async fn connection_status(&self, id: &str) -> Result<Value, RpcError> {
+        let mut value=self.status(id).await?;
+        if value["state"] == "ready" {
+            let config=self.store.read()?;
+            let profile=config.profiles.get(id).ok_or_else(||invalid("Unknown runtime profile"))?;
+            if profile.kind == Kind::External {
+                if value["baseUrl"] != profile.external_url()?.as_str().trim_end_matches('/') {
+                    return Err(invalid("Profile changed during connection discovery"));
+                }
+                value["username"]=json!(profile.username);
+                value["password"]=json!(profile.password);
+            } else if let Some(record)=config.runtimes.get(id).filter(|r| value["baseUrl"]==r.base_url) {
+                value["username"]=json!(record.username);
+                value["password"]=json!(record.password);
+            } else { return Err(invalid("Runtime changed during connection discovery")); }
+        }
+        Ok(value)
+    }
+
     pub async fn doctor(&self, id: Option<&str>) -> Result<Value, RpcError> {
         let config = self.store.read()?;
         let ids: Vec<_> = if let Some(id) = id { vec![id.to_string()] } else { config.profiles.keys().cloned().collect() };

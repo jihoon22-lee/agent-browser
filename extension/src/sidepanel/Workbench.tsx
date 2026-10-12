@@ -325,12 +325,21 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
           <button type="button" hidden={!running && !sending && !requestHeld} disabled={!wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => { const current=wb.captureScope(),selectedApi=api(),path=sessionPath();
             const attempt=submission.current?.key===draftKey?submission.current:undefined;
             if(attempt)attempt.cancelled=true;
-            const stopped=await chrome.runtime.sendMessage({kind:'request-cancel',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId,...(attempt?.requestId?{requestId:attempt.requestId}:{})}});
-            if(stopped?.ok===false)throw Error(stopped.error?.message);
+            const failures:string[]=[];
+            let stopped:any;
+            try {
+              stopped=await chrome.runtime.sendMessage({kind:'request-cancel',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId,...(attempt?.requestId?{requestId:attempt.requestId}:{})}});
+              if(stopped?.ok===false)throw Error(stopped.error?.message);
+            } catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
             if(stopped?.result===false||(!attempt?.requestId&&stopped?.result!==true)){
-              if(operation&&stopsOperation(operation.id))await bridgeRequest('operation.abort',{operationId:operation.id});
-              await selectedApi.post(path+'/abort');
+              try { if(operation&&stopsOperation(operation.id))await bridgeRequest('operation.abort',{operationId:operation.id}); }
+              catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
             }
+            // Always attempt the selected session's abort, even if the Bridge
+            // disconnected or lease cleanup failed. Report both failures.
+            try { await selectedApi.post(path+'/abort'); }
+            catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
+            if(failures.length)throw Error(failures.join(' · '));
             if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync(); })}>응답 중단</button></div></div>
       </form>
     </section>;

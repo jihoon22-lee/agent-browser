@@ -72,7 +72,10 @@ async fn doctor_separates_api_mcp_and_model_metadata_without_leaking_provider_fi
     });
     let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),0);
     let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"external","directory":"/synthetic space","baseUrl":format!("http://127.0.0.1:{port}"),"password":"private-password"})).unwrap();
-    manager.save(profile,false).unwrap(); let result = manager.doctor(Some("fixture")).await.unwrap(); let text = result.to_string();
+    manager.save(profile,false).unwrap();
+    assert!(!manager.status("fixture").await.unwrap().to_string().contains("private-password"));
+    assert_eq!(manager.connection_status("fixture").await.unwrap()["password"],"private-password");
+    let result = manager.doctor(Some("fixture")).await.unwrap(); let text = result.to_string();
     for secret in ["private-api-key","private-header","private-password","private-mcp-detail"] { assert!(!text.contains(secret)); }
     let checks = result["checks"].as_array().unwrap();
     assert!(checks.iter().any(|check| check["id"] == "mcp" && check["status"] == "ok"));

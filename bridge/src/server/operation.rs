@@ -39,6 +39,7 @@ struct GateInner {
     owned_tabs: std::collections::HashSet<i64>,
     closed_tabs: std::collections::HashSet<i64>,
     request: Option<RequestTarget>,
+    stopped_clients: std::collections::HashMap<String, std::time::Instant>,
 }
 
 #[derive(Clone)]
@@ -61,10 +62,13 @@ impl OperationGate {
     }
 
     fn request_matches(g:&GateInner,id:Option<&str>,client:&str)->Result<(),RpcError> {
+        if id.is_none() && g.stopped_clients.get(client).is_some_and(|until| *until > std::time::Instant::now()) {
+            return Err(RpcError::new(ErrorCode::Cancelled,Retry::Never,"A panel request was stopped. Unscoped attach is blocked for 30 seconds; wait for a new user request."));
+        }
         match (&g.request,id) {
             (None,None)=>Ok(()),
             (Some(r),Some(id)) if r.id==id && r.client==client=>Ok(()),
-            _=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"Attach with the requestId from the current user request. Do not reuse another request's operation.")),
+            _=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"A panel request owns the browser. Wait for completion or stop it in the panel; scoped calls must use that requestId.")),
         }
     }
 
@@ -78,9 +82,25 @@ impl OperationGate {
     }
 
     pub fn end_request(&self,id:&str,client:&str)->Result<Option<AbortedOperation>,RpcError> {
+        self.finish_request(id,client,false)
+    }
+
+    pub fn cancel_request(&self,id:&str,client:&str)->Result<Option<AbortedOperation>,RpcError> {
+        self.finish_request(id,client,true)
+    }
+
+    fn stop_client(g: &mut GateInner, client: &str) {
+        let now=std::time::Instant::now();
+        g.stopped_clients.retain(|_,until| *until>now);
+        g.stopped_clients.insert(client.into(),now+std::time::Duration::from_secs(30));
+    }
+
+    fn finish_request(&self,id:&str,client:&str,cancel:bool)->Result<Option<AbortedOperation>,RpcError> {
         let mut g=self.inner.lock().unwrap();Self::request_matches(&g,Some(id),client)?;
+        if cancel { Self::stop_client(&mut g,client); }
         g.request=None;g.generation+=1;let generation=g.generation;
-        Ok(Self::finish(&mut g,OpState::Released).map(|op|AbortedOperation{id:op.id,generation,client_id:op.client_id}))
+        let state=if cancel {OpState::Aborted} else {OpState::Released};
+        Ok(Self::finish(&mut g,state).map(|op|AbortedOperation{id:op.id,generation,client_id:op.client_id}))
     }
 
     pub fn attach_request(&self, tab_id:i64, client_id:&str, request_id:Option<&str>)->Result<Operation,RpcError> {
@@ -266,9 +286,19 @@ impl OperationGate {
 
     /// Closes the gate first: any later call for this operation gets CANCELLED.
     pub fn abort(&self, id: Option<&str>) -> Option<AbortedOperation> {
+        self.abort_inner(id,false)
+    }
+
+    pub fn abort_user(&self, id: Option<&str>) -> Option<AbortedOperation> {
+        self.abort_inner(id,true)
+    }
+
+    fn abort_inner(&self,id:Option<&str>,user:bool)->Option<AbortedOperation> {
         let mut g = self.inner.lock().unwrap();
         let matches = g.current.as_ref().is_some_and(|o| id.is_none_or(|i| i == o.id));
-        if id.is_none() || matches { g.request=None; }
+        if user && (id.is_none() || matches) {
+            if let Some(request)=g.request.take() { Self::stop_client(&mut g,&request.client); }
+        }
         if !matches { return None; }
         g.generation += 1;
         let generation = g.generation;
@@ -464,5 +494,35 @@ mod tests {
         gate.add_tab(&op.id,7).unwrap(); gate.switch_tab(&op.id,7).unwrap();
         let result = gate.adopt_children(&op.id,op.generation,"A",1,&[2]).unwrap();
         assert_eq!(result.tabs,vec![1,7,2]); assert_eq!(result.current_tab,7);
+    }
+}
+
+#[cfg(test)]
+mod issue8_tests {
+    use super::*;
+    #[test]
+    fn stop_cancels_the_operation_and_blocks_unscoped_reattach() {
+        let g=OperationGate::default();g.begin_request("req","browser",Some(7)).unwrap();
+        let op=g.attach_request(7,"browser",Some("req")).unwrap();
+        g.cancel_request("req","browser").unwrap();
+        assert_eq!(g.check(&op.id).unwrap_err().code,ErrorCode::Cancelled);
+        assert_eq!(g.attach(9,"browser").unwrap_err().code,ErrorCode::Cancelled);
+        g.begin_request("next","browser",Some(9)).unwrap();
+        assert!(g.attach_request(9,"browser",Some("next")).is_ok());
+    }
+    #[test]
+    fn mcp_abort_keeps_the_captured_request_and_tab() {
+        let g=OperationGate::default();g.begin_request("req","browser",Some(7)).unwrap();
+        let op=g.attach_request(7,"browser",Some("req")).unwrap();g.abort(Some(&op.id));
+        assert_eq!(g.request_target(Some("req"),"browser",None).unwrap(),Some(7));
+        assert!(g.attach(42,"browser").is_err());
+        assert!(g.attach_request(7,"browser",Some("req")).is_ok());
+    }
+    #[test]
+    fn normal_completion_releases_the_request_for_cli() {
+        let g=OperationGate::default();g.begin_request("req","browser",Some(7)).unwrap();
+        let op=g.attach_request(7,"browser",Some("req")).unwrap();g.end_request("req","browser").unwrap();
+        assert_eq!(g.check(&op.id).unwrap_err().code,ErrorCode::OperationInvalid);
+        assert!(g.attach(9,"browser").is_ok());
     }
 }
