@@ -1,3 +1,19 @@
+# Issue #8 후속 수정 (2026-10-12)
+
+기준 `db397ea`, `feat/issue8-followup`. [계획](./plans/2026-10-12-issue8-followup.md)의 WP2 → WP1 → WP3 → WP4 → WP5 순서로 진행한다.
+
+## WP2 완료
+
+- F4: checkbox/radio는 checked, 나머지 input은 동일 속성을 가진 새 input에서 정규화한 기본값으로 비교한다. 파일 선택·실제 편집은 계속 보호한다.
+- F8: ref identity에서는 편집 내용 fallback을 제외한다. 이름 없는 contenteditable을 같은 ref로 두 번 fill하고 click할 수 있으며 비편집 버튼의 이름 변경은 stale로 유지한다.
+- F11: 포인터 전달 뒤 상호작용/ref 재검사 실패는 EXECUTION_UNKNOWN/unsafe다. mousedown 부수효과를 executed=no로 보고하지 않는다.
+- 먼저 추가한 회귀 13건이 실패함을 확인했다. 수정 후 관련 Vitest 3파일 49/49, Extension TypeScript/Vite 빌드와 E2E 타입 검사 통과.
+- `bash scripts/test-windows.sh -- issue8-content.spec.ts board-navigation.spec.ts -g 'F4|F8|F11|B08'`: 실제 Windows Node 24.18.1 / Chrome 154.0.8037.99 / MSVC release exe로 **8/8 통과**. 격리 headless 프로필과 합성 페이지만 사용했다.
+- 최초 Windows 실행은 fixture 임의 포트 6566에 대한 Chrome ERR_UNSAFE_PORT로 실패했다. 실행 목록에 새 spec을 등록한 최종 재실행 결과가 위 8/8이다. jsdom은 min/max range의 파싱 초기값을 50으로 남기는 차이가 있어 해당 경계는 실제 Chrome에서 검증했다.
+- 전체 마일스톤 검사는 아직 실행하지 않았다. 모델 호출, push/PR/Release, 운영 설치 변경은 하지 않았다.
+
+---
+
 # v0.1.5 단일 통합 릴리스 준비
 
 최종 추가 검증: 8ebcefd 전체 Linux·Windows CI #38223173674 성공. 실제 Chrome 요청 14개, 새 탭·창·즐겨찾기 fixture 및 실제 WSL iframe 재현 완료. 후속 리뷰의 삭제된 세션 404는 f1e5979에서 복구했다. Windows 설정 동시 편집 P1은 검증한 원본의 쓰기·교체 잠금과 덮어쓰기 없는 게시로 수정하고 네이티브 경계 7개를 통과했다. 히스토리 경계는 항목 1개 또는 전체 이력이 노출된 경우 즉시 미실행 오류를 반환하며 실제 Chrome B09가 216ms에 통과했다. 다른 출처 때문에 이력이 가려진 경우 기존 탐색을 허용하므로 여전히 30초 확인 대기가 가능하다. 확장 339개와 기존 게시판 8개도 통과했다. 자동 리뷰 사용량 한도로 최신 head 전체 외부 자동 리뷰는 미완료이며, 기존 리뷰와 최종 변경의 로컬 코드 검토·회귀를 근거로 진행한다.

@@ -158,7 +158,7 @@ it('review: pointer handlers cannot retarget a previously validated link before 
   const link=document.querySelector('a')!, ref=refOf('Post'), clicked=vi.fn();
   link.addEventListener('mousedown',()=>{link.href='/post/2';});
   link.addEventListener('click',e=>{e.preventDefault();clicked();});
-  await expect(runAction('click',{ref})).rejects.toMatchObject({code:'STALE_ELEMENT'});
+  await expect(runAction('click',{ref})).rejects.toMatchObject({code:'EXECUTION_UNKNOWN',retry:'unsafe'});
   expect(clicked).not.toHaveBeenCalled();
 });
 
@@ -166,4 +166,44 @@ it('file upload is explicitly unsupported and never treats a local path as a tex
  document.body.innerHTML='<input type="file" aria-label="Upload">';
  await expect(runAction('fill',{ref:refOf('Upload'),text:'/synthetic/file.txt'})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
  expect(document.querySelector('input')!.files).toHaveLength(0);
+});
+
+it.each(['checkbox','radio','range','color','number','date'])('F4 accepts untouched %s and preserves an edited value', async type => {
+  document.body.innerHTML=`<input type="${type}">`;
+  const el=document.querySelector('input')!;
+  await expect(runAction('close-check',{})).resolves.toEqual({executed:false});
+  if (type==='checkbox'||type==='radio') el.checked=true;
+  else el.value=type==='color'?'#abcdef':type==='date'?'2026-10-12':'75';
+  await expect(runAction('close-check',{})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+});
+it.each(['<input type="range" min="20" max="40" value="100">','<input type="color" value="invalid">','<input type="number" value="invalid">','<input type="date" value="invalid">'])('F4 normalizes the authored default: %s',async html=>{
+  document.body.innerHTML=html;
+  await expect(runAction('close-check',{})).resolves.toEqual({executed:false});
+});
+it.each(['','aria-label="Composer"'])('F8 keeps an editable ref through repeated fill and click (%s)',async attrs=>{
+  document.body.innerHTML=`<div contenteditable="true" role="textbox" ${attrs}>old</div>`;
+  const el=document.querySelector('div')!;
+  Object.defineProperty(el,'isContentEditable',{get:()=>true});
+  const ref=refOf(attrs?'Composer':'old');
+  await runAction('fill',{ref,text:'hello'});
+  await runAction('fill',{ref,text:'hello again'});
+  expect(el.textContent).toBe('hello again');
+  await expect(runAction('click',{ref})).resolves.toMatchObject({executed:true});
+});
+it('F8 still rejects renamed noneditable buttons',async()=>{
+  document.body.innerHTML='<button>Before</button>';
+  const ref=refOf('Before');document.querySelector('button')!.textContent='After';
+  await expect(runAction('click',{ref})).rejects.toMatchObject({code:'STALE_ELEMENT'});
+});
+it.each(['hidden','renamed','removed'])('F11 reports unsafe execution after mousedown (%s)',async change=>{
+  document.body.innerHTML='<button>Menu</button><div id="overlay" hidden>Open</div>';
+  const el=document.querySelector('button')!, ref=refOf('Menu'), click=vi.fn();
+  el.addEventListener('click',click);
+  el.addEventListener('mousedown',()=>{
+    document.getElementById('overlay')!.hidden=false;
+    if(change==='hidden')el.hidden=true;else if(change==='renamed')el.textContent='Changed';else el.remove();
+  });
+  await expect(runAction('click',{ref})).rejects.toMatchObject({code:'EXECUTION_UNKNOWN',retry:'unsafe'});
+  expect(document.getElementById('overlay')!.hidden).toBe(false);
+  expect(click).not.toHaveBeenCalled();
 });

@@ -150,7 +150,9 @@ test('B07 genuine BFCache restoration never revives old refs',async()=>{
 test('B08 pointer handler cannot redirect a snapshot link to another article',async()=>{
   const {page,operationId,snap}=await setup();
   await page.locator('#first').evaluate(el=>el.addEventListener('mousedown',()=>{(el as HTMLAnchorElement).href='?post=2';}));
-  expect((await world.mcp.call('browser_click',{operationId,ref:ref(snap,'Post 1')})).error?.code).toBe('STALE_ELEMENT');
+  const outcome=await world.mcp.call('browser_click',{operationId,ref:ref(snap,'Post 1')});
+  expect(outcome.error).toMatchObject({code:'EXECUTION_UNKNOWN',retry:'unsafe'});
+  expect(outcome.executed).toBe('unknown');
   expect(page.url()).not.toContain('post=');
   expect((await snapshot(operationId)).frames[0].elements.find((el:any)=>el.name==='Post 1').href).toContain('post=2');
 });

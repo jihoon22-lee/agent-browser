@@ -9,7 +9,7 @@ export class RefTable {
   // Identity, not array position, protects recycled list rows. Editable values are
   // deliberately excluded so fill/select do not invalidate their own controls.
   private identity(el: Element): string {
-    return JSON.stringify([roleOf(el), accessibleName(el),
+    return JSON.stringify([roleOf(el), accessibleName(el, true),
       el instanceof HTMLAnchorElement ? el.href : el.getAttribute('href'),
       el.getAttribute('target'), el.getAttribute('type'), el.getAttribute('formaction')]);
   }
