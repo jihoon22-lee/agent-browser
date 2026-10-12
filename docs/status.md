@@ -1,6 +1,20 @@
-# v0.1.6 Windows preview 릴리스 준비 (2026-10-12)
+# v0.1.6 Windows preview 게시 완료 (2026-10-13 KST)
 
-사용자 요청으로 문서·버전을 갱신하고 v0.1.6 태그와 GitHub prerelease를 게시한다. 기존 v0.1.5 태그·자산은 보존한다. 운영 설치 변경은 요청받지 않았으며 검증은 격리된 설치·Chrome 프로필에서 진행한다. [릴리스 계획](./plans/2026-10-12-release-0.1.6.md)을 따른다.
+[v0.1.6 prerelease](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.6)를 2026-10-12 15:06 UTC에 게시했다. 기존 v0.1.5 태그·자산과 운영 설치는 유지했다.
+
+- 태그 대상: `d509ce6c6bb81a444c140948a12ae006b04180f1`. PR #7과 [PR #12](https://github.com/jihoon22-lee/agent-browser/pull/12)를 포함한다. PR #12 최종 `18a1bad`의 코드·보안 리뷰에 추가 지적이 없었고 [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38265368510)와 [태그 대상 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38266446708)는 Linux·Windows 모두 통과했다.
+- 게시 자산: `agent-browser-0.1.6-windows-x64.zip`(3,620,719 bytes, 35 files), `SHA256SUMS`. ZIP SHA-256은 `d347b21638db34e4896405711d05a8ca7b30db0d4dedb9d6dac6df501ffbd2f7`이다. GitHub asset digest, 재다운로드 파일, 내부 manifest·버전·문서 링크·배포 제외 항목을 확인했다.
+- main 재빌드에서 Bridge 바이트가 앞선 후보와 달라 최종 ZIP 자체로 Windows·WSL 관리 OpenCode 1.18.29의 실제 headed Chrome 사이드 패널 검사를 다시 실행했다. 서로 다른 두 탭의 새 요청, requestId 누락 후 교정, attach/snapshot, 정상·합성 provider 오류 후 lease 해제·응답 중단 비활성화, 관리 runtime 종료가 모두 통과했다. 각 실행은 합성 provider 9회이며 실제 LLM 성공을 뜻하지 않는다.
+- 최종 ZIP으로 실제 관리 WSL OpenCode의 v0.1.5→v0.1.6 업데이트도 통과했다. 새 runtime instance·새 Bridge/MCP 경로·MCP connected, 세션·설치 ID·페어링·프로필 보존을 확인하고 해당 격리 설치를 제거했다.
+- 잠금 해제 후 설치 GUI의 실제 마우스 클릭·선택 키 경로가 통과했다. 미리보기/취소, 시작 실패/rollback/재시도, WSL 등록, 프로필 검증·저장·중복 방지·검증 중 닫기, 업데이트, 설치된 GUI의 handoff와 제거·데이터 보존을 확인했다. 최초 Documents/Codex 시험 경로는 공유 쓰기 권한 검사에서 거절되어 부모 ACL을 바꾸지 않고 새 개인 AppData 경로에서 재실행했다. 이때 검사한 Setup.exe는 최종 ZIP과 동일한 바이트다. 패널 입력은 별도로 CDP/DOM 이벤트를 사용했다.
+- **게시본 재다운로드 후** 실제 Windows 신규 설치/재설치, 게시된 v0.1.5에서 업데이트, 인증된 Bridge 시작, 버전·설치 ID·페어링·데이터·JSONC 보존, 제거와 데이터 보존을 다시 확인해 모두 통과했다. `/tmp/ab-published16-install-smoke.log`에 기록했다. 운영 설치는 읽기 전용 확인에서 여전히 v0.1.5였으며 자동 업데이트하지 않았다.
+- **미검증:** 실제 Zen 무료 모델은 0원 카탈로그·공식 가용성 확인 뒤 한 차례 호출했으나 HTTP 403/FreeTierError로 거부되어 도구 실행 0건이다. 실제 모델의 작업 수행 성공, 사내 환경, 최소 Chrome 116 자체의 검증은 통과로 보고하지 않는다. requestId 안내 개선이 모든 모델의 인자 누락을 방지한다고 보장하지 않는다.
+
+[릴리스 계획](./plans/2026-10-12-release-0.1.6.md)을 완료했다. 아래는 준비·회귀 검증의 시점별 이력이다. 이 게시 결과 기록은 태그 이후 문서 변경이며 릴리스 태그와 자산을 교체하지 않는다.
+
+## 릴리스 준비 이력
+
+사용자 요청으로 문서·버전을 갱신하고 v0.1.6 태그와 GitHub prerelease 게시를 준비했다. 기존 v0.1.5 태그·자산은 보존한다. 운영 설치 변경은 요청받지 않았으며 검증은 격리된 설치·Chrome 프로필에서 진행한다. [릴리스 계획](./plans/2026-10-12-release-0.1.6.md)을 따른다.
 
 - 기준: PR #9 병합 `ba5c979`. 기능 최종 `dd009ba`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38250547986)는 Linux·Windows 모두 성공했다.
 - Extension 단위 **392/392**, Linux E2E **86 통과/3 skipped**, Windows E2E **87 통과/2 skipped** 및 별도 bookmarks **2/2**, Rust·빌드·문서·설치·패키징·GUI 회귀 검사 통과. 코드·보안 리뷰는 추가 문제 없이 완료됐으며 리뷰 스레드 10개를 해결했다.
