@@ -348,13 +348,17 @@ namespace AgentBrowser.Installer {
                 }
             }return null;
         }
+        static void RemoveStoppedMarker(InstallState state,Dictionary<string,object> marker) {
+            if(marker==null)return;
+            string path=Path.Combine(state.DataDir,".installer-bridge-process.json");NativeIO.PlainPath(path);var current=Marker(state);
+            if(current==null)return;
+            if(NativeIO.Json.Serialize(current)!=NativeIO.Json.Serialize(marker))throw new IOException("Bridge ownership marker changed during stop; it was preserved.");
+            File.Delete(path);
+        }
         public static bool Stop(InstallState state) {
-            var marker=Marker(state);using(var process=Verify(state,marker)) {if(process==null) return false;}
-            using(var again=Verify(state,marker)) {if(again==null) return false;using(var p=Process.GetProcessById(Convert.ToInt32(marker["Pid"]))) {p.Kill();if(!p.WaitForExit(5000)) throw new IOException("Owned Bridge did not stop.");}}
-            string markerPath=Path.Combine(state.DataDir,".installer-bridge-process.json");
-            NativeIO.PlainPath(markerPath);var current=Marker(state);
-            if(current!=null) {if(NativeIO.Json.Serialize(current)!=NativeIO.Json.Serialize(marker))throw new IOException("Bridge ownership marker changed during stop; it was preserved.");File.Delete(markerPath);}
-            return true;
+            var marker=Marker(state);using(var process=Verify(state,marker)) {if(process==null) {RemoveStoppedMarker(state,marker);return false;}}
+            using(var again=Verify(state,marker)) {if(again==null) {RemoveStoppedMarker(state,marker);return false;}using(var p=Process.GetProcessById(Convert.ToInt32(marker["Pid"]))) {p.Kill();if(!p.WaitForExit(5000)) throw new IOException("Owned Bridge did not stop.");}}
+            RemoveStoppedMarker(state,marker);return true;
         }
         public static void Start(InstallState state) {
             ValidateLaunch(state);
