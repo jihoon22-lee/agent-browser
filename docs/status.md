@@ -14,6 +14,8 @@
 
 PR #7 통합 추가 검사: handlers/panel-requests 단위 **84/84**, 빌드·E2E 타입·문서 링크 통과. 실제 Windows 게시판 **10/10**(진짜 BFCache 복원과 iframe 중간 편집 보존 포함), 네이티브 관리 업데이트 경계 **6/6** 통과. 통합 ZIP은 35개 파일의 버전·해시·링크·제외 항목을 확인했다. 실제 격리 WSL OpenCode 업데이트는 재시작 경고로 실패했고 소유 runtime record 0개로 정리를 확인했다. 원인 진단 중이며 이 실행을 통과로 보고하지 않는다.
 
+같은 제품 코드에 경고 시 doctor를 실행하는 임시 진단 드라이버를 붙여 새로운 Windows/WSL fixture에서 다시 실행했고 **실제 OpenCode 1.18.29의 0.1.5→0.1.6 업데이트가 통과**했다. 새 runtime instance·새 Bridge/MCP 경로·MCP connected, 설치 ID·페어링·프로필·시험 세션 보존을 확인했으며 종료 시 uninstall을 수행했다. 첫 경고는 이 실행에서 재현되지 않아 원인을 확정하지 않는다. 모델 요청·사용자 Chrome·전역 설정 접근은 없다. PR #11은 최종 `cdf302e`의 CI·코드·보안 리뷰 통과 후 `266b015`로 병합됐고 PR #7 통합본은 이를 포함한다.
+
 아래 최초 후보는 main CI 후속 수정 전 산출물이다. 게시하지 않았으며 최종 태그와 ZIP은 후속 수정이 포함된 main에서 다시 생성한다.
 
 - Cargo workspace·lockfile의 Bridge와 Extension manifest를 **0.1.6**으로 맞췄다. CHANGELOG·설치 예시·중단/탐색/예약 안내를 갱신하고 PR #9 병합 기록을 반영했다. 문서 링크 검사와 기존 보조 테스트 3개, Python 패키지 테스트 3개가 통과했다.
