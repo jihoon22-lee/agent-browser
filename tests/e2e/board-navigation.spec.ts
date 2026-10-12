@@ -26,6 +26,21 @@ test.afterEach(async () => {
   for(const page of world.context.pages()) if(page!==world.adminPage) await page.close();
 });
 test.afterAll(async()=>{await world?.stop();});
+test('B09 history boundaries return promptly without changing the page',async()=>{
+  const page=await world.context.newPage();
+  await page.evaluate(url=>location.replace(url),world.fixture.base+'/board.html');
+  await page.waitForURL('**/board.html');
+  await page.waitForLoadState('load');
+  const operationId=await world.attach(page); await snapshot(operationId);
+  console.log('HISTORY boundary '+JSON.stringify(await page.evaluate(()=>({length:history.length,entries:(window as any).navigation.entries().length,back:(window as any).navigation.canGoBack,forward:(window as any).navigation.canGoForward}))));
+  for(const action of ['back','forward']) {
+    const url=page.url(), start=Date.now();
+    const result=await world.mcp.call('browser_navigate',{operationId,action});
+    expect(result.error?.code).toBe('ELEMENT_NOT_INTERACTABLE');
+    expect(Date.now()-start).toBeLessThan(5000);
+    expect(page.url()).toBe(url);
+  }
+});
 test('B01 hard article/back cycles, forward and reload use fresh references',async()=>{
   const {page,operationId}=await setup();
   for(let i=0;i<4;i++) {

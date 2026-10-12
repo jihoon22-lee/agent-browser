@@ -171,12 +171,48 @@ mv -fT -- ""$temporary"" ""$target""
                     args.AddRange(new [] { "--exec","/bin/sh","-c",WslWrite.Replace("\r\n","\n"),"agent-browser-write",target.Path,MapWsl(temp).Path,expected });
                     RunChecked(WslExe,args);
                 } else {
-                    if((File.Exists(path)?FileHash(path):"missing")!=expected) throw new IOException("Settings changed while preparing; no settings were overwritten.");
-                    if(expected=="missing") File.Move(temp,path); else File.Replace(temp,path,null);
+                    if(expected=="missing") File.Move(temp,path);
+                    else using(var replacement=new SettingsReplacement(path,expected)) replacement.Publish(temp);
                 }
             } finally { if(File.Exists(temp)) File.Delete(temp); }
         }
         [StructLayout(LayoutKind.Sequential)] struct Disposition { public byte DeleteFile; }
+        [DllImport("kernel32.dll",SetLastError=true,EntryPoint="SetFileInformationByHandle")] static extern bool RenameFile(Microsoft.Win32.SafeHandles.SafeFileHandle file,int kind,IntPtr information,int size);
+        // A path-based hash followed by Replace loses concurrent editor saves. Hold
+        // the verified file against writes AND renames, move that exact file to a
+        // recovery name through its handle, then publish without overwriting any
+        // file that appeared meanwhile. There is a brief missing-name interval;
+        // the original bytes remain recoverable even if the process is interrupted.
+        internal sealed class SettingsReplacement : IDisposable {
+            readonly string path; readonly FileStream stream;
+            public SettingsReplacement(string path,string expected) {
+                this.path=System.IO.Path.GetFullPath(path);
+                var handle=CreateFile(path,0x80010000,1,IntPtr.Zero,3,0x00200000,IntPtr.Zero);
+                if(handle.IsInvalid){int error=Marshal.GetLastWin32Error();handle.Dispose();throw new IOException("Settings are being edited; no settings were overwritten.",new System.ComponentModel.Win32Exception(error));}
+                stream=new FileStream(handle,FileAccess.Read);
+                try {using(var hash=SHA256.Create())if(BitConverter.ToString(hash.ComputeHash(stream)).Replace("-","").ToLowerInvariant()!=expected)throw new IOException("Settings changed while preparing; no settings were overwritten.");}
+                catch {stream.Dispose();throw;}
+            }
+            void Rename(string destination) {
+                byte[] name=Encoding.Unicode.GetBytes(destination);
+                int rootOffset=IntPtr.Size==8?8:4,lengthOffset=rootOffset+IntPtr.Size,nameOffset=lengthOffset+4;
+                IntPtr data=Marshal.AllocHGlobal(nameOffset+name.Length);
+                try {for(int i=0;i<nameOffset;i++)Marshal.WriteByte(data,i,0);Marshal.WriteInt32(data,lengthOffset,name.Length);Marshal.Copy(name,0,IntPtr.Add(data,nameOffset),name.Length);
+                    if(!RenameFile(stream.SafeFileHandle,3,data,nameOffset+name.Length))throw new IOException("Cannot safely rename verified settings.",new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+                }finally{Marshal.FreeHGlobal(data);}
+            }
+            public void Publish(string temporary) {
+                File.SetAccessControl(temporary,File.GetAccessControl(path));
+                string recovery=path+".agent-browser-recovery-"+Guid.NewGuid().ToString("N");
+                Rename(recovery);
+                try {File.Move(temporary,path);}
+                catch {try{Rename(path);}catch{throw new IOException("Settings changed during publication. The concurrent file was preserved; original settings remain at "+recovery);}throw;}
+                var disposition=new Disposition{DeleteFile=1};
+                // A failed cleanup retains a recovery copy, never removes the new file.
+                SetFileInformationByHandle(stream.SafeFileHandle,4,ref disposition,Marshal.SizeOf(typeof(Disposition)));
+            }
+            public void Dispose(){stream.Dispose();}
+        }
         [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern Microsoft.Win32.SafeHandles.SafeFileHandle CreateFile(string path,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
         [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetFileInformationByHandle(Microsoft.Win32.SafeHandles.SafeFileHandle file,int kind,ref Disposition information,int size);
         public static void DeleteExpected(string path,string expected,string wslUser=null) {

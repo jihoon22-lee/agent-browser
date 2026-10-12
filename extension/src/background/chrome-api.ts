@@ -1,5 +1,20 @@
 import type { BookmarkAccess } from './bookmarks';
 import type { KeyValueStore } from './bridge-connection';
+import { ProtocolError } from '../protocol/errors';
+async function traverse(id: number, documentId: string | undefined, direction: 'back' | 'forward') {
+    const results = await chrome.scripting.executeScript({
+        target: {tabId:id,...(documentId ? {documentIds:[documentId]} : {frameIds:[0]})},
+        args: [direction],
+        func: (direction: 'back' | 'forward') => {
+            const nav=(window as any).navigation;
+            // Navigation API hides cross-origin entries. Only treat its boundary
+            // as definitive when it exposes the complete session history.
+            if(history.length===1 || (nav && nav.entries().length===history.length && !(direction==='back' ? nav.canGoBack : nav.canGoForward))) return false;
+            history[direction](); return true;
+        },
+    });
+    if(results[0]?.result===false) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','No history entry is available in that direction.','never',{executed:false});
+}
 export const chromeStorage: KeyValueStore = {
     get: async (k) => (await chrome.storage.local.get(k))[k], set: (k, v) => chrome.storage.local.set({ [k]: v }),
 };
@@ -38,12 +53,8 @@ export const realChromeApi: ChromeApi = {
     tabsUpdate: async (id, p) => { const tab = await chrome.tabs.update(id, p); if (!tab)
         throw new Error('Tab was closed'); return tab; }, // Traverse exactly one history entry. tabs.goBack/goForward behave like
     // browser UI and can skip entries without trusted user activation (agent clicks).
-    tabsGoBack: async (id, documentId) => { await chrome.scripting.executeScript({
-        target: {tabId:id,...(documentId ? {documentIds:[documentId]} : {frameIds:[0]})}, func: () => history.back(),
-    }); },
-    tabsGoForward: async (id, documentId) => { await chrome.scripting.executeScript({
-        target: {tabId:id,...(documentId ? {documentIds:[documentId]} : {frameIds:[0]})}, func: () => history.forward(),
-    }); }, tabsReload: id => chrome.tabs.reload(id),
+    tabsGoBack: (id, documentId) => traverse(id,documentId,'back'),
+    tabsGoForward: (id, documentId) => traverse(id,documentId,'forward'), tabsReload: id => chrome.tabs.reload(id),
     captureVisibleTab: windowId => chrome.tabs.captureVisibleTab(windowId, { format: 'png' }),
     listFrames: async (tabId) => (await chrome.webNavigation.getAllFrames({ tabId }) ?? []).map(f => ({ frameId: f.frameId, documentId: f.documentId, url: f.url })),
     inject: async (tabId, frame) => {
