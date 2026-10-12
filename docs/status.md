@@ -1,14 +1,16 @@
-## 후속 통합 작업 — 활성 탭·iframe·WSL 통합
+# v0.1.5 단일 통합 릴리스 준비
 
-GUI PR #5와 분리된 Windows 작업 복사본에서 진행한다. 운영 설치와 사용자 Chrome 프로필은 변경하지 않았다. iframe 제품 변경은 현재 권한(tabs/scripting/webNavigation 등) 내에서 수행하며 debugger 권한을 추가하지 않았다.
+사용자의 최신 지시에 따라 GUI·WSL·iframe·요청별 활성 탭·게시판 개선을 하나의 PR #6과 한 번의 v0.1.5 릴리스로 묶는다. 게시된 최신 버전은 v0.1.4이며, GUI 단독 릴리스는 하지 않는다. 기존 GUI PR #5의 커밋·검증 이력은 merge로 보존한다. 운영 설치·사용자 Chrome 프로필·전역 OpenCode 설정은 변경하지 않았다.
 
-- 활성 탭 독립 리뷰: 준비 중 Stop 이후 제출, HTTP admission 거절 후 예약 누수, OpenCode 중단 오류가 예약 종료를 가리는 문제를 실패 회귀로 재현하고 수정했다(`9ced9eb`). 늦은 동일 세션 취소는 정확한 requestId로 구분하고, 중단 API 실패 시 재시도할 신원을 보존한다.
-- 완료 판정 추가 리뷰: 이전의 terminal 단계 뒤에 미완료 단계가 생겼을 때 자동 해제하지 않는다. 최신 matching assistant의 time.completed와 서버 idle을 함께 확인하고 명시적인 tool-calls/unknown finish는 제외한다. v1의 선택 필드 finish가 없어도 정상 완료를 인정한다.
-- iframe: 합성 클릭의 로컬 viewport 좌표·버튼 상태, 명시적 이벤트/키보드 초점 후보, snapshot 문서에 결합된 frameRef 대기를 구현했다. 본문 DOM 교체는 허용하고 문서 이동·닫힌 프레임은 오래된 참조를 거부한다.
-- Extension 전체 32 suites / 317 tests, 타입 검사·빌드 통과. Rust 전체 143 tests 통과(1 ignored), Windows MSVC debug 빌드 성공. 실제 Windows Chrome 154.0.8037.99에서 같은 출처·다른 출처·중첩 iframe과 OOPIF 2개 전체 경로 통과. 좌표 조건·체크박스·새 탭·프레임 범위·stale 참조를 확인했다.
-- PR #6 첫 코드 리뷰의 예약 복구·완료 후 Stop·선택적 finish·삭제된 세션 404 결함을 실패 회귀로 재현하고 수정했다. 예약 신원은 Chrome 재시작에도 남는 local storage에 보존한다. 관련 최종 회귀 91개와 실제 패널 12개 검사, 실제 WSL OpenCode→MCP→Windows Chrome iframe 경로를 통과했다. 자체 WSL 런타임의 stopped 상태와 프로세스 정리를 확인했다.
-- 합성 입력은 isTrusted=false이며 trusted 입력을 요구하는 fixture는 열리지 않는다. 사내 서비스와 실제 LLM 호출은 이번 검증에 포함하지 않는다.
-- WSL 원본 748f8d5, dad0216을 cd872f2, f2b0403으로 순서대로 통합했다. 문서 충돌은 양쪽 시험 구간을 유지했다. GUI main 통합과 게시판 안정성 최종 인계를 기다리며, 같은 PR에서 통합·최종 배포 검증을 진행한다.
+- 통합: GUI 61a116c, WSL 원본 748f8d5/dad0216, 게시판 원본 3c6de97/5e50f63 및 이 브랜치의 iframe·활성 탭 수정. 클릭의 실제 표시 조각 좌표와 실행 직전 ref/상호작용 재검사를 모두 보존했다.
+- 확장 전체 32 suites / 329 tests, 타입 검사·빌드와 E2E 타입 검사가 통과했다. 도구 설명의 합산 크기는 기존 6,000자 제한을 유지한다. Rust 계약·서버·WSL 회귀와 실제 Windows 빌드를 수행했으며, 최종 조합의 전체 결과는 PR CI에서 확인한다. 시험 자식이 exec하기 전 image를 캡처하던 경합은 시험 준비 단계에서 보정하고 관련 3개 회귀를 통과했다.
+- 최종 v0.1.5 Windows Chrome 154.0.8037.99 핵심 경로: 실제 패널/요청 예약 13개, 게시판 8개 통과. 생성 탭 닫기 뒤 요청 유지·원래 탭 보호·명시적 복귀·iframe 대기·href 변경 참조 거부를 하나의 시나리오에서 확인했다. 실제 BFCache persisted=true와 beforeunload 취소 후 소유권/URL 보존을 확인했다.
+- 격리 WSL OpenCode 1.18.29가 구성한 MCP 명령→Windows Bridge 0.1.5→실제 Chrome 확장→same/cross/nested iframe·OOPIF 2개 경로가 통과했다. HTTP/MCP 준비, 자체 런타임 stopped 및 프로세스 정리를 확인했다. 모델 호출은 0회다.
+- PR 첫 리뷰의 Chrome 재시작 예약 유실, 완료 후 Stop 누락, 선택적 finish 미처리, 삭제 세션 404 고착을 실패 회귀로 재현하고 수정했다. 예약은 durable local storage에 보존하며 busy/retry 및 명시적 비종료 finish는 계속 보류한다. 선택 경합은 같은 selection lock으로 보호한다.
+- 합성 입력 isTrusted=false, 비표준 편집기의 저장 상태, 검사 뒤 동시 편집의 한계는 유지한다. 사내 서비스·구형 WSL VM·실제 WSL shutdown·커널 자원고갈을 검증했다고 주장하지 않는다. debugger 권한이나 Chrome 보안 설정을 추가하지 않는다.
+- 사용자가 추가 요청한 새 탭 생성·즐겨찾기 점검은 별도 게시판 담당의 후속 인계를 기다린다. 최종 게시 전에 결과를 통합하고 필요한 권한 확인을 따른다. 이후 최종 PR CI/유의미한 리뷰, 병합, 게시본 재다운로드·격리 설치/업데이트 검증까지 수행한다.
+
+아래는 각 독립 작업과 이전 릴리스의 검증 이력이다. 당시의 승인·배포 상태는 위 현재 상태와 구분한다.
 
 ## 활성 탭 기본 선택 — 초기 독립 로컬 검증 기록
 

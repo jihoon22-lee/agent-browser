@@ -18,7 +18,12 @@ fn orphan_group_result(child_nonce: &str) -> (Option<i32>,Option<i32>,bool) {
         .env("AGENT_BROWSER_RUNTIME_ID","fixture").spawn().unwrap();
     leader.wait().unwrap();
     let pid=std::fs::read_to_string(child_file).unwrap().trim().parse::<u32>().unwrap();
-    let child=process::identity(pid).unwrap();
+    // The shell publishes $! before the child execs sleep. Pin the test child's
+    // final image, otherwise a harmless exec looks like a killed foreign owner.
+    let expected=std::fs::canonicalize("/bin/sleep").unwrap().to_string_lossy().into_owned();
+    let mut child=process::identity(pid).unwrap();
+    for _ in 0..100 { if child.image==expected { break; } std::thread::sleep(Duration::from_millis(10)); child=process::identity(pid).unwrap(); }
+    assert_eq!(child.image,expected,"fixture child did not exec sleep");
     let control=|mode| std::process::Command::new("/bin/sh").args(["-c",WSL_CONTROL,"fixture",owner.to_str().unwrap(),"fixture",mode,"0000"]).status().unwrap().code();
     let state=control("state"); let stopped=control("stop");
     for _ in 0..100 {if !process::matches(&child){break;} std::thread::sleep(Duration::from_millis(10));}
