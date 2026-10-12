@@ -37,7 +37,21 @@ GUI PR #5와 분리된 Windows 작업 복사본에서 진행한다. 운영 설�
 4. 연결된 노드라도 이름·role·링크 대상 등이 바뀌면 옛 ref를 거부한다. pagehide에서 ref registry를 비우므로 실제 BFCache 복원 후에도 옛 refs는 STALE_ELEMENT다. index 자동 재선택은 없다.
 5. `browser_tabs action=close`를 추가했다. 작업에서 생성/채택한 현재 탭만 허용하며 최초 attach 탭은 보호한다. 현재 문서 snapshot과 모든 frame의 폼 검사를 요구한다. close는 한 번만 전달하며 Chrome onRemoved만 성공으로 확인한다. 3초 내 확인이 없으면 EXECUTION_UNKNOWN, 강제 닫기/자동 재시도 없음. 결과 operationTabs에서 원래 목록 tabId로 명시적으로 switch하고 새 snapshot을 읽는다.
 
-### 최종 실행 결과
+### 독립 검토 후속 · GUI 이후 통합 인계
+
+초기 커밋 `3c6de97b39b2f89eb96ac74dd101dfb9d0696a40`의 짧은 독립 검토에서 실제 dispatch 경계의 세 결함을 실패 테스트로 확인하고 보완했다.
+
+- top document가 없는 동안 과거 snapshot만으로 history 이동이 dispatch되어 새 top 문서로 fallback할 수 있었다. 현재 문서가 없으면 FRAME_UNAVAILABLE로 실행 전에 거부한다.
+- 닫기 폼 검사 중 iframe이 교체되면 미검사 문서를 포함한 탭을 닫을 수 있었다. 검사한 frame/document 집합을 고정하고 닫기 전달 전에 다시 비교한다.
+- mousedown 등 포인터 처리기가 같은 DOM 링크의 href를 변경하면 이미 검사한 ref가 다른 글을 클릭할 수 있었다. 실제 click 직전에 identity와 상호작용 가능 여부를 재검사한다. B08 실제 Chrome에서 주소 변경 후 click이 차단되고 원래 목록이 유지됨을 확인했다.
+
+snapshot 재시도는 같은 request의 tabId/operationId를 유지하고 읽기만 반복하며, 최종 정상 읽기의 bindings만 게시하는 것을 확인했다. 탭 소유권 제한은 Bridge의 operation lock 안에서 검증한다. beforeunload 취소 후 실제 탭 존재뿐 아니라 operationTabs/currentTab/currentTabClosed 및 원래 목록 URL 보존도 B06에 명시적으로 검사했다. 비표준 편집기 한계는 기존 문서와 일치하며, 여러 frame 폼 검사는 원자적 저장 판정이 아니므로 검사 뒤 동시 편집까지 보장하지 않는다는 제한을 추가했다.
+
+후속 최종 검증: 영향 단위 테스트 4파일 **62/62**, 확장 빌드/E2E 타입 검사, 실제 Windows Chrome의 게시판·새 탭·브라우저 시나리오 **43/43** 통과(AB_TEST_BFCACHE=1, 실제 persisted=true). 아래의 초기 전체 55/55 및 289/289 결과와 구분한다. Rust 코드는 후속 검토에서 변경하지 않았다. 로그는 `review-red.log`, `review-click-red.log`, `review-green.log`, `review-windows.log`다.
+
+사용자 후속 지시로 별도 PR/릴리스 대신 GUI 이후 통합 작업에 넘긴다. 이 worktree에서는 초기 커밋 뒤 후속 수정 커밋을 순서대로 적용할 수 있게 유지하며, 다른 작업 폴더·운영 설치 수정이나 별도 push/PR/병합/릴리스는 하지 않는다. 통합 시 겹칠 가능성이 큰 파일은 background handlers/chrome-api, content actions/refs, MCP tools/router/operation 및 문서다. 통합한 최종 코드의 회귀는 통합 담당이 별도 실행해야 하며 여기 결과로 대체하지 않는다.
+
+### 초기 커밋의 전체 실행 결과
 
 | 검사 | 관찰 결과 |
 |---|---|

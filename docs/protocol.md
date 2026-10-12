@@ -171,3 +171,6 @@ Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 
 - close는 mutation dedupe를 적용한다. 동일 requestId 재전송은 저장된 결과를 돌려주고 실제 닫기를 반복하지 않는다. 취소/연결 단절 후 불명확한 결과는 탭 목록과 페이지 상태부터 확인한다.
 
 한계: 임의 사이트의 JS closure만 바뀌고 DOM의 의미 정보가 같은 경우를 완전히 검출할 수 없다. 폼 검사는 일반 input/textarea/select 및 open Shadow DOM, editable 영역을 대상으로 하며 저장 완료를 판정하지 않는다. 사이트 자체 JS 상태, 닫힌 Shadow DOM/canvas 편집기, 브라우저가 경고를 제공하지 않는 비표준 편집 데이터의 저장 여부는 보장하지 않는다. beforeunload 창을 취소하거나 script-close가 거부되면 탭을 보존하고 사용자 판단을 요구한다.
+
+
+독립 검토 보완: top document가 열거되지 않으면 history 이동은 dispatch 전에 거부하며 새 문서로 fallback하지 않는다. 닫기 사전 검사 후 frame/document 집합을 다시 확인하여 교체·추가·제거된 iframe이 있으면 닫지 않는다. 여러 frame의 폼 검사는 원자적 트랜잭션이 아니므로 검사 후의 동시 편집까지 저장 여부를 보장하지 않는다. 포인터 이벤트 처리 중 href/DOM identity가 바뀌면 실제 click 직전에 다시 검사하여 STALE_ELEMENT로 중단한다.

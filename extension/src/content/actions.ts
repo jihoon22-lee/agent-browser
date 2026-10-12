@@ -101,13 +101,20 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const changes = observeChanges(500, signal);
       const point=clickPoint(el);
       const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
+      // A rejected pre-click check must not leave an unhandled observation when
+      // the command is cancelled. The observer itself is bounded to 500ms.
+      void changes.catch(() => {});
       for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
         const down=type.endsWith('down');
         el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:down?1:0,pointerId:1,pointerType:'mouse',isPrimary:true,pressure:down?0.5:0}));
       }
-      // dispatchEvent retains native activation (links, form controls) while
-      // HTMLElement.click() discards coordinates. This is still untrusted input.
-      el.dispatchEvent(new MouseEvent('click',{...base,buttons:0}));
+      assertInteractable(el);
+      // Pointer handlers can recycle a row or change href synchronously. Do not
+      // transfer the original ref to the new target immediately before dispatch.
+      resolveRef(String(p.ref));
+      // Retain native activation and viewport coordinates after the final check.
+      // This is still untrusted input.
+      el.dispatchEvent(new MouseEvent('click',{...base,...clickPoint(el),buttons:0}));
       return { executed: true, verified: await changes };
     }
     case "fill": {

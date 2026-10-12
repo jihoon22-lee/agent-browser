@@ -109,7 +109,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         await check(req, signal);
         const tabId = tab.id!;
         if (req.method === 'browser.tabs.close') {
-            const documents = await frames.list(tabId);
+            const documents = (await frames.list(tabId)).map(frame => ({...frame}));
             const top = documents.find(f => f.frameId === 0);
             if (!top) throw new ProtocolError('FRAME_UNAVAILABLE', 'Cannot check the document before closing.');
             await requireSnapshot(p, tabId, top.documentId);
@@ -118,6 +118,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 const response = await interruptible(api.sendToFrame(tabId, frame, {kind:'cmd', method:'close-check', params:{...p,requestId:req.id}}), signal);
                 if (!response?.ok) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'A frame has edited controls or cannot be checked; preserve the tab.');
             }
+            const liveDocuments = await frames.list(tabId);
+            if (liveDocuments.length !== documents.length || documents.some(frame => !liveDocuments.some(live => live.frameId === frame.frameId && live.documentId === frame.documentId)))
+                throw new ProtocolError('FRAME_UNAVAILABLE', 'A document changed during the close check. Preserve the tab and inspect a fresh snapshot.');
             let resolve!: (value: unknown) => void;
             const removed = new Promise(r => { resolve = r; });
             const off = api.onTabRemoved(id => { if (id === tabId) resolve({closed:true}); });
@@ -179,6 +182,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             if (action === 'goto')
                 requireWeb(String(p.url ?? ''));
             const document = (await frames.list(tabId)).find(f=>f.frameId===0);
+            if (!document) throw new ProtocolError('FRAME_UNAVAILABLE', 'The top document is unavailable. Wait and take a fresh snapshot before navigating.');
             const actions: Record<string, () => Promise<unknown>> = { goto: () => api.tabsUpdate(tabId, { url: String(p.url) }), back: () => api.tabsGoBack(tabId, document?.documentId), forward: () => api.tabsGoForward(tabId, document?.documentId), reload: () => api.tabsReload(tabId) };
             const act = actions[String(action)];
             if (!act)

@@ -358,3 +358,23 @@ it('edited child frame prevents close dispatch', async () => {
   await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
   expect(calls).toEqual(['close-check','close-check']);
 });
+
+it('review: missing top document never permits history to retarget the next document', async () => {
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  w.frames.set(1,[]);
+  const back=vi.fn(async()=>{throw Error('must not dispatch');});w.api.tabsGoBack=back;
+  await expect(h(request('browser.navigate',{action:'back'}))).rejects.toMatchObject({code:'FRAME_UNAVAILABLE'});
+  expect(back).not.toHaveBeenCalled();
+});
+it('review: replacing a checked child document prevents close dispatch',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  w.frames.get(1)!.push({frameId:2,documentId:'checked-child',url:'https://example.test/form'});
+  const methods:string[]=[];
+  w.api.sendToFrame=async(_id,frame,msg:any)=>{
+    methods.push(msg.method);
+    if(msg.method==='close-check'&&frame.frameId===2) w.frames.get(1)![1]!.documentId='unchecked-child';
+    return {ok:true};
+  };
+  await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'FRAME_UNAVAILABLE'});
+  expect(methods).not.toContain('close');
+});

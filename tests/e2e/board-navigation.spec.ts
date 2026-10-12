@@ -94,12 +94,14 @@ test('B05 edited form is kept open without a force-close fallback',async()=>{
   expect((await snapshot(operationId)).frames[0].elements.some((e:any)=>e.value==='Unsaved fixture')).toBe(true);
 });
 test('B06 native beforeunload warning can cancel close and preserves the tab',async()=>{
-  const {operationId,snap}=await setup();
+  const {page,operationId,snap}=await setup();
+  const originalUrl=page.url();
   await click(operationId,ref(snap,'New tab post'));
   await snapshot(operationId);
   const detail=world.context.pages().find(p=>p.url().includes('post=9'))!;
   await detail.getByRole('heading').click(); // trusted activation, synthetic fixture only
   await detail.evaluate(()=>addEventListener('beforeunload',e=>{e.preventDefault();e.returnValue='';}));
+  const beforeClose=(await world.admin('status.get')).operation;
   const dialog=detail.waitForEvent('dialog');
   const closing=world.mcp.call('browser_tabs',{operationId,action:'close'});
   const warning=await dialog;
@@ -107,6 +109,11 @@ test('B06 native beforeunload warning can cancel close and preserves the tab',as
   await warning.dismiss();
   expect((await closing).error?.code).toBe('EXECUTION_UNKNOWN');
   expect(detail.isClosed()).toBe(false);
+  const afterClose=(await world.admin('status.get')).operation;
+  expect(afterClose.tabs).toEqual(beforeClose.tabs);
+  expect(afterClose.currentTab).toBe(beforeClose.currentTab);
+  expect(afterClose.currentTabClosed).toBe(false);
+  expect(page.url()).toBe(originalUrl);
 });
 
 test('B07 genuine BFCache restoration never revives old refs',async()=>{
@@ -123,4 +130,12 @@ test('B07 genuine BFCache restoration never revives old refs',async()=>{
   expect(evidence.restored).toBe(true);
   expect((await world.mcp.call('browser_click',{operationId,ref:ref(list,'Cache post')})).error?.code).toBe('STALE_ELEMENT');
   expect(ref(await snapshot(operationId),'Cache post')).not.toBe(ref(list,'Cache post'));
+});
+
+test('B08 pointer handler cannot redirect a snapshot link to another article',async()=>{
+  const {page,operationId,snap}=await setup();
+  await page.locator('#first').evaluate(el=>el.addEventListener('mousedown',()=>{(el as HTMLAnchorElement).href='?post=2';}));
+  expect((await world.mcp.call('browser_click',{operationId,ref:ref(snap,'Post 1')})).error?.code).toBe('STALE_ELEMENT');
+  expect(page.url()).not.toContain('post=');
+  expect((await snapshot(operationId)).frames[0].elements.find((el:any)=>el.name==='Post 1').href).toContain('post=2');
 });

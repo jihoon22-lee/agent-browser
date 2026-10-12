@@ -393,7 +393,7 @@ in [wsl-interop-review.md](./wsl-interop-review.md).
 실제 WSL→Chrome 통합은 `AB_WSL_OPENCODE`에 WSL OpenCode 실행 파일 경로를 설정하고 `node tests/e2e/iframe.windows.mjs`로 실행한다. 필요하면 `AB_WSL_DISTRO`를 지정한다. 자체 HOME/XDG의 관리형 OpenCode HTTP health와 MCP 연결을 확인한 후, 그 서버가 반환한 MCP 명령을 별도 시험 클라이언트로 실행해 실제 Windows 확장의 iframe 클릭·본문 대기를 수행한다. 실제 Chrome E2E이며 모델 호출은 0회다. 종료 시 runtime.stop 후 runtime.status=stopped를 확인한다.
 ## 게시판 탐색 회귀 (독립 worktree)
 
-`tests/e2e/board-navigation.spec.ts`는 기존 World 하네스의 자체 포트·AGENT_BROWSER_HOME·임시 Chrome 프로필을 사용한다. 실제 사용자 탭은 대상에 포함되지 않는다. B01은 네 번의 hard 목록/본문/back 왕복 및 forward/reload, B02는 SPA back 후 900ms 지연 목록·같은 DOM 노드 정렬·pagination, B03은 iframe 교체, B04는 새 탭 본문/닫기/명시적 원래 탭 복귀, B05는 편집된 폼의 닫기 거부, B06은 실제 beforeunload 창 dismiss, B07은 실제 BFCache 복원을 검사한다.
+`tests/e2e/board-navigation.spec.ts`는 기존 World 하네스의 자체 포트·AGENT_BROWSER_HOME·임시 Chrome 프로필을 사용한다. 실제 사용자 탭은 대상에 포함되지 않는다. B01은 네 번의 hard 목록/본문/back 왕복 및 forward/reload, B02는 SPA back 후 900ms 지연 목록·같은 DOM 노드 정렬·pagination, B03은 iframe 교체, B04는 새 탭 본문/닫기/명시적 원래 탭 복귀, B05는 편집된 폼의 닫기 거부, B06은 실제 beforeunload 창 dismiss, B07은 실제 BFCache 복원을 검사한다. B08은 mousedown에서 링크가 재지정돼도 실제 click 직전 STALE_ELEMENT로 차단되는지 검사한다.
 
 Windows 준비: 별도 `AGENT_BROWSER_WINDOWS_TEST_DIR`를 설정한 뒤 `bash scripts/test-windows.sh --prepare-only`. Windows PowerShell에서 아래 명령을 실행한다(경로는 해당 별도 시험 디렉터리):
 

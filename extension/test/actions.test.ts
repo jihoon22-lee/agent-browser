@@ -152,3 +152,12 @@ it('close preflight accepts a clean implicit select but rejects edited shadow co
   shadow.innerHTML='<input value="before">';shadow.querySelector('input')!.value='unsaved';
   await expect(runAction('close-check',{})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
 });
+
+it('review: pointer handlers cannot retarget a previously validated link before click', async () => {
+  document.body.innerHTML='<a href="/post/1">Post</a>';
+  const link=document.querySelector('a')!, ref=refOf('Post'), clicked=vi.fn();
+  link.addEventListener('mousedown',()=>{link.href='/post/2';});
+  link.addEventListener('click',e=>{e.preventDefault();clicked();});
+  await expect(runAction('click',{ref})).rejects.toMatchObject({code:'STALE_ELEMENT'});
+  expect(clicked).not.toHaveBeenCalled();
+});
