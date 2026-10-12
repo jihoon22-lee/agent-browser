@@ -157,3 +157,34 @@ it.each(['reconcile','finish'] as const)('review R10 Stop bypasses a stalled %s 
     expect(call.mock.calls.filter(([m])=>m==='request.end')).toHaveLength(1);
   }finally{release({state:'stopped'});await poll;await cancel;}
 });
+it('shares overlapping runtime probes so completion and the next request do not race the runtime lock',async()=>{
+  storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
+  let release!:(value:any)=>void,started!:()=>void;
+  const probing=new Promise<void>(resolve=>{started=resolve;});
+  let busy=false;
+  call.mockImplementation(async method=>{
+    if(method!=='runtime.status')return {};
+    if(busy)return {state:'starting'};
+    busy=true;started();return new Promise(resolve=>{release=value=>{busy=false;resolve(value);};});
+  });
+  api.get.mockImplementation(async path=>path==='/session/status'?{}:[{info:{role:'assistant',sessionID:'session-one',parentID:'msg-one',time:{completed:1},finish:'stop'}}]);
+  const poll=manager.finish(lease('one'));
+  await probing;
+  const prepare=manager.prepare(lease('two'),null).then(value=>({value}),error=>({error}));
+  for(let i=0;i<20;i++)await Promise.resolve();
+  const probes=call.mock.calls.filter(([m])=>m==='runtime.status').length;
+  release({state:'ready',baseUrl:'http://127.0.0.1:4444'});
+  const [prepared,finished]=await Promise.all([prepare,poll]);
+  expect(probes).toBe(1);
+  expect(prepared).toMatchObject({value:{requestId:'two'}});
+  expect(finished).toBe(false);
+  expect(storage.panelBrowserRequest).toEqual(lease('two'));
+});
+it('does not cache a failed shared runtime probe across a later completion check',async()=>{
+  storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
+  call.mockRejectedValueOnce(Error('temporary disconnect'));
+  await expect(manager.reconcile()).rejects.toThrow('temporary disconnect');
+  expect(await manager.reconcile()).toBe(false);
+  expect(call.mock.calls.filter(([m])=>m==='runtime.status')).toHaveLength(2);
+  expect(storage.panelBrowserRequest).toEqual(lease('one'));
+});

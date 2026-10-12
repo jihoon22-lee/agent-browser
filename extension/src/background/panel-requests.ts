@@ -5,11 +5,22 @@ const KEY='panelBrowserRequest';
 export function panelRequests(call:Call) {
   let tail:Promise<unknown>=Promise.resolve();
   const serial=<T>(work:()=>Promise<T>)=>{const next=tail.then(work);tail=next.catch(()=>{});return next;};
-  const client=async (lease:RequestLease)=>{
-    const runtime=await call('runtime.status',{profileId:lease.profileId,includeConnection:true}).catch(error=>{
+  const probes=new Map<string,Promise<any>>();
+  const runtimeStatus=(profileId:string,shared:boolean)=>{
+    const pending=shared?probes.get(profileId):undefined;
+    if(pending)return pending;
+    const lookup=call('runtime.status',{profileId,includeConnection:true}).catch(error=>{
       if(error?.code==='INVALID_PARAMS'&&error?.message==='Unknown runtime profile')return null;
       throw error;
     });
+    if(!shared)return lookup;
+    const tracked=lookup.finally(()=>{if(probes.get(profileId)===tracked)probes.delete(profileId);});
+    probes.set(profileId,tracked);return tracked;
+  };
+  const client=async (lease:RequestLease,shared=true)=>{
+    // Concurrent completion/prepare reads must not contend for the Bridge's
+    // runtime lock and mistake the other read for a starting runtime.
+    const runtime=await runtimeStatus(lease.profileId,shared);
     if(runtime===null||runtime?.state==='stopped'||runtime?.state==='error')return null;
     if(runtime?.state!=='ready')throw Error('실행 환경의 상태를 아직 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
     return new OpenCodeV1Client({...runtime,directory:lease.directory});
@@ -105,7 +116,9 @@ export function panelRequests(call:Call) {
       await end(saved,clientId,true);
       // User Stop already closed the gate and cleared the lease. The panel also
       // attempts /abort using its captured connection if discovery is unavailable.
-      const api=await client(saved).catch(()=>null);
+      // Stop never waits for a shared completion probe. A busy discovery falls
+      // back to the panel's already captured connection after closing the gate.
+      const api=await client(saved,false).catch(()=>null);
       if(!api)return {handled:true,abortSent:false};
       try { await api.post(`/session/${encodeURIComponent(saved.sessionId)}/abort`); }
       catch(error) { if(!(error instanceof OpenCodeApiError && error.status===404))throw error; }
