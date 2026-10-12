@@ -14,6 +14,30 @@ function controlledInput(el: HTMLInputElement, onChange: (v: string) => void) {
 }
 
 beforeEach(() => { document.body.innerHTML = ""; resetRegistry(); });
+it('click supplies local viewport coordinates and button state, preserving native checkbox activation',async()=>{
+  document.body.innerHTML='<label><input type="checkbox"> Mail</label>';
+  const el=document.querySelector('input')!;
+  vi.spyOn(el,'getBoundingClientRect').mockReturnValue({left:40,top:80,width:20,height:10,right:60,bottom:90} as DOMRect);
+  const events:MouseEvent[]=[];
+  for(const type of ['mousedown','mouseup','click'])el.addEventListener(type,e=>events.push(e as MouseEvent));
+  await runAction('click',{ref:refOf('Mail'),generation:1});
+  expect(events.map(e=>[e.type,e.clientX,e.clientY,e.buttons,e.detail,e.isTrusted])).toEqual([
+    ['mousedown',50,85,1,1,false],['mouseup',50,85,0,1,false],['click',50,85,0,1,false],
+  ]);
+  expect(el.checked).toBe(true);
+});
+it('discovers explicit inline and keyboard click candidates without treating every row as interactive',()=>{
+  document.body.innerHTML='<div onclick="void 0">Inline mail</div><div tabindex="0">Keyboard mail</div><div tabindex="-1">programmatic</div><div>plain</div><div onkeydown="void 0">unfocusable keyboard handler</div>';
+  expect(snap().elements.map(e=>e.name)).toEqual(['Inline mail','Keyboard mail']);
+});
+it('clicks a real fragment of a wrapped inline link instead of whitespace in its bounding box',async()=>{
+  document.body.innerHTML='<a href="/mail">Wrapped link</a>';const el=document.querySelector('a')!;
+  vi.spyOn(el,'getBoundingClientRect').mockReturnValue({left:10,top:10,width:110,height:30} as DOMRect);
+  vi.spyOn(el,'getClientRects').mockReturnValue([{left:10,top:10,right:30,bottom:20,width:20,height:10},{left:100,top:30,right:120,bottom:40,width:20,height:10}] as unknown as DOMRectList);
+  let point:number[]=[];el.addEventListener('click',e=>{e.preventDefault();point=[e.clientX,e.clientY];});
+  await runAction('click',{ref:refOf('Wrapped link'),generation:1});
+  expect(point).toEqual([20,15]);
+});
 
 it("fill updates React-like controlled state, not just the DOM", async () => {
   document.body.innerHTML = `<label for="n">이름</label><input id="n">`;
@@ -116,4 +140,30 @@ it.each(['<option disabled value="bad">Blocked</option>', '<optgroup disabled><o
   select.addEventListener('input', changed); select.addEventListener('change', changed);
   await expect(runAction('select', {ref: refOf('Choice'), option: 'bad', generation: 10})).rejects.toMatchObject({code: 'ELEMENT_NOT_INTERACTABLE'});
   expect(select.value).toBe('good'); expect(changed).not.toHaveBeenCalled();
+});
+
+it('close preflight accepts a clean implicit select but rejects edited shadow controls', async () => {
+  document.body.innerHTML='<select><option>One</option><option>Two</option></select><div id="host"></div>';
+  await expect(runAction('close-check',{})).resolves.toEqual({executed:false});
+  document.querySelector('select')!.selectedIndex=1;
+  await expect(runAction('close-check',{})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+  document.querySelector('select')!.selectedIndex=0;
+  const shadow=document.querySelector('#host')!.attachShadow({mode:'open'});
+  shadow.innerHTML='<input value="before">';shadow.querySelector('input')!.value='unsaved';
+  await expect(runAction('close-check',{})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+});
+
+it('review: pointer handlers cannot retarget a previously validated link before click', async () => {
+  document.body.innerHTML='<a href="/post/1">Post</a>';
+  const link=document.querySelector('a')!, ref=refOf('Post'), clicked=vi.fn();
+  link.addEventListener('mousedown',()=>{link.href='/post/2';});
+  link.addEventListener('click',e=>{e.preventDefault();clicked();});
+  await expect(runAction('click',{ref})).rejects.toMatchObject({code:'STALE_ELEMENT'});
+  expect(clicked).not.toHaveBeenCalled();
+});
+
+it('file upload is explicitly unsupported and never treats a local path as a text value',async()=>{
+ document.body.innerHTML='<input type="file" aria-label="Upload">';
+ await expect(runAction('fill',{ref:refOf('Upload'),text:'/synthetic/file.txt'})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+ expect(document.querySelector('input')!.files).toHaveLength(0);
 });

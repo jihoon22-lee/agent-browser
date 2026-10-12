@@ -1,5 +1,7 @@
 # 설치·업데이트·패키징
 
+Windows 기존 설정 파일은 해시 검사부터 교체까지 쓰기·이름 변경을 막는 핸들로 보호한다. 검증한 원본을 같은 폴더의 `.agent-browser-recovery-<id>` 이름으로 옮긴 뒤 새 파일을 덮어쓰기 없이 게시한다. 이 사이 경로가 잠깐 비어 있을 수 있다. 다른 프로그램이 파일을 만들면 그 파일을 보존하고 중단한다. 프로세스가 이 구간에서 중단되면 원본 recovery 파일과 설치 transaction 백업을 확인한다. 정상 완료 시 recovery 파일은 정리된다. WSL 파일은 해당 Linux 파일시스템의 해시 검사·rename 경로를 사용하며 Windows 핸들 잠금 보장의 대상이 아니다.
+
 사용자 설치 절차는 배포에 포함되는 [README-install.md](../README-install.md)를 따른다. 설치 기본값은 현재 사용자 `%LOCALAPPDATA%\AgentBrowser`, 확장 고정 경로는 그 아래 `extension`이다.
 
 ## 설치 파일과 소유권

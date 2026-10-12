@@ -1,5 +1,5 @@
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isRendered } from "./dom";
+import { accessibleName, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
@@ -11,6 +11,14 @@ export function cancelUpTo(generation: number) { cancelCommands({ generation });
 
 type P = Record<string, unknown> & CommandScope;
 const hasLayout = () => document.documentElement.getClientRects().length > 0;
+function clickPoint(el:Element) {
+  // Inline links can wrap into disjoint rectangles; their union's center may
+  // be whitespace. Choose an actual visible fragment for hit testing and input.
+  const r=[...el.getClientRects()].find(r=>r.width>0&&r.height>0&&r.right>0&&r.bottom>0&&r.left<innerWidth&&r.top<innerHeight)
+    ?? el.getBoundingClientRect();
+  return {clientX:(Math.max(0,r.left)+Math.min(innerWidth,r.left+r.width))/2,
+    clientY:(Math.max(0,r.top)+Math.min(innerHeight,r.top+r.height))/2};
+}
 
 function assertInteractable(el: Element) {
   if (!isRendered(el, { checkLayout: hasLayout() }) || el.matches(":disabled") || el.closest("[inert]")) {
@@ -18,8 +26,7 @@ function assertInteractable(el: Element) {
   }
   if (!hasLayout()) return;
   (el as HTMLElement).scrollIntoView({ block: "center", inline: "center" });
-  const r = el.getBoundingClientRect();
-  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  const {clientX:x,clientY:y}=clickPoint(el);
   let top = document.elementFromPoint(x, y);
   // Document hit testing retargets shadow children to their host. Descend each
   // open root so an overlay inside that same root still blocks the click.
@@ -66,14 +73,55 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
 
 async function executeAction(method: string, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
   switch (method) {
+    case "link": {
+      const el=resolveRef(String(p.ref));
+      if (!(el instanceof HTMLAnchorElement) || !el.hasAttribute('href') || el.hasAttribute('download'))
+        throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','newTab requires a normal anchor without download; JavaScript buttons are not guessed.');
+      if (!['http:','https:'].includes(new URL(el.href).protocol)) throw new ProtocolError('UNSUPPORTED_PAGE','Only HTTP(S) links can open in a new tab.');
+      return {url:el.href};
+    }
+    case "close-check":
+    case "close": {
+      // Preserve edited controls even on sites that forgot beforeunload. A custom
+      // editor cannot be certified clean, so leave it open as well.
+      const controls: Element[] = [];
+      walkDeep(document, el => { if (el.matches('input,textarea,select,[contenteditable]')) controls.push(el); });
+      const dirty = controls.some(el => {
+        if (el instanceof HTMLInputElement) return el.value !== el.defaultValue || el.checked !== el.defaultChecked || (el.files?.length ?? 0) > 0;
+        if (el instanceof HTMLTextAreaElement) return el.value !== el.defaultValue;
+        if (el instanceof HTMLSelectElement) {
+          const options = Array.from(el.options);
+          if (el.multiple) return options.some(o => o.selected !== o.defaultSelected);
+          let index = options.map(o => o.defaultSelected).lastIndexOf(true);
+          if (index < 0 && el.size <= 1) index = options.findIndex(o => !o.disabled && !o.closest('optgroup[disabled]'));
+          return el.selectedIndex !== index;
+        }
+        return (el as HTMLElement).isContentEditable;
+      });
+      if (dirty) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'Edited form controls or an editable region may contain unsaved data; preserve this tab.');
+      if (method === 'close') window.close();
+      return {executed: method === 'close'};
+    }
     case "click": {
       const el = resolveRef(String(p.ref));
       assertInteractable(el);
       const changes = observeChanges(500, signal);
+      const point=clickPoint(el);
+      const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
+      // A rejected pre-click check must not leave an unhandled observation when
+      // the command is cancelled. The observer itself is bounded to 500ms.
+      void changes.catch(() => {});
       for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
-        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, { bubbles: true, cancelable: true, composed: true }));
+        const down=type.endsWith('down');
+        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:down?1:0,pointerId:1,pointerType:'mouse',isPrimary:true,pressure:down?0.5:0}));
       }
-      (el as HTMLElement).click();
+      assertInteractable(el);
+      // Pointer handlers can recycle a row or change href synchronously. Do not
+      // transfer the original ref to the new target immediately before dispatch.
+      resolveRef(String(p.ref));
+      // Retain native activation and viewport coordinates after the final check.
+      // This is still untrusted input.
+      el.dispatchEvent(new MouseEvent('click',{...base,...clickPoint(el),buttons:0}));
       return { executed: true, verified: await changes };
     }
     case "fill": {
@@ -81,6 +129,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       assertInteractable(el);
       const text = String(p.text ?? "");
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        if (el instanceof HTMLInputElement && el.type === 'file') throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','File upload is not supported by browser_fill; it cannot read a local path or choose a file.');
         if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field is read-only.");
         el.focus();
         nativeSet(el, text);

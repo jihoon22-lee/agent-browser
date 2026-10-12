@@ -42,7 +42,7 @@ impl Role {
     /// Methods a connection of this role may call on serve. Anything else is FORBIDDEN_METHOD.
     fn allows(self, method: &str) -> bool {
         match self {
-            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
+            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "request.begin" | "request.end" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
             Role::Mcp => matches!(method, "tool.call" | "tool.cancel"),
         }
     }
@@ -394,7 +394,7 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
                 }
                 let name = params["name"].as_str().unwrap_or_default().to_string();
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                let attach = name == "browser_tabs" && arguments["action"] == "attach";
+                let attach = name == "browser_tabs" && (arguments["action"] == "attach" || (arguments["action"] == "new" && arguments.get("operationId").is_none()));
                 let (abort, registration) = AbortHandle::new_pair();
                 running.insert(id.clone(), abort);
                 pending.push(async move {
@@ -478,6 +478,33 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
     match method {
         "heartbeat" => Envelope::ok(id, json!({ "at": now_ms() })),
         "status.get" => Envelope::ok(id, state.status()),
+        "request.begin" | "request.end" => {
+            // Selection validation and reservation must be atomic with browser.use.
+            // Never wait on this socket: attach may need its tabs.get response.
+            // End remains independent so Stop can invalidate an in-flight attach.
+            let _selection = if method=="request.begin" {
+                match state.selection.try_lock() {
+                    Ok(lock)=>Some(lock),
+                    Err(_)=>return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Browser selection or attach is in progress.")),
+                }
+            } else { None };
+            let Some(request)=params["requestId"].as_str().filter(|s|!s.is_empty()&&s.len()<=128) else {
+                return Envelope::err(id,RpcError::new(ErrorCode::InvalidParams,Retry::Never,"requestId is required"));
+            };
+            let Some(client)=params["clientId"].as_str().filter(|s|!s.is_empty() && (method=="request.end" || Some(*s)==state.registry.selected_client().as_deref())) else {
+                return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
+            };
+            let result=if method=="request.begin" {
+                state.ops.begin_request(request,client,params["tabId"].as_i64().filter(|n|*n>0)).map(|_|None)
+            } else { state.ops.end_request(request,client) };
+            match result {
+                Ok(operation)=>{
+                    if let Some(op)=operation {state.registry.notify_for(&op.client_id,"browser.cancel",json!({"operationId":op.id,"generation":op.generation}));}
+                    state.broadcast_status();Envelope::ok(id,json!({"requestId":request}))
+                },
+                Err(error)=>Envelope::err(id,error),
+            }
+        },
         "operation.abort" => {
             let operation_id = params.get("operationId").and_then(Value::as_str);
             match state.ops.abort(operation_id) {
@@ -542,6 +569,25 @@ async fn management_request(state: &ServerState, method: &str, params: &Value) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_begin_cannot_cross_browser_selection_and_end_does_not_wait_for_attach() {
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), config::load_or_init(home.path()).unwrap());
+        let (a, _rx) = tokio::sync::mpsc::unbounded_channel();
+        state.registry.register("A", a);
+        let params=json!({"requestId":"request-a","clientId":"A","tabId":42});
+        let lock=state.selection.lock().await;
+        let reply=extension_request(&state,"busy".into(),"request.begin",&params).await;
+        assert!(matches!(reply,Envelope::Res{ok:false,..}),"{reply:?}");
+        drop(lock);
+        let reply=extension_request(&state,"begin".into(),"request.begin",&params).await;
+        assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
+        let _lock=state.selection.lock().await;
+        let reply=extension_request(&state,"stop".into(),"request.end",&params).await;
+        assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
+        assert!(state.ops.request_target(Some("request-a"),"A",None).is_err());
+    }
 
     #[tokio::test]
     async fn abort_notifies_the_operation_owner_after_selection_has_changed() {

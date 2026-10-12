@@ -747,3 +747,57 @@ docs/status.md에 다음을 유지한다.
 [R15] OpenCode config/models: https://opencode.ai/docs/config/ ; https://opencode.ai/docs/models/
 [R16] Chrome extension loading: https://developer.chrome.com/docs/extensions/get-started/tutorial/hello-world
 [R17] MCP stdio: https://modelcontextprotocol.io/specification/2025-06-18/basic/transports
+
+
+### Fifth review and security rerun — 2026-10-12 07:05 UTC
+
+Remote head remains `09caec518be826c3995e0476fecf3e64e8539607`; its Linux/Windows CI 38211907836 passed. The 06:31 code review raised five P2s. The requested retry comment was posted successfully at https://github.com/jihoon22-lee/agent-browser/pull/5#issuecomment-6119150335 after a new explicit delegation requested the retry. Code review completed at 06:51 and raised five more P2s; security review completed at 07:01 and repeated the data-owner issue. The earlier 06:26 security `Failed` run exposed no explanation, so its cause is still unknown; it is not counted as a clean review.
+
+Local fixes cover all ten distinct follow-up findings:
+
+- Uninstall tracks missing registered settings in its preview snapshot, rejecting recreation before Apply.
+- Empty managed-runtime maps no longer require launching a missing Bridge executable. Already-exited, owned PID records can be cleared without the deleted executable; live/unverified runtime records retain the installation.
+- Remove ignores the disabled new-registration checkbox and selections.
+- Native package verification and the shared PowerShell verifier used by the Windows builder reject extension/package version mismatch. Synthetic test package versions/hashes are internally consistent.
+- Legacy PowerShell transactions record the bytes actually written, require the same hash during rollback, preserve concurrent changes, continue unrelated restorations and retain a recovery path/hash journal plus backups on conflict.
+- Maintenance handoff uses `%LOCALAPPDATA%/AgentBrowser-Setup`, requiring the same trusted-owner/ancestor policy as installation roots before execution.
+- The install and update guide restores ZIP SHA256 comparison against separately published SHA256SUMS or the official asset digest before extraction/execution.
+- Automatic Windows executable discovery inspects components from the drive root and rejects reparse points before visiting descendants. This uses the [documented attribute behavior](https://devblogs.microsoft.com/oldnewthing/20100212-00/?p=14963): link attributes describe the link itself. No SMB server was contacted in tests.
+- Private directory ACL preparation rejects foreign owners, including a pre-existing empty data child; it does not silently retain owner rights after changing the DACL.
+- Windows executable and working-directory validation now precedes the version probe; relative, remote and reparse paths are rejected before execution.
+
+The native uninstall/UI/package cases failed five times before fixes (`review6-red.log`), then all 47 native cases passed. Complete native/actual WSL integration passed 52 cases (`review6-wsl-final.log`), including real OpenCode 1.18.29 authentication with Bridge 0.1.5 and no model/page action. An earlier invocation failed only because the test driver received a relative JS path; it was rerun with an absolute path and a fresh fixture. The exact interrupted fixture was uninstalled through its verified install ID.
+
+The four new owner/path cases each failed before fixes (`review7-red.log`); all 51 native cases then passed (`review7-green.log`). Owner checks use isolated security descriptors, the replaceable-ancestor test temporarily changes only its own fixture ACL and restores it, and discovery uses a local junction fixture. They are not a real second-user exploit or SMB authentication test. The relative Windows probe uses an isolated synthetic executable and also verifies that an explicitly selected valid absolute executable can be prepared.
+
+GUI candidate 7 passed complete discovery, preview/Back/cancel, occupied-port rollback/retry, WSL registration, stale profile validation/save/duplicate/pending close, masked pairing, update and installed-GUI self-uninstall (`gui-review7.log`). Final candidate 8 also passed discovery, preview/cancel, failure/retry, update and self-uninstall through its exact-hash per-user maintenance cache (`gui-review8.log`). GUI tests use owned native HWND button/selection events plus UI Automation reads, not physical mouse input.
+
+Legacy PowerShell 5.1 regressions were written for text/copy/delete rollback conflicts, continued unrelated recovery, version-mismatched packaging and actual WSL rollback. Local script execution was refused by host policy (`review6-wsl-rollback-red.log`); no policy bypass/change was used. The PowerShell 5.1 parser accepted the source, but this is syntax-only evidence. New PowerShell execution and latest-head CI remain pending. Standard-library package tests (3), CI helper tests (3), actionlint, Markdown links and diff checks passed. Rust/extension product source was not changed in these follow-ups; their prior remote-head CI pass is not presented as a latest-head CI run.
+
+Final local candidate: 32 files, SHA256 `e19171e688ef714c4228574e72e6967c3cc8392191bf9b15487c03d5fb52b29a`; internal hashes, extension version, Windows x64 Bridge/GUI PE and absence of runtime/private artifacts passed. This is an unpublished local candidate, not a release asset.
+
+Remote push of regression commit `c61094d` was rejected by automatic approval review because the original delegation withheld push approval and the later review request did not clearly authorize this exact repository/push. An exact repository/branch/PR/release approval question is pending; no workaround, push, merge, tag or release was performed after that rejection. The current remote findings therefore remain unresolved on GitHub until the local fixes can be pushed and reviewed. Personal operational v0.1.4 PID 74680, install identity, pairing, profiles, data owner and global WSL settings remain unchanged. The separate company WSL/active-tab/iframe work is excluded.
+
+Final current-source Windows/WSL integration: **56 PASS** (14 existing + 42 review cases), `review7-wsl-final.log`. The valid absolute Windows profile probe also passed. Rebuilding the final candidate into a separate directory produced the identical SHA256 above. No local script-policy exception was used.
+
+### Publication authorization restored — 2026-10-12 07:08 UTC
+
+The parent supplied the later explicit user deployment approvals. The same previously rejected push was retried once and approved; `c61094d` and `8aa6677` are now on PR #5. The earlier blocker is resolved. Latest-head CI/code/security reviews remain required before merge and a new v0.1.5 prerelease; the operating v0.1.4 and separate WSL/iframe/active-tab work remain excluded.
+
+
+### PowerShell CI execution follow-up — 2026-10-12 07:16 UTC
+
+Current-head Linux CI passed. Windows CI 38216139555 passed the new concurrent text/copy/delete rollback regression plus normal install/update/removal and live-process checks, then exposed a real integration omission: direct COM Startup shortcut creation did not record its written hash, so occupied-port rollback retained that shortcut as a supposed concurrent edit. The existing occupied-port regression is the failing test. Setup now creates the link in its transaction stage and publishes it through Copy-TransactionFile. Owned process-marker writes also use the transaction when setup provides one, and snapshot-only calls suppress their internal journal objects from command output. GUI/native product code is unchanged; targeted PowerShell CI is the required revalidation, with no redundant manual review request.
+
+Windows CI 38216816747 passed PowerShell install/update/rollback/uninstall, including the repaired occupied-port Startup cleanup. The next stage exposed a stale synthetic upgrade fixture: runtime-cleanup.tests.ps1 changed only the outer version to 0.2.0 while retaining extension 0.1.0. The fixture now updates the extension version/hash together. This follow-up changes tests only; it does not weaken the mixed-version rejection.
+
+### GUI integration handoff; standalone release stopped — 2026-10-12 07:48 UTC
+
+The user's latest instruction supersedes the earlier standalone v0.1.5 publication plan and exact-head review gates above: combine GUI, WSL, iframe, active-tab and board improvements into one release. PR #5 remains open and unmerged; no v0.1.5 tag or release was created. The integration owner is thread `01a12eae-b801-75cc-bd86-32fd1c55c031`. Do not publish this branch as a separate GUI release or restart repeated manual reviews.
+
+CI 38217400340 at 61a116c passed both Linux and Windows, including the actual PowerShell install/update/rollback/remove and managed-runtime tests. The previous Startup rollback failure and synthetic package-version failure are resolved. Code and security reviews completed on that head; the last code review reported four P2s. Three concrete data/access issues received narrowly scoped fixes: deletion checks expected bytes while excluding Windows writers/replacers through the same handle; native rollback continues restoring independent files after a conflict and retains recovery evidence; package destination subdirectories must have trusted owners/private write permissions at preview and apply. The five new native cases all failed first (`boundary-red.log`) and then passed (`boundary-green.log`). WSL deletion uses the selected distribution/user and checks expected contents immediately before removal; it does not claim an atomic lock against arbitrary Unix writers.
+
+The fourth finding asks to reject every local Windows path for WSL MCP registration. It is deferred for clearer path guidance: WSL can legitimately consume a Windows-mounted config via /mnt/c, so a blanket UNC-only restriction is not justified by the demonstrated evidence. This is not reported as fixed. No other feature/runtime scope was added.
+
+The final source was compiled with the .NET Framework 4.8 C# compiler and validated with the existing native Windows/actual WSL suite. Initial WSL rerun stopped because the temporary fixture used invalid server.port=0; the fixture was corrected to a positive port and rerun in a fresh isolated directory. The published-v0.1.4 upgrade fixture prepared for the now-canceled standalone release and the interrupted WSL fixture were uninstalled through their verified identities. Operating v0.1.4 and global OpenCode settings remain untouched. Latest commit CI will run automatically after push; the integration owner should use its real result, not treat 61a116c's pass as a final-head pass. The pre-fix CI ZIP is not a final release artifact.
+Final local result: **62 PASS** (15 existing/WSL cases + 47 review cases), `boundary-all-final.log`. Actual OpenCode 1.18.29 connected and an authenticated Bridge 0.1.5 reply was verified with delivered=false/executed=no; no model or page operation ran. At 07:47 UTC, the read-only production audit confirmed v0.1.4 PID 74680, identity, pairing, profiles, owner marker and global WSL configuration unchanged. No known failing installer test remains; final-head remote CI is pending handoff.

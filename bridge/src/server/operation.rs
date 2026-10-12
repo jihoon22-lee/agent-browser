@@ -12,6 +12,7 @@ pub struct Operation {
     pub id: String,
     pub generation: u64,
     pub tabs: Vec<i64>,
+    pub opened_tabs: Vec<i64>,
     pub current_tab: i64,
     pub client_id: String,
     pub state: OpState,
@@ -37,26 +38,78 @@ struct GateInner {
     finished: Vec<(String, OpState)>, // last 50 ended operations, to answer CANCELLED vs OPERATION_INVALID
     owned_tabs: std::collections::HashSet<i64>,
     closed_tabs: std::collections::HashSet<i64>,
+    request: Option<RequestTarget>,
 }
+
+#[derive(Clone)]
+struct RequestTarget { id: String, client: String, tab: Option<i64> }
 
 impl OperationGate {
     pub fn attach(&self, tab_id: i64, client_id: &str) -> Result<Operation, RpcError> {
+        self.attach_request(tab_id, client_id, None)
+    }
+
+    pub fn begin_request(&self, id: &str, client: &str, tab: Option<i64>) -> Result<(), RpcError> {
+        let mut g=self.inner.lock().unwrap();
+        if let Some(r)=&g.request {
+            if r.id==id && r.client==client { return Ok(()); }
+            return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another user request owns the browser. Wait for it to finish or stop it."));
+        }
+        if g.current.is_some() { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Finish or stop the previous browser operation before starting a new request.")); }
+        g.request=Some(RequestTarget{id:id.into(),client:client.into(),tab});
+        Ok(())
+    }
+
+    fn request_matches(g:&GateInner,id:Option<&str>,client:&str)->Result<(),RpcError> {
+        match (&g.request,id) {
+            (None,None)=>Ok(()),
+            (Some(r),Some(id)) if r.id==id && r.client==client=>Ok(()),
+            _=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"Attach with the requestId from the current user request. Do not reuse another request's operation.")),
+        }
+    }
+
+    pub fn request_target(&self,id:Option<&str>,client:&str,explicit:Option<i64>)->Result<Option<i64>,RpcError> {
+        let g=self.inner.lock().unwrap(); Self::request_matches(&g,id,client)?;
+        if explicit.is_some() { return Ok(explicit); }
+        match &g.request {
+            Some(r)=>r.tab.map(Some).ok_or_else(||RpcError::new(ErrorCode::TabNotFound,Retry::Never,"No safe active tab was available when the user submitted this request. Ask for an explicit tab.")),
+            None=>Ok(None),
+        }
+    }
+
+    pub fn end_request(&self,id:&str,client:&str)->Result<Option<AbortedOperation>,RpcError> {
+        let mut g=self.inner.lock().unwrap();Self::request_matches(&g,Some(id),client)?;
+        g.request=None;g.generation+=1;let generation=g.generation;
+        Ok(Self::finish(&mut g,OpState::Released).map(|op|AbortedOperation{id:op.id,generation,client_id:op.client_id}))
+    }
+
+    pub fn attach_request(&self, tab_id:i64, client_id:&str, request_id:Option<&str>)->Result<Operation,RpcError> {
+        self.begin(Some(tab_id),client_id,request_id)
+    }
+
+    pub fn reserve_new(&self,client_id:&str,request_id:Option<&str>)->Result<Operation,RpcError> {
+        self.begin(None,client_id,request_id)
+    }
+
+    fn begin(&self,tab_id:Option<i64>,client_id:&str,request_id:Option<&str>)->Result<Operation,RpcError> {
         let mut g = self.inner.lock().unwrap();
+        Self::request_matches(&g,request_id,client_id)?;
         if let Some(op) = g.current.as_ref().filter(|o| o.state == OpState::Active) {
             return Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
                 "Another browser operation is running. Wait for it to finish or ask the user to press Stop.")
                 .with_details(json!({ "operationId": op.id })));
         }
         g.generation += 1;
-        g.owned_tabs.clear(); g.owned_tabs.insert(tab_id); g.closed_tabs.clear();
+        g.owned_tabs.clear(); g.owned_tabs.extend(tab_id); g.closed_tabs.clear();
         let op = Operation {
             id: format!("op-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
             generation: g.generation,
-            tabs: vec![tab_id],
-            current_tab: tab_id,
+            tabs: tab_id.into_iter().collect(),
+            opened_tabs: vec![],
+            current_tab: tab_id.unwrap_or(0),
             client_id: client_id.to_string(),
             state: OpState::Active,
-            current_tab_closed: false,
+            current_tab_closed: tab_id.is_none(),
         };
         g.current = Some(op.clone());
         Ok(op)
@@ -87,6 +140,9 @@ impl OperationGate {
 
     pub fn select_browser<T>(&self, client_id: &str, select: impl FnOnce() -> T) -> Result<T, RpcError> {
         let g = self.inner.lock().unwrap();
+        if g.request.as_ref().is_some_and(|r|r.client!=client_id) {
+            return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another request has captured a different browser."));
+        }
         if let Some(op) = g.current.as_ref().filter(|op| op.client_id != client_id) {
             return Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
                 "Finish or stop the current operation before selecting another browser.")
@@ -119,7 +175,7 @@ impl OperationGate {
         let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
         if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
         g.owned_tabs.insert(tab);
-        let op = g.current.as_mut().unwrap(); if !op.tabs.contains(&tab) { op.tabs.push(tab); } Ok(())
+        let op = g.current.as_mut().unwrap(); if !op.tabs.contains(&tab) { op.tabs.push(tab); op.opened_tabs.push(tab); } Ok(())
     }
 
     pub fn add_and_switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
@@ -127,7 +183,7 @@ impl OperationGate {
         if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
         g.owned_tabs.insert(tab);
         let op = g.current.as_mut().unwrap();
-            if !op.tabs.contains(&tab) { op.tabs.push(tab); }
+            if !op.tabs.contains(&tab) { op.tabs.push(tab); op.opened_tabs.push(tab); }
             op.current_tab = tab;
             op.current_tab_closed = false;
         Ok(())
@@ -143,7 +199,7 @@ impl OperationGate {
         let tabs: Vec<_> = tabs.iter().copied().filter(|tab| *tab > 0 && *tab != source && !g.closed_tabs.contains(tab)).collect();
         g.owned_tabs.extend(tabs.iter().copied());
         let op = g.current.as_mut().unwrap();
-        for tab in &tabs { if !op.tabs.contains(tab) { op.tabs.push(*tab); } }
+        for tab in &tabs { if !op.tabs.contains(tab) { op.tabs.push(*tab); op.opened_tabs.push(*tab); } }
         // A concurrent explicit switch wins over an older click's new-tab result.
         if op.current_tab == source { if let Some(tab) = tabs.first() { op.current_tab = *tab; op.current_tab_closed = false; } }
         Ok(op.clone())
@@ -167,6 +223,7 @@ impl OperationGate {
         if g.current.is_some() { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut() {
             op.tabs.retain(|t| *t != tab);
+            op.opened_tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
         }
     }
@@ -176,6 +233,7 @@ impl OperationGate {
         if g.current.as_ref().is_some_and(|op| op.id == id) { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut().filter(|op| op.id == id) {
             op.tabs.retain(|t| *t != tab);
+            op.opened_tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
         }
     }
@@ -186,6 +244,7 @@ impl OperationGate {
         if g.current.as_ref().is_some_and(|op| op.client_id == client_id) { g.closed_tabs.insert(tab); }
         if let Some(op) = g.current.as_mut().filter(|op| op.client_id == client_id) {
             op.tabs.retain(|t| *t != tab);
+            op.opened_tabs.retain(|t| *t != tab);
             if op.current_tab == tab { op.current_tab_closed = true; }
         }
     }
@@ -209,6 +268,7 @@ impl OperationGate {
     pub fn abort(&self, id: Option<&str>) -> Option<AbortedOperation> {
         let mut g = self.inner.lock().unwrap();
         let matches = g.current.as_ref().is_some_and(|o| id.is_none_or(|i| i == o.id));
+        if id.is_none() || matches { g.request=None; }
         if !matches { return None; }
         g.generation += 1;
         let generation = g.generation;
@@ -224,6 +284,51 @@ impl OperationGate {
 mod tests {
     use super::*;
     use crate::rpc::ErrorCode;
+
+    #[test]
+    fn standalone_new_respects_request_owner_without_requiring_a_default_tab() {
+        let g=OperationGate::default();g.begin_request("new-request","browser",None).unwrap();
+        assert!(g.reserve_new("browser",None).is_err());
+        assert!(g.reserve_new("other",Some("new-request")).is_err());
+        let op=g.reserve_new("browser",Some("new-request")).unwrap();
+        assert!(op.tabs.is_empty());g.add_and_switch_tab(&op.id,42).unwrap();
+        assert!(g.begin_request("next","browser",Some(7)).is_err());
+        g.end_request("new-request","browser").unwrap();
+        assert!(g.reserve_new("browser",Some("new-request")).is_err());
+    }
+
+    #[test]
+    fn request_target_is_captured_and_explicit_target_wins() {
+        let g = OperationGate::default();
+        g.begin_request("turn-a", "browser", Some(12)).unwrap();
+        assert_eq!(g.request_target(Some("turn-a"), "browser", None).unwrap(), Some(12));
+        assert_eq!(g.request_target(Some("turn-a"), "browser", Some(99)).unwrap(), Some(99));
+        assert!(g.request_target(None, "browser", None).is_err());
+        assert!(g.request_target(Some("turn-a"), "other", None).is_err());
+        assert!(g.begin_request("turn-b", "browser", Some(22)).is_err());
+    }
+
+    #[test]
+    fn request_end_invalidates_its_operation_and_late_request_ids() {
+        let g = OperationGate::default();
+        g.begin_request("turn-a", "browser", Some(12)).unwrap();
+        let op=g.attach_request(12,"browser",Some("turn-a")).unwrap();
+        assert!(g.end_request("wrong", "browser").is_err());
+        assert_eq!(g.check(&op.id).unwrap().current_tab,12);
+        g.end_request("turn-a","browser").unwrap();
+        assert!(g.check(&op.id).is_err());
+        assert!(g.attach_request(12,"browser",Some("turn-a")).is_err());
+        g.begin_request("turn-b","browser",Some(22)).unwrap();
+        assert_eq!(g.request_target(Some("turn-b"),"browser",None).unwrap(),Some(22));
+    }
+
+    #[test]
+    fn ambiguous_default_never_falls_back_but_explicit_target_is_allowed() {
+        let g=OperationGate::default();
+        g.begin_request("turn-a","browser",None).unwrap();
+        assert!(g.request_target(Some("turn-a"),"browser",None).is_err());
+        assert_eq!(g.request_target(Some("turn-a"),"browser",Some(7)).unwrap(),Some(7));
+    }
 
     #[test]
     fn second_attach_while_active_is_busy() {

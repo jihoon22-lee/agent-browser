@@ -206,7 +206,8 @@ test("S15 works with side panel closed", async () => {
 
 test("S16 mcp stdout purity", async () => {
   const list = await world.mcp.request("tools/list");
-  expect(list.tools).toHaveLength(11);
+  expect(list.tools).toHaveLength(12);
+  expect(list.tools.some((tool:any)=>tool.name === "browser_bookmarks")).toBe(true);
   await world.ok("browser_tabs", { action: "list" });
   expect(world.mcp.stdout.length).toBeGreaterThan(2);
   expect(world.mcp.invalidStdout).toEqual([]);
@@ -216,7 +217,11 @@ test("S16 mcp stdout purity", async () => {
 test("S17 unsupported page", async () => {
   const page = await world.context.newPage();
   await page.goto("chrome://version");
-  expect((await world.mcp.call("browser_tabs", { action: "attach", tabId: await world.tabId(page) })).error?.code).toBe("UNSUPPORTED_PAGE");
+  const attached=await world.ok("browser_tabs", { action: "attach", tabId: await world.tabId(page) });
+  expect(attached.data.tab.attachable).toBe(false);
+  expect((await world.mcp.call("browser_snapshot",{operationId:attached.operationId})).error?.code).toBe("UNSUPPORTED_PAGE");
+  await world.ok("browser_navigate",{operationId:attached.operationId,url:world.fixture.base+"/board.html"});
+  expect((await world.ok("browser_snapshot",{operationId:attached.operationId})).data.frames[0].text.content).toContain("Board ready");
 });
 
 test("R18 cancelled operation does not poison a new operation after bridge restart", async () => {

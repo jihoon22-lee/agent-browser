@@ -29,30 +29,16 @@
 
 ### 연결 끊김 또는 계속 재시도
 
-설치 폴더의 `start-bridge.cmd`를 실행하고 설정의 **Bridge 주소**를 확인합니다. 기본값은 `ws://127.0.0.1:4317/extension`입니다. 포트는 설치 출력과 같아야 하고 끝의 `/extension`도 필요합니다. OpenCode 서버 주소인 `http://127.0.0.1:4096`을 넣으면 안 됩니다.
+설치 GUI에서 실제 설치 폴더를 선택하고 **Bridge 시작**을 누릅니다. **페어링 토큰** 화면의 주소를 확장 Options에 입력합니다. 기본값은 `ws://127.0.0.1:4317/extension`이며 끝의 `/extension`도 필요합니다. OpenCode 서버 주소인 `http://127.0.0.1:4096`을 넣으면 안 됩니다.
 
-사용자 지정 설치 경로가 `D:\Multimedia\AgentBrowser`라면 Windows PowerShell에서 다음처럼 실행합니다. 실제 설치 경로로 바꾸세요.
-
-```powershell
-$agentBrowserInstall = 'D:\Multimedia\AgentBrowser'
-powershell -NoProfile -ExecutionPolicy Bypass -File "$agentBrowserInstall\start-bridge.ps1" -InstallDir $agentBrowserInstall
-powershell -NoProfile -ExecutionPolicy Bypass -File "$agentBrowserInstall\show-pairing.ps1" -InstallDir $agentBrowserInstall
-```
-
-기본 설치라면 첫 줄 대신 다음을 사용합니다.
-
-```powershell
-$agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser'
-```
-
-이 명령은 지정한 설치의 상태 파일을 사용합니다. 다른 폴더의 `browser-bridge.exe`를 임의로 실행하면 별도 데이터·포트 설정을 볼 수 있습니다. 설치 위치를 옮기려고 파일만 이동하지 마세요.
+사용자 지정 설치라면 GUI의 설치 폴더를 해당 경로(예: `D:\Multimedia\AgentBrowser`)로 맞춥니다. 다른 폴더의 Bridge를 임의로 실행하거나 설치 파일만 이동하지 마세요.
 
 ### 상호 인증 실패·페어링 필요
 
 **페어링 인증 실패**, **상호 인증에 실패했습니다**, **다른 확장과 페어링되어 있습니다**가 표시되면 다음을 확인합니다.
 
 1. 같은 배포 버전의 Bridge와 확장을 사용 중인지 확인합니다. 업데이트 후 확장도 새로고침합니다.
-2. 해당 설치의 `show-pairing.ps1`을 실행해 주소와 토큰을 확인합니다.
+2. 설치 GUI에서 해당 설치를 선택하고 **페어링 토큰**으로 주소와 토큰을 확인합니다.
 3. **Bridge 주소**와 **페어링 토큰**을 입력하고 **저장 후 연결**을 누릅니다. 토큰은 출력된 64자리 소문자 16진수 값 그대로 사용합니다.
 4. 실제 작업할 Chrome 프로필인지 확인합니다. 다른 확장 설치와 다시 페어링하면 기존 연결에 영향을 줄 수 있습니다.
 
@@ -66,7 +52,11 @@ v0.1.3 이하에서 Windows PowerShell 5.1의 `powershell -File .\setup.ps1` 실
 
 ### PowerShell이 스크립트 실행을 차단함
 
-[설치 안내](../README-install.md)의 `powershell -NoProfile -ExecutionPolicy Bypass -File ...` 형태를 사용합니다. 이 명령은 해당 프로세스에 실행 정책을 지정하며 전역 정책을 변경하지 않습니다. 조직 정책에 의해 실행 자체가 차단되면 정책을 우회하는 다른 실행기를 만들지 말고 담당자에게 확인하세요.
+현재 ZIP의 네이티브 `AgentBrowser-Setup.exe`를 사용합니다. GUI는 PowerShell 스크립트를 실행하지 않습니다. 전역·프로세스 실행 정책을 변경하지 마세요. 조직 정책이 EXE 또는 로컬 확장 실행도 차단한다면 담당자에게 승인된 설치 방법을 확인합니다.
+
+### WSL 설정 저장 실패
+
+기존 WSL UNC 파일에 Windows `File.Replace`를 적용하면 지원하지 않는 작업 오류가 날 수 있습니다. 현재 설치 관리자는 같은 디렉터리의 임시 파일과 Linux rename으로 변경하고 기존 소유자·그룹·권한을 보존합니다. 미리보기 이후 파일이 바뀌면 중단하므로 **이전 → 변경 내용 확인**으로 새 내용을 확인합니다. 선택한 WSL 사용자의 권한이 없으면 권한·정책을 우회하지 않고 중단합니다.
 
 ## 4. Bridge는 연결되지만 OpenCode가 준비되지 않음
 
@@ -112,19 +102,12 @@ WSL interop이 막혀 있거나 Windows에서 WSL localhost로 접근할 수 없
 
 대화는 가능하지만 브라우저 도구가 없거나 **browser MCP is unavailable or not connected**가 나오면 **대화 → 작업 도구 → 커맨드·스킬·MCP**와 연결 진단을 확인합니다.
 
+- 진단은 등록 없음·비활성·실행 파일 없음·권한·인증·타임아웃·연결 실패를 구분합니다. 전역 JSON에 `mcp`가 없어도 관리 서버는 별도 overlay를 사용할 수 있으므로 해당 프로필의 진단 결과를 확인합니다.
 - Windows·WSL 관리 프로필: 해당 서버에 Bridge의 MCP 설정이 제공되어야 합니다. 실행 파일·배포판·interop 상태와 진단 오류를 확인합니다.
-- 외부 서버·독립 CLI: 해당 OpenCode 설정에 브라우저 MCP를 별도로 등록해야 합니다. [설치 안내](../README-install.md)의 `examples\mcp-windows.json` 또는 배포판을 지정해 생성한 WSL 조각을 사용합니다. 사용자 전체 설정을 덮어쓰지 않습니다.
+- 외부 서버·독립 CLI: 해당 OpenCode 설정에 브라우저 MCP를 별도로 등록해야 합니다. 설치 GUI에서 실제 Windows·WSL 설정 파일을 선택해 등록합니다. 사용자 전체 설정을 덮어쓰지 않습니다.
 - **different Bridge port or a removed Bridge executable** 오류: 관리 서버가 이전 Bridge 주소나 사라진 실행 파일을 계속 사용 중입니다. 해당 프로필의 **서버 중지 → 시작·연결 확인**을 실행해 새 MCP 설정을 적용합니다.
 
-설치 후 Bridge 포트를 바꾸려면 ZIP을 풀어둔 배포 폴더에서 같은 설치 경로를 지정합니다. 아래는 포트를 `4321`로 바꾸는 예시입니다.
-
-```powershell
-# 압축 해제한 새 배포 폴더에서 실행합니다.
-$agentBrowserInstall = 'D:\Multimedia\AgentBrowser'
-powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir $agentBrowserInstall -Port 4321
-```
-
-변경 전 진행 중인 브라우저·OpenCode 작업을 중단합니다. 변경 후 해당 설치의 `show-pairing.ps1`로 확인한 주소를 확장 설정에 저장하고, 관리 프로필마다 **서버 중지 → 시작·연결 확인**을 실행합니다. 외부 서버·CLI의 MCP 설정은 해당 서버 관리 방식에 따라 주소를 반영하고 다시 연결해야 합니다.
+설치 후 Bridge 포트를 바꾸려면 새 ZIP의 GUI에서 같은 설치 폴더를 선택하고 **업데이트**와 새 **Bridge 포트**를 지정합니다. 변경 전 진행 중인 작업을 중단합니다. 변경 후 **페어링 토큰** 화면의 주소를 확장에 저장하고, 관리 프로필마다 **서버 중지 → 시작·연결 확인**을 진행합니다. 외부 서버·CLI도 새 주소로 다시 연결해야 합니다.
 
 정상 업데이트는 기존 관리 서버가 참조하는 버전별 Bridge 실행 파일을 보존합니다. 설치 폴더의 `app` 안에서 이전 버전 exe를 임의로 삭제하지 마세요.
 
@@ -208,3 +191,19 @@ $agentBrowserState = Get-Content -LiteralPath (Join-Path $agentBrowserInstall '.
 테마 변경은 실행 환경 이름 오른쪽 **테마** 또는 설정 페이지의 **테마**에서 합니다. **시스템 설정**은 Chrome이 감지한 시스템 밝기 설정을 따라 Latte/Mocha로 바뀝니다. 항상 같은 색을 쓰려면 Latte·Frappé·Macchiato·Mocha 중 하나를 선택합니다. 이전 버전의 밝게/어둡게 선택은 Latte/Mocha로 이어집니다.
 
 업데이트 후에도 이전의 긴 한 페이지 화면이 보이면 `chrome://extensions`에서 확장을 새로고침하고 패널을 다시 엽니다. 로드한 확장 경로가 실제 설치 폴더의 `extension`인지 확인하세요. 새로고침 전에 진행 중인 작업을 멈추고 미전송 초안은 별도로 보관합니다.
+
+
+## iframe에서 읽기는 되지만 클릭·본문 열기가 실패함
+
+먼저 새 snapshot에서 해당 프레임과 요소를 다시 찾습니다. 본문 확인은 그 프레임의 frameRef로 기다리며, 페이지 이동 후 이전 문서의 참조를 재사용하지 않습니다. 일반 행에 클릭 의미나 초점 표시가 없으면 모델이 클릭 후보를 찾지 못할 수 있습니다. `isTrusted` 검사나 브라우저 사용자 활성화가 필요한 앱은 합성 클릭으로 해결되지 않습니다. 이 경우 실제 사용자 입력이 필요하며 Chrome 보안 설정 변경이나 권한 우회를 해결책으로 안내하지 않습니다.
+
+## 새 요청의 탭 예약이 남음
+
+전송 여부가 불확실한 네트워크 오류는 자동 재전송하지 않습니다. 해당 세션에서 응답 중단을 누르고 다시 요청합니다. 중단은 먼저 브라우저 예약을 닫습니다. OpenCode 중단 API까지 실패하면 오류와 요청 신원을 유지하므로 연결 복구 후 중단을 재시도할 수 있습니다. 완료 응답이 없는 idle 상태만으로 다른 요청의 예약을 빼앗지 않습니다.
+
+
+## WSL은 응답하지만 브라우저 MCP가 준비되지 않음
+
+진단에서는 OpenCode HTTP 인증/health와 브라우저 MCP 연결 상태를 구분합니다. HTTP가 정상이어도 MCP 초기화가 실패하면 준비 완료가 아닙니다. 전용 keeper 소켓의 Windows canary가 실패하거나 소유권이 불명확하면 오류를 유지합니다. 해당 실행 환경을 명시적으로 중단한 뒤 다시 시작하고, 반복되면 Windows·WSL·커널·OpenCode 버전과 민감정보를 제거한 오류 코드를 확인하세요. 전역 OpenCode 설정, 운영 프로세스, WSL 전체 인스턴스를 임의로 지우거나 재시작하지 마세요.
+
+WSL 제어 호출은 같은 합성 fixture 비교에서 시작 6→2회, 일반 상태 확인 5회 합계 15→5회였습니다. 이는 전체 WSL 실행 횟수가 아니라 제어 호출 수이며, 별도 장기 keeper 세션 1개가 추가됩니다. 지연 시간 개선을 모든 PC에서 보장하는 수치는 아닙니다.

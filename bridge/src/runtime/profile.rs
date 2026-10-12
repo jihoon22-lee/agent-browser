@@ -49,7 +49,7 @@ impl Profile {
                 if key.is_empty() || !key.bytes().enumerate().all(|(index, c)| c.is_ascii_alphabetic() || c == b'_' || (index > 0 && c.is_ascii_digit())) || value.contains('\0') {
                     return Err(invalid("Environment keys must be variable names and values must not contain NUL"));
                 }
-                if ["AGENT_BROWSER_RUNTIME_ID", "AGENT_BROWSER_RUNTIME_OWNER", "OPENCODE_SERVER_PASSWORD", "OPENCODE_SERVER_USERNAME", "WSLENV"].contains(&key.to_ascii_uppercase().as_str()) {
+                if ["AGENT_BROWSER_INTEROP_SOCKET", "WSL_INTEROP", "AGENT_BROWSER_RUNTIME_ID", "AGENT_BROWSER_RUNTIME_OWNER", "OPENCODE_SERVER_PASSWORD", "OPENCODE_SERVER_USERNAME", "WSLENV"].contains(&key.to_ascii_uppercase().as_str()) {
                     return Err(invalid("Runtime ownership and server credentials are managed by the Bridge; use external profile authentication fields for an existing server"));
                 }
                 if key.eq_ignore_ascii_case("OPENCODE_CONFIG_CONTENT") && key != "OPENCODE_CONFIG_CONTENT" { return Err(invalid("Use the canonical OPENCODE_CONFIG_CONTENT environment key")); }

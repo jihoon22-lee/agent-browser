@@ -48,6 +48,80 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi
 async function render() { await act(async () => { root.render(createElement(App)); await new Promise(resolve => setTimeout(resolve, 0)); }); }
 const button = (text: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find(element => element.textContent === text)!;
 
+it('captures a fresh active tab for each prompt and sends its request context in system',async()=>{
+  const win={id:4,focused:true,tabs:[{id:31,active:true,url:'https://mail.test'}]};
+  (chrome as any).windows={getLastFocused:vi.fn(async()=>structuredClone(win))};
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-prepare'?{ok:true,result:{system:`requestId=${message.lease.requestId}; captured=${message.target.tabId}`}}:original(message));
+  await render();await draftValue('첫 요청');await act(async()=>button('보내기').click());
+  win.tabs[0]!.id=42;
+  await draftValue('다음 요청');await act(async()=>button('보내기').click());
+  const prepares=runtime.mock.calls.map(([m])=>m).filter(m=>m.kind==='request-prepare');
+  expect(prepares.map(m=>m.target.tabId)).toEqual([31,42]);
+  expect(prepares[0].lease.requestId).not.toBe(prepares[1].lease.requestId);
+  const sends=test.post.mock.calls.filter(([path])=>path.endsWith('/prompt_async'));
+  expect(sends[0]![1].system).toContain('captured=31');expect(sends[1]![1].system).toContain('captured=42');
+  expect(sends[0]![1].messageID).toBe(prepares[0].lease.messageId);
+});
+
+it('discards an unsent reservation when the selected session changes during preparation',async()=>{
+  secondSession();await render();const pending=deferred<any>();
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation((message:any)=>message.kind==='request-prepare'?pending.promise:original(message));
+  await draftValue('전송 대기');await act(async()=>button('보내기').click());
+  await selectOtherSession();
+  await act(async()=>pending.resolve({ok:true,result:{system:'request'}}));
+  expect(test.post.mock.calls.some(([path])=>path.endsWith('/prompt_async'))).toBe(false);
+  const messages=runtime.mock.calls.map(([m])=>m);
+  expect(messages.find(m=>m.kind==='request-discard')?.requestId).toBe(messages.find(m=>m.kind==='request-prepare').lease.requestId);
+});
+
+it('does not submit after Stop while the browser reservation is pending',async()=>{
+  await render();const pending=deferred<any>();
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation((message:any)=>message.kind==='request-prepare'?pending.promise:original(message));
+  await draftValue('cancel this');await act(async()=>button('보내기').click());
+  await act(async()=>button('응답 중단').click());
+  await act(async()=>pending.resolve({ok:true,result:{system:'request'}}));
+  expect(test.post.mock.calls.some(([path])=>path.endsWith('/prompt_async'))).toBe(false);
+});
+it.each([400,403,404,422])('discards the exact reservation on rejected HTTP %s submission',async status=>{
+  await render();test.post.mockRejectedValueOnce(new OpenCodeApiError(status,'rejected'));
+  await draftValue('rejected');await act(async()=>button('보내기').click());
+  const calls=(chrome.runtime.sendMessage as ReturnType<typeof vi.fn>).mock.calls.map(([m])=>m);
+  expect(calls.find(m=>m.kind==='request-discard')?.requestId).toBe(calls.find(m=>m.kind==='request-prepare').lease.requestId);
+});
+it('closes the browser reservation even when OpenCode abort fails',async()=>{
+  await render();await draftValue('request');await act(async()=>button('보내기').click());
+  test.post.mockRejectedValueOnce(Error('offline'));
+  await act(async()=>button('응답 중단').click());
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({kind:'request-cancel'}));
+});
+it('Stop still owns the earlier request after a premature next submission is rejected',async()=>{
+  await render();let saved:any;
+  const localGet=chrome.storage.local.get as ReturnType<typeof vi.fn>,getStorage=localGet.getMockImplementation() as ()=>Promise<Record<string,any>>;
+  localGet.mockImplementation(async()=>({...await getStorage(),panelBrowserRequest:saved}));
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>{
+    if(message.kind==='request-prepare'){
+      if(saved)return {ok:false,error:{message:'previous request incomplete'}};
+      saved=message.lease;return {ok:true,result:{system:'request'}};
+    }
+    return original(message);
+  });
+  await draftValue('first');await act(async()=>button('보내기').click());
+  await draftValue('too soon');await act(async()=>button('보내기').click());
+  await act(async()=>button('응답 중단').click());
+  expect(runtime.mock.calls.map(([m])=>m).find(m=>m.kind==='request-cancel').scope.requestId).toBe(saved.requestId);
+});
+it('still aborts subsequent session work when a completed prompt has no remaining lease',async()=>{
+  await render();await draftValue('completed request');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:false}:original(message));
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  await act(async()=>button('응답 중단').click());
+  expect(test.post).toHaveBeenCalledWith('/session/ses-one/abort',undefined);
+});
 it("restores the selected profile/session and isolates streaming messages by session", async () => {
   await render(); expect(host.textContent).toContain("기존 질문"); expect(host.textContent).toContain("사내 모델");
   await act(async () => test.stream({ id: "evt-other", type: "message.part.updated", properties: { sessionID: "ses-other", part: { id: "prt-other", messageID: "msg-other", sessionID: "ses-other", type: "text", text: "다른 세션 비밀" } } }));

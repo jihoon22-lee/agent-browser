@@ -45,7 +45,7 @@ function handler(req, res) {
     if (rel.startsWith("..")) return send(res, 404, "not found", "text/plain");
     try {
       const data = await readFile(join(siteDir, rel));
-      res.writeHead(200, { "content-type": types[extname(rel)] ?? "application/octet-stream", "cache-control": "no-store" });
+      res.writeHead(200, { "content-type": types[extname(rel)] ?? "application/octet-stream", "cache-control": rel === "board-cache.html" ? "max-age=60" : "no-store" });
       res.end(data);
     } catch {
       send(res, 404, "not found", "text/plain");

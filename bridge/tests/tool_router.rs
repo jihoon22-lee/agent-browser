@@ -136,7 +136,7 @@ async fn unknown_tool_and_bad_args_are_invalid_params() {
     assert_eq!(tool(&mut mcp, "browser_eval", json!({})).await["error"]["code"], "INVALID_PARAMS");
     assert_eq!(tool(&mut mcp, "browser_tabs", json!({"action": "explode"})).await["error"]["code"], "INVALID_PARAMS");
     assert_eq!(tool(&mut mcp, "browser_snapshot", json!({"operationId": "op-x", "maxChars": 5})).await["error"]["code"], "INVALID_PARAMS");
-    assert_eq!(tool(&mut mcp, "browser_tabs", json!({"action": "new"})).await["error"]["code"], "INVALID_PARAMS");
+    assert_eq!(tool(&mut mcp, "browser_tabs", json!({"action": "new", "url": 42})).await["error"]["code"], "INVALID_PARAMS");
 }
 
 #[tokio::test]
@@ -389,4 +389,48 @@ async fn r01_cancel_crossing_attach_response_releases_only_that_operation() {
     call(&mut mcp,"tool.cancel",json!({"requestId":request.id()})).await;
     let snapshot = tool(&mut mcp,"browser_snapshot",json!({"operationId":next["operationId"]})).await;
     assert_eq!(snapshot["ok"],true,"late cancellation must not stop a replacement operation");
+}
+
+#[tokio::test]
+async fn close_preserves_original_and_requires_switch_after_owned_tab_closes() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let seen = fake_extension(serve.port, cfg.token.clone(), |method,p| {
+        if method == "browser.tabs.close" { assert_eq!(p["tabId"],77); return Ok(json!({"closed":true})); }
+        if method == "browser.tabs.get" { return Ok(json!({"tabId":p["tabId"].as_i64().unwrap_or(42)})); }
+        default_reply(method,p)
+    }).await;
+    let mut mcp = mcp_client(serve.port,&cfg.token,"close-client").await;
+    let a=tool(&mut mcp,"browser_tabs",json!({"action":"attach"})).await;
+    let op=a["operationId"].as_str().unwrap();
+    let rejected=tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await;
+    assert_eq!(rejected["error"]["code"],"FORBIDDEN_METHOD");
+    assert!(!seen.lock().unwrap().iter().any(|m|m=="browser.tabs.close"));
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"new","operationId":op,"url":"https://example.test"})).await["ok"],true);
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op,"tabId":42})).await["error"]["code"],"INVALID_PARAMS");
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await["executed"],"yes");
+    assert_eq!(tool(&mut mcp,"browser_snapshot",json!({"operationId":op})).await["error"]["code"],"TAB_CLOSED");
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"switch","operationId":op,"tabId":42})).await["ok"],true);
+}
+
+#[tokio::test]
+async fn new_can_reserve_an_operation_without_attach_and_existing_operation_is_protected() {
+    let (_h,serve,cfg)=start_test_serve().await;
+    let seen=fake_extension(serve.port,cfg.token.clone(),default_reply).await;
+    let mut mcp=mcp_client(serve.port,&cfg.token,"new-client").await;
+    let created=tool(&mut mcp,"browser_tabs",json!({"action":"new"})).await;
+    assert_eq!(created["ok"],true);assert_eq!(created["data"]["tab"]["url"],"about:blank");
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"new"})).await["error"]["code"],"BROWSER_BUSY");
+    assert_eq!(seen.lock().unwrap().iter().filter(|m|m.as_str()=="browser.tabs.create").count(),1);
+    let op=created["operationId"].as_str().unwrap();
+    assert_eq!(tool(&mut mcp,"browser_snapshot",json!({"operationId":op})).await["data"]["tabId"],77);
+}
+#[tokio::test]
+async fn failed_standalone_creation_releases_its_reservation() {
+    let (_h,serve,cfg)=start_test_serve().await;
+    fake_extension(serve.port,cfg.token.clone(),|method,p| {
+        if method=="browser.tabs.create" {Err(("EXECUTION_UNKNOWN","synthetic failure"))}else{default_reply(method,p)}
+    }).await;
+    let mut mcp=mcp_client(serve.port,&cfg.token,"failed-new").await;
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"new"})).await["error"]["code"],"EXECUTION_UNKNOWN");
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"attach"})).await["ok"],true);
 }

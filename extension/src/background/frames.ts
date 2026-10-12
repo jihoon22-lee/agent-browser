@@ -29,10 +29,16 @@ export function frameRouter(api: ChromeApi, store: SessionStore) {
             throw new ProtocolError('FRAME_UNAVAILABLE', 'This frame could not be accessed.');
         }
     }
-    async function resolve(tabId: number, ref?: string, operationId?: string): Promise<FrameInfo> {
+    async function resolve(tabId: number, ref?: string, operationId?: string, frameRef?: string): Promise<FrameInfo> {
         const frames = await list(tabId);
-        if (ref) {
-            const parsed = RefTable.parse(ref);
+        if (ref || frameRef !== undefined) {
+            const match=frameRef===undefined?undefined:/^s(\d+)f(\d+)$/.exec(frameRef);
+            if(frameRef!==undefined&&!match)throw new ProtocolError('INVALID_PARAMS','Use frameRef returned by browser_snapshot.');
+            const explicit=match?{snapshotId:Number(match[1]),frameId:Number(match[2])}:undefined;
+            const element=ref?RefTable.parse(ref):undefined;
+            if(explicit&&ref&&(!element||explicit.snapshotId!==element.snapshotId||explicit.frameId!==element.frameId))
+                throw new ProtocolError('INVALID_PARAMS','frameRef and element ref must belong to the same snapshot frame.');
+            const parsed = explicit??element;
             if (!parsed)
                 throw new ProtocolError('ELEMENT_NOT_FOUND', 'Use an element ref returned by browser_snapshot.');
             const binding = await store.binding(parsed.snapshotId, parsed.frameId);

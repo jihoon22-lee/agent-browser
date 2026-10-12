@@ -302,3 +302,111 @@ $testExe = '<copied Windows lib test exe>'
 소유자 신원 게시를 늦추고 초기 runtime.json 저장을 실패시켜, cleanup 이후 서버 역할의 명령이 뒤늦게 실행되지 않는지 검사한다.
 Unix lib의 `review_wsl_launch_requires_matching_persisted_start_permit`는 같은 launch shell이 permit 없음/다른 nonce에서는 exec하지 않고 일치하는 저장 허가 뒤에만 실행하는지 검사한다.
 UI 후속 회귀는 기존 `workbench.test.ts`의 `review ` 테스트 7개로 초기·검색·추가 목록, 연결 중 선택/삭제, 반복 재연결/프로필 전환의 요청 상한을 검증한다.
+
+
+## 요청별 활성 탭 회귀
+
+새 동작은 패널에서 생성한 requestId를 `browser_tabs action=attach`에 전달한다. 명시적인 tabId가 없으면 전송 당시 캡처한 기본 탭을 사용하며, 이후 사용자 탭 전환을 따라가지 않는다. Chrome 확장 권한은 추가하지 않는다.
+
+```powershell
+# 고정 pnpm 의존성 및 extension/dist, Windows Bridge 빌드가 준비된 독립 복제본
+node tests/e2e/request-target.windows.mjs
+```
+
+기본 exe는 `target/x86_64-pc-windows-msvc/debug/browser-bridge.exe`이며 `AB_BRIDGE_EXE`로 변경할 수 있다. Chrome은 설치된 Windows Chrome을 사용한다. 테스트는 자체 포트·임시 HOME/profile·합성 HTTP/SSE만 사용하고 생성한 프로세스를 정리한다. `Extensions.loadUnpacked`는 공식 CDP API로 호출하며 새 확장 권한/정책 설정을 추가하지 않는다. 현재 PC에서 플래그를 수동 추가하지 않고 로드에 성공했다. 다른 환경에서 실패하면 오류를 그대로 보고한다.
+
+추가 단위 회귀: `extension/test/request-target.test.ts`, `extension/test/panel-requests.test.ts`, `workbench.test.ts`의 요청 캡처/전송 취소; Rust `server::operation`과 `mcp::tools`. 실제 모델이 요청 문맥을 따르는지는 이 결정적 테스트의 검증 범위가 아니다. 요청 ID를 누락하거나 종료된 operation을 재사용하면 조작 전에 거부한다.
+
+
+## iframe 전체 경로 회귀
+
+`node tests/e2e/iframe.windows.mjs`는 실제 Windows Chrome + MSVC Bridge + 빌드 확장으로 MCP → background → 격리 content 경로를 검사한다. `tests/fixtures/iframe.mjs`의 합성 같은 출처·다른 출처·중첩 iframe만 이용하며 새 임시 프로필·HOME·포트를 사용한다. `AB_BRIDGE_EXE`와 `AB_EXTENSION_DIR`로 격리 패키지를 지정할 수 있고 활성 탭 스크립트도 같은 변수를 지원한다. 운영 설치·Chrome 프로필은 읽거나 변경하지 않는다.
+
+검사 항목: inline/키보드 후보, 좌표 조건과 스크롤, isTrusted 거절 유지, 체크박스 기본 활성화, 새 탭 편입, frameRef의 텍스트·URL 범위, 본문 교체 후 대기, 오래된 요소 및 문서 이동 후 프레임 참조 거부. 결과 JSON은 ignored `tests/agent/results/iframe.json`에 기록한다. 실제 모델 호출과 사내 서비스 접속은 포함하지 않는다.
+
+실제 패널 경계 추가 검증: Stop 후 늦은 attach 거부, 비동기 활성 탭 캡처 중 취소 뒤 미전송, HTTP 400 admission 거절 뒤 정확한 예약 해제를 포함해 요청 단위 전체 경로 12개를 검사한다. OpenCode fixture는 정상 응답 종료의 finish=stop을 실제 v1 필드로 제공한다.
+## WSL interop 회귀
+
+배경과 완료된 실행 기록은 [WSL interop 검증](./wsl-interop-validation.md)을 따른다.
+Linux에서 `cargo test --locked --offline --lib runtime::` 및 `--test runtime_management`를 실행한다.
+Windows 산출물은 별도 worktree의 `target/`에서 만든 뒤 작업 전용 Windows 경로로 복사한다.
+
+```bash
+cargo xwin build --locked --offline --target x86_64-pc-windows-msvc -p agent-browser-bridge
+cargo xwin test --locked --offline --target x86_64-pc-windows-msvc --lib --no-run
+```
+
+실제 Windows에서 생성된 unit test exe의 다음 필터를 각각 `--ignored --nocapture`로 실행한다.
+이는 자체 임시 HOME와 nonce를 쓰며 `/bin/sleep` 또는 시작 허가를 기다리는 shell만 만든다.
+
+- `keeper_initial_persist_failure_cleans_the_unpermitted_group`
+- `review_pending_wsl_owner_is_cleaned_after_initial_persist_failure`
+- `stop_revokes_permission_before_a_delayed_wsl_launch_can_exec`
+
+`bridge/tests/windows-runtime.mjs`는 native Windows Node와 기존 `ws` 의존성을 사용한다.
+`AGENT_BROWSER_TEST_EXE`, `AGENT_BROWSER_TEST_OPENCODE_EXE`, 필요하면
+`AGENT_BROWSER_TEST_MODULE_ROOT`를 지정한다. WSL에는 `AGENT_BROWSER_TEST_WSL_EXE`,
+`AGENT_BROWSER_TEST_WSL_NODE`, 선택적으로 `AGENT_BROWSER_TEST_WSL_DISTRO`를 지정한다.
+fixture를 Windows 드라이브에 복사하거나 해당 배포판의 WSL UNC 경로에서 실행할 수 있다.
+
+- `RUNTIME_KIND=wsl`, `RUNTIME_SCENARIO=interop-keeper`: 실제 OpenCode 연결, 같은 keeper 소켓의
+  Windows canary, 실제 MCP initialize와 합성 도구 응답, 자체 소켓 정지/부재, keeper 종료,
+  Bridge 재시작과 이전 기록의 보수적 처리 및 정리를 확인한다. `/usr/bin/python3`가 필요하다.
+- `RUNTIME_SCENARIO=probe-count`: 동일 합성 서버에서 시작과 status 5회의 제어 호출을 센다.
+  기준 바이너리에도 `wsl_control_status`의 같은 debug 로그를 넣는다. 로그 관측으로 WSL 호출을 추가하지 않는다.
+- `RUNTIME_KIND=cmd`, `RUNTIME_SCENARIO=mcp-delay` / `mcp-failure`: HTTP 성공만으로 ready를
+  반환하지 않는지, MCP 지연을 기다리는지, 실패 기한 뒤 자체 서버를 정리하는지 확인한다.
+- `wsl-start-failure`, `wsl-unknown-marker`, `healthy-fixture` 및 scenario 없는 실제 CLI 경로도 유지한다.
+
+`result.json`은 자격정보나 사용자 대화를 포함하지 않는 단계별 결과만 보관한다.
+기존 runtime.json, 로그, 사용자 Chrome 페이지를 fixture로 가져오지 않는다.
+커널 결함을 주장하려면 별도 근거가 필요하며, 자체 AF_UNIX handshake 정지를 그 재현으로 보고하지 않는다.
+
+## WSL interop follow-up review scenarios
+
+Use the same native Windows runner environment described above. The review
+fixtures additionally support these `RUNTIME_KIND=wsl` scenarios:
+
+- `previous-boot`: isolated previous-boot owner/keeper markers and absent process
+  identities; stopped then fresh start. Does not shut down the host WSL instance.
+- `orphan-leader`: kill only the nonce/start-tick-verified fixture server leader,
+  leave its synthetic HTTP child alive, then verify owned Stop closes the child.
+  The fixture has source-removal and 90-second self-termination safeguards.
+- `startup-crash`: delay only the fixture server launch, kill its own resident
+  Bridge after durable ownership, restart, verify retained instance, Stop, start.
+- `concurrent-callers`: run two separate native CLI starts against one isolated
+  home/profile; require one owned record and either shared readiness or an explicit
+  profile-lock rejection, then reuse after callers exit and cleanly stop.
+- `interop-review`: real OpenCode 1.18.29 with isolated HOME/XDG/project/config;
+  verify settings and environment preservation, inject a nonresponsive browser
+  MCP command through v1 POST /mcp, require HTTP-healthy/MCP-failed error state
+  and retained ownership, restore the command, initialize and run a synthetic tool.
+
+Review-only Linux regressions reside in `bridge/src/runtime/interop_tests.rs`:
+previous boot with absent keeper, exited leader with owned surviving child, and
+foreign-nonce orphan group refusal. Full suite command:
+`cargo test --locked --offline -p agent-browser-bridge`.
+Results and distinctions from real Chrome/model/kernel reproduction are recorded
+in [wsl-interop-review.md](./wsl-interop-review.md).
+
+
+실제 WSL→Chrome 통합은 `AB_WSL_OPENCODE`에 WSL OpenCode 실행 파일 경로를 설정하고 `node tests/e2e/iframe.windows.mjs`로 실행한다. 필요하면 `AB_WSL_DISTRO`를 지정한다. 자체 HOME/XDG의 관리형 OpenCode HTTP health와 MCP 연결을 확인한 후, 그 서버가 반환한 MCP 명령을 별도 시험 클라이언트로 실행해 실제 Windows 확장의 iframe 클릭·본문 대기를 수행한다. 실제 Chrome E2E이며 모델 호출은 0회다. 종료 시 runtime.stop 후 runtime.status=stopped를 확인한다.
+## 게시판 탐색 회귀 (독립 worktree)
+
+`tests/e2e/board-navigation.spec.ts`는 기존 World 하네스의 자체 포트·AGENT_BROWSER_HOME·임시 Chrome 프로필을 사용한다. 실제 사용자 탭은 대상에 포함되지 않는다. B01은 네 번의 hard 목록/본문/back 왕복 및 forward/reload, B02는 SPA back 후 900ms 지연 목록·같은 DOM 노드 정렬·pagination, B03은 iframe 교체, B04는 새 탭 본문/닫기/명시적 원래 탭 복귀, B05는 편집된 폼의 닫기 거부, B06은 실제 beforeunload 창 dismiss, B07은 실제 BFCache 복원을 검사한다. B08은 mousedown에서 링크가 재지정돼도 실제 click 직전 STALE_ELEMENT로 차단되는지 검사한다.
+
+Windows 준비: 별도 `AGENT_BROWSER_WINDOWS_TEST_DIR`를 설정한 뒤 `bash scripts/test-windows.sh --prepare-only`. Windows PowerShell에서 아래 명령을 실행한다(경로는 해당 별도 시험 디렉터리):
+
+```powershell
+$env:AB_TEST_BFCACHE='1'
+node <isolated-test-directory>/tests/e2e/windows-run.ts -- board-navigation.spec.ts
+```
+
+AB_TEST_BFCACHE는 Playwright의 기본 `--disable-back-forward-cache` 인수를 제외한다. 일반 테스트 실행에서 B07은 명시적으로 skip되며 BFCache 검증으로 집계하지 않는다. opt-in 실행은 `pageshow.persisted === true`를 반드시 assert하고 notRestoredReasons를 기록한다. 설정은 시험 자식 프로필에만 적용하며 OS/운영 브라우저 정책 및 manifest 권한은 변경하지 않는다. B06의 신뢰된 클릭도 합성 시험 페이지에만 수행한다.
+
+회귀 단위 검사는 snapshot 문서 교체 중 재읽기/상한, 연결 노드 identity 변경, pagehide registry 만료, 오래된 complete 경합, close의 operation 경계·request dedupe·편집된 iframe/Shadow DOM 보호를 검사한다. 실행 결과는 status.md의 게시판 절에 기록한다.
+
+
+## 새 탭·창·즐겨찾기 기능 검사
+
+`browser-capabilities.spec.ts` C01–C07은 실제 MCP 호출로 standalone new, snapshot 없는 new, blank→HTTP goto, windows/windowId, anchor newTab, 생산 optional permission 기본 거부, about:blank 보안 경계를 검사한다. `bookmarks.spec.ts` F01–F02는 별도 `AB_TEST_BOOKMARKS=1` 시험 확장 복사본과 빈 프로필에서 만든 합성 즐겨찾기로 폴더/검색/페이지/비방문/변경 도구 거부를 검사한다. 일반 실행에서는 F01–F02를 skip하고 허용 상태 검증으로 집계하지 않는다. 시험 manifest 차이와 실제 사용자 동의 UI의 검증 한계는 [지원표](./browser-capabilities.md)에 기록한다.

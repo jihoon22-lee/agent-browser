@@ -66,7 +66,7 @@ Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 
 
 | 방향 | 메서드 |
 |---|---|
-| Extension → serve | `heartbeat`, `status.get`, `operation.abort`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
+| Extension → serve | `heartbeat`, `status.get`, `request.begin`, `request.end`, `operation.abort`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
 | Mcp → serve | `tool.call`, `tool.cancel` |
 | serve → Extension | `browser.*` 명령(`browser.click` 등) |
 | 그 밖 | `FORBIDDEN_METHOD` |
@@ -141,4 +141,45 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 | `never` | 입력이나 상태를 바꾸지 않으면 같은 결과다 |
 
 오류 코드 전체 목록은 `protocol/schema/error-codes.json`을 따른다. 응답 없음·연결 끊김·타임아웃 뒤의
-쓰기 명령(click/fill/select/press/navigate/scroll/tabs new)은 자동 재실행하지 않고 `EXECUTION_UNKNOWN`으로 끝낸다.
+쓰기 명령(click/fill/select/press/navigate/scroll/tabs new/close)은 자동 재실행하지 않고 `EXECUTION_UNKNOWN`으로 끝낸다.
+
+
+### 패널 요청의 탭 예약
+
+Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 브라우저의 새 사용자 요청을 예약한다. 하나의 요청만 예약할 수 있다. tabId 누락은 안전한 기본 대상이 없음을 뜻하며 attach 시 현재 탭으로 대체하지 않는다. `browser_tabs action=attach`의 선택적 requestId가 예약과 일치해야 한다. 명시적 tabId는 캡처된 기본값보다 우선한다. 기존 CLI는 예약이 없을 때 requestId 없이 attach할 수 있다.
+
+`request.end {requestId, clientId}`는 정확히 일치하는 예약과 그 operation을 해제하고 content 명령을 취소한다. 이전 operation으로 뒤늦게 들어온 도구 호출은 거부한다. Stop은 operation과 연결된 예약도 무효화한다. 완료 판단은 동일 OpenCode session/message 응답과 authoritative idle 상태로 확인하며, API 응답이 불명확하면 durable local storage의 예약 식별자를 보존한다.
+
+
+### 프레임 대기
+
+`browser_snapshot`의 각 프레임은 `frameRef`(예: `s12f7`)를 반환한다. `browser_wait {operationId, frameRef, text}`는 그 snapshot에 결합된 tab/operation/document에서 조건을 검사한다. DOM 본문만 교체되면 유지되지만 프레임 제거·문서 이동·다른 작업/탭의 참조는 `STALE_ELEMENT`다. `refGone`과 함께 지정하면 같은 snapshot 프레임이어야 한다.
+
+조건은 OR이며, 명시적 frameRef의 URL 조건도 해당 문서에만 적용한다. frameRef를 생략하면 refGone의 프레임, 둘 다 없으면 최상위 문서를 사용한다. 최상위 URL 대기는 기존의 탭 이동 관찰을 유지한다. iframe의 문서 간 이동 후에는 새 snapshot을 요청한다. 다른 프레임의 같은 텍스트나 URL로 성공을 대신하지 않는다.
+
+
+## 게시판 탐색과 탭 닫기
+
+- back/forward는 현재 top document를 고정한 isolated-world `history.back/forward`를 사용한다. Chrome의 `tabs.goBack/goForward`는 신뢰된 사용자 활성화가 없는 기록을 건너뛸 수 있어 합성 클릭 뒤 목록 복귀에 사용하지 않는다.
+- 탐색은 문서 ID/URL 또는 loading/complete 이벤트로 실제 전환을 관찰한다. API 승인 직후 이전 complete 상태만으로 성공하지 않는다. 30초 내 전환을 관찰하지 못하면 실행 여부가 명확한 timeout 또는 EXECUTION_UNKNOWN을 반환하며 자동 재실행하지 않는다. 같은 URL/문서에서 이벤트도 없는 no-op 이동은 timeout이 될 수 있다.
+- snapshot은 읽은 frame document ID와 반환 시점의 live 문서를 비교한다. top 문서 읽기 실패나 문서/URL 변경은 총 3번까지 읽기만 반복한다. 3번 모두 실패하면 safe FRAME_UNAVAILABLE이다. 부분 iframe 실패는 frameErrors로 유지한다.
+- refs는 실제 DOM 노드와 snapshot/frame/document/operation 경계에 묶인다. 노드가 연결돼 있어도 접근 가능한 이름·role·href·target·type·formaction이 바뀌면 STALE_ELEMENT다. pagehide에서 registry를 지워 BFCache 복원 후 옛 refs의 부활을 막는다. 값 입력 자체는 참조를 무효화하지 않는다.
+- SPA 렌더 완료나 지연 목록 준비는 load와 다르다. `browser_wait(text=예상 목록 텍스트)` → `browser_snapshot` → 이름/href로 재선택한다. 이전 index로 자동 클릭하거나 STALE을 무시하지 않는다.
+- `browser_tabs(action=close,operationId)`는 현재 operation의 **새로 생성/채택된 탭**만 닫는다. 최초 attach 탭과 외부 tabId는 거부한다. 닫기 전 현재 문서 snapshot을 요구하며 모든 접근 가능한 frame의 편집된 폼을 검사한다. 검사 불가 frame은 닫지 않는다.
+- 닫기는 `window.close`를 한 번 요청하여 Chrome의 beforeunload 및 script-close 제한을 유지한다. `tabs.remove`나 강제 종료로 대체하지 않는다. `tabs.onRemoved`만 성공 근거로 사용하며 3초 안에 확인되지 않으면 unsafe EXECUTION_UNKNOWN이다. 경고 창을 자동 승인하지 않는다.
+- close 응답의 operationTabs 중 원래 목록 tabId로 `switch`한 다음 새 snapshot을 읽는다. 자동 복귀 대상을 추측하지 않는다. switch는 기존과 같이 작업 대상 전환이며 브라우저의 전경 활성화 기능과 다르다.
+- close는 mutation dedupe를 적용한다. 동일 requestId 재전송은 저장된 결과를 돌려주고 실제 닫기를 반복하지 않는다. 취소/연결 단절 후 불명확한 결과는 탭 목록과 페이지 상태부터 확인한다.
+
+한계: 임의 사이트의 JS closure만 바뀌고 DOM의 의미 정보가 같은 경우를 완전히 검출할 수 없다. 폼 검사는 일반 input/textarea/select 및 open Shadow DOM, editable 영역을 대상으로 하며 저장 완료를 판정하지 않는다. 사이트 자체 JS 상태, 닫힌 Shadow DOM/canvas 편집기, 브라우저가 경고를 제공하지 않는 비표준 편집 데이터의 저장 여부는 보장하지 않는다. beforeunload 창을 취소하거나 script-close가 거부되면 탭을 보존하고 사용자 판단을 요구한다.
+
+
+독립 검토 보완: top document가 열거되지 않으면 history 이동은 dispatch 전에 거부하며 새 문서로 fallback하지 않는다. 닫기 사전 검사 후 frame/document 집합을 다시 확인하여 교체·추가·제거된 iframe이 있으면 닫지 않는다. 여러 frame의 폼 검사는 원자적 트랜잭션이 아니므로 검사 후의 동시 편집까지 저장 여부를 보장하지 않는다. 포인터 이벤트 처리 중 href/DOM identity가 바뀌면 실제 click 직전에 다시 검사하여 STALE_ELEMENT로 중단한다.
+
+
+## 새 탭 시작·즐겨찾기 읽기 후속 계약
+
+`browser_tabs new`는 operationId를 생략하면 선택된 Chrome에 새 작업을 예약한 뒤 탭을 생성한다. 기존 operationId가 있으면 그 작업에 추가하며 페이지 snapshot은 요구하지 않는다. URL 생략은 about:blank, 선택 windowId는 new/list에 사용한다. 예약은 drop/실패/취소 시 해당 ID만 해제하며 다른 활성 작업이 있으면 생성 전에 BROWSER_BUSY다. 늦은 새 작업 응답 취소도 기존 attach와 같은 연결별 정리 경로를 사용한다.
+
+제한 페이지 attach는 메타데이터 대상 선정만 허용한다. attachable=false는 DOM 접근 불가 의미로 유지하고 snapshot/read는 계속 UNSUPPORTED_PAGE다. 명시적 HTTP(S) goto만 DOM snapshot 없이 허용한다. `browser_click newTab=true`는 ref의 일반 HTTP(S) anchor href를 읽어 새 탭을 생성하고 기존 작업에 채택한다. source click handler는 실행하지 않는다. JavaScript 버튼·download 링크는 거부한다.
+
+`browser_bookmarks`는 operationId 없이 선택된 연결 Chrome에서 list/search를 수행하는 읽기 도구다. 별도 변경/권한 요청 도구는 없다. 선택 bookmarks 권한이 없거나 읽기 중 철회되면 FORBIDDEN_METHOD다. 폴더 탐색은 list+folderId, 검색은 search+query, 페이지는 offset/limit를 사용한다. 결과·권한·제약은 [지원표](./browser-capabilities.md)에 명시한다.

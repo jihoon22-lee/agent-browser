@@ -3,7 +3,7 @@ type FixturePart = { type: string; id?: string; sessionID?: string; messageID?: 
 type FixtureMessage = { info: { id: string; sessionID: string; role: string; time: { created: number; completed?: number }; [key: string]: unknown }; parts: FixturePart[] };
 type FixtureSession = { id: string; title: string; revert?: { messageID: string }; [key: string]: unknown };
 type FixtureBody = { parts: FixturePart[]; variant?: string; model?: unknown; [key: string]: unknown };
-export function startOpenCodeFixture(): Promise<{
+export function startOpenCodeFixture(options?: { responseDelayMs?: number }): Promise<{
   origin: string; username: string; password: string; directory: string;
   state: {
     sessions: FixtureSession[];

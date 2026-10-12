@@ -1,0 +1,259 @@
+{
+  "reviewedCommit": "748f8d584b8abe279e70e891d01b300ce965c781",
+  "branch": "fix/wsl-interop-compat",
+  "finalWindowsBinarySha256": "a3341c9fd9f067075f601a30ebc16cdac5a3ad3d4d3790fe3bacfe640c42fc07",
+  "environment": {
+    "windows": "10.0.26200.9457",
+    "wsl": "2.7.12.0",
+    "runningKernel": "6.18.33.2-microsoft-standard-WSL2",
+    "opencode": "1.18.29",
+    "fixtureLinuxNode": "/usr/bin/node v22.22.1"
+  },
+  "cases": [
+    {
+      "case": "old-binary-orphan-regression",
+      "expectedSuccess": false,
+      "kind": "wsl",
+      "checks": [],
+      "stages": [
+        {
+          "stage": "owned-server-leader-killed-child-left-for-stop",
+          "pid": 1494495,
+          "ok": true
+        }
+      ],
+      "error": "Expected \"actual\" to be strictly unequal to:\n\n'stopped'"
+    },
+    {
+      "case": "previous-boot",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "previous-boot-markers-stopped-without-wsl-shutdown",
+        "synthetic-ready-restart-reuse-stop"
+      ],
+      "ok": true
+    },
+    {
+      "case": "orphan-leader",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "orphan-child-remains-owned-and-is-stopped"
+      ],
+      "stages": [
+        {
+          "stage": "owned-server-leader-killed-child-left-for-stop",
+          "pid": 1497982,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "case": "startup-crash",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "startup-controller-crash-retains-ownership-and-stop-cleans",
+        "synthetic-ready-restart-reuse-stop"
+      ],
+      "ok": true
+    },
+    {
+      "case": "real-opencode-settings-mcp-failure",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "config-file-other-mcp-and-profile-env-preserved",
+        "mcp-initialize-failure-preserves-server-and-recovers",
+        "review-runtime-cleanup"
+      ],
+      "stages": [
+        {
+          "stage": "authenticated-http-v1",
+          "ok": true,
+          "unauthenticatedStatus": 401,
+          "authenticatedStatus": 200,
+          "version": "1.18.29"
+        },
+        {
+          "stage": "profile-environment-and-working-directory-preserved",
+          "ok": true
+        },
+        {
+          "stage": "opencode-mcp-initialize-timeout",
+          "ok": true,
+          "configuredTimeoutMs": 1200,
+          "initializeRequestElapsedMs": 3600,
+          "verificationElapsedMs": 5025,
+          "httpHealthy": true,
+          "managerState": "error",
+          "recordPreserved": true
+        },
+        {
+          "stage": "keeper-socket-windows-canary",
+          "ok": true,
+          "version": "browser-bridge 0.1.4"
+        },
+        {
+          "stage": "native-bridge-mcp-initialize",
+          "ok": true,
+          "protocolVersion": "2025-06-18",
+          "serverInfo": {
+            "name": "agent-browser",
+            "version": "0.1.4"
+          }
+        },
+        {
+          "stage": "first-tool-synthetic-extension-response",
+          "ok": true,
+          "tool": "browser_tabs",
+          "requestId": 2,
+          "isError": false,
+          "syntheticTitle": "interop-synthetic",
+          "elapsedMs": 4
+        }
+      ],
+      "ok": true
+    },
+    {
+      "case": "real-opencode-keeper-faults",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "bridge-restart-reuses-same-owned-keeper",
+        "legacy-runtime-preserved-and-refresh-required",
+        "keeper-death-refuses-ready-and-retains-ownership",
+        "server-and-keeper-cleanup"
+      ],
+      "stages": [
+        {
+          "stage": "opencode-http-and-mcp-connected",
+          "ok": true,
+          "elapsedMs": 7812
+        },
+        {
+          "stage": "native-windows-bridge-processes",
+          "ok": true,
+          "count": 2
+        },
+        {
+          "stage": "keeper-socket-windows-canary",
+          "ok": true,
+          "version": "browser-bridge 0.1.4"
+        },
+        {
+          "stage": "native-bridge-mcp-initialize",
+          "ok": true,
+          "protocolVersion": "2025-06-18",
+          "serverInfo": {
+            "name": "agent-browser",
+            "version": "0.1.4"
+          }
+        },
+        {
+          "stage": "first-tool-synthetic-extension-response",
+          "ok": true,
+          "tool": "browser_tabs",
+          "requestId": 2,
+          "isError": false,
+          "syntheticTitle": "interop-synthetic",
+          "elapsedMs": 5
+        },
+        {
+          "stage": "missing-socket-refused-before-native-launch",
+          "ok": true
+        },
+        {
+          "stage": "stalled-socket-canary-deadline",
+          "ok": true,
+          "elapsedSeconds": 11.24
+        },
+        {
+          "stage": "owned-keeper-terminated",
+          "pid": 1534643,
+          "ok": true
+        }
+      ],
+      "ok": true
+    },
+    {
+      "case": "concurrent-native-callers",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "concurrent-native-callers-share-one-owned-runtime-after-caller-exit",
+        "synthetic-ready-restart-reuse-stop"
+      ],
+      "stages": [
+        {
+          "stage": "concurrent-native-cli-callers",
+          "ok": true,
+          "callers": 2,
+          "successful": 1,
+          "lockRejected": 1,
+          "ownedRuntimeRecords": 1
+        }
+      ],
+      "ok": true
+    },
+    {
+      "case": "baseline-probes",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "synthetic-ready-restart-reuse-stop"
+      ],
+      "probes": {
+        "variant": "baseline",
+        "startup": 6,
+        "statusCalls": 5,
+        "controlLaunches": 15,
+        "elapsedMs": 3425
+      },
+      "ok": true
+    },
+    {
+      "case": "final-probes",
+      "expectedSuccess": true,
+      "kind": "wsl",
+      "checks": [
+        "synthetic-ready-restart-reuse-stop"
+      ],
+      "probes": {
+        "variant": "review",
+        "startup": 2,
+        "statusCalls": 5,
+        "controlLaunches": 5,
+        "elapsedMs": 1223
+      },
+      "ok": true
+    }
+  ],
+  "nativeWindowsUnitTests": [
+    {
+      "name": "keeper_initial_persist_failure_cleans_the_unpermitted_group",
+      "passed": true
+    },
+    {
+      "name": "review_pending_wsl_owner_is_cleaned_after_initial_persist_failure",
+      "passed": true
+    },
+    {
+      "name": "stop_revokes_permission_before_a_delayed_wsl_launch_can_exec",
+      "passed": true
+    }
+  ],
+  "cleanup": {
+    "atUtc": "2026-10-12T07:03:25Z",
+    "testPathWindowsBridgeProcesses": 0,
+    "operatingBridgePort": 4317,
+    "operatingBridgePid": 74680
+  },
+  "linuxSuite": {
+    "passed": 139,
+    "failed": 0,
+    "ignored": 1
+  }
+}

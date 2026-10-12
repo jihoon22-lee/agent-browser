@@ -4,8 +4,9 @@ import type { ChromeApi, FrameInfo } from './chrome-api';
 import { frameRouter, type FrameError } from './frames';
 import { RefTable } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
+import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
-const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create']);
+const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
 const asError = (e: unknown) => e instanceof ProtocolError ? e : new ProtocolError('INTERNAL', String(e));
@@ -82,35 +83,66 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         if (!(await store.hasSnapshot(String(p.operationId),tabId,documentId)))
             throw new ProtocolError('STALE_ELEMENT','Take a fresh browser_snapshot for this operation before writing.');
     }
-    async function dispatch(run: Running): Promise<unknown> {
+    async function dispatch(run: Running, snapshotAttempt = 0): Promise<unknown> {
         const { req, controller } = run, p = req.params, signal = controller.signal;
         await check(req, signal);
+        if (req.method === 'browser.bookmarks') return readBookmarks(api.bookmarks,p);
         if (req.method === 'browser.tabs.list')
-            return { tabs: (await api.tabsQuery({})).map(describeTab) };
+            return { tabs: (await api.tabsQuery(typeof p.windowId === 'number' ? {windowId:p.windowId} : {})).map(describeTab) };
+        if (req.method === 'browser.windows.list')
+            return {windows:(await api.windowsList?.() ?? []).map(w => ({windowId:w.id,focused:w.focused,state:w.state,type:w.type}))};
         if (req.method === 'browser.tabs.get') {
             const tab = await getTab(api, typeof p.tabId === 'number' ? p.tabId : undefined);
-            requireWeb(tab.url);
             return describeTab(tab);
         }
         if (req.method === 'browser.tabs.create') {
-            const url = String(p.url ?? '');
-            requireWeb(url);
-            await requireSnapshot(p);
+            const url = String(p.url ?? 'about:blank');
+            if (url !== 'about:blank') requireWeb(url);
+            const windowId = typeof p.windowId === 'number' ? p.windowId : typeof p.sourceTabId === 'number' ? (await getTab(api,p.sourceTabId)).windowId : undefined;
             await check(req, signal);
             run.started = true;
-            const created = await api.tabsCreate({ url, active: false });
+            const created = await api.tabsCreate({ url, active: false, ...(windowId === undefined ? {} : {windowId}) });
             if (!created.id)
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'Chrome did not return a new tab ID.', 'unsafe');
             const tab = await loadedTab(api, created.id, async () => { }, signal);
             return describeTab(tab);
         }
         const tab = await getTab(api, Number(p.tabId));
-        requireWeb(tab.url);
+        const goto = req.method === 'browser.navigate' && (p.action ?? 'goto') === 'goto';
+        if (!goto) requireWeb(tab.url);
         await check(req, signal);
         const tabId = tab.id!;
+        if (req.method === 'browser.tabs.close') {
+            const documents = (await frames.list(tabId)).map(frame => ({...frame}));
+            const top = documents.find(f => f.frameId === 0);
+            if (!top) throw new ProtocolError('FRAME_UNAVAILABLE', 'Cannot check the document before closing.');
+            await requireSnapshot(p, tabId, top.documentId);
+            for (const frame of documents) {
+                await frames.inject(tabId, frame);
+                const response = await interruptible(api.sendToFrame(tabId, frame, {kind:'cmd', method:'close-check', params:{...p,requestId:req.id}}), signal);
+                if (!response?.ok) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'A frame has edited controls or cannot be checked; preserve the tab.');
+            }
+            const liveDocuments = await frames.list(tabId);
+            if (liveDocuments.length !== documents.length || documents.some(frame => !liveDocuments.some(live => live.frameId === frame.frameId && live.documentId === frame.documentId)))
+                throw new ProtocolError('FRAME_UNAVAILABLE', 'A document changed during the close check. Preserve the tab and inspect a fresh snapshot.');
+            let resolve!: (value: unknown) => void;
+            const removed = new Promise(r => { resolve = r; });
+            const off = api.onTabRemoved(id => { if (id === tabId) resolve({closed:true}); });
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+                await check(req, signal);
+                run.started = true;
+                // window.close preserves Chrome beforeunload/script-close rules.
+                // A disappearing reply is expected; ONLY onRemoved confirms success.
+                void api.sendToFrame(tabId, top, {kind:'cmd',method:'close',params:{...p,requestId:req.id}}).catch(() => {});
+                const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new ProtocolError('EXECUTION_UNKNOWN', 'Closure was not confirmed. A browser warning or script-close restriction may be keeping the tab open. Inspect tabs; do not force-close or automatically retry.', 'unsafe')), 3000); });
+                return await interruptible(Promise.race([removed, timeout]), signal);
+            } finally { off(); clearTimeout(timer); }
+        }
         if (req.method === 'browser.snapshot') {
+            if (tab.status === 'loading') await loadedTab(api, tabId, async () => {}, signal);
             const snapshotId = await store.nextSnapshotId(), results: unknown[] = [], errors: FrameError[] = [], bindings: FrameInfo[] = [];
-            const allFrames = (await frames.list(tabId)).sort((a,b)=>a.frameId-b.frameId);
+            const allFrames = (await frames.list(tabId)).map(f => ({...f})).sort((a,b)=>a.frameId-b.frameId);
             const frameOffset = Math.max(0,Number(p.frameOffset??0));
             let used=0, framesNextOffset:number|null=null;
             for(let index=frameOffset;index<allFrames.length;index++) {
@@ -120,7 +152,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 try {
                     await frames.inject(tabId,f);
                     const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
-                    const withDocument={...result,documentId:f.documentId};
+                    const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotId}f${f.frameId}`};
                     const length=JSON.stringify(withDocument).length;
                     if(length>60_000)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
                     if(used+length>60_000){framesNextOffset=index;break;}
@@ -133,24 +165,34 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     errors.push(error);used+=errorSize;
                 }
             }
-            if(frameOffset===0&&!bindings.some(f=>f.frameId===0))throw new ProtocolError('FRAME_UNAVAILABLE','The top document could not be read.','safe',{frameErrors:errors});
+            if(frameOffset===0&&!bindings.some(f=>f.frameId===0)) {
+                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1);
+                throw new ProtocolError('FRAME_UNAVAILABLE','The top document could not be read.','safe',{frameErrors:errors});
+            }
+            const live = await frames.list(tabId);
+            const current = await getTab(api, tabId);
+            if (bindings.some(f => !live.some(now => now.frameId === f.frameId && now.documentId === f.documentId)) || current.url !== tab.url || current.status === 'loading') {
+                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1);
+                throw new ProtocolError('FRAME_UNAVAILABLE', 'Navigation changed the snapshot repeatedly. Wait for the expected page state and take a fresh snapshot.', 'safe');
+            }
             await store.bind(snapshotId,bindings.map(f=>({...f,tabId,operationId:String(p.operationId)})));
             return {snapshotId,url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
-                note:'DOM element list, not the accessibility tree. Use frameOffset, elementOffset, or text offset to continue truncated results.'};
+                note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results.'};
         }
         if (req.method === 'browser.navigate') {
             const action = p.action ?? 'goto';
             if (action === 'goto')
                 requireWeb(String(p.url ?? ''));
-            const actions: Record<string, () => Promise<unknown>> = { goto: () => api.tabsUpdate(tabId, { url: String(p.url) }), back: () => api.tabsGoBack(tabId), forward: () => api.tabsGoForward(tabId), reload: () => api.tabsReload(tabId) };
+            const document = isWeb(tab.url) ? (await frames.list(tabId)).find(f=>f.frameId===0) : undefined;
+            if (!document && (!goto || isWeb(tab.url))) throw new ProtocolError('FRAME_UNAVAILABLE', 'The top document is unavailable. Wait and take a fresh snapshot before navigating.');
+            const actions: Record<string, () => Promise<unknown>> = { goto: () => api.tabsUpdate(tabId, { url: String(p.url) }), back: () => api.tabsGoBack(tabId, document?.documentId), forward: () => api.tabsGoForward(tabId, document?.documentId), reload: () => api.tabsReload(tabId) };
             const act = actions[String(action)];
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
-            const document = (await frames.list(tabId)).find(f=>f.frameId===0);
-            await requireSnapshot(p,tabId,document?.documentId);
-            const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal);
+            if (isWeb(tab.url)) await requireSnapshot(p,tabId,document?.documentId);
+            const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true);
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
         if (req.method === 'browser.screenshot') {
@@ -176,6 +218,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         }
         if (CONTENT.has(req.method)) {
             const ref = typeof p.ref === 'string' ? p.ref : typeof p.refGone === 'string' ? p.refGone : undefined;
+            const frameRef=req.method==='browser.wait'&&typeof p.frameRef==='string'?p.frameRef:undefined;
+            if(frameRef!==undefined)await frames.resolve(tabId,ref,String(p.operationId),frameRef);
             if (typeof p.refGone === 'string') {
                 const parsed = RefTable.parse(p.refGone);
                 const binding = parsed ? await store.binding(parsed.snapshotId, parsed.frameId) : undefined;
@@ -186,15 +230,25 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     return { executed: false, verified: { met: 'refGone' } };
             }
             const prepare = async () => {
-                const frame = await frames.resolve(tabId, ref, String(p.operationId));
+                const frame = await frames.resolve(tabId, ref, String(p.operationId),frameRef);
                 if(WRITE.has(req.method))await requireSnapshot(p,tabId,frame.documentId);
                 await frames.inject(tabId, frame);
                 await check(req, signal);
                 return frame;
             };
-            if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
+            if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string' && !frameRef && !ref)
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
+            if (req.method === 'browser.click' && p.newTab === true) {
+                const link = await interruptible(api.sendToFrame(tabId,frame,{kind:'cmd',method:'link',params:{...p,requestId:req.id}}),signal);
+                if (!link?.ok) { const e=link?.error; throw new ProtocolError(e?.code ?? 'ELEMENT_NOT_INTERACTABLE',e?.message ?? 'The ref is not an HTTP(S) anchor.'); }
+                const url=String(link.result?.url ?? ''); requireWeb(url);
+                await check(req,signal); run.started=true;
+                const created=await api.tabsCreate({url,active:false,windowId:tab.windowId,openerTabId:tabId});
+                if (!created.id) throw new ProtocolError('EXECUTION_UNKNOWN','New tab ID was not returned. Inspect tabs before retrying.','unsafe');
+                const loaded=await loadedTab(api,created.id,async()=>{},signal);
+                return {executed:true,openedTabs:[{...describeTab(loaded),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
+            }
             return send(tabId, frame, req.method.slice('browser.'.length), p, run);
         }
         throw new ProtocolError('FORBIDDEN_METHOD', `Unknown browser method ${req.method}.`);

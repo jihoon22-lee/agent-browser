@@ -82,3 +82,16 @@ describe("refs", () => {
     expect(RefTable.parse("s3f12e7")).toEqual({ snapshotId: 3, frameId: 12, index: 7 });
   });
 });
+
+it('rejects a recycled row whose href changed without replacing the DOM node', () => {
+  document.body.innerHTML = '<a href="/post/1">Post</a>';
+  const s = takeSnapshot(opts);
+  document.querySelector('a')!.href = '/post/2';
+  expect(() => resolveRef(s.elements[0]!.ref)).toThrowError(expect.objectContaining({ code: 'STALE_ELEMENT' }));
+});
+it('rejects a recycled button with changed accessible identity', () => {
+  document.body.innerHTML = '<button aria-label="Read post 1">Read</button>';
+  const s = takeSnapshot(opts);
+  document.querySelector('button')!.setAttribute('aria-label', 'Read post 2');
+  expect(() => resolveRef(s.elements[0]!.ref)).toThrowError(expect.objectContaining({ code: 'STALE_ELEMENT' }));
+});

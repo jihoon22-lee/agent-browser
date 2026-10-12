@@ -9,7 +9,7 @@ export type ToolOutcome = {
   executed: "yes" | "no" | "unknown";
   verified: Record<string, unknown> | null;
   data: any;
-  error?: { code: string; message: string; retry: string };
+  error?: { code: string; message: string; retry: string; details?: unknown };
 };
 export type ToolResult = { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean };
 

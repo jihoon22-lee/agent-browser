@@ -40,16 +40,58 @@ function Join-SafePath([string]$Root, [string]$Relative) {
     return $path
 }
 function Read-Utf8Text([string]$Path) { return [IO.File]::ReadAllText($Path, [Text.Encoding]::UTF8) }
-function Write-Utf8Atomic([string]$Path, [string]$Text) {
+function Get-WslFileTarget([string]$Path) {
+    if ($Path -match '(?i)^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)\\(.+)$') {
+        return [pscustomobject]@{ Distribution=$Matches[1]; LinuxPath=('/' + $Matches[2].Replace('\','/')) }
+    }
+    return $null
+}
+function Write-BytesAtomic([string]$Path, [byte[]]$Bytes, [string]$ExpectedSha256='') {
     $parent = [IO.Path]::GetDirectoryName($Path)
     if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
     Assert-PlainPath $Path
+    if (-not $ExpectedSha256) { $ExpectedSha256 = if (Test-Path -LiteralPath $Path) { Get-FileSha256 $Path } else { 'missing' } }
+    if ($ExpectedSha256 -ne 'missing' -and $ExpectedSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Invalid settings concurrency hash.' }
     $temp = Join-Path $parent ('.agent-browser-' + [guid]::NewGuid().ToString('N') + '.tmp')
     try {
-        [IO.File]::WriteAllText($temp, $Text, $script:Utf8NoBom)
-        if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
-        else { [IO.File]::Move($temp, $Path) }
+        [IO.File]::WriteAllBytes($temp, $Bytes)
+        $target = Get-WslFileTarget $Path
+        if ($target) {
+            # ReplaceFile is unsupported by WSL's UNC file provider. Rename on
+            # the Linux filesystem without deleting/truncating the destination;
+            # preserve its owner, group and mode before publishing the temp file.
+            $temporary = Get-WslFileTarget $temp
+            $script = @'
+set -eu
+target=$1
+temporary=$2
+expected=$3
+[ ! -L "$target" ] && [ ! -L "$temporary" ] || { echo 'Settings symlink changed; no settings were overwritten.' >&2; exit 41; }
+if [ "$expected" = missing ]; then
+    [ ! -e "$target" ] || { echo 'Settings appeared while preparing; no settings were overwritten.' >&2; exit 42; }
+else
+    [ -f "$target" ] || { echo 'Settings disappeared while preparing; no settings were overwritten.' >&2; exit 43; }
+    actual=$(sha256sum -- "$target")
+    actual=${actual%% *}
+    [ "$actual" = "$expected" ] || { echo 'Settings changed while preparing; no settings were overwritten.' >&2; exit 44; }
+    chown --reference="$target" -- "$temporary"
+    chmod --reference="$target" -- "$temporary"
+fi
+mv -fT -- "$temporary" "$target"
+'@
+            $script = $script.Replace("`r`n", "`n")
+            $wsl = Join-Path ([Environment]::GetFolderPath('System')) 'wsl.exe'
+            $null = Invoke-NativeCapture $wsl @('--distribution',$target.Distribution,'--exec','/bin/sh','-c',$script,'agent-browser-write',$target.LinuxPath,$temporary.LinuxPath,$ExpectedSha256.ToLowerInvariant()) ([IO.Path]::GetTempPath()) @{} 15000
+        } else {
+            $actual = if (Test-Path -LiteralPath $Path) { Get-FileSha256 $Path } else { 'missing' }
+            if ($actual -ne $ExpectedSha256) { throw 'Settings changed while preparing; no settings were overwritten.' }
+            if ($actual -eq 'missing') { [IO.File]::Move($temp, $Path) }
+            else { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+        }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+}
+function Write-Utf8Atomic([string]$Path, [string]$Text, [string]$ExpectedSha256='') {
+    Write-BytesAtomic $Path ($script:Utf8NoBom.GetBytes($Text)) $ExpectedSha256
 }
 function Read-InstallState([string]$Root) {
     $path = Join-Path $Root $script:AgentBrowserStateName
@@ -210,6 +252,7 @@ function Read-VerifiedPackage([string]$Root) {
     if ($pe -lt 0 -or $pe + 6 -ge $bytes.Length -or [BitConverter]::ToUInt32($bytes, $pe) -ne 17744 -or [BitConverter]::ToUInt16($bytes, $pe + 4) -ne 34404) { throw 'The Bridge executable is not Windows x64.' }
     $extension = (Read-Utf8Text (Join-Path $Root 'extension\manifest.json')) | ConvertFrom-Json
     if ($extension.manifest_version -ne 3 -or -not $extension.key) { throw 'A keyed Manifest V3 extension is required.' }
+    if ($extension.version -cne $manifest.Version) { throw 'Extension version does not match the package version.' }
     return $manifest
 }
 function Assert-OwnedFiles([string]$Root, $State) {
@@ -226,34 +269,54 @@ function New-FileTransaction([string]$Root) {
 }
 function Save-TransactionFile($Transaction, [string]$Path) {
     Assert-PlainPath $Path
-    if (-not $Transaction.Seen.Add($Path)) { return }
+    if (-not $Transaction.Seen.Add($Path)) { return @($Transaction.Journal | Where-Object { $_.Path -eq $Path })[0] }
     $exists = Test-Path -LiteralPath $Path
     $backup = Join-Path $Transaction.Stage ([guid]::NewGuid().ToString('N') + '.backup')
     if ($exists) {
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "A directory blocks this file path: $Path" }
         [IO.File]::Copy($Path, $backup, $false)
     }
-    $Transaction.Journal.Add([pscustomobject]@{ Path=$Path; Existed=$exists; Backup=$backup })
+    $entry=[pscustomobject]@{ Path=$Path; Existed=$exists; Backup=$backup; Written=$(if($exists){Get-FileSha256 $backup}else{'missing'}) }
+    $Transaction.Journal.Add($entry)
+    return $entry
 }
-function Set-TransactionText($Transaction, [string]$Path, [string]$Text) { Save-TransactionFile $Transaction $Path; Write-Utf8Atomic $Path $Text }
+function Set-TransactionText($Transaction, [string]$Path, [string]$Text, [string]$ExpectedSha256='') {
+    $entry=Save-TransactionFile $Transaction $Path
+    if(-not $ExpectedSha256){$ExpectedSha256=$entry.Written}
+    Write-Utf8Atomic $Path $Text $ExpectedSha256
+    $entry.Written=Get-TextHash $Text
+}
 function Copy-TransactionFile($Transaction, [string]$Source, [string]$Destination) {
-    Save-TransactionFile $Transaction $Destination
-    $parent = [IO.Path]::GetDirectoryName($Destination)
-    if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
-    [IO.File]::Copy($Source, $Destination, $true)
+    $entry=Save-TransactionFile $Transaction $Destination
+    $bytes=[IO.File]::ReadAllBytes($Source)
+    Write-BytesAtomic $Destination $bytes $entry.Written
+    $sha=[Security.Cryptography.SHA256]::Create()
+    try{$entry.Written=([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
 }
 function Remove-TransactionFile($Transaction, [string]$Path) {
-    Save-TransactionFile $Transaction $Path
-    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+    $entry=Save-TransactionFile $Transaction $Path
+    $actual=if(Test-Path -LiteralPath $Path){Get-FileSha256 $Path}else{'missing'}
+    if($actual -ne $entry.Written){throw 'File changed during removal; it was retained.'}
+    if($actual -ne 'missing'){Remove-Item -LiteralPath $Path -Force}
+    $entry.Written='missing'
 }
 function Undo-FileTransaction($Transaction) {
+    $conflicts=New-Object 'System.Collections.Generic.List[string]'
     for ($i=$Transaction.Journal.Count-1; $i -ge 0; $i--) {
         $entry = $Transaction.Journal[$i]
-        if ($entry.Existed) {
-            $parent = [IO.Path]::GetDirectoryName($entry.Path)
-            if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
-            [IO.File]::Copy($entry.Backup, $entry.Path, $true)
-        } elseif (Test-Path -LiteralPath $entry.Path) { Remove-Item -LiteralPath $entry.Path -Force }
+        try {
+            Assert-PlainPath $entry.Path
+            $actual=if(Test-Path -LiteralPath $entry.Path){Get-FileSha256 $entry.Path}else{'missing'}
+            if($actual -ne $entry.Written){throw 'File changed after the installer write; user changes were retained.'}
+            if ($entry.Existed) {
+                Write-BytesAtomic $entry.Path ([IO.File]::ReadAllBytes($entry.Backup)) $entry.Written
+                $entry.Written=Get-FileSha256 $entry.Backup
+            } elseif ($actual -ne 'missing') { Remove-Item -LiteralPath $entry.Path -Force; $entry.Written='missing' }
+        } catch { $conflicts.Add($entry.Path + ': ' + $_.Exception.Message) }
+    }
+    if($conflicts.Count){
+        Write-Utf8Atomic (Join-Path $Transaction.Stage 'recovery.json') (ConvertTo-Json @{ Files=$Transaction.Journal.ToArray(); Conflicts=$conflicts.ToArray() } -Depth 10)
+        throw ('Rollback needs inspection: ' + ($conflicts -join '; '))
     }
 }
 function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
@@ -414,7 +477,7 @@ function Invoke-NativeCapture([string]$Executable, [string[]]$Arguments, [string
 function Invoke-BridgeCapture($State, [string[]]$Arguments, [int]$TimeoutMs=20000, [switch]$ReturnResult) {
     return Invoke-NativeCapture $State.CurrentExe $Arguments $State.InstallDir @{ AGENT_BROWSER_HOME=$State.DataDir; AGENT_BROWSER_PORT=[string]$State.Port } $TimeoutMs -ReturnResult:$ReturnResult
 }
-function Start-OwnedBridge($State) {
+function Start-OwnedBridge($State, $Transaction=$null) {
     $existing = Get-VerifiedBridgeProcess $State
     if ($existing -and (Get-FullPath $existing.Marker.Executable) -eq (Get-FullPath $State.CurrentExe) -and [int]$existing.Marker.Port -eq [int]$State.Port) {
         return [pscustomobject]@{ running=$true; pid=[int]$existing.Marker.Pid; port=[int]$State.Port; reused=$true }
@@ -431,6 +494,8 @@ function Start-OwnedBridge($State) {
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$State.Port) + '(?:\s|$)'
     if (-not $process -or (Get-FullPath $process.ExecutablePath) -ne $expectedExe -or $process.CommandLine -notmatch $role) { throw 'Started Bridge process identity could not be verified.' }
     $marker = [ordered]@{ Product=$script:AgentBrowserProduct; InstallId=$State.InstallId; Pid=[int]$started.pid; Executable=$expectedExe; Port=[int]$State.Port; CreatedAt=$process.CreationDate.ToUniversalTime().ToString('o') }
-    Write-Utf8Atomic (Join-Path $State.DataDir '.installer-bridge-process.json') (ConvertTo-Json $marker -Depth 5)
+    $markerPath=Join-Path $State.DataDir '.installer-bridge-process.json'
+    if($Transaction){Set-TransactionText $Transaction $markerPath (ConvertTo-Json $marker -Depth 5)}
+    else {Write-Utf8Atomic $markerPath (ConvertTo-Json $marker -Depth 5)}
     return [pscustomobject]@{ running=$true; pid=[int]$started.pid; port=[int]$State.Port; reused=$false }
 }

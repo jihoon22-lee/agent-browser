@@ -4,6 +4,7 @@ import { chromeSessionStore } from "./dedupe";
 import { ProtocolError } from "../protocol/errors";
 import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
+import { panelRequests } from './panel-requests';
 
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore());
 let lastStatus: ConnStatus = { state: "disconnected" };
@@ -19,6 +20,7 @@ const conn = new BridgeConnection({
   onEvent: (event, data) => { void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {}); },
 });
 
+const requests=panelRequests((method,params)=>conn.request(method,params));
 chrome.runtime.onStartup.addListener(() => conn.ensure());
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create("bridge-keepalive", { periodInMinutes: 1 });
@@ -32,6 +34,11 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
+  if(['request-prepare','request-cancel','request-finish','request-discard'].includes(msg?.kind)) {
+    const work=msg.kind==='request-prepare'?requests.prepare(msg.lease,msg.target,msg.previousOperationId):msg.kind==='request-discard'?requests.discard(msg.requestId):msg.kind==='request-finish'?requests.finish(msg.scope):requests.cancel(msg.scope);
+    work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:error instanceof Error?error.message:String(error)}}));
+    return true;
+  }
   if (msg?.kind === "reconnect") { conn.stop(); conn.start(); sendResponse({ ok: true }); return; }
   if (msg?.kind === "profiles-changed") { sendResponse({ ok: true }); return; }
   if (msg?.kind === "get-conn-status") { sendResponse(lastStatus); return; }

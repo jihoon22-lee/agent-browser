@@ -60,6 +60,7 @@ jobs:
       - name: Documentation links and helper regression tests
         run: |
           node --test scripts/ci-checks.test.mjs
+          python3 tests/install/package_release_test.py
           node scripts/ci-checks.mjs
           git diff --check
       - name: Rust unit and integration tests (Linux)
@@ -130,9 +131,24 @@ jobs:
       - name: Build extension
         run: pnpm --filter agent-browser-extension build
       - name: Native Windows installed Chrome E2E with synthetic APIs
+        env:
+          AB_TEST_BFCACHE: '1'
         # Uses the runner's installed Google Chrome, isolated temporary profiles, and native Windows Node/exe.
         # The harness records the exact browser/Node versions. WSL and real OpenCode are separate manual checks.
         run: node tests/e2e/windows-run.ts --exe "$env:GITHUB_WORKSPACE\target\x86_64-pc-windows-msvc\release\browser-bridge.exe" --extension "$env:GITHUB_WORKSPACE\extension\dist"
+      - name: Native Windows request target boundaries
+        env:
+          AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+        run: node tests/e2e/request-target.windows.mjs
+      - name: Native Windows synthetic bookmark permission fixture
+        env:
+          AB_TEST_BOOKMARKS: '1'
+        # A temporary extension copy and empty profile; never approves a user permission prompt.
+        run: node tests/e2e/windows-run.ts --exe "$env:GITHUB_WORKSPACE\target\x86_64-pc-windows-msvc\release\browser-bridge.exe" --extension "$env:GITHUB_WORKSPACE\extension\dist" -- bookmarks.spec.ts
+      - name: Native Windows iframe interaction boundaries
+        env:
+          AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+        run: node tests/e2e/iframe.windows.mjs
       - name: PowerShell 5.1 JSONC preservation
         shell: powershell
         run: .\tests\install\jsonc.tests.ps1
@@ -151,6 +167,18 @@ jobs:
       - name: Build reviewable Windows package (does not publish a Release)
         shell: powershell
         run: .\scripts\build-release.ps1 -SkipBuild
+      - name: Native GUI engine install/update/rollback/uninstall regressions
+        run: |
+          $fixture=Join-Path $env:USERPROFILE ('Documents\ab-test-' + [guid]::NewGuid().ToString('N').Substring(0,12))
+          $package=Join-Path $fixture 'package'
+          Expand-Archive -LiteralPath (Get-ChildItem release/agent-browser-*-windows-x64.zip | Select-Object -First 1).FullName -DestinationPath $package
+          $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          $testExe=Join-Path $fixture 'NativeEngineTests.exe'
+          $sources=@('installer\NativeIO.cs','installer\Discovery.cs','installer\Jsonc.cs','installer\InstallerEngine.cs','installer\ProfileForm.cs','installer\SetupForm.cs','tests\install\NativeEngineTests.cs','tests\install\InstallerReviewTests.cs') | ForEach-Object { Join-Path $env:GITHUB_WORKSPACE $_ }
+          & $compiler /nologo /codepage:65001 /target:exe /main:AgentBrowser.Installer.NativeEngineTests ('/out:' + $testExe) /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Management.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll @sources
+          if ($LASTEXITCODE -ne 0) { throw 'Native installer test compilation failed' }
+          & $testExe $package (Join-Path $package 'AgentBrowser-Setup.exe') (Join-Path $fixture 'cases')
+          if ($LASTEXITCODE -ne 0) { throw 'Native installer regression failed' }
       - name: Upload Windows package and checksum
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
