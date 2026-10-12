@@ -1,6 +1,6 @@
 # Issue #8 후속 수정 (2026-10-12)
 
-기준 `db397ea`, 브랜치 `feat/issue8-followup`. [이슈 #8](https://github.com/jihoon22-lee/agent-browser/issues/8) §2의 **WP2 → WP1 → WP3 → WP4 → WP5 구현 완료**. [계획](./plans/2026-10-12-issue8-followup.md)에 과제별 완료를 기록했다. 모든 커밋은 로컬이며 push/PR/Release/운영 설치 변경은 하지 않았다.
+기준 `db397ea`, 브랜치 `feat/issue8-followup`. [이슈 #8](https://github.com/jihoon22-lee/agent-browser/issues/8) §2의 **WP2 → WP1 → WP3 → WP4 → WP5 구현 완료**. [계획](./plans/2026-10-12-issue8-followup.md)에 과제별 완료를 기록했다. 후속 사용자 요청에 따라 브랜치를 push하고 PR의 CI·리뷰 통과 후 main 병합을 진행한다. Release 게시와 운영 설치 변경은 이번 범위에 없다.
 
 ## WP2 완료
 
