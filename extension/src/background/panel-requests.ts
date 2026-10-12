@@ -29,8 +29,11 @@ export function panelRequests(call:Call) {
       const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
       if(saved){
         const api=await client(saved);
-        const [messages,statuses]=await Promise.all([api.get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`),api.get<Record<string,any>>('/session/status')]);
-        if(['busy','retry'].includes(statuses[saved.sessionId]?.type)||!completedRequest(saved,messages))throw Error('이전 요청이 아직 실행 중이거나 완료를 확인하지 못했습니다. 완료를 기다리거나 해당 세션에서 응답을 중단하세요.');
+        const [messages,statuses]=await Promise.all([api.get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`).catch(error=>{
+          if(error instanceof OpenCodeApiError&&error.status===404)return null;
+          throw error;
+        }),api.get<Record<string,any>>('/session/status')]);
+        if(['busy','retry'].includes(statuses[saved.sessionId]?.type)||(messages!==null&&!completedRequest(saved,messages)))throw Error('이전 요청이 아직 실행 중이거나 완료를 확인하지 못했습니다. 완료를 기다리거나 해당 세션에서 응답을 중단하세요.');
         await end(saved,clientId);
       } else if(previousOperationId) {
         const api=await client(lease),statuses=await api.get<Record<string,any>>('/session/status');

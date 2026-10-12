@@ -23,6 +23,13 @@ it('releases a deleted session after closing its gate even when abort returns 40
   await expect(panelRequests(call).cancel(lease('one'))).resolves.toBe(true);
   expect(storage.panelBrowserRequest).toBeUndefined();
 });
+it.each([404,500])('handles a disappeared owning session without clearing uncertain HTTP %i failures',async status=>{
+  storage.panelBrowserRequest=lease('one');
+  api.get.mockImplementation(async(path:string)=>{if(path==='/session/status')return {};throw new OpenCodeApiError(status,'fixture');});
+  const preparing=panelRequests(call).prepare(lease('two'),null);
+  if(status===404){await preparing;expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser'});expect(storage.panelBrowserRequest).toEqual(lease('two'));}
+  else {await expect(preparing).rejects.toThrow();expect(storage.panelBrowserRequest).toEqual(lease('one'));expect(call.mock.calls.some(([method])=>method==='request.end')).toBe(false);}
+});
 it('ignores a delayed cancellation for an older request in the same session',async()=>{
   storage.panelBrowserRequest=lease('one');
   await panelRequests(call).cancel({...lease('one'),requestId:'older'});
