@@ -196,9 +196,10 @@ mv -fT -- ""$temporary"" ""$target""
             void Rename(string destination) {
                 byte[] name=Encoding.Unicode.GetBytes(destination);
                 int rootOffset=IntPtr.Size==8?8:4,lengthOffset=rootOffset+IntPtr.Size,nameOffset=lengthOffset+4;
-                IntPtr data=Marshal.AllocHGlobal(nameOffset+name.Length);
-                try {for(int i=0;i<nameOffset;i++)Marshal.WriteByte(data,i,0);Marshal.WriteInt32(data,lengthOffset,name.Length);Marshal.Copy(name,0,IntPtr.Add(data,nameOffset),name.Length);
-                    if(!RenameFile(stream.SafeFileHandle,3,data,nameOffset+name.Length))throw new IOException("Cannot safely rename verified settings.",new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+                int size=nameOffset+name.Length+2;
+                IntPtr data=Marshal.AllocHGlobal(size);
+                try {for(int i=0;i<size;i++)Marshal.WriteByte(data,i,0);Marshal.WriteInt32(data,lengthOffset,name.Length);Marshal.Copy(name,0,IntPtr.Add(data,nameOffset),name.Length);
+                    if(!RenameFile(stream.SafeFileHandle,3,data,size))throw new IOException("Cannot safely rename verified settings to "+destination,new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
                 }finally{Marshal.FreeHGlobal(data);}
             }
             public void Publish(string temporary) {
