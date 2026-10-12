@@ -12,7 +12,10 @@ export function cancelUpTo(generation: number) { cancelCommands({ generation });
 type P = Record<string, unknown> & CommandScope;
 const hasLayout = () => document.documentElement.getClientRects().length > 0;
 function clickPoint(el:Element) {
-  const r=el.getBoundingClientRect();
+  // Inline links can wrap into disjoint rectangles; their union's center may
+  // be whitespace. Choose an actual visible fragment for hit testing and input.
+  const r=[...el.getClientRects()].find(r=>r.width>0&&r.height>0&&r.right>0&&r.bottom>0&&r.left<innerWidth&&r.top<innerHeight)
+    ?? el.getBoundingClientRect();
   return {clientX:(Math.max(0,r.left)+Math.min(innerWidth,r.left+r.width))/2,
     clientY:(Math.max(0,r.top)+Math.min(innerHeight,r.top+r.height))/2};
 }

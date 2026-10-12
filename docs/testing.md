@@ -388,3 +388,6 @@ foreign-nonce orphan group refusal. Full suite command:
 `cargo test --locked --offline -p agent-browser-bridge`.
 Results and distinctions from real Chrome/model/kernel reproduction are recorded
 in [wsl-interop-review.md](./wsl-interop-review.md).
+
+
+실제 WSL→Chrome 통합은 `AB_WSL_OPENCODE`에 WSL OpenCode 실행 파일 경로를 설정하고 `node tests/e2e/iframe.windows.mjs`로 실행한다. 필요하면 `AB_WSL_DISTRO`를 지정한다. 자체 HOME/XDG의 관리형 OpenCode HTTP health와 MCP 연결을 확인한 후, 그 서버가 반환한 MCP 명령을 별도 시험 클라이언트로 실행해 실제 Windows 확장의 iframe 클릭·본문 대기를 수행한다. 실제 Chrome E2E이며 모델 호출은 0회다. 종료 시 runtime.stop 후 runtime.status=stopped를 확인한다.

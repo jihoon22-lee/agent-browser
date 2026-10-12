@@ -30,6 +30,14 @@ it('discovers explicit inline and keyboard click candidates without treating eve
   document.body.innerHTML='<div onclick="void 0">Inline mail</div><div tabindex="0">Keyboard mail</div><div tabindex="-1">programmatic</div><div>plain</div>';
   expect(snap().elements.map(e=>e.name)).toEqual(['Inline mail','Keyboard mail']);
 });
+it('clicks a real fragment of a wrapped inline link instead of whitespace in its bounding box',async()=>{
+  document.body.innerHTML='<a href="/mail">Wrapped link</a>';const el=document.querySelector('a')!;
+  vi.spyOn(el,'getBoundingClientRect').mockReturnValue({left:10,top:10,width:110,height:30} as DOMRect);
+  vi.spyOn(el,'getClientRects').mockReturnValue([{left:10,top:10,right:30,bottom:20,width:20,height:10},{left:100,top:30,right:120,bottom:40,width:20,height:10}] as unknown as DOMRectList);
+  let point:number[]=[];el.addEventListener('click',e=>{e.preventDefault();point=[e.clientX,e.clientY];});
+  await runAction('click',{ref:refOf('Wrapped link'),generation:1});
+  expect(point).toEqual([20,15]);
+});
 
 it("fill updates React-like controlled state, not just the DOM", async () => {
   document.body.innerHTML = `<label for="n">이름</label><input id="n">`;

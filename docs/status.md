@@ -1,4 +1,4 @@
-## 후속 통합 작업 — 활성 탭·iframe (WSL 최종 인계 대기)
+## 후속 통합 작업 — 활성 탭·iframe·WSL 통합
 
 GUI PR #5와 분리된 Windows 작업 복사본에서 진행한다. 운영 설치와 사용자 Chrome 프로필은 변경하지 않았다. iframe 제품 변경은 현재 권한(tabs/scripting/webNavigation 등) 내에서 수행하며 debugger 권한을 추가하지 않았다.
 
@@ -7,7 +7,7 @@ GUI PR #5와 분리된 Windows 작업 복사본에서 진행한다. 운영 설�
 - iframe: 합성 클릭의 로컬 viewport 좌표·버튼 상태, 명시적 이벤트/키보드 초점 후보, snapshot 문서에 결합된 frameRef 대기를 구현했다. 본문 DOM 교체는 허용하고 문서 이동·닫힌 프레임은 오래된 참조를 거부한다.
 - Extension 전체 32 suites / 312 tests 통과. Rust MCP 계약 2 tests 통과, Windows MSVC debug 빌드 성공. 실제 Windows Chrome 154.0.8037.99에서 같은 출처·다른 출처·중첩 iframe과 OOPIF 2개 전체 경로 통과. 좌표 조건·체크박스·새 탭·프레임 범위·stale 참조를 확인했다.
 - 합성 입력은 isTrusted=false이며 trusted 입력을 요구하는 fixture는 열리지 않는다. 사내 서비스와 실제 LLM 호출은 이번 검증에 포함하지 않는다.
-- 최종 통합/배포 결과는 WSL 최종 커밋 및 GUI main 통합 후 별도로 갱신한다.
+- WSL 원본 748f8d5, dad0216을 cd872f2, f2b0403으로 순서대로 통합했다. 문서 충돌은 양쪽 시험 구간을 유지했다. GUI main 통합과 최종 배포 검증을 진행한다.
 
 ## 활성 탭 기본 선택 — 독립 로컬 브랜치
 

@@ -13,7 +13,7 @@ const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..'), owned=[], r
 const {startIframeFixture}=await import('../fixtures/iframe.mjs');
 const fixture=await startIframeFixture(),fixturePort=fixture.port;
 const temp=await mkdtemp(join(tmpdir(),'agent-browser-iframe-full-'));
-let context;
+let context,stopRuntime;
 const child=(exe,args,options={})=>{const p=spawn(exe,args,{windowsHide:true,stdio:['pipe','pipe','pipe'],...options});owned.push(p);p.stderr.on('data',()=>{});return p;};
 const firstLine=p=>new Promise((resolve,reject)=>{const l=createInterface({input:p.stdout});l.once('line',s=>{l.close();resolve(s)});p.once('error',reject)});
 try{
@@ -22,9 +22,10 @@ try{
  const exe=process.env.AB_BRIDGE_EXE??join(root,'target/x86_64-pc-windows-msvc/debug/browser-bridge.exe');
  const bridge=child(exe,['serve','--port',String(port)],{env});bridge.stdout.resume();
  for(let i=0;;i++){const ready=await new Promise(r=>{const s=connect(port,'127.0.0.1');s.once('connect',()=>{s.destroy();r(true)});s.once('error',()=>r(false))});if(ready)break;if(i>100)throw Error('Bridge startup');await new Promise(r=>setTimeout(r,100));}
- const mcp=child(exe,['mcp'],{env});let seq=0;const pending=new Map();
- createInterface({input:mcp.stdout}).on('line',s=>{const v=JSON.parse(s);assert.equal(v.jsonrpc,'2.0');const p=pending.get(v.id);if(p){pending.delete(v.id);clearTimeout(p.timer);v.error?p.reject(v.error):p.resolve(v.result)}});
- const rpc=(method,params)=>new Promise((resolve,reject)=>{const id=++seq;const timer=setTimeout(()=>reject(Error('MCP timeout '+method)),20000);pending.set(id,{resolve,reject,timer});mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n')});
+ const mcp=child(exe,['mcp'],{env});let transport=mcp,seq=0;const pending=new Map();
+ const listen=p=>createInterface({input:p.stdout}).on('line',s=>{const v=JSON.parse(s);assert.equal(v.jsonrpc,'2.0');const p=pending.get(v.id);if(p){pending.delete(v.id);clearTimeout(p.timer);v.error?p.reject(v.error):p.resolve(v.result)}});
+ listen(mcp);
+ const rpc=(method,params)=>new Promise((resolve,reject)=>{const id=++seq;const timer=setTimeout(()=>reject(Error('MCP timeout '+method)),20000);pending.set(id,{resolve,reject,timer});transport.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n')});
  report.initialize=await rpc('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'iframe-investigation',version:'1'}});mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
  report.tools=await rpc('tools/list',{});
  const call=async(name,args)=>{const r=await rpc('tools/call',{name,arguments:args});return JSON.parse(r.content.find(c=>c.type==='text').text)};
@@ -38,6 +39,32 @@ try{
  await admin.evaluate(({token,port})=>chrome.storage.local.set({pairingToken:token,bridgeUrl:`ws://127.0.0.1:${port}/extension`}),{token,port});
  for(let i=0;;i++){const s=await admin.evaluate(()=>chrome.runtime.sendMessage({kind:'get-conn-status'}));if(s?.state==='connected')break;if(i>200)throw Error('Connection timeout');await admin.waitForTimeout(100);}
  const page=await context.newPage();await page.goto(`http://127.0.0.1:${fixturePort}/case`);
+ if(process.env.AB_WSL_OPENCODE){
+   const management=async(method,params)=>{
+     const r=await admin.evaluate(({method,params})=>chrome.runtime.sendMessage({kind:'bridge',method,params}),{method,params});
+     assert(r.ok,JSON.stringify(r));return r.result;
+   };
+   const mapped=p=>'/mnt/'+p[0].toLowerCase()+p.slice(2).replaceAll('\\','/');
+   const isolated=join(temp,'linux');await mkdir(isolated,{recursive:true});
+   const profileEnv={HOME:mapped(isolated),OPENCODE_DISABLE_MODELS_FETCH:'true',OPENCODE_DISABLE_AUTOUPDATE:'true'};
+   for(const name of ['CONFIG','DATA','STATE','CACHE']){const p=join(isolated,name.toLowerCase());await mkdir(p);profileEnv['XDG_'+name+'_HOME']=mapped(p);}
+   const profile={id:'iframe-wsl',name:'Isolated WSL Chrome test',kind:'wsl',distribution:process.env.AB_WSL_DISTRO??'Ubuntu',executable:process.env.AB_WSL_OPENCODE,directory:mapped(isolated),env:profileEnv};
+   await management('profile.save',{profile});
+   stopRuntime=async()=>{
+     await management('runtime.stop',{profileId:profile.id});
+     const status=await management('runtime.status',{profileId:profile.id});
+     assert.equal(status.state,'stopped');report.wslStopped=true;
+   };
+   const runtime=await management('runtime.ensure',{profileId:profile.id});assert.equal(runtime.state,'ready');
+   const headers={Authorization:'Basic '+Buffer.from(runtime.username+':'+runtime.password).toString('base64')};
+   const health=await fetch(runtime.baseUrl+'/global/health',{headers}).then(r=>r.json());assert.equal(health.healthy,true);
+   const status=await fetch(runtime.baseUrl+'/mcp?'+new URLSearchParams({directory:profile.directory}),{headers}).then(r=>r.json());assert.equal(status.browser.status,'connected');
+   mcp.stdin.end();
+   transport=child(join(process.env.SystemRoot,'System32/wsl.exe'),['-d',profile.distribution,'--exec','/usr/bin/python3',mapped(join(root,'tests/fixtures/wsl-mcp.py')),mapped(join(temp,'home'))]);listen(transport);
+   const initialized=await rpc('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'wsl-real-chrome',version:'1'}});
+   transport.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+   report.wslRuntime={version:health.version,healthy:true,mcpConnected:true,serverInfo:initialized.serverInfo,modelCalls:0};
+ }
  const tab=await admin.evaluate(async url=>(await chrome.tabs.query({})).find(t=>t.url===url),page.url());
  const operationId=(await ok('browser_tabs',{action:'attach',tabId:tab.id})).operationId;
  const snap=await ok('browser_snapshot',{operationId});report.snapshot=snap;report.frames=[];
@@ -80,11 +107,13 @@ try{
  assert(report.iframeTargets.length>=1);
  report.pass=true;console.log('PASS full MCP/Bridge/Extension/isolated-content path: 3 frame scenarios; OOPIF targets:',report.iframeTargets.length);
 }catch(e){report.error=String(e);throw e;}finally{
+ try{await stopRuntime?.();}catch(e){report.cleanupError=String(e);report.retainedHome=temp;}
  await context?.close();
  for(const p of owned.reverse()){if(p.exitCode===null){p.stdin?.end();p.kill();await new Promise(r=>{if(p.exitCode!==null)return r();p.once('exit',r);});}}
  report.ownedProcessesStopped=owned.every(p=>p.exitCode!==null||p.signalCode!==null);
  await fixture.close();
  await mkdir(join(root,'tests/agent/results'),{recursive:true});
  await writeFile(join(root,'tests/agent/results/iframe.json'),JSON.stringify(report,null,2));
- await rm(temp,{recursive:true,force:true});
+ if(!report.cleanupError)await rm(temp,{recursive:true,force:true});
+ else throw Error('Owned WSL runtime cleanup needs inspection; see iframe.json');
 }
