@@ -18,6 +18,12 @@
 - 프레임 주입 실패 지적은 기존 frameRouter.inject가 일반 오류를 FRAME_UNAVAILABLE로 정규화하고 있어 재현되지 않았다. 일반 Document changed while injecting 오류를 refGone/frameRef 두 경로에 주입하는 회귀를 추가해 URL 대기가 계속되는 것을 확인했다.
 - 수정 전 3개 실패를 확인했다. 관련 단위 5파일 **192/192**, snapshot **11/11**, 빌드·E2E 타입 검사 통과. 실제 Windows 영향 E2E **27/27**, Linux 영향 E2E **14/14** 통과. 실제 Stop 1회에 /abort 1회와 textarea default 교체 후 STALE_ELEMENT를 확인했다.
 
+## PR #9 세 번째 리뷰 후속
+
+- head `58d8cc6`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38247920913)는 Linux·Windows 모두 통과했다. 코드·보안 재리뷰 완료 후 코드 리뷰에서 Stop 연속 클릭의 중복 abort 경계 1건이 추가됐다.
+- 같은 이벤트 주기의 두 번 클릭으로 취소가 2회 전송되는 회귀 2건을 먼저 확인했다. 동기 ref 잠금과 버튼 disabled 상태를 함께 적용하고, 직접 abort fallback·재동기화까지 잠금을 유지한다. finally에서 해제해 실패 후 명시적 재시도는 허용한다.
+- Workbench 단위 **83/83**, Extension TypeScript/Vite 빌드 통과. 실제 Windows Chrome/MSVC release Bridge에서 단일 클릭과 연속 두 번 클릭 모두 `/abort` 1회를 확인해 **2/2 통과**했다. 실패 후 재시도도 단위 테스트로 확인했다. 새 head의 원격 CI·재리뷰는 push 후 확인한다.
+
 ## WP2 완료
 
 - F4: checkbox/radio는 checked, 나머지 input은 동일 속성을 가진 새 input에서 정규화한 기본값으로 비교한다. 파일 선택·실제 편집은 계속 보호한다.

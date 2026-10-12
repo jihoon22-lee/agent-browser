@@ -682,3 +682,38 @@ it('review R7 falls back once when the gate closed but no background abort was s
   test.post.mockClear();await act(async()=>button('응답 중단').click());
   expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(1);
 });
+it.each([true,false])('review R8 serializes rapid Stop clicks including fallback (background abort=%s)',async abortSent=>{
+  await render();
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  let finish!:(value:any)=>void;
+  runtime.mockImplementation((message:any)=>message.kind==='request-cancel'?new Promise(resolve=>{finish=resolve;}):original(message));
+  const stop=button('응답 중단');
+  await act(async()=>{stop.click();stop.click();});
+  expect(runtime.mock.calls.filter(([m])=>m.kind==='request-cancel')).toHaveLength(1);
+  expect(stop.disabled).toBe(true);
+  let finishAbort!:()=>void;
+  test.post.mockImplementation(async(path:string)=>{if(path.endsWith('/abort'))await new Promise<void>(resolve=>{finishAbort=resolve;});return true;});
+  await act(async()=>finish({ok:true,result:{handled:true,abortSent}}));
+  if(!abortSent){
+    expect(stop.disabled).toBe(true);
+    await act(async()=>stop.click());
+    expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(1);
+    await act(async()=>finishAbort());
+  }
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(abortSent?0:1);
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  expect(stop.disabled).toBe(false);
+});
+it('review R8 releases the Stop guard after abort failure so the user can retry',async()=>{
+  await render();
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:false}:original(message));
+  test.post.mockRejectedValueOnce(Error('abort unavailable'));
+  await act(async()=>button('응답 중단').click());
+  expect(host.textContent).toContain('abort unavailable');
+  expect(button('응답 중단').disabled).toBe(false);
+  await act(async()=>button('응답 중단').click());
+  expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(2);
+});
