@@ -66,11 +66,11 @@ namespace AgentBrowser.Installer {
             operation.SelectedIndexChanged+=delegate {package.Enabled=operation.SelectedIndex!=2;register.Enabled=operation.SelectedIndex!=2;};
             folder.Leave+=delegate {LoadState();};
             foreach(Control field in new Control[]{folder,config,kind,distribution,operation})field.TextChanged+=delegate{revision++;};
-            if(!Has(args,"--install-dir")) LoadState();
+            LoadState();
             status.Text="설치 폴더와 작업을 선택하세요. 검색과 미리보기는 설정을 변경하지 않습니다.";
             Shown+=async delegate{if(!Has(args,"--no-discover"))await Discover();};
         }
-        void LoadState() {try {var old=InstallerEngine.State(folder.Text);if(old!=null) {operation.SelectedIndex=1;port.Value=old.Port;status.Text="기존 설치 "+old.Version+"을 찾았습니다. 데이터는 보존합니다.";}}catch(Exception error){status.Text=error.Message;}}
+        void LoadState() {try {var old=InstallerEngine.State(folder.Text);if(old!=null) {operation.SelectedIndex=1;port.Value=old.Port;startup.Checked=old.Startup!=null;if(old.Startup!=null)startupPath.Text=Path.GetDirectoryName(old.Startup.Path);status.Text="기존 설치 "+old.Version+"을 찾았습니다. 데이터는 보존합니다.";}}catch(Exception error){status.Text=error.Message;}}
         void ShowPairing() {
             try {
                 var state=InstallerEngine.State(InstallerEngine.Root(folder.Text));if(state==null)throw new IOException("먼저 AgentBrowser를 설치하고 Bridge를 시작하세요.");InstallerEngine.Owned(state);

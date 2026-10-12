@@ -73,13 +73,31 @@ namespace AgentBrowser.Installer {
             string full=Full(path);if(full==Path.GetPathRoot(full).TrimEnd('\\')) throw new IOException("A drive root cannot be an installation folder.");
             foreach(var item in new [] {Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),Environment.GetFolderPath(Environment.SpecialFolder.Windows)}) if(Same(full,Full(item))) throw new IOException("Choose a dedicated subfolder.");
             if(full.StartsWith(@"\\",StringComparison.Ordinal)) throw new IOException("Bridge installation must be on a Windows local disk. WSL settings can use a WSL path.");
-            NativeIO.PlainPath(full);if(Directory.Exists(full))RequirePrivateInstallRoot(full);return full;
+            RequireLocalInstallDrive(new DriveInfo(Path.GetPathRoot(full)).DriveType);NativeIO.PlainPath(full);RequirePrivateInstallRoot(full);return full;
+        }
+        static readonly HashSet<string> TrustedOwners=new HashSet<string>{WindowsIdentity.GetCurrent().User.Value,"S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"};
+        static void RequireTrustedOwner(DirectorySecurity acl) {
+            var owner=acl.GetOwner(typeof(SecurityIdentifier));
+            if(owner==null||!TrustedOwners.Contains(owner.Value))throw new IOException("The installation path must be owned by the current user or a trusted Windows system account.");
         }
         static void RequirePrivateInstallRoot(string root) {
-            var trusted=new HashSet<string>{WindowsIdentity.GetCurrent().User.Value,"S-1-5-18","S-1-5-32-544","S-1-3-0"};
-            var writes=FileSystemRights.WriteData|FileSystemRights.AppendData|FileSystemRights.WriteExtendedAttributes|FileSystemRights.WriteAttributes|FileSystemRights.Delete|FileSystemRights.DeleteSubdirectoriesAndFiles|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership;
-            foreach(FileSystemAccessRule rule in Directory.GetAccessControl(root,AccessControlSections.Access).GetAccessRules(true,true,typeof(SecurityIdentifier)))
-                if(rule.AccessControlType==AccessControlType.Allow&&(rule.FileSystemRights&writes)!=0&&!trusted.Contains(rule.IdentityReference.Value))throw new IOException("Shared write permissions are not supported for an application installation. Choose a private per-user folder.");
+            for(var directory=new DirectoryInfo(root);directory!=null;directory=directory.Parent)
+                if(directory.Exists)RequireDirectorySecurity(directory.GetAccessControl(AccessControlSections.Access|AccessControlSections.Owner),Same(directory.FullName,root));
+        }
+        internal static void RequireDirectorySecurity(DirectorySecurity acl,bool installRoot) {
+            RequireTrustedOwner(acl);
+            var writes=FileSystemRights.Delete|FileSystemRights.DeleteSubdirectoriesAndFiles|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership;
+            if(installRoot)writes|=FileSystemRights.WriteData|FileSystemRights.AppendData|FileSystemRights.WriteExtendedAttributes|FileSystemRights.WriteAttributes;
+            foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,true,typeof(SecurityIdentifier))) {
+                if(rule.AccessControlType!=AccessControlType.Allow||(!installRoot&&(rule.PropagationFlags&PropagationFlags.InheritOnly)!=0))continue;
+                // AppContainer package/capability rights intersect with user/group rights;
+                // they cannot independently grant access to another Windows account.
+                // https://learn.microsoft.com/windows/win32/secauthz/implementing-an-appcontainer
+                string sid=rule.IdentityReference.Value;if(sid.StartsWith("S-1-15-2-",StringComparison.Ordinal)||sid.StartsWith("S-1-15-3-",StringComparison.Ordinal))continue;
+                bool trusted=TrustedOwners.Contains(rule.IdentityReference.Value)||rule.IdentityReference.Value=="S-1-3-0";
+                uint rights=unchecked((uint)rule.FileSystemRights);
+                if(!trusted&&((rule.FileSystemRights&writes)!=0||(rights&0x10000000)!=0||(installRoot&&(rights&0x40000000)!=0)))throw new IOException("Shared write or replacement permissions are not supported for an installation path. Choose a private per-user folder and ancestry.");
+            }
         }
         public static T Read<T>(string path) {NativeIO.PlainPath(path);return NativeIO.Json.Deserialize<T>(File.ReadAllText(path,NativeIO.Utf8));}
         public static InstallState State(string root) {
@@ -100,6 +118,8 @@ namespace AgentBrowser.Installer {
                 if(File.Exists(state.Startup.Path)&&!Same(NativeIO.FileHash(state.Startup.Path),state.Startup.Sha256)) throw new IOException("The Startup shortcut changed; it was preserved.");
             }
         }
+        internal static void RequireLocalInstallDrive(DriveType type) {if(type!=DriveType.Fixed&&type!=DriveType.Removable&&type!=DriveType.Ram)throw new IOException("Bridge installation requires a writable Windows local disk; mapped network drives are not supported.");}
+        internal static byte[] CapturePackageFile(string root,OwnedFile file) {var bytes=File.ReadAllBytes(NativeIO.SafePath(root,file.Path));if(!Same(NativeIO.Hash(bytes),file.Sha256))throw new IOException("Package changed while preparing: "+file.Path);return bytes;}
         static PackageManifest Package(string root) {
             NativeIO.PlainPath(root);var m=Read<PackageManifest>(Path.Combine(root,"package-manifest.json"));
             if(m.Product!="agent-browser"||m.Platform!="windows-x64"||!Regex.IsMatch(m.Version??"",@"^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$")||m.Files==null) throw new IOException("Invalid Windows package manifest.");
@@ -180,7 +200,7 @@ namespace AgentBrowser.Installer {
                 string relative=file.Path;if(relative=="browser-bridge.exe"||relative=="AgentBrowser-Setup.exe") relative="app/"+tag+"/"+relative;
                 string dest=NativeIO.SafePath(root,relative);
                 if(File.Exists(dest)&&!owned.ContainsKey(relative)) throw new IOException("An unowned file blocks installation: "+dest);
-                Add(p,dest,File.ReadAllBytes(NativeIO.SafePath(package,file.Path)));owned[relative]=file.Sha256.ToLowerInvariant();
+                Add(p,dest,CapturePackageFile(package,file));owned[relative]=file.Sha256.ToLowerInvariant();
             }
             var oldRecords=Registrations(p.Old);var requested=new List<McpRecord>(oldRecords);
             var explicitPaths=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -233,7 +253,7 @@ namespace AgentBrowser.Installer {
             } finally {System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);if(File.Exists(path)) File.Delete(path);}
         }
         public static string Apply(InstallPlan p,CancellationToken cancel,Action<string> progress) {
-            string root=p.Options.InstallDir,lockPath=Path.Combine(root,".agent-browser-install.lock");cancel.ThrowIfCancellationRequested();bool existingRoot=Directory.Exists(root);Directory.CreateDirectory(root);if(!existingRoot)PrivateDirectory(root);RequirePrivateInstallRoot(root);
+            string root=Root(p.Options.InstallDir),lockPath=Path.Combine(root,".agent-browser-install.lock");cancel.ThrowIfCancellationRequested();bool existingRoot=Directory.Exists(root);Directory.CreateDirectory(root);if(!existingRoot){RequireTrustedOwner(Directory.GetAccessControl(root,AccessControlSections.Owner));PrivateDirectory(root);}RequirePrivateInstallRoot(root);
             bool restartOld=false,newStarted=false;var stoppedProfiles=new List<string>();FileTransaction transaction=null;bool complete=false;
             using(var fileLock=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)) {
                 try {
@@ -331,6 +351,9 @@ namespace AgentBrowser.Installer {
         public static bool Stop(InstallState state) {
             var marker=Marker(state);using(var process=Verify(state,marker)) {if(process==null) return false;}
             using(var again=Verify(state,marker)) {if(again==null) return false;using(var p=Process.GetProcessById(Convert.ToInt32(marker["Pid"]))) {p.Kill();if(!p.WaitForExit(5000)) throw new IOException("Owned Bridge did not stop.");}}
+            string markerPath=Path.Combine(state.DataDir,".installer-bridge-process.json");
+            NativeIO.PlainPath(markerPath);var current=Marker(state);
+            if(current!=null) {if(NativeIO.Json.Serialize(current)!=NativeIO.Json.Serialize(marker))throw new IOException("Bridge ownership marker changed during stop; it was preserved.");File.Delete(markerPath);}
             return true;
         }
         public static void Start(InstallState state) {

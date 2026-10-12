@@ -54,7 +54,7 @@ internal static class GuiSmokeTests {
         int launched=process.Id;string digest;using(var sha=SHA256.Create())digest=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(exe))).Replace("-","").ToLowerInvariant();
         string expected=Path.Combine(Path.GetTempPath(),"AgentBrowser-Setup",digest,"AgentBrowser-Setup.exe");bool handedOff=false;
         var timer=Stopwatch.StartNew();while(timer.ElapsedMilliseconds<15000){
-            process.Refresh();if(!process.HasExited&&process.MainWindowHandle!=IntPtr.Zero){window=AutomationElement.FromHandle(process.MainWindowHandle);return;}
+            process.Refresh();IntPtr handle=IntPtr.Zero;try{if(!process.HasExited)handle=process.MainWindowHandle;}catch(InvalidOperationException){if(!process.HasExited)throw;}if(handle!=IntPtr.Zero){window=AutomationElement.FromHandle(handle);return;}
             if(!handedOff&&process.HasExited)using(var query=new ManagementObjectSearcher("SELECT ProcessId,ExecutablePath FROM Win32_Process WHERE ParentProcessId="+launched))foreach(ManagementObject child in query.Get()) {
                 if(!String.Equals(child["ExecutablePath"] as string,expected,StringComparison.OrdinalIgnoreCase))continue;
                 process.Dispose();process=Process.GetProcessById(Convert.ToInt32(child["ProcessId"]));handedOff=true;Console.WriteLine("PASS verified installed GUI handoff to exact-hash temporary executable");break;

@@ -4,6 +4,9 @@ import argparse, hashlib, json, pathlib, re, shutil, struct, subprocess, tempfil
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 def win(path): return subprocess.check_output(["wslpath","-w",str(path.resolve())],text=True).strip()
+def validate_extension(extension, version):
+    if extension.get("version")!=version: raise ValueError("Extension version mismatch")
+    if extension["manifest_version"]!=3 or not extension.get("key"): raise ValueError("Keyed MV3 extension required")
 def main():
     p=argparse.ArgumentParser()
     for name in ["bridge","extension","notices","out"]: p.add_argument("--"+name,type=pathlib.Path,required=True)
@@ -42,7 +45,7 @@ def main():
             if not allowed.fullmatch(rel) or path.suffix not in [".js",".css",".html",".json",".png",".svg",".webp",".woff",".woff2",".ico"] or (path.suffix==".json" and rel!="manifest.json"): raise ValueError("Unexpected extension artifact: "+rel)
             copy(path,"extension/"+rel)
         extension=json.loads((stage/"extension/manifest.json").read_text())
-        if extension["manifest_version"]!=3 or not extension.get("key"): raise ValueError("Keyed MV3 extension required")
+        validate_extension(extension, version)
         for name in ["setup.ps1","uninstall.ps1","installer-common.ps1","start-bridge.ps1","start-bridge.cmd","show-pairing.ps1"]: copy(ROOT/"scripts"/name,name)
         for name in ["README-install.md","CHANGELOG.md","LICENSE","SECURITY.md","docs/user-guide.md","docs/troubleshooting.md"]: copy(ROOT/name,name)
         for name in ["THIRD_PARTY_NOTICES","third-party-inventory.json"]: copy(a.notices/name,name)
