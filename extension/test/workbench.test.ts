@@ -76,6 +76,27 @@ it('discards an unsent reservation when the selected session changes during prep
   expect(messages.find(m=>m.kind==='request-discard')?.requestId).toBe(messages.find(m=>m.kind==='request-prepare').lease.requestId);
 });
 
+it('does not submit after Stop while the browser reservation is pending',async()=>{
+  await render();const pending=deferred<any>();
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation((message:any)=>message.kind==='request-prepare'?pending.promise:original(message));
+  await draftValue('cancel this');await act(async()=>button('보내기').click());
+  await act(async()=>button('응답 중단').click());
+  await act(async()=>pending.resolve({ok:true,result:{system:'request'}}));
+  expect(test.post.mock.calls.some(([path])=>path.endsWith('/prompt_async'))).toBe(false);
+});
+it.each([400,403,404,422])('discards the exact reservation on rejected HTTP %s submission',async status=>{
+  await render();test.post.mockRejectedValueOnce(new OpenCodeApiError(status,'rejected'));
+  await draftValue('rejected');await act(async()=>button('보내기').click());
+  const calls=(chrome.runtime.sendMessage as ReturnType<typeof vi.fn>).mock.calls.map(([m])=>m);
+  expect(calls.find(m=>m.kind==='request-discard')?.requestId).toBe(calls.find(m=>m.kind==='request-prepare').lease.requestId);
+});
+it('closes the browser reservation even when OpenCode abort fails',async()=>{
+  await render();await draftValue('request');await act(async()=>button('보내기').click());
+  test.post.mockRejectedValueOnce(Error('offline'));
+  await act(async()=>button('응답 중단').click());
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({kind:'request-cancel'}));
+});
 it("restores the selected profile/session and isolates streaming messages by session", async () => {
   await render(); expect(host.textContent).toContain("기존 질문"); expect(host.textContent).toContain("사내 모델");
   await act(async () => test.stream({ id: "evt-other", type: "message.part.updated", properties: { sessionID: "ses-other", part: { id: "prt-other", messageID: "msg-other", sessionID: "ses-other", type: "text", text: "다른 세션 비밀" } } }));

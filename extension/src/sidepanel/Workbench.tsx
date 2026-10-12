@@ -9,6 +9,7 @@ import { RenameField, SessionMenu, type SessionAction } from "./SessionActions";
 import { THEMES, themeNames, themeTokens, useTheme } from "../theme/themes";
 import type { Operation } from "./status-store";
 import { captureRequestTarget, completedRequest, type RequestLease } from './request-target';
+import { OpenCodeApiError } from '../agents/opencode-v1/client';
 
 export type WorkspaceView = "chat" | "sessions" | "browser";
 type Props = { operation: Operation | null; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void };
@@ -35,6 +36,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   const composer = useRef<HTMLTextAreaElement>(null);
   const selectedControls = useRef({ key: "", dirty: false });
   const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef(false);
+  const submission=useRef<{key:string;cancelled:boolean;requestId?:string;submitted:boolean}|undefined>(undefined);
   const models = useMemo(() => availableModels(wb.catalog), [wb.catalog]);
   const model = models.find(item => `${item.providerID}/${item.id}` === modelKey);
   const messages = wb.state.messages[wb.sessionId] ?? [];
@@ -142,6 +144,15 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       if (current()) setDraft(""); return;
     }
     sendLock.current = true; setSending(true); wb.setError("");
+    const attempt={key:draftKey,cancelled:false,submitted:false,requestId:undefined as string|undefined};
+    submission.current=attempt;
+    const canSubmit=()=>current()&&!attempt.cancelled;
+    const discard=async()=>{
+      if(!attempt.requestId)return;
+      const response=await chrome.runtime.sendMessage({kind:'request-discard',requestId:attempt.requestId});
+      if(!response?.ok)throw Error(response?.error?.message??'Browser request cleanup failed.');
+      if(current()&&submission.current===attempt)setRequestHeld(false);
+    };
     try {
       if (!wb.sessionId) throw new Error("새 세션을 만들거나 기존 세션을 선택하세요.");
       if (!model) throw new Error("이 실행 환경에서 사용할 수 있는 모델을 선택하세요.");
@@ -151,13 +162,14 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       const scope={profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId};
       const prepare=async()=>{
         const target=await targetPromise;
-        if(!current())throw Error('요청을 보내기 전에 선택한 세션이 바뀌었습니다.');
+        if(!canSubmit())throw Error('요청 전송이 취소되었거나 선택한 세션이 바뀌었습니다.');
         const requestId=crypto.randomUUID();
+        attempt.requestId=requestId;
         setRequestHeld(true);
         const response=await chrome.runtime.sendMessage({kind:'request-prepare',lease:{...scope,messageId:messageID,requestId},target,
           ...(operation&&wb.operationOwner(operation.id)===wb.sessionId?{previousOperationId:operation.id}:{})});
         if(!response?.ok)throw Error(response?.error?.message??'요청의 작업 탭을 고정하지 못했습니다.');
-        if(!current()){await chrome.runtime.sendMessage({kind:'request-discard',requestId});throw Error('선택한 세션이 바뀌어 전송을 취소했습니다.');}
+        if(!canSubmit()){await discard();throw Error('요청 전송을 취소했습니다.');}
         setRequestHeld(true);
         return response.result.system as string;
       };
@@ -168,14 +180,26 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
           if (!wb.commands.some(item => item.name === command[1])) throw new Error("서버에 등록되지 않은 커맨드입니다. /commands에서 확인하세요.");
           if (attachments.some(part => part.type !== "file")) throw new Error("사용자 커맨드에는 파일 첨부만 전달할 수 있습니다. 에이전트 참조는 일반 메시지로 보내세요.");
           const system=await prepare();
-          await selectedApi.request("POST", path + "/command", { body: { messageID, command: command[1], arguments: command[2] ?? "", model: modelKey, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...attachments,await textFilePart('browser-request.txt',system)] }, timeoutMs: 300000 });
+          const context=await textFilePart('browser-request.txt',system);
+          if(!canSubmit()){await discard();throw Error('요청 전송을 취소했습니다.');}
+          attempt.submitted=true;
+          await selectedApi.request("POST", path + "/command", { body: { messageID, command: command[1], arguments: command[2] ?? "", model: modelKey, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...attachments,context] }, timeoutMs: 300000 });
         }
       } else {
         const system=await prepare();
+        if(!canSubmit()){await discard();throw Error('요청 전송을 취소했습니다.');}
+        attempt.submitted=true;
         await selectedApi.post(path + "/prompt_async", { messageID,system, model: { providerID: model.providerID, modelID: model.id }, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...(draft.trim() ? [{ type: "text", text: draft }] : []), ...attachments] });
       }
-      if (current()) { wb.watchResponse(); if (previousDraft.current.draft === draft && previousDraft.current.attachments === attachments) { setDraft(""); setAttachments([]); } setNotice(""); await wb.resync(); }
-    } catch (error) { if (current()) wb.setError(error instanceof Error ? error.message : String(error)); }
+      if (canSubmit()) { wb.watchResponse(); if (previousDraft.current.draft === draft && previousDraft.current.attachments === attachments) { setDraft(""); setAttachments([]); } setNotice(""); await wb.resync(); }
+    } catch (error) {
+      // Only explicit admission failures prove the mutation was not accepted.
+      // Transport failures and 5xx retain the token until completion or Stop.
+      if(attempt.submitted&&error instanceof OpenCodeApiError&&[400,401,403,404,422].includes(error.status)) {
+        try { await discard(); } catch(cleanup) { if(current())wb.setError(String(cleanup));return; }
+      }
+      if (current()&&!attempt.cancelled) wb.setError(error instanceof Error ? error.message : String(error));
+    }
     finally { if (current()) { sendLock.current = false; setSending(false); } }
   }
   async function addBrowserReference(reference: string) {
@@ -287,7 +311,16 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         {mention !== undefined && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성"><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>{wb.agents.filter(item => !item.hidden && item.name.includes(mention)).map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
         {draft.startsWith("/") && !draft.includes(" ") && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)].filter(name => name.includes(draft.slice(1))).slice(0, 15).map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>}
         <div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-actions"><span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span><div><button className="primary" disabled={!wb.connected || !wb.sessionId || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
-          <button type="button" hidden={!running && !sending && !requestHeld} disabled={!wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => { const current = wb.captureScope(), selectedApi = api(), path = sessionPath(); if (operation && stopsOperation(operation.id)) await bridgeRequest("operation.abort", { operationId: operation.id }); await selectedApi.post(path + "/abort"); const stopped=await chrome.runtime.sendMessage({kind:"request-cancel",scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId}}); if(stopped?.ok===false)throw Error(stopped.error?.message); if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync(); })}>응답 중단</button></div></div>
+          <button type="button" hidden={!running && !sending && !requestHeld} disabled={!wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => { const current=wb.captureScope(),selectedApi=api(),path=sessionPath();
+            const attempt=submission.current?.key===draftKey?submission.current:undefined;
+            if(attempt)attempt.cancelled=true;
+            const stopped=await chrome.runtime.sendMessage({kind:'request-cancel',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId,...(attempt?.requestId?{requestId:attempt.requestId}:{})}});
+            if(stopped?.ok===false)throw Error(stopped.error?.message);
+            if(!attempt?.requestId&&stopped?.result!==true){
+              if(operation&&stopsOperation(operation.id))await bridgeRequest('operation.abort',{operationId:operation.id});
+              await selectedApi.post(path+'/abort');
+            }
+            if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync(); })}>응답 중단</button></div></div>
       </form>
     </section>;
   const usagePanel = <details className="workspace-section"><summary>사용량·컨텍스트</summary><dl className="usage"><dt>최근 호출</dt><dd>{tokenLine(usage.latest)}</dd><dt>현재 사용자 요청 합계</dt><dd>{tokenLine(usage.request)}</dd><dt>세션 누적</dt><dd>{tokenLine(usage.session)}</dd><dt>현재 컨텍스트</dt><dd>{usage.context.tokens === null ? "정보 없음" : `${usage.context.tokens.toLocaleString()} 토큰 · 최근 호출 기반 추정`}{usage.context.limit !== null ? ` / 모델 한도 ${usage.context.limit.toLocaleString()}` : " / 모델 한도 정보 없음"}{usage.context.modelChanged ? " · 모델 변경 후 새 호출 대기" : ""}</dd><dt>압축</dt><dd>{({ none: "없음", pending: "진행 중", completed: "완료" } as Data)[usage.compaction]}</dd></dl><button disabled={!model || !wb.sessionId || running} onClick={() => void perform(compact)}>지금 컨텍스트 압축</button></details>;

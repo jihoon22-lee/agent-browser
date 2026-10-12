@@ -10,10 +10,10 @@ export function panelRequests(call:Call) {
     if(runtime.state!=='ready')throw Error('이전 요청의 완료 상태를 확인하지 못했습니다. 해당 요청을 중단한 뒤 다시 시도하세요.');
     return new OpenCodeV1Client({...runtime,directory:lease.directory});
   };
-  async function end(lease:RequestLease,clientId:string) {
+  async function end(lease:RequestLease,clientId:string,clear=true) {
     try { await call('request.end',{requestId:lease.requestId,clientId}); }
     catch(error) { if((error as any)?.code!=='OPERATION_INVALID')throw error; }
-    await chrome.storage.session.remove(KEY);
+    if(clear)await chrome.storage.session.remove(KEY);
   }
   return {
     discard:(requestId:string)=>serial(async()=>{
@@ -57,14 +57,17 @@ export function panelRequests(call:Call) {
       if(typeof clientId!=='string')return false;
       await end(saved,clientId);return true;
     }),
-    cancel:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>serial(async()=>{
+    cancel:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'> & {requestId?:string})=>serial(async()=>{
       const saved=(await chrome.storage.session.get(KEY))[KEY] as RequestLease|undefined;
       if(!saved||saved.profileId!==scope.profileId||saved.directory!==scope.directory||saved.sessionId!==scope.sessionId)return;
+      if(scope.requestId&&scope.requestId!==saved.requestId)return;
       const {clientId}=await chrome.storage.local.get('clientId');
-      const api=await client(saved);
       if(typeof clientId!=="string")throw Error("Browser client unavailable");
-      await end(saved,clientId);
+      await end(saved,clientId,false);
+      const api=await client(saved);
       await api.post(`/session/${encodeURIComponent(saved.sessionId)}/abort`);
+      await chrome.storage.session.remove(KEY);
+      return true;
     }),
   };
 }

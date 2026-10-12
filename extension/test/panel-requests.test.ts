@@ -9,6 +9,18 @@ beforeEach(()=>{
   vi.stubGlobal('chrome',{storage:{local:{get:async()=>({clientId:'browser'})},session:{get:async()=>structuredClone(storage),set:async(v:any)=>Object.assign(storage,v),remove:async(k:string)=>{delete storage[k]}}}});
 });
 afterEach(()=>vi.unstubAllGlobals());
+it('ignores a delayed cancellation for an older request in the same session',async()=>{
+  storage.panelBrowserRequest=lease('one');
+  await panelRequests(call).cancel({...lease('one'),requestId:'older'});
+  expect(call).not.toHaveBeenCalled();expect(api.post).not.toHaveBeenCalled();
+});
+it('closes the browser gate even when runtime discovery fails during cancellation',async()=>{
+  storage.panelBrowserRequest=lease('one');
+  call.mockImplementation(async method=>{if(method==='runtime.ensure')throw Error('offline');return {};});
+  await expect(panelRequests(call).cancel(lease('one'))).rejects.toThrow('offline');
+  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser'});
+  expect(storage.panelBrowserRequest).toEqual(lease('one'));
+});
 it('pins submission target and serializes concurrent session requests',async()=>{
   const manager=panelRequests(call);
   const results=await Promise.allSettled([manager.prepare(lease('one'),{tabId:11,windowId:1}),manager.prepare(lease('two'),{tabId:22,windowId:2})]);
@@ -36,7 +48,7 @@ it('does not cancel another selected session and closes the owner gate before ab
   storage.panelBrowserRequest=lease('one');const manager=panelRequests(call);
   await manager.cancel(lease('two'));expect(api.post).not.toHaveBeenCalled();
   await manager.cancel(lease('one'));expect(api.post).toHaveBeenCalledWith('/session/session-one/abort');
-  expect(call).toHaveBeenLastCalledWith('request.end',{requestId:'one',clientId:'browser'});
+  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser'});
   expect(storage.panelBrowserRequest).toBeUndefined();
   expect(call.mock.invocationCallOrder.at(-1)).toBeLessThan(api.post.mock.invocationCallOrder[0]!);
 });
