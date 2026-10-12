@@ -8,12 +8,23 @@
 
 ## v0.1.6 로컬 패키지 검증
 
+아래 최초 후보는 main CI 후속 수정 전 산출물이다. 게시하지 않았으며 최종 태그와 ZIP은 후속 수정이 포함된 main에서 다시 생성한다.
+
 - Cargo workspace·lockfile의 Bridge와 Extension manifest를 **0.1.6**으로 맞췄다. CHANGELOG·설치 예시·중단/탐색/예약 안내를 갱신하고 PR #9 병합 기록을 반영했다. 문서 링크 검사와 기존 보조 테스트 3개, Python 패키지 테스트 3개가 통과했다.
 - `cargo xwin build --locked --release --target x86_64-pc-windows-msvc`와 Extension TypeScript/Vite 빌드, 잠긴 의존성 163개 고지 생성 완료. WSL 파일시스템 임시 exe 실행은 PermissionError로 실패해 Windows 개발 경로를 출력 디렉터리로 지정한 패키징을 사용했다.
 - Windows x64 PE와 실제 exe 버전, Extension/패키지 manifest 버전, ZIP 내부 35개 파일과 SHA-256, 배포 문서 링크·제외 항목을 확인했다. 별도 디렉터리의 두 빌드는 동일한 ZIP SHA-256 `82787c4000edaa052bc8f15494974a205b3fa8b73c911fdb4e3e1ee53e5e6c5c`였다.
 - 게시된 v0.1.5 ZIP의 해시를 검증한 뒤 별도 Windows 경로에서 새 v0.1.6 설치/재설치와 v0.1.5→v0.1.6 업데이트를 실행했다. 실제 Bridge 인증 시작, 버전·설치 ID·페어링·합성 데이터·JSONC 설정 보존, 제거 후 소유 MCP 정리와 데이터 보존이 통과했다. 설치 엔진 직접 호출 시험이며 GUI 클릭 시험으로 보고하지 않는다.
 - 임시 검증 드라이버의 클래스명 오류와 JSONC 개행까지 동일하다고 요구한 assertion을 수정한 뒤 새 fixture에서 최종 실행했다. 제품 코드는 변경하지 않았다. 운영 설치·전역 OpenCode 설정·모델은 사용하지 않았다.
 - 최종 릴리스 PR/CI와 태그·게시 결과는 이 준비 기록 이후 GitHub PR·Release에도 기록한다. 위 ZIP은 아직 로컬 후보이며 게시 완료를 의미하지 않는다.
+
+## v0.1.6 main CI 상태 조회 경합 후속
+
+- [PR #10](https://github.com/jihoon22-lee/agent-browser/pull/10)은 `b766f30`에서 [Linux·Windows CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38253381774)와 코드·보안 리뷰를 통과해 `633b9e4`로 병합됐다. 동일한 main의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38254371723)에서 Linux W05가 명령 결과를 받지 못해 실패했다. 재시도만으로 성공 처리하지 않았다.
+- 실패 화면의 `실행 환경의 상태를 아직 확인하지 못했습니다`와 Bridge의 `status()` try_lock 경로로 원인을 확인했다. 직렬 큐 밖의 완료 확인과 새 요청 준비가 동시에 같은 runtime.status를 호출해 한쪽이 일시적인 starting을 받았다.
+- 경합을 재현하는 단위 테스트가 먼저 실패했다. 같은 프로필의 진행 중인 완료/준비 조회만 공유하고 정착된 결과·실패는 캐시하지 않는다. Stop은 공유 조회를 우회해 gate 종료 후 기존 직접 API fallback을 유지한다.
+- 관련 단위 2파일 **111/111** 후 실패 조회의 재사용 방지 회귀를 추가해 panel-requests **29/29**를 확인했다. Extension 빌드·E2E 타입 검사 통과. W05를 Linux **10/10**, 실제 Windows Chrome/MSVC Bridge **10/10** 반복해 통과했다. 새 최종 PR/main CI와 패키지 재생성 전에는 태그·Release를 게시하지 않는다.
+- [후속 PR #11](https://github.com/jihoon22-lee/agent-browser/pull/11)의 첫 head `c9f514e`는 [Linux·Windows CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38255585228)를 통과했다. 코드 리뷰에서 상태 조회 중 runtime.stop/profile.delete가 시작되면 이전 조회 결과를 재사용할 수 있는 경계가 추가됐다.
+- profile.save/delete·runtime.stop 시작/종료에 프로필 세대를 변경하고 진행 중인 공유 조회를 무효화한다. 관리 작업 중에는 새 prepare를 거부하며 request.begin 도중 세대가 바뀌면 생성한 예약을 종료한다. 새로운 guard 회귀 2건의 초기 실패 후 관련 단위 **114/114**, 빌드·E2E 타입 검사, 실제 Windows 요청/패널 E2E **20/20**가 통과했다. 새 head CI·재리뷰는 push 후 확인한다.
 
 ---
 
