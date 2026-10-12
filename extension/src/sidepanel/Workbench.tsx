@@ -198,6 +198,17 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       if(attempt.submitted&&error instanceof OpenCodeApiError&&[400,401,403,404,422].includes(error.status)) {
         try { await discard(); } catch(cleanup) { if(current())wb.setError(String(cleanup));return; }
       }
+      if(!attempt.submitted&&!attempt.cancelled&&chrome.storage.session){
+        // A rejected next submission must not replace the still-running owner's
+        // Stop token with the rejected attempt's token.
+        try {
+          const saved=(await chrome.storage.session.get('panelBrowserRequest')).panelBrowserRequest as RequestLease|undefined;
+          if(current()&&submission.current===attempt){
+            const owned=saved?.profileId===wb.profileId&&saved.directory===wb.directory&&saved.sessionId===wb.sessionId;
+            attempt.requestId=owned?saved.requestId:undefined;setRequestHeld(owned);
+          }
+        }catch{/* Keep the uncertain identity when storage itself is unavailable. */}
+      }
       if (current()&&!attempt.cancelled) wb.setError(error instanceof Error ? error.message : String(error));
     }
     finally { if (current()) { sendLock.current = false; setSending(false); } }

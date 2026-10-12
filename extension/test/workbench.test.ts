@@ -97,6 +97,22 @@ it('closes the browser reservation even when OpenCode abort fails',async()=>{
   await act(async()=>button('응답 중단').click());
   expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({kind:'request-cancel'}));
 });
+it('Stop still owns the earlier request after a premature next submission is rejected',async()=>{
+  await render();let saved:any;
+  (chrome.storage as any).session={get:async()=>({panelBrowserRequest:saved})};
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>{
+    if(message.kind==='request-prepare'){
+      if(saved)return {ok:false,error:{message:'previous request incomplete'}};
+      saved=message.lease;return {ok:true,result:{system:'request'}};
+    }
+    return original(message);
+  });
+  await draftValue('first');await act(async()=>button('보내기').click());
+  await draftValue('too soon');await act(async()=>button('보내기').click());
+  await act(async()=>button('응답 중단').click());
+  expect(runtime.mock.calls.map(([m])=>m).find(m=>m.kind==='request-cancel').scope.requestId).toBe(saved.requestId);
+});
 it("restores the selected profile/session and isolates streaming messages by session", async () => {
   await render(); expect(host.textContent).toContain("기존 질문"); expect(host.textContent).toContain("사내 모델");
   await act(async () => test.stream({ id: "evt-other", type: "message.part.updated", properties: { sessionID: "ses-other", part: { id: "prt-other", messageID: "msg-other", sessionID: "ses-other", type: "text", text: "다른 세션 비밀" } } }));
