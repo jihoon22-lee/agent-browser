@@ -325,3 +325,39 @@ node tests/e2e/request-target.windows.mjs
 검사 항목: inline/키보드 후보, 좌표 조건과 스크롤, isTrusted 거절 유지, 체크박스 기본 활성화, 새 탭 편입, frameRef의 텍스트·URL 범위, 본문 교체 후 대기, 오래된 요소 및 문서 이동 후 프레임 참조 거부. 결과 JSON은 ignored `tests/agent/results/iframe.json`에 기록한다. 실제 모델 호출과 사내 서비스 접속은 포함하지 않는다.
 
 실제 패널 경계 추가 검증: Stop 후 늦은 attach 거부, 비동기 활성 탭 캡처 중 취소 뒤 미전송, HTTP 400 admission 거절 뒤 정확한 예약 해제를 포함해 요청 단위 전체 경로 12개를 검사한다. OpenCode fixture는 정상 응답 종료의 finish=stop을 실제 v1 필드로 제공한다.
+## WSL interop 회귀
+
+배경과 완료된 실행 기록은 [WSL interop 검증](./wsl-interop-validation.md)을 따른다.
+Linux에서 `cargo test --locked --offline --lib runtime::` 및 `--test runtime_management`를 실행한다.
+Windows 산출물은 별도 worktree의 `target/`에서 만든 뒤 작업 전용 Windows 경로로 복사한다.
+
+```bash
+cargo xwin build --locked --offline --target x86_64-pc-windows-msvc -p agent-browser-bridge
+cargo xwin test --locked --offline --target x86_64-pc-windows-msvc --lib --no-run
+```
+
+실제 Windows에서 생성된 unit test exe의 다음 필터를 각각 `--ignored --nocapture`로 실행한다.
+이는 자체 임시 HOME와 nonce를 쓰며 `/bin/sleep` 또는 시작 허가를 기다리는 shell만 만든다.
+
+- `keeper_initial_persist_failure_cleans_the_unpermitted_group`
+- `review_pending_wsl_owner_is_cleaned_after_initial_persist_failure`
+- `stop_revokes_permission_before_a_delayed_wsl_launch_can_exec`
+
+`bridge/tests/windows-runtime.mjs`는 native Windows Node와 기존 `ws` 의존성을 사용한다.
+`AGENT_BROWSER_TEST_EXE`, `AGENT_BROWSER_TEST_OPENCODE_EXE`, 필요하면
+`AGENT_BROWSER_TEST_MODULE_ROOT`를 지정한다. WSL에는 `AGENT_BROWSER_TEST_WSL_EXE`,
+`AGENT_BROWSER_TEST_WSL_NODE`, 선택적으로 `AGENT_BROWSER_TEST_WSL_DISTRO`를 지정한다.
+fixture를 Windows 드라이브에 복사하거나 해당 배포판의 WSL UNC 경로에서 실행할 수 있다.
+
+- `RUNTIME_KIND=wsl`, `RUNTIME_SCENARIO=interop-keeper`: 실제 OpenCode 연결, 같은 keeper 소켓의
+  Windows canary, 실제 MCP initialize와 합성 도구 응답, 자체 소켓 정지/부재, keeper 종료,
+  Bridge 재시작과 이전 기록의 보수적 처리 및 정리를 확인한다. `/usr/bin/python3`가 필요하다.
+- `RUNTIME_SCENARIO=probe-count`: 동일 합성 서버에서 시작과 status 5회의 제어 호출을 센다.
+  기준 바이너리에도 `wsl_control_status`의 같은 debug 로그를 넣는다. 로그 관측으로 WSL 호출을 추가하지 않는다.
+- `RUNTIME_KIND=cmd`, `RUNTIME_SCENARIO=mcp-delay` / `mcp-failure`: HTTP 성공만으로 ready를
+  반환하지 않는지, MCP 지연을 기다리는지, 실패 기한 뒤 자체 서버를 정리하는지 확인한다.
+- `wsl-start-failure`, `wsl-unknown-marker`, `healthy-fixture` 및 scenario 없는 실제 CLI 경로도 유지한다.
+
+`result.json`은 자격정보나 사용자 대화를 포함하지 않는 단계별 결과만 보관한다.
+기존 runtime.json, 로그, 사용자 Chrome 페이지를 fixture로 가져오지 않는다.
+커널 결함을 주장하려면 별도 근거가 필요하며, 자체 AF_UNIX handshake 정지를 그 재현으로 보고하지 않는다.

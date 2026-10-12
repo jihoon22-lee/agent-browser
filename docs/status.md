@@ -208,3 +208,21 @@ Clippy의 남은 경고는 기준 main의 동일 코드와 대조했다. `conn.r
 - 전역 `~/.cargo/config.toml`의 `build.target-dir`이 다른 프로젝트 캐시를 가리킨다. 이 저장소는 `.cargo/config.toml`로 `target/`을 쓴다.
 - 전역 OpenCode 설정에는 기존 MCP(playwright 등)가 있다. 수정하지 않고 테스트는 별도 설정으로 격리한다.
 - 실제 사용자 설치의 Bridge는 사용을 위해 실행 상태로 유지한다. 검증용 프로세스는 테스트가 끝나면 종료한다.
+
+## 2026-10-12 WSL interop 방어 수정
+
+`v0.1.4` 기반의 `fix/wsl-interop-compat` 별도 worktree에서 keeper 소유·수명 관리,
+동일 소켓 Windows canary, WSL 검사 통합, HTTP와 browser MCP의 준비 판정 분리를 구현했다.
+keeper 없는 기존 런타임은 보존하고 명시적인 Stop/재시작으로 구성을 갱신한다.
+늦게 실행되는 WSL 명령이 Stop 뒤 시작 허가를 소비하는 경합도 실패 테스트로 재현하고 수정했다.
+
+Linux Bridge 전체 135개 및 후속 runtime 관련 회귀, 실제 Windows/WSL의 OpenCode 1.18.29,
+canary·MCP initialize·합성 첫 도구 응답, caller/Bridge 종료 후 재사용, keeper 종료,
+소켓 부재·handshake 정지, 저장 실패·시작 허가 취소, MCP 지연·실패 정리를 검증했다.
+동일 조건의 status 5회에서 WSL 제어 프로브가 15회에서 5회로 감소했다.
+구현·실행 근거와 재현 한계는 [WSL interop 검증 기록](./wsl-interop-validation.md)에 정리했다.
+
+현재 WSL 2.7.12에도 공식 #41252의 timeout 수정이 없다는 소스 근거를 확인했다.
+정상 시험 통과를 런타임 결함 부재로 해석하지 않는다. 별도 구형 WSL 패키지 VM 시험과
+커널 vsock 결함의 직접 재현은 미실행이며, 응용 계층 fault injection과 구분한다.
+운영 설치, GUI 작업 브랜치, 기존 사용자 세션, 전역 OpenCode 설정을 변경하지 않았다.

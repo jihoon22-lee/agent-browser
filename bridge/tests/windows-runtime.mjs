@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { randomBytes, createHmac } from 'node:crypto';
 import { createServer } from 'node:net';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 const require = createRequire(process.env.AGENT_BROWSER_TEST_MODULE_ROOT || new URL('../../tests/e2e/package.json', import.meta.url));
 const WebSocket = require('ws');
@@ -21,11 +22,19 @@ const scenario = process.env.RUNTIME_SCENARIO || '';
 let fixtureShutdown;
 const home = mkdtempSync(join(tmpdir(), 'ab-runtime-한글 공간-'));
 const directory = join(home, '작업 공간'); mkdirSync(directory);
-const env = { ...process.env, AGENT_BROWSER_HOME: home };
+const env = { ...process.env, AGENT_BROWSER_HOME: home, AGENT_BROWSER_LOG: 'agent_browser_bridge::runtime=debug,info' };
 execFileSync(exe, ['pair'], { env, stdio: ['ignore', 'pipe', 'ignore'] });
 const token = JSON.parse(readFileSync(join(home, 'config.json'))).token;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const windowsToWsl = path => '/mnt/' + path[0].toLowerCase() + path.slice(2).replaceAll('\\', '/');
+const windowsToWsl = path => {
+  const unc=path.match(/^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)\\(.*)$/i);
+  if(unc) {
+    assert.equal(unc[1].toLowerCase(),(process.env.AGENT_BROWSER_TEST_WSL_DISTRO||'Ubuntu').toLowerCase());
+    return '/'+unc[2].replaceAll('\\','/');
+  }
+  assert(/^[A-Za-z]:[\\/]/.test(path),'Fixture paths must be absolute Windows or matching WSL UNC paths');
+  return '/mnt/' + path[0].toLowerCase() + path.slice(2).replaceAll('\\', '/');
+};
 async function freePort() {
   const server = createServer(); await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port;
@@ -54,7 +63,11 @@ async function connect() {
   }
   assert(connected, 'Fixture Bridge must start');
   ws.on('message', data => {
-    const message = JSON.parse(data), request = pending.get(message.id); if (!request) return;
+    const message = JSON.parse(data);
+    if (message.type === 'req' && message.method === 'browser.tabs.list') {
+      ws.send(JSON.stringify({v:1,type:'res',id:message.id,ok:true,result:{tabs:[{tabId:73,title:'interop-synthetic',url:'https://fixture.invalid/'}]}})); return;
+    }
+    const request = pending.get(message.id); if (!request) return;
     pending.delete(message.id); clearTimeout(request.timer);
     message.ok ? request.resolve(message.result) : request.reject(Error(message.error?.code + ': ' + message.error?.message));
   });
@@ -92,10 +105,56 @@ if (kind === 'cmd') {
   writeFileSync(launcher, `#!/bin/sh\nif [ "$1" = attach ]; then exec ${quote(process.env.AGENT_BROWSER_TEST_WSL_NODE)} ${quote(windowsToWsl(attachFixture))} "$@"; fi\nexec ${quote(process.env.AGENT_BROWSER_TEST_WSL_EXE)} "$@"\n`);
   profile.kind = 'wsl'; profile.distribution = process.env.AGENT_BROWSER_TEST_WSL_DISTRO || 'Ubuntu';
   profile.executable = windowsToWsl(launcher); profile.directory = '/tmp';
+  const isolated = join(home,'linux'); mkdirSync(isolated);
+  profile.env.HOME = windowsToWsl(isolated);
+  for (const name of ['CONFIG','DATA','STATE','CACHE']) { const path=join(isolated,name.toLowerCase()); mkdirSync(path); profile.env['XDG_'+name+'_HOME']=windowsToWsl(path); }
+  profile.env.OPENCODE_DISABLE_MODELS_FETCH='true'; profile.env.OPENCODE_DISABLE_AUTOUPDATE='true';
 }
 profile.env.ATTACH_EXPECTED_DIRECTORY = profile.directory;
+async function interopCheck(mode) {
+  const script=windowsToWsl(fileURLToPath(new URL('./fixtures/interop-check.py',import.meta.url)));
+  const result=await new Promise((resolve,reject)=>{
+    const child=spawn(join(process.env.SystemRoot,'System32','wsl.exe'),['-d',profile.distribution,'--exec','/usr/bin/python3',script,mode,windowsToWsl(home)],{stdio:['ignore','pipe','pipe']});
+    let stdout='',stderr=''; const timer=setTimeout(()=>{child.kill();reject(Error('Isolated interop check timeout'));},45000);
+    child.stdout.on('data',chunk=>stdout+=chunk); child.stderr.on('data',chunk=>stderr+=chunk);
+    child.once('error',reject); child.once('exit',code=>{clearTimeout(timer);code===0?resolve(stdout):reject(Error('Isolated interop check failed: '+stderr.slice(-1200)));});
+  });
+  const stages=result.trim().split('\n').map(line=>JSON.parse(line)); outcome.stages??=[]; outcome.stages.push(...stages);
+}
 async function regression() {
-  if (scenario === 'healthy-fixture') {
+  if (scenario === 'interop-keeper') {
+    assert.equal(kind,'wsl'); await call('profile.save',{profile});
+    const began=Date.now();
+    const [ready,second]=await Promise.all([call('runtime.ensure',{profileId:profile.id}),call('runtime.ensure',{profileId:profile.id})]);
+    assert.equal(ready.state,'ready',ready.error); assert.equal(second.baseUrl,ready.baseUrl);
+    outcome.stages=[{stage:'opencode-http-and-mcp-connected',ok:true,elapsedMs:Date.now()-began}];
+    const own=()=>JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes[profile.id];
+    const first=own(); assert(first.wslKeeper.socket.startsWith('/run/WSL/'));
+    const command=`Get-CimInstance Win32_Process -Filter "Name='browser-bridge.exe'" | Where-Object { $_.ExecutablePath -eq '${exe.replaceAll("'","''")}' } | Select-Object ProcessId,ExecutablePath | ConvertTo-Json -Compress`;
+    const native=JSON.parse(execFileSync(join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-Command',command],{encoding:'utf8',windowsHide:true}));
+    assert(Array.isArray(native) && native.length>=2,'Owned resident Bridge and native MCP proxy must both be running');
+    outcome.stages.push({stage:'native-windows-bridge-processes',ok:true,count:native.length});
+    await interopCheck('protocol'); await interopCheck('faults');
+    ws.close(); bridge.kill(); await sleep(400); launch(); await connect();
+    const reused=await call('runtime.ensure',{profileId:profile.id}); assert.equal(reused.baseUrl,ready.baseUrl);
+    assert.equal(own().wslKeeper.launcher.pid,first.wslKeeper.launcher.pid);
+    outcome.checks.push('bridge-restart-reuses-same-owned-keeper');
+    const configPath=join(home,'runtime.json'), saved=readFileSync(configPath,'utf8'), legacy=JSON.parse(saved);
+    delete legacy.runtimes[profile.id].wslKeeper; let legacyStatus;
+    try { writeFileSync(configPath,JSON.stringify(legacy)); legacyStatus=await call('runtime.ensure',{profileId:profile.id}); }
+    finally { writeFileSync(configPath,saved); }
+    assert.equal(legacyStatus.state,'error','An existing runtime without the keeper requires explicit Stop');
+    outcome.checks.push('legacy-runtime-preserved-and-refresh-required');
+    await interopCheck('kill-keeper'); await sleep(300);
+    assert.equal((await call('runtime.status',{profileId:profile.id})).state,'error');
+    assert.equal((await call('runtime.ensure',{profileId:profile.id})).state,'error');
+    assert.equal(own().instance,first.instance,'Keeper death must not create another runtime');
+    outcome.checks.push('keeper-death-refuses-ready-and-retains-ownership');
+    await call('runtime.stop',{profileId:profile.id});
+    assert.equal((await call('runtime.status',{profileId:profile.id})).state,'stopped');
+    assert.equal(await fetch(ready.baseUrl+'/').then(()=>true,()=>false),false);
+    await call('profile.delete',{profileId:profile.id}); outcome.checks.push('server-and-keeper-cleanup');
+  } else if (['healthy-fixture','probe-count','mcp-failure','mcp-delay'].includes(scenario)) {
     const file = join(home,'healthy-fixture.cjs');
     writeFileSync(file, readFileSync(new URL('./fixtures/opencode-server.cjs',import.meta.url),'utf8') + '\nsetTimeout(()=>process.exit(0),90000).unref();\n');
     if(kind === 'wsl') {
@@ -107,9 +166,26 @@ async function regression() {
       profile.env.AB_FIXTURE_NODE = process.execPath; profile.env.AB_FIXTURE_FILE = file;
       writeFileSync(launcher, '@echo off\r\n"%AB_FIXTURE_NODE%" "%AB_FIXTURE_FILE%" %*\r\n'); profile.executable = launcher;
     }
+    if(scenario==='mcp-failure') profile.env.AGENT_BROWSER_FIXTURE_MCP_STATUS='failed';
+    if(scenario==='mcp-delay') profile.env.AGENT_BROWSER_FIXTURE_MCP_DELAY_MS='3000';
     await call('profile.save',{profile});
-    const ready = await call('runtime.ensure',{profileId:profile.id}); assert.equal(ready.state,'ready',ready.error);
-    const status = await call('runtime.status',{profileId:profile.id}); assert.equal(status.state,'ready');
+    const began=Date.now(); const ready = await call('runtime.ensure',{profileId:profile.id});
+    if(scenario==='mcp-failure') {
+      assert.equal(ready.state,'error'); assert(ready.error.includes('browser MCP'));
+      assert.equal((await call('runtime.status',{profileId:profile.id})).state,'stopped');
+      assert.equal(await fetch('http://127.0.0.1:'+profile.port+'/').then(()=>true,()=>false),false);
+      await call('profile.delete',{profileId:profile.id}); outcome.checks.push('http-ready-mcp-failed-startup-cleanup'); return;
+    }
+    assert.equal(ready.state,'ready',ready.error);
+    if(scenario==='mcp-delay') {assert(Date.now()-began>=3000); outcome.checks.push('waits-for-delayed-mcp-readiness');}
+    const count=()=>readFileSync(join(home,'logs','serve.log'),'utf8').split('\n').filter(line=>line.includes('WSL control probe')).length;
+    if(scenario==='probe-count') {
+      const before=count(); const began=Date.now();
+      for(let n=0;n<5;n++) assert.equal((await call('runtime.status',{profileId:profile.id})).state,'ready');
+      outcome.probes={variant:process.env.INTEROP_VARIANT||'modified',startup:before,statusCalls:5,controlLaunches:count()-before,elapsedMs:Date.now()-began};
+    } else {
+      const status = await call('runtime.status',{profileId:profile.id}); assert.equal(status.state,'ready');
+    }
     ws.close(); bridge.kill(); await sleep(400); launch(); await connect();
     assert.equal((await call('runtime.ensure',{profileId:profile.id})).baseUrl,ready.baseUrl);
     await call('runtime.stop',{profileId:profile.id});

@@ -27,14 +27,14 @@ const port = Number(process.argv[process.argv.indexOf('--port') + 1]);
 const authorization = 'Basic ' + Buffer.from(process.env.OPENCODE_SERVER_USERNAME + ':' + process.env.OPENCODE_SERVER_PASSWORD).toString('base64');
 record('started', { port, node: process.version });
 const server = http.createServer((request, response) => {
-  const path = request.url.startsWith('/doc') ? '/doc' : request.url.startsWith('/global/health') ? '/global/health' : request.url.startsWith('/config') ? '/config' : 'other';
+  const path = request.url.startsWith('/doc') ? '/doc' : request.url.startsWith('/global/health') ? '/global/health' : request.url.startsWith('/config') ? '/config' : request.url.startsWith('/mcp') ? '/mcp' : 'other';
   const authenticated = request.headers.authorization === authorization;
   record('request', { path, authenticated });
   if (!authenticated) { response.writeHead(401); response.end(); return; }
   response.setHeader('Content-Type', 'application/json');
   response.end(JSON.stringify(path === '/doc'
     ? { paths: { '/session': {}, '/provider': {}, '/event': {}, '/mcp': {} } }
-    : path === '/config' ? JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}') : { healthy: true, version: '1.18.29' }));
+    : path === '/mcp' ? { browser: { status: process.env.AGENT_BROWSER_FIXTURE_MCP_STATUS || (Date.now()-started < Number(process.env.AGENT_BROWSER_FIXTURE_MCP_DELAY_MS || 0) ? 'failed' : 'connected') } } : path === '/config' ? JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}') : { healthy: true, version: '1.18.29' }));
 });
 server.on('error', error => fail(error, 'listen-error'));
 setTimeout(() => server.listen(port, '127.0.0.1', () => record('listening', { port })), 500);
