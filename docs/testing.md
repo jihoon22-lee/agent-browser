@@ -323,3 +323,5 @@ node tests/e2e/request-target.windows.mjs
 `node tests/e2e/iframe.windows.mjs`는 실제 Windows Chrome + MSVC Bridge + 빌드 확장으로 MCP → background → 격리 content 경로를 검사한다. `tests/fixtures/iframe.mjs`의 합성 같은 출처·다른 출처·중첩 iframe만 이용하며 새 임시 프로필·HOME·포트를 사용한다. `AB_BRIDGE_EXE`와 `AB_EXTENSION_DIR`로 격리 패키지를 지정할 수 있고 활성 탭 스크립트도 같은 변수를 지원한다. 운영 설치·Chrome 프로필은 읽거나 변경하지 않는다.
 
 검사 항목: inline/키보드 후보, 좌표 조건과 스크롤, isTrusted 거절 유지, 체크박스 기본 활성화, 새 탭 편입, frameRef의 텍스트·URL 범위, 본문 교체 후 대기, 오래된 요소 및 문서 이동 후 프레임 참조 거부. 결과 JSON은 ignored `tests/agent/results/iframe.json`에 기록한다. 실제 모델 호출과 사내 서비스 접속은 포함하지 않는다.
+
+실제 패널 경계 추가 검증: Stop 후 늦은 attach 거부, 비동기 활성 탭 캡처 중 취소 뒤 미전송, HTTP 400 admission 거절 뒤 정확한 예약 해제를 포함해 요청 단위 전체 경로 12개를 검사한다. OpenCode fixture는 정상 응답 종료의 finish=stop을 실제 v1 필드로 제공한다.

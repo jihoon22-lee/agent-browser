@@ -12,7 +12,7 @@ const require=createRequire(import.meta.url);
 const {chromium}=require('@playwright/test');
 const {startOpenCodeFixture}=await import('../fixtures/opencode.mjs');
 const api=await startOpenCodeFixture({responseDelayMs:1500});
-const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..'), owned=[], report={branch:'feat/request-active-tab',checks:[]};
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..'), owned=[], report={branch:'feat/browser-compat-followup',checks:[]};
 const temp=await mkdtemp(join(tmpdir(),'agent-browser-iframe-full-'));
 let context;
 const fixtureServer=httpServer((req,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(req.url.startsWith('/case')?'<title>Task A</title><iframe src="/mail"></iframe>':req.url.startsWith('/mail')?'<title>Inbox</title><a href="/body" target="_blank">New tab</a>':'<title>Task B</title><p>Opened body</p>');});
@@ -103,6 +103,31 @@ try{
  await panel.waitForTimeout(100);await panel.evaluate(()=>document.querySelector('textarea').closest('form').requestSubmit());
  for(let i=0;;i++){const req=api.state.requests.findLast(r=>r.path.endsWith('/prompt_async'));if(req&&req.body.messageID!==report.prompt.messageID){assert(req.body.system.includes(String(popup.tabs[0].id)));report.popupPrompt={messageID:req.body.messageID,system:req.body.system};break;}if(i>100)throw Error('Popup request not submitted');await panel.waitForTimeout(100);}
  report.checks.push('Next actual panel request captures focused popup instead of previous request tab');
+ const stoppedLease=await admin.evaluate(async()=> (await chrome.storage.session.get('panelBrowserRequest')).panelBrowserRequest);
+ await panel.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='응답 중단').click());
+ await panel.waitForFunction(async()=>!(await chrome.storage.session.get('panelBrowserRequest')).panelBrowserRequest);
+ assert.equal((await call('browser_tabs',{action:'attach',requestId:stoppedLease.requestId})).ok,false);
+ report.checks.push('Actual Stop ends the exact reservation and rejects late attach');
+ const promptCount=()=>api.state.requests.filter(r=>r.path.endsWith('/prompt_async')).length;
+ const beforeCancelled=promptCount();
+ await panel.evaluate(async()=>{
+   const original=chrome.windows.getLastFocused,win=await original({populate:true,windowTypes:['normal','popup']});
+   chrome.windows.getLastFocused=()=>new Promise(resolve=>{window.releaseTarget=()=>{chrome.windows.getLastFocused=original;resolve(win);};});
+   const t=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'cancel before capture');t.dispatchEvent(new Event('input',{bubbles:true}));
+ });
+ await panel.waitForTimeout(100);await panel.evaluate(()=>document.querySelector('textarea').closest('form').requestSubmit());
+ await panel.waitForFunction(()=>typeof window.releaseTarget==='function');
+ await panel.evaluate(()=>[...document.querySelectorAll('button')].find(b=>b.textContent==='응답 중단').click());
+ await panel.evaluate(()=>window.releaseTarget());
+ await panel.waitForTimeout(200);
+ assert.equal(promptCount(),beforeCancelled);
+ report.checks.push('Stop during asynchronous target capture never submits the delayed prompt');
+ await panel.route('**/session/*/prompt_async*',route=>route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({message:'synthetic admission rejection'})}),{times:1});
+ await panel.evaluate(()=>{const t=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'rejected prompt');t.dispatchEvent(new Event('input',{bubbles:true}));});
+ await panel.waitForTimeout(100);await panel.evaluate(()=>document.querySelector('textarea').closest('form').requestSubmit());
+ await panel.getByRole('alert').filter({hasText:'HTTP 400'}).waitFor();
+ assert.equal(await admin.evaluate(async()=> (await chrome.storage.session.get('panelBrowserRequest')).panelBrowserRequest),undefined);
+ report.checks.push('Definite HTTP admission rejection releases its exact browser reservation');
  report.pass=true;console.log(JSON.stringify({pass:true,checks:report.checks},null,2));
 }catch(e){report.error=String(e);throw e;}finally{
  await context?.close();
