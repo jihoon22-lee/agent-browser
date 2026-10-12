@@ -173,7 +173,7 @@ Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 
 한계: 임의 사이트의 JS closure만 바뀌고 DOM의 의미 정보가 같은 경우를 완전히 검출할 수 없다. 폼 검사는 일반 input/textarea/select 및 open Shadow DOM, editable 영역을 대상으로 하며 저장 완료를 판정하지 않는다. 사이트 자체 JS 상태, 닫힌 Shadow DOM/canvas 편집기, 브라우저가 경고를 제공하지 않는 비표준 편집 데이터의 저장 여부는 보장하지 않는다. beforeunload 창을 취소하거나 script-close가 거부되면 탭을 보존하고 사용자 판단을 요구한다.
 
 
-독립 검토 보완: top document가 열거되지 않으면 history 이동은 dispatch 전에 거부하며 새 문서로 fallback하지 않는다. 닫기 사전 검사 후 frame/document 집합을 다시 확인하여 교체·추가·제거된 iframe이 있으면 닫지 않는다. 여러 frame의 폼 검사는 원자적 트랜잭션이 아니므로 검사 후의 동시 편집까지 저장 여부를 보장하지 않는다. 포인터 이벤트 처리 중 href/DOM identity가 바뀌면 실제 click 직전에 다시 검사하여 STALE_ELEMENT로 중단한다.
+독립 검토 보완: top document가 열거되지 않으면 history 이동은 dispatch 전에 거부하며 새 문서로 fallback하지 않는다. 닫기 사전 검사 후 frame/document 집합을 다시 확인하여 교체·추가·제거된 iframe이 있으면 닫지 않는다. 첫 사전 검사 뒤 모든 frame의 폼을 병렬로 한 번 재검사하고 문서 집합도 재확인한다. 앞서 검사한 frame이 뒤 frame의 검사 중 편집되면 닫기를 보내지 않는다. 재검사는 한 번으로 제한하며 dirty/검사 불가/문서 변경은 안전하게 중단한다. 여러 frame의 검사는 원자적 트랜잭션이 아니므로 각 frame의 최종 응답 이후에 발생한 편집까지 저장 여부를 보장하지 않는다. top 문서는 실제 window.close 직전에 기존 폼 검사를 다시 수행한다. 포인터 이벤트 처리 중 href/DOM identity가 바뀌면 실제 click 직전에 다시 검사하여 STALE_ELEMENT로 중단한다.
 
 
 ## 새 탭 시작·즐겨찾기 읽기 후속 계약

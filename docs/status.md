@@ -1,3 +1,15 @@
+# v0.1.5 후속 검토 — iframe 닫기 전 재검사 (2026-10-12)
+
+- 기준: origin/main 및 v0.1.5 `db397ea19f970fcfdf4959a32ac0643d22aeb071`. 독립 worktree `/home/jihoon/projects/agent-browser-close-recheck`, branch `fix/close-frame-edit-race`. PR #6 [discussion_r4246249886](https://github.com/jihoon22-lee/agent-browser/pull/6#discussion_r4246249886)의 08:58 UTC P1은 이 기준에도 남아 있었다. 기존 board-navigation 등 다른 worktree는 사용/수정하지 않았다. 이 변경은 로컬이며 push/PR/릴리스는 하지 않았다.
+- 수정 전 단위 회귀 실패(닫기 dispatch), 실제 Windows Chrome 154.0.8037.99에서도 재현: 뒤 iframe의 실제 close-check 응답을 시험 worker에서 잠시 지연하고 이미 검사한 앞 iframe의 input.value만 변경했다. 같은 문서이며 beforeunload도 없는데 `executed:yes`, `closed:true`로 편집값을 잃었다. 시험 hook은 테스트에만 있고 제품에는 없다.
+- 최소 수정: 모든 frame의 최초 검사 완료 후 폼을 병렬로 정확히 한 번 재검사한다. 뒤이어 frame/document 집합을 재확인하며 dirty/검사 실패/교체면 close dispatch 전에 중단한다. 닫기 재시도나 강제 종료, manifest 권한 변경은 없다. Chrome beforeunload/script-close 규칙과 request dedupe를 보존한다.
+- 수정 후 실제 Chrome B10: 입력값과 문서 ID를 보존하고 `ELEMENT_NOT_INTERACTABLE`, `executed:no`, close 미전송. 값을 원래대로 복구하면 동일한 깨끗한 다중 iframe 탭은 정상적으로 닫힌다. 생성한 시험 탭만 사용했다.
+- 검증: Extension **34 suites / 342 tests**, TypeScript 및 Vite 빌드, E2E 타입 검사 통과. 실제 Windows Chrome 게시판 **10/10** 통과: 반복 hard navigation/back, SPA 정렬/페이지, iframe 교체, 새 탭 닫기/복귀, dirty form, beforeunload 취소, 실제 BFCache persisted=true, pointer href 교체, 새 경합. 최종 B10도 별도 재확인했다. Windows Bridge는 이 기준 소스를 `cargo xwin build --offline --locked --release --target x86_64-pc-windows-msvc`로 빌드했다. Rust 코드는 변경하지 않았으며 Rust 전체 단위 검사는 이번 후속에서 재실행하지 않았다.
+- 증거: Windows 작업 디렉터리 `C:/Users/USER/Documents/Codex/2026-10-12/task-3/close-review/`의 `browser-red.log`, `browser-green.log`, `browser-final.log`, `unit-red.log`, `extension-all.log`, `build-green.log`, `e2e-types.log`. 자체 임시 HOME/포트/Chrome 프로필만 사용했고 harness 종료로 시험 프로세스를 정리했다.
+- 한계: 재검사는 bounded 검증이며 frame들 사이의 원자적 잠금은 아니다. 각 frame의 최종 응답 **이후**의 동시 편집까지 완전히 보장하지 않으며, 사이트 JS 상태/닫힌 Shadow DOM의 저장 여부도 판단하지 않는다. top은 실제 close 직전에 기존 검사를 다시 한다. 별도로 기존 checkbox가 포함된 pristine form fixture도 보수적으로 닫기가 거절됨을 관찰했다(value/defaultValue 비교); 이 P1 범위에서는 해당 기존 판정 규칙을 변경하지 않았다. 재검사 후 모든 유형의 페이지 편집이 안전하다고 주장하지 않는다.
+
+아래는 이전 통합 및 릴리스 준비 기록이다.
+
 # v0.1.5 단일 통합 릴리스 준비
 
 최종 추가 검증: 8ebcefd 전체 Linux·Windows CI #38223173674 성공. 실제 Chrome 요청 14개, 새 탭·창·즐겨찾기 fixture 및 실제 WSL iframe 재현 완료. 후속 리뷰의 삭제된 세션 404는 f1e5979에서 복구했다. Windows 설정 동시 편집 P1은 검증한 원본의 쓰기·교체 잠금과 덮어쓰기 없는 게시로 수정하고 네이티브 경계 7개를 통과했다. 히스토리 경계는 항목 1개 또는 전체 이력이 노출된 경우 즉시 미실행 오류를 반환하며 실제 Chrome B09가 216ms에 통과했다. 다른 출처 때문에 이력이 가려진 경우 기존 탐색을 허용하므로 여전히 30초 확인 대기가 가능하다. 확장 339개와 기존 게시판 8개도 통과했다. 자동 리뷰 사용량 한도로 최신 head 전체 외부 자동 리뷰는 미완료이며, 기존 리뷰와 최종 변경의 로컬 코드 검토·회귀를 근거로 진행한다.

@@ -385,3 +385,38 @@ it('creates blank tabs without any page snapshot and routes a chosen window',asy
  expect(create).toHaveBeenCalledWith({url:'about:blank',active:false,windowId:10});
  expect(w.sent).toHaveLength(0);
 });
+
+it('review: edits to an earlier child during later checks preserve the same document',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  w.frames.get(1)!.push({frameId:2,documentId:'earlier',url:'https://example.test/form'},
+    {frameId:3,documentId:'later',url:'https://example.test/form'});
+  let dirty=false, closes=0;
+  const checks:number[]=[];
+  w.api.sendToFrame=async(_id,frame,msg:any)=>{
+    if(msg.method==='close') {closes++;throw Error('must preserve the tab');}
+    checks.push(frame.frameId);
+    if(frame.frameId===3) dirty=true;
+    return {ok:frame.frameId!==2||!dirty};
+  };
+  await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+  expect(closes).toBe(0);
+  expect(checks.filter(id=>id===2)).toHaveLength(2);
+  expect(w.frames.get(1)![1]!.documentId).toBe('earlier');
+});
+
+it.each(['unavailable','replaced'] as const)('review: final close validation preserves a %s frame',async mode=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
+  w.frames.get(1)!.push({frameId:2,documentId:'child',url:'https://example.test/form'});
+  let childChecks=0,closes=0;
+  w.api.sendToFrame=async(_id,frame,msg:any)=>{
+    if(msg.method==='close') {closes++;throw Error('must preserve the tab');}
+    if(frame.frameId===2&&++childChecks===2) {
+      if(mode==='unavailable') return {ok:false};
+      w.frames.get(1)![1]!.documentId='replacement';
+    }
+    return {ok:true};
+  };
+  await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:mode==='unavailable'?'ELEMENT_NOT_INTERACTABLE':'FRAME_UNAVAILABLE'});
+  expect(childChecks).toBe(2);
+  expect(closes).toBe(0);
+});
