@@ -8,7 +8,7 @@ using Microsoft.Win32;
 
 namespace AgentBrowser.Installer {
     internal sealed class OpenCodeCandidate {
-        public string Kind, Distribution, User, Home, Executable, Version, Error;
+        public string Kind, Distribution, User, Home, Executable, Version;public string Error=null;
         public readonly List<string> Settings = new List<string>();
         public override string ToString() { return (Kind=="wsl" ? "WSL · "+Distribution+" · "+User : "Windows")+" · "+Executable; }
     }
@@ -51,7 +51,8 @@ namespace AgentBrowser.Installer {
             foreach(var executable in candidates) if(File.Exists(executable)) {
                 var candidate=new OpenCodeCandidate { Kind="windows",Home=home,Executable=Path.GetFullPath(executable) };
                 AddConfigFiles(candidate,Path.Combine(home,@".config\opencode"));
-                try { candidate.Version=Version(candidate); } catch(Exception error) { candidate.Error=error.Message; }
+                // Enumeration must not execute an unselected PATH candidate.
+                // ManagedProfile.Prepare probes only after the user's Confirm action.
                 result.OpenCode.Add(candidate);
             }
             if(!File.Exists(NativeIO.WslExe)) { result.Notices.Add("WSL을 찾지 못했습니다. Windows 설치만 진행하거나 WSL 설정을 나중에 추가할 수 있습니다."); return result; }
@@ -89,7 +90,7 @@ namespace AgentBrowser.Installer {
                 version=NativeIO.CmdVersion(candidate.Executable);
             } else version=NativeIO.RunChecked(candidate.Executable,new [] {"--version"});
             if(!System.Text.RegularExpressions.Regex.IsMatch(version,@"^1\.[0-9A-Za-z.+-]+$")) throw new IOException("OpenCode v1 실행파일인지 확인하지 못했습니다.");
-            return version;
+            candidate.Version=version;return version;
         }
         public static List<OpenCodeCandidate> FindWsl(string distribution,string user) {
             const string probe="set -eu\nprintf 'USER\\t%s\\n' \"$(id -un)\"\nprintf 'HOME\\t%s\\n' \"$HOME\"\np=$(command -v opencode || true); [ -z \"$p\" ] || printf 'EXE\\t%s\\n' \"$p\"\nfor p in \"$HOME/.opencode/bin/opencode\" \"$HOME/.local/bin/opencode\"; do [ ! -x \"$p\" ] || printf 'EXE\\t%s\\n' \"$p\"; done\nc=${XDG_CONFIG_HOME:-$HOME/.config}/opencode\nfor p in \"$c/opencode.json\" \"$c/opencode.jsonc\"; do [ ! -f \"$p\" ] || printf 'CFG\\t%s\\n' \"$p\"; done\n";
@@ -102,7 +103,6 @@ namespace AgentBrowser.Installer {
             foreach(var exe in executables) {
                 var item=new OpenCodeCandidate { Kind="wsl",Distribution=distribution,User=actualUser,Home=home,Executable=exe };
                 foreach(var path in configs) item.Settings.Add(@"\\wsl.localhost\"+distribution+path.Replace('/','\\'));
-                try { item.Version=Version(item); } catch(Exception error) { item.Error=error.Message; }
                 found.Add(item);
             }
             return found;

@@ -66,7 +66,15 @@ namespace AgentBrowser.Installer {
         static string Remove(string text,List<Token> t,Property p) {
             int start=t[p.Key].Start,end=t[p.Last].End;
             if(p.After>=0) end=t[p.After].End;else if(p.Before>=0) start=t[p.Before].Start;
-            return text.Remove(start,end-start);
+            // Comments do not belong to the owned JSON value. Preserve comments
+            // inside a removed browser/mcp span as comments in its parent object.
+            string removed=text.Substring(start,end-start);var comments=new StringBuilder();int previous=0;
+            foreach(var token in Tokens(removed).Concat(new[]{new Token{Start=removed.Length,End=removed.Length}})) {
+                string gap=removed.Substring(previous,token.Start-previous);
+                if(gap.Contains("//")||gap.Contains("/*"))comments.Append(gap).Append('\n');
+                previous=token.End;
+            }
+            return text.Substring(0,start)+(comments.Length==0?"":"\n"+comments+"\n")+text.Substring(end);
         }
         public static JsonEdit Edit(string text,object entry,string expected=null,bool remove=false,bool removeEmpty=false) {
             Minify(text);var t=Tokens(text);if(t.Count==0||t[0].Kind!="{") throw new FormatException("OpenCode settings must be an object.");

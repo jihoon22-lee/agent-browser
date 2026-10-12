@@ -102,7 +102,7 @@ internal static class GuiSmokeTests {
                     if(Find("SaveProfile").Current.IsEnabled)throw new Exception("REGRESSION: stale profile validation enabled Save after inputs changed");
                     Console.WriteLine("PASS actual GUI stale profile validation discarded");
                 }
-                Click("ValidateProfile");Wait(()=>Get("ProfilePreview").Contains("추가할 프로필"),"profile validation failed");Click("SaveProfile");Wait(()=>Get("ProfilePreview").Contains("프로필을 저장했습니다"),"profile save failed");Screenshot(Path.Combine(root,"managed-profile-saved.png"));
+                Click("ValidateProfile");Wait(()=>Find("SaveProfile").Current.IsEnabled&&Find("ValidateProfile").Current.IsEnabled&&Get("ProfilePreview").Contains("추가할 프로필"),"profile validation failed");Click("SaveProfile");Wait(()=>Get("ProfilePreview").Contains("프로필을 저장했습니다"),"profile save failed");Screenshot(Path.Combine(root,"managed-profile-saved.png"));
                 if(args.Contains("--async-profile")) {
                     Click("ValidateProfile");Wait(()=>Find("ValidateProfile").Current.IsEnabled,"duplicate profile validation did not finish");if(Find("SaveProfile").Current.IsEnabled||!Get("ProfilePreview").Contains("같은 ID"))throw new Exception("duplicate profile was accepted");
                     Set("ProfileId","cancelled-validation");Click("ValidateProfile");Click("CloseProfile");window=parent;Thread.Sleep(2000);if(process.HasExited||!Find("ManagedProfiles").Current.IsEnabled)throw new Exception("closing pending validation damaged main GUI");Console.WriteLine("PASS actual GUI duplicate profile rejected and pending validation close is safe");

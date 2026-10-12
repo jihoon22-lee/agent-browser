@@ -19,6 +19,9 @@ namespace AgentBrowser.Installer {
         }
         [StructLayout(LayoutKind.Sequential)] struct Created {public IntPtr Process,Thread;public uint Pid,Tid;}
         [StructLayout(LayoutKind.Sequential)] struct Accounting {public long User,Kernel,PeriodUser,PeriodKernel;public uint Faults,Total,Active,Terminated;}
+        [StructLayout(LayoutKind.Sequential)] struct Limits {public long ProcessTime,JobTime;public uint Flags;public UIntPtr MinimumWorkingSet,MaximumWorkingSet;public uint ActiveProcesses;public UIntPtr Affinity;public uint Priority,Scheduling;}
+        [StructLayout(LayoutKind.Sequential)] struct IoCounters {public ulong Reads,Writes,Other,ReadBytes,WriteBytes,OtherBytes;}
+        [StructLayout(LayoutKind.Sequential)] struct ExtendedLimits {public Limits Basic;public IoCounters Io;public UIntPtr ProcessMemory,JobMemory,PeakProcessMemory,PeakJobMemory;}
         [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr security,string name);
         [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcess(string application,StringBuilder command,IntPtr processSecurity,IntPtr threadSecurity,bool inherit,uint flags,string environment,string directory,ref Startup startup,out Created created);
         [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
@@ -28,6 +31,7 @@ namespace AgentBrowser.Installer {
         [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);
         [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateProcess(IntPtr process,uint code);
         [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,out Accounting data,int length,IntPtr returned);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref ExtendedLimits data,int length);
         [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle,uint milliseconds);
         [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
         IntPtr job,launcher;bool committed;
@@ -36,6 +40,7 @@ namespace AgentBrowser.Installer {
             job=CreateJobObject(IntPtr.Zero,null);if(job==IntPtr.Zero)throw Error("Cannot create owned Bridge startup job");
             Created child=new Created();bool assigned=false;
             try {
+                StartupLimit(true);
                 var values=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
                 foreach(System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())values[(string)entry.Key]=(string)entry.Value;
                 foreach(var entry in environment)values[entry.Key]=entry.Value;
@@ -58,7 +63,12 @@ namespace AgentBrowser.Installer {
         public void RequireChild(int pid) {
             using(var process=Process.GetProcessById(pid)) {bool inside;if(!IsProcessInJob(process.Handle,job,out inside))throw Error("Cannot verify startup child ownership");if(!inside||process.HasExited)throw new IOException("Bridge PID does not belong to this startup.");}
         }
-        public void Commit(){committed=true;}
+        void StartupLimit(bool killOnClose) {
+            // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE remains set until the owner marker is saved.
+            var limits=new ExtendedLimits{Basic=new Limits{Flags=killOnClose?0x2000u:0u}};
+            if(!SetInformationJobObject(job,9,ref limits,Marshal.SizeOf(typeof(ExtendedLimits))))throw Error("Cannot configure owned startup lifetime");
+        }
+        public void Commit(){StartupLimit(false);committed=true;}
         public void Dispose() {
             try {
                 if(job!=IntPtr.Zero&&!committed) {

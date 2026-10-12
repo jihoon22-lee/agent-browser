@@ -18,6 +18,7 @@ namespace AgentBrowser.Installer {
             manifest.Files=files.ToArray();manifest.Version=version;NativeIO.WriteText(Path.Combine(destination,"package-manifest.json"),NativeIO.Json.Serialize(manifest));
         }
         [STAThread] public static int Main(string[] args){
+            if(args.Length==3&&args[0]=="--startup-owner-fixture")return InstallerReviewTests.StartupOwnerFixture(args);
             if(args.Length==2&&args[0]=="--cleanup") {if(!args[1].Contains("\\windows-setup-ui\\isolated-native-"))throw new Exception("Not an owned test path");if(InstallerEngine.State(args[1])!=null)InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=args[1]}),CancellationToken.None,s=>{});return 0;}
             string root=args[2];Directory.CreateDirectory(root);string package1=Path.Combine(root,"package-1"),package2=Path.Combine(root,"package-2"),install=Path.Combine(root,"설치 & space"),startup=Path.Combine(root,"Synthetic Startup"),settings=Path.Combine(root,"설정.jsonc");
             try {

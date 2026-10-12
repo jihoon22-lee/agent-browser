@@ -14,7 +14,7 @@ namespace AgentBrowser.Installer {
                 Console.WriteLine("PASS native cmd probe with Unicode, spaces and ampersand");
                 var found=Discovery.Find();
                 Console.WriteLine("DISCOVERY "+NativeIO.Json.Serialize(new {Installs=found.Installs.Count,Distributions=found.Distributions,OpenCode=found.OpenCode.Select(c=>new {c.Kind,c.Distribution,c.User,c.Version,c.Error,SettingsCount=c.Settings.Count}).ToArray(),Notices=found.Notices}));
-                if(args.Length>0) Assert(found.OpenCode.Any(c=>c.Kind=="wsl"&&c.Distribution==args[0]&&c.Version=="1.18.29"&&c.Error==null),"expected installed WSL OpenCode not found");
+                if(args.Length>0) {var selected=found.OpenCode.FirstOrDefault(c=>c.Kind=="wsl"&&c.Distribution==args[0]);Assert(selected!=null&&selected.Version==null&&selected.Error==null,"expected unprobed WSL candidate not found");Assert(Discovery.Version(selected)=="1.18.29","explicit selected-candidate version probe failed");}
                 Console.WriteLine("PASS native discovery smoke test");
                 return 0;
             } catch(Exception error) { Console.Error.WriteLine(error);return 1; }

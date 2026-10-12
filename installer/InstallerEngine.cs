@@ -37,6 +37,7 @@ namespace AgentBrowser.Installer {
         void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
     }
 
+
     public sealed class OwnedFile { public string Path {get;set;} public string Sha256 {get;set;} }
     public sealed class PackageManifest { public string Product {get;set;} public string Platform {get;set;} public string Version {get;set;} public OwnedFile[] Files {get;set;} }
     public sealed class StartupRecord { public string Path {get;set;} public string Sha256 {get;set;} }
@@ -255,6 +256,7 @@ namespace AgentBrowser.Installer {
                         transaction.Write(new Change{Path=Path.Combine(root,StateName),Expected=p.StateHash,Bytes=NativeIO.Utf8.GetBytes(NativeIO.Json.Serialize(p.Next))});
                         if(p.Options.Start) {progress("Bridge 시작 확인 중");BridgeControl.Start(p.Next);newStarted=true;}
                     } else transaction.Write(new Change{Path=Path.Combine(p.Old.DataDir,".installer-bridge-process.json"),Expected=HashOrMissing(Path.Combine(p.Old.DataDir,".installer-bridge-process.json"))});
+                    cancel.ThrowIfCancellationRequested();
                     complete=true;string warning="";
                     try {transaction.Cleanup();}catch(Exception) {warning="\r\n경고: 설치 변경은 완료됐지만 임시 복구 파일 정리는 실패했습니다. 보존된 경로: "+transaction.Stage;progress(warning);}
                     try {using(var registry=Registry.CurrentUser.CreateSubKey(@"Software\AgentBrowser\Installations")) {if(p.Next==null) registry.DeleteSubKey(p.Old.InstallId,false);else using(var item=registry.CreateSubKey(p.Next.InstallId)) item.SetValue("Path",root);}} catch(Exception) {progress("설치는 완료됐지만 다음 실행의 설치 위치 자동 등록은 실패했습니다. 폴더를 직접 선택할 수 있습니다.");}
