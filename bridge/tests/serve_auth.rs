@@ -59,7 +59,7 @@ async fn mcp_role_cannot_call_extension_or_admin_methods() {
     let (_h, serve, cfg) = start_test_serve().await;
     let mut ws = ws_connect(serve.port, "/mcp-proxy", None).await.unwrap();
     hello(&mut ws, "mcp", &cfg.token, "mcp-1").await;
-    for m in ["operation.abort", "browser.use", "runtime.ensure", "config.set"] {
+    for m in ["operation.abort", "request.begin", "request.end", "browser.use", "runtime.ensure", "config.set"] {
         let res = call(&mut ws, m, serde_json::json!({})).await;
         assert_eq!(err_code(&res), Some(ErrorCode::ForbiddenMethod), "{m}");
     }

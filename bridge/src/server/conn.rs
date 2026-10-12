@@ -479,10 +479,19 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
         "heartbeat" => Envelope::ok(id, json!({ "at": now_ms() })),
         "status.get" => Envelope::ok(id, state.status()),
         "request.begin" | "request.end" => {
+            // Selection validation and reservation must be atomic with browser.use.
+            // Never wait on this socket: attach may need its tabs.get response.
+            // End remains independent so Stop can invalidate an in-flight attach.
+            let _selection = if method=="request.begin" {
+                match state.selection.try_lock() {
+                    Ok(lock)=>Some(lock),
+                    Err(_)=>return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Browser selection or attach is in progress.")),
+                }
+            } else { None };
             let Some(request)=params["requestId"].as_str().filter(|s|!s.is_empty()&&s.len()<=128) else {
                 return Envelope::err(id,RpcError::new(ErrorCode::InvalidParams,Retry::Never,"requestId is required"));
             };
-            let Some(client)=params["clientId"].as_str().filter(|s|Some(*s)==state.registry.selected_client().as_deref()) else {
+            let Some(client)=params["clientId"].as_str().filter(|s|!s.is_empty() && (method=="request.end" || Some(*s)==state.registry.selected_client().as_deref())) else {
                 return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
             };
             let result=if method=="request.begin" {
@@ -560,6 +569,25 @@ async fn management_request(state: &ServerState, method: &str, params: &Value) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn request_begin_cannot_cross_browser_selection_and_end_does_not_wait_for_attach() {
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), config::load_or_init(home.path()).unwrap());
+        let (a, _rx) = tokio::sync::mpsc::unbounded_channel();
+        state.registry.register("A", a);
+        let params=json!({"requestId":"request-a","clientId":"A","tabId":42});
+        let lock=state.selection.lock().await;
+        let reply=extension_request(&state,"busy".into(),"request.begin",&params).await;
+        assert!(matches!(reply,Envelope::Res{ok:false,..}),"{reply:?}");
+        drop(lock);
+        let reply=extension_request(&state,"begin".into(),"request.begin",&params).await;
+        assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
+        let _lock=state.selection.lock().await;
+        let reply=extension_request(&state,"stop".into(),"request.end",&params).await;
+        assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
+        assert!(state.ops.request_target(Some("request-a"),"A",None).is_err());
+    }
 
     #[tokio::test]
     async fn abort_notifies_the_operation_owner_after_selection_has_changed() {
