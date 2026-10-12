@@ -1,12 +1,13 @@
 [
   {
-    "description": "List tabs; attach returns operationId; new opens an operation tab; switch selects an operation tab; close only closes the current operation-created tab, never the attached original; release ends the operation. After close, switch to a surviving tabId and snapshot. User focus does not change the target.",
+    "description": "List tabs/windows, attach, new, switch, close or release. New needs no snapshot; omit operationId to start an operation. Omit url for about:blank. Close only operation-created tabs; switch back explicitly. Switch changes the operation target.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "action": {
           "enum": [
             "list",
+            "windows",
             "attach",
             "new",
             "switch",
@@ -16,20 +17,25 @@
           "type": "string"
         },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
-          "type": "string"
-        },
-        "tabId": {
-          "description": "For attach (omit for request default, or current tab without a request) and switch",
-          "type": "integer"
-        },
-        "url": {
-          "description": "For new: http(s) URL to open",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "requestId": {
-          "type": "string",
-          "description": "For attach: current panel requestId. Omit tabId for the captured active tab; explicit user target takes priority."
+          "description": "Current panel requestId for attach or standalone new",
+          "type": "string"
+        },
+        "tabId": {
+          "description": "Attach target (omit for request default), or switch target",
+          "type": "integer"
+        },
+        "url": {
+          "description": "For new: HTTP(S) URL or about:blank (default)",
+          "type": "string"
+        },
+        "windowId": {
+          "description": "Filter list or choose window for new; IDs from windows",
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "required": [
@@ -38,6 +44,39 @@
       "type": "object"
     },
     "name": "browser_tabs"
+  },
+  {
+    "description": "Read bookmarks only: list root folders or folderId children, or search titles/URLs. Requires the user's optional bookmarks permission in settings. Does not visit URLs or modify bookmarks.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "default": "list",
+          "enum": [
+            "list",
+            "search"
+          ],
+          "type": "string"
+        },
+        "folderId": {
+          "type": "string"
+        },
+        "limit": {
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "name": "browser_bookmarks"
   },
   {
     "description": "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach, navigation, tab switch or rerender before writing; identify targets by name/href, never old index. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
@@ -66,7 +105,7 @@
           "type": "integer"
         },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         }
       },
@@ -93,7 +132,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "url": {
@@ -112,12 +151,16 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "newTab": {
+          "description": "Open an HTTP(S) anchor in a new operation tab without clicking the source",
+          "type": "boolean"
+        },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "description": "Latest snapshot ref, e.g. s3f0e12",
           "type": "string"
         }
       },
@@ -135,11 +178,11 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "description": "Latest snapshot ref, e.g. s3f0e12",
           "type": "string"
         },
         "text": {
@@ -164,14 +207,14 @@
           "type": "boolean"
         },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "option": {
           "type": "string"
         },
         "ref": {
-          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "description": "Latest snapshot ref, e.g. s3f0e12",
           "type": "string"
         }
       },
@@ -201,11 +244,11 @@
           "type": "string"
         },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "description": "Latest snapshot ref, e.g. s3f0e12",
           "type": "string"
         }
       },
@@ -232,11 +275,11 @@
           "type": "string"
         },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "description": "Latest snapshot ref, e.g. s3f0e12",
           "type": "string"
         }
       },
@@ -253,8 +296,12 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "frameRef": {
+          "description": "Document-bound frameRef returned on a browser_snapshot frame.",
+          "type": "string"
+        },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "refGone": {
@@ -274,10 +321,6 @@
         },
         "urlIncludes": {
           "type": "string"
-        },
-        "frameRef": {
-          "type": "string",
-          "description": "Document-bound frameRef returned on a browser_snapshot frame."
         }
       },
       "required": [
@@ -312,11 +355,11 @@
           "type": "integer"
         },
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Element ref from the latest browser_snapshot, e.g. s3f0e12",
+          "description": "Latest snapshot ref, e.g. s3f0e12",
           "type": "string"
         }
       },
@@ -334,7 +377,7 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "operationId returned by browser_tabs action=attach",
+          "description": "From browser_tabs attach/new",
           "type": "string"
         }
       },

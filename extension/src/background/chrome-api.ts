@@ -1,3 +1,4 @@
+import type { BookmarkAccess } from './bookmarks';
 import type { KeyValueStore } from './bridge-connection';
 export const chromeStorage: KeyValueStore = {
     get: async (k) => (await chrome.storage.local.get(k))[k], set: (k, v) => chrome.storage.local.set({ [k]: v }),
@@ -8,6 +9,8 @@ export type FrameInfo = {
     url: string;
 };
 export interface ChromeApi {
+    bookmarks?: BookmarkAccess;
+    windowsList?(): Promise<chrome.windows.Window[]>;
     tabsQuery(query: chrome.tabs.QueryInfo): Promise<chrome.tabs.Tab[]>;
     tabsGet(id: number): Promise<chrome.tabs.Tab>;
     tabsCreate(params: chrome.tabs.CreateProperties): Promise<chrome.tabs.Tab>;
@@ -25,6 +28,12 @@ export interface ChromeApi {
     onCreatedNavigationTarget(fn: (details: chrome.webNavigation.WebNavigationSourceCallbackDetails) => void): () => void;
 }
 export const realChromeApi: ChromeApi = {
+    bookmarks: {
+        granted: () => chrome.permissions.contains({permissions:['bookmarks']}),
+        children: id => chrome.bookmarks.getChildren(id),
+        search: query => chrome.bookmarks.search(query),
+    },
+    windowsList: () => chrome.windows.getAll({windowTypes:['normal']}),
     tabsQuery: q => chrome.tabs.query(q), tabsGet: id => chrome.tabs.get(id), tabsCreate: p => chrome.tabs.create(p),
     tabsUpdate: async (id, p) => { const tab = await chrome.tabs.update(id, p); if (!tab)
         throw new Error('Tab was closed'); return tab; }, // Traverse exactly one history entry. tabs.goBack/goForward behave like

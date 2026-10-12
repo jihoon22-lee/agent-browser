@@ -1,0 +1,48 @@
+# 브라우저 작업 지원 범위와 권한
+
+## 이번 후속 보완의 원인
+
+이전 new 도구는 operationId와 일반 웹페이지의 snapshot을 모두 요구하고 HTTP(S) URL만 받았다. Chrome 새 탭 화면에서는 attach도 거부되어 시작 경로가 막혔다. 실제 MCP→Windows Bridge→확장→Chrome에서 작업 없는 new는 OPERATION_REQUIRED, attach 직후 new는 STALE_ELEMENT로 실패함을 확인했다.
+
+이제 `browser_tabs {action:"new",url:"https://…"}`로 기존 페이지를 읽지 않고 작업을 시작할 수 있다. operationId를 주면 해당 작업에 추가하며, URL을 생략하면 about:blank다. 빈 탭에서는 `browser_navigate {operationId,url:"https://…"}`로 이동한 다음 snapshot한다. 동시 standalone new는 BROWSER_BUSY로 차단한다. 새 작업 예약은 실패/취소 시 해제하고, 응답을 잃은 생성은 자동 재실행하지 않는다.
+
+## 기능별 점검
+
+| 표준 작업 | 현재 지원과 사용법 | 남은 제약/권한 |
+|---|---|---|
+| 새 탭 생성 | new 단독으로 작업 시작, 또는 operationId로 추가. snapshot 불필요. URL 생략은 빈 탭 | HTTP(S)/about:blank만 허용. 자동 재시도 없음 |
+| 탭 목록 | list, windowId 필터. tabId/windowId/index/openerTabId/status/pinned/active 메타데이터 | 선택된 연결 Chrome 프로필 범위 |
+| 창별 대상 선택 | windows로 일반 창 ID·focused·state 확인, list/new에 windowId 지정 | 창 생성·닫기·크기 변경 도구는 이번 범위 밖. 새 권한 없음 |
+| 기존 탭 연결 | attach에 tabId 지정. 제한 페이지도 메타데이터 연결 후 일반 URL로 이동 가능 | chrome:// 등의 DOM/스크린샷 접근은 허용하지 않음 |
+| 작업 탭 전환 | switch에 작업 소유 tabId | 전경 활성화 계약은 별도 통합 작업에서 처리. 이 브랜치가 중복 구현하지 않음 |
+| 탭 닫기 | close로 현재 작업에서 생성한 웹 탭만, 원래 attach 탭은 보호 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외. 강제 닫기 없음 |
+| 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
+| back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰 | 일반 페이지 쓰기는 snapshot 필요. 빈/제한 페이지에서 HTTP(S) goto는 DOM 읽기 없이 가능 |
+| snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM | 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
+| scroll | 문서 또는 ref 컨테이너의 up/down/top/bottom | 수직 기준. 좌표·수평·드래그는 미지원 |
+| wait | 텍스트 나타남/사라짐, refGone, URL 부분문자열과 timeout | 범용 network-idle/사이트 readiness 판정 없음. 조건을 단계별로 확인 |
+| input | text input/textarea/contenteditable 값 교체와 input/change 이벤트 | 파일 입력은 경로를 입력받지 않고 명확히 거부. 모든 프레임워크/IME를 보장하지 않음 |
+| select | option value/label, checkbox/radio 원하는 상태 | 다중 선택 배열 API는 없음. disabled option과 불가능한 radio 해제는 거부 |
+| keyboard | Enter/Tab/Escape/Space/Backspace/ArrowUp/ArrowDown의 DOM 이벤트 및 구현된 기본 동작 | trusted OS 입력·Ctrl/L·브라우저 단축키·키 조합·IME 미지원 |
+| screenshot | 작업 탭이 활성일 때 visible PNG | 탭 활성화는 통합 계약 확인, 전체 페이지/백그라운드 캡처와 OS UI 미지원 |
+| 즐겨찾기 | browser_bookmarks list, folderId로 폴더 진입, search query, offset/limit | 아래 선택 bookmarks 권한. 읽기만 제공. URL은 조회만 하고 방문하지 않음 |
+| 다운로드 | 일반 링크 클릭으로 Chrome 자체 다운로드가 발생할 수 있음 | 시작/목록/진행/완료/경로/파일 읽기 도구 없음. downloads 권한 추가하지 않음 |
+| 업로드 | 미지원임을 명시적으로 반환 | OS 파일 선택창·로컬 경로·파일 내용 읽기를 우회하지 않음. 별도 승인된 파일 선택 설계 필요 |
+
+새 탭은 background 생성이 기본이며 작업의 currentTab이 새 탭으로 바뀐다. 사용자 전경 탭을 임의로 바꾸지 않는다. 통합본의 활성 탭 정책과 병합할 때 이 의미를 맞춰야 한다.
+
+## 즐겨찾기 선택 권한의 정확한 영향
+
+기존 필수 permissions/host_permissions를 늘리지 않고 `optional_permissions:["bookmarks"]`만 추가했다. Chrome은 즐겨찾기에 읽기 전용 권한을 제공하지 않으므로 읽기에도 읽기·변경을 포함하는 bookmarks 권한이 필요하다. 실제 제품 MCP/API 구현은 getChildren/search만 사용하며 생성·수정·이동·삭제 도구는 없다.
+
+기본 상태는 미허용이다. 사용자가 확장 설정의 **즐겨찾기 접근 허용**을 직접 누르면 같은 클릭 처리 안에서 Chrome permissions.request를 호출한다. Chrome 동의 창은 사용자에게 맡긴다. 에이전트 도구·페이지 content script·Bridge는 권한을 요청하거나 승인할 수 없다. 설정의 **접근 해제**로 선택 권한을 철회할 수 있다. 권한 거부/철회는 FORBIDDEN_METHOD와 permission=bookmarks 안내를 반환한다.
+
+허용하면 연결된 Chrome 프로필의 즐겨찾기 제목/URL을 에이전트가 요청한 범위에서 읽을 수 있고, 반환 정보는 연결된 모델로 전달될 수 있다. 결과는 기본 25개/최대 50개 및 약 28,000자 레코드 예산으로 제한한다. 긴 URL은 일부를 실제 URL로 오인하지 않도록 생략하고 urlOmitted를 표시한다. bookmarklet 등의 URL은 데이터로만 반환하고 openable=false다. 검색/결과를 별도 로컬 캐시에 저장하지 않는다. 조회 사이 사용자 편집이 있으면 offset 페이지가 변할 수 있다.
+
+시험은 생산 manifest의 기본 권한 거부를 실제 Chrome에서 별도로 확인한다. 허용 상태의 API 시험은 `AB_TEST_BOOKMARKS=1`일 때 하네스가 **자체 임시 디렉터리에 확장을 복사하고 시험 manifest에서만 bookmarks를 필수 권한으로 선언**하여 빈 임시 프로필에 로드한다. 자체 생성한 합성 즐겨찾기만 사용한다. 이는 사용자의 선택 권한 동의 UI 승인을 검증했다는 뜻이 아니다. 동의/거부/해제 UI 흐름은 mock API 단위 테스트로 검증하며 실제 사용자 프롬프트를 자동 승인하지 않는다.
+
+공식 근거: [Chrome bookmarks API](https://developer.chrome.com/docs/extensions/reference/api/bookmarks), [optional permissions API](https://developer.chrome.com/docs/extensions/reference/api/permissions).
+
+## 통합 주의
+
+이 후속은 게시판 커밋 뒤 적용한다. tools/router/operation/conn, handlers/chrome-api, Options, 하네스에서 기존 활성 탭·iframe 작업과 겹칠 수 있다. active-tab 기본 대상 선정은 통합 담당의 계약을 유지하고, standalone new의 작업 예약/취소 정리 및 bookmarks의 **operation 없이 선택된 브라우저를 읽는 계약**을 함께 유지한다. 일반 페이지 클릭/입력의 snapshot 안전 장치는 제거하지 않았다. 운영 설치·사용자 Chrome 프로필 변경이나 별도 배포는 하지 않는다.

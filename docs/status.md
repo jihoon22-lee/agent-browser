@@ -26,6 +26,33 @@
 
 # 진행 상태
 
+## 새 탭·즐겨찾기·일반 탐색 보완 — 통합 인계 (2026-10-12)
+
+기준은 이 독립 브랜치의 `5e50f6300e4dee1bde824a7159a42205326dfbf2`다. 기존 게시판 두 커밋 뒤에 적용할 후속이다. 다른 GUI/iframe/WSL/활성 탭 작업이나 운영 설치는 변경하지 않았다. 별도 push/PR/릴리스는 하지 않고 GUI 이후 통합 담당에게 넘긴다.
+
+- 실제 MCP→Windows Bridge→Chrome에서 standalone new의 OPERATION_REQUIRED 및 attach 직후 new의 STALE_ELEMENT 실패 2개를 먼저 확인했다(`capabilities-red.log`). operation/snapshot 선행조건을 제거하고 작업 예약/취소 해제를 구현했다. 빈 탭과 명시적 웹 이동도 지원한다.
+- 창 목록/windows, windowId로 list 필터 및 new 대상 지정, ref 기반 일반 anchor의 newTab을 추가했다. 활성 탭 자동 추종/전경 정책은 이 브랜치에서 별도로 추가하지 않았다.
+- bookmarks 도구와 권한은 기준 코드에 없었다. manifest에는 **optional_permissions bookmarks만 추가**했다. Chrome에 읽기 전용 권한은 없지만 제품 API는 읽기만 노출한다. 사용자가 옵션 버튼에서 직접 동의/철회한다. 에이전트가 권한을 요청/승인하지 않으며 사용자 프로필 권한도 수정하지 않았다.
+- 일반 탐색·입력·스크롤·대기·키보드·다운로드·업로드의 상세 [지원표](./browser-capabilities.md)를 작성했다. 파일 업로드 미지원은 명확한 오류로 반환한다. about:blank DOM 주입이 Chrome에서 실제 거부됨을 확인하고 이를 우회하지 않는다. 빈 탭의 안전한 close는 현재 제외하며 웹으로 이동한 뒤에는 기존 close 계약을 적용한다.
+
+| 최종 검사 | 결과 |
+|---|---|
+| Extension 전체 단위 검사 | 32파일, 300/300 통과 |
+| Rust 전체 검사 | 135 통과, 기존 helper 1 ignored |
+| 생산 manifest 실제 Windows Chrome 전체 E2E | **63 통과**, 별도 bookmarks fixture 2 skipped. BFCache 실제 복원 포함 |
+| 별도 bookmarks 허용 fixture 실제 Chrome | **2/2 통과**. 폴더 탐색·검색·페이지·URL 비방문·변경 도구 거부 |
+| Extension 빌드, E2E 타입 검사 | 통과 |
+| Node fixture/runtime/interop/문서 helper | 14/14 통과 |
+| Clippy | 통과, 기존 7곳 경고 유지 |
+
+Windows Node 24.18.1 / Chrome 154.0.8037.99. 시험한 Windows exe SHA-256 `b3858dba9af6a32cd0d1bd7424009f1d8c93ec6598c7cf382b053cac3823f32e`. 로그는 `C:/Users/USER/Documents/Codex/2026-10-12/task-3/`의 `capabilities-windows-final.log`, `bookmarks-windows-final.log`, `capabilities-extension-final.log`, `capabilities-rust.log`, `capabilities-helpers.log`다.
+
+검증 한계: 실제 사용자 Chrome 동의 창의 승인/철회를 자동 시험하지 않았다. production manifest 기본 거부는 실제 Chrome, 동의/거부/해제 UI는 mock permissions, 허용 API는 별도 임시 프로필의 시험 manifest(필수 bookmarks)로 구분하여 검사했다. 기존 운영 설치/사용자 즐겨찾기는 읽거나 변경하지 않았다. 실제 모델 판단, 회사 정책 환경, 업로드/다운로드 관리 API와 OS UI는 미검증 또는 미지원이다.
+
+초기 빌드에서 test fixture의 Chrome 신규 타입 필드와 도구 목록 개수 기대값을 수정했고, 스키마 크기 제한 6,000자를 넘지 않도록 설명을 축약했다. 첫 허용 검색 시험은 합성 상위 폴더명까지 검색에 포함되어 4건이었고 fixture 명칭을 구분한 뒤 통과했다. 첫 전체 Chrome 검사의 S16/S17은 도구 개수와 제한 페이지 attach 계약의 이전 기대값이었다. 12개 도구 및 metadata attach 후 DOM 접근 거부/명시적 웹 이동을 검사하도록 갱신한 **최종 63 통과 실행**으로 대체했다.
+
+통합 충돌 주의: tools/router/operation/conn, handlers/chrome-api, Options, E2E harness가 겹칠 수 있다. standalone new의 operation 예약/RAII 해제, new 응답을 가로지르는 취소 정리, bookmark의 operation 없는 선택 브라우저 읽기, 제한 페이지 metadata attach와 DOM 차단을 함께 유지한다. 통합본은 별도 검증해야 한다.
+
 ## 게시판 탐색 안정성 — 별도 작업 로컬 검증 완료 (2026-10-12)
 
 - 시작 시 `git ls-remote origin HEAD refs/heads/main`으로 확인한 기준은 `fb2bcdbb4672a09395c7d7cc2ee75e6796e897c1`이다. 독립 브랜치 `fix/board-navigation-stability`, worktree `/home/jihoon/projects/agent-browser-board-navigation`에서 작업했다. 관련 `AGENTS.md`를 읽었으며 이 기준 저장소에 `.agents/skills`는 없었다.

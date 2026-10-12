@@ -405,3 +405,8 @@ node <isolated-test-directory>/tests/e2e/windows-run.ts -- board-navigation.spec
 AB_TEST_BFCACHE는 Playwright의 기본 `--disable-back-forward-cache` 인수를 제외한다. 일반 테스트 실행에서 B07은 명시적으로 skip되며 BFCache 검증으로 집계하지 않는다. opt-in 실행은 `pageshow.persisted === true`를 반드시 assert하고 notRestoredReasons를 기록한다. 설정은 시험 자식 프로필에만 적용하며 OS/운영 브라우저 정책 및 manifest 권한은 변경하지 않는다. B06의 신뢰된 클릭도 합성 시험 페이지에만 수행한다.
 
 회귀 단위 검사는 snapshot 문서 교체 중 재읽기/상한, 연결 노드 identity 변경, pagehide registry 만료, 오래된 complete 경합, close의 operation 경계·request dedupe·편집된 iframe/Shadow DOM 보호를 검사한다. 실행 결과는 status.md의 게시판 절에 기록한다.
+
+
+## 새 탭·창·즐겨찾기 기능 검사
+
+`browser-capabilities.spec.ts` C01–C07은 실제 MCP 호출로 standalone new, snapshot 없는 new, blank→HTTP goto, windows/windowId, anchor newTab, 생산 optional permission 기본 거부, about:blank 보안 경계를 검사한다. `bookmarks.spec.ts` F01–F02는 별도 `AB_TEST_BOOKMARKS=1` 시험 확장 복사본과 빈 프로필에서 만든 합성 즐겨찾기로 폴더/검색/페이지/비방문/변경 도구 거부를 검사한다. 일반 실행에서는 F01–F02를 skip하고 허용 상태 검증으로 집계하지 않는다. 시험 manifest 차이와 실제 사용자 동의 UI의 검증 한계는 [지원표](./browser-capabilities.md)에 기록한다.

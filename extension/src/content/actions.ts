@@ -73,6 +73,13 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
 
 async function executeAction(method: string, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
   switch (method) {
+    case "link": {
+      const el=resolveRef(String(p.ref));
+      if (!(el instanceof HTMLAnchorElement) || !el.hasAttribute('href') || el.hasAttribute('download'))
+        throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','newTab requires a normal anchor without download; JavaScript buttons are not guessed.');
+      if (!['http:','https:'].includes(new URL(el.href).protocol)) throw new ProtocolError('UNSUPPORTED_PAGE','Only HTTP(S) links can open in a new tab.');
+      return {url:el.href};
+    }
     case "close-check":
     case "close": {
       // Preserve edited controls even on sites that forgot beforeunload. A custom
@@ -122,6 +129,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       assertInteractable(el);
       const text = String(p.text ?? "");
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+        if (el instanceof HTMLInputElement && el.type === 'file') throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','File upload is not supported by browser_fill; it cannot read a local path or choose a file.');
         if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field is read-only.");
         el.focus();
         nativeSet(el, text);

@@ -57,7 +57,7 @@ it('lists tabs with attachability and returns flat tab metadata', async () => {
 it('rejects missing tabs and unsupported pages before injecting', async () => {
     const w = world(), h = createHandlers(w.api, memorySessionStore());
     await expect(h(request('browser.tabs.get', { tabId: 99 }))).rejects.toMatchObject({ code: 'TAB_NOT_FOUND' });
-    await expect(h(request('browser.tabs.get', { tabId: 3 }))).rejects.toMatchObject({ code: 'UNSUPPORTED_PAGE' });
+    expect(await h(request('browser.tabs.get', { tabId: 3 }))).toMatchObject({tabId:3,attachable:false});
     w.tabs.get(1)!.url = 'https://chromewebstore.google.com/detail/x';
     await expect(h(request('browser.snapshot'))).rejects.toMatchObject({ code: 'UNSUPPORTED_PAGE' });
     expect(w.sent).toHaveLength(0);
@@ -377,4 +377,11 @@ it('review: replacing a checked child document prevents close dispatch',async()=
   };
   await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({code:'FRAME_UNAVAILABLE'});
   expect(methods).not.toContain('close');
+});
+
+it('creates blank tabs without any page snapshot and routes a chosen window',async()=>{
+ const w=world(),h=createHandlers(w.api,memorySessionStore()),create=vi.fn(w.api.tabsCreate);w.api.tabsCreate=create;
+ expect(await h(request('browser.tabs.create',{windowId:10}))).toMatchObject({tabId:9,url:'about:blank'});
+ expect(create).toHaveBeenCalledWith({url:'about:blank',active:false,windowId:10});
+ expect(w.sent).toHaveLength(0);
 });

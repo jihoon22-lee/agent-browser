@@ -394,7 +394,7 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
                 }
                 let name = params["name"].as_str().unwrap_or_default().to_string();
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                let attach = name == "browser_tabs" && arguments["action"] == "attach";
+                let attach = name == "browser_tabs" && (arguments["action"] == "attach" || (arguments["action"] == "new" && arguments.get("operationId").is_none()));
                 let (abort, registration) = AbortHandle::new_pair();
                 running.insert(id.clone(), abort);
                 pending.push(async move {

@@ -3,20 +3,27 @@ use serde_json::{json, Value};
 
 pub struct ToolDef { pub name: &'static str, pub description: &'static str, pub schema: Value }
 
-fn op() -> Value { json!({"type":"string","description":"operationId returned by browser_tabs action=attach"}) }
-fn r#ref() -> Value { json!({"type":"string","description":"Element ref from the latest browser_snapshot, e.g. s3f0e12"}) }
+fn op() -> Value { json!({"type":"string","description":"From browser_tabs attach/new"}) }
+fn r#ref() -> Value { json!({"type":"string","description":"Latest snapshot ref, e.g. s3f0e12"}) }
 
 pub fn all() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
-            "List tabs; attach returns operationId; new opens an operation tab; switch selects an operation tab; close only closes the current operation-created tab, never the attached original; release ends the operation. After close, switch to a surviving tabId and snapshot. User focus does not change the target.",
+            "List tabs/windows, attach, new, switch, close or release. New needs no snapshot; omit operationId to start an operation. Omit url for about:blank. Close only operation-created tabs; switch back explicitly. Switch changes the operation target.",
             schema: json!({"type":"object","properties":{
-                "action":{"type":"string","enum":["list","attach","new","switch","close","release"]},
-                "tabId":{"type":"integer","description":"For attach (omit for request default, or current tab without a request) and switch"},
-                "requestId":{"type":"string","description":"For attach: current panel requestId. Omit tabId for the captured active tab; explicit user target takes priority."},
-                "url":{"type":"string","description":"For new: http(s) URL to open"},
+                "action":{"type":"string","enum":["list","windows","attach","new","switch","close","release"]},
+                "tabId":{"type":"integer","description":"Attach target (omit for request default), or switch target"},
+                "requestId":{"type":"string","description":"Current panel requestId for attach or standalone new"},
+                "url":{"type":"string","description":"For new: HTTP(S) URL or about:blank (default)"},
+                "windowId":{"type":"integer","minimum":1,"description":"Filter list or choose window for new; IDs from windows"},
                 "operationId": op()},
                 "required":["action"],"additionalProperties":false}) },
+        ToolDef { name: "browser_bookmarks", description: "Read bookmarks only: list root folders or folderId children, or search titles/URLs. Requires the user's optional bookmarks permission in settings. Does not visit URLs or modify bookmarks.",
+            schema: json!({"type":"object","properties":{
+                "action":{"type":"string","enum":["list","search"],"default":"list"},
+                "folderId":{"type":"string"},"query":{"type":"string"},
+                "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},
+                "additionalProperties":false}) },
         ToolDef { name: "browser_snapshot", description:
             "Read DOM text, elements and tables with refs. Take a fresh snapshot after attach, navigation, tab switch or rerender before writing; identify targets by name/href, never old index. Continue with offset (text), elementOffset or frameOffset from returned cursors.",
             schema: json!({"type":"object","properties":{"operationId":op(),
@@ -30,7 +37,7 @@ pub fn all() -> Vec<ToolDef> {
                 "action":{"type":"string","enum":["goto","back","forward","reload"],"default":"goto"},
                 "url":{"type":"string"}},"required":["operationId"],"additionalProperties":false}) },
         ToolDef { name: "browser_click", description: "Click an element by ref. Returns whether the URL or page content changed.",
-            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref()},"required":["operationId","ref"],"additionalProperties":false}) },
+            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean","description":"Open an HTTP(S) anchor in a new operation tab without clicking the source"}},"required":["operationId","ref"],"additionalProperties":false}) },
         ToolDef { name: "browser_fill", description: "Replace the value of a text input or textarea by ref. Returns the value read back from the page.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"text":{"type":"string"}},"required":["operationId","ref","text"],"additionalProperties":false}) },
         ToolDef { name: "browser_select", description: "Choose an option in a select (by option value or visible label) or set a checkbox/radio checked state, by ref.",

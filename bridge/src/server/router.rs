@@ -119,7 +119,7 @@ fn check_url(url: &str) -> Result<(), RpcError> {
 fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
     match name {
         "browser_tabs" => match args["action"].as_str() {
-            Some("new") => check_url(args["url"].as_str().ok_or_else(|| invalid("action=new requires `url`"))?),
+            Some("new") if args["url"].as_str().is_some_and(|url| url != "about:blank") => check_url(args["url"].as_str().unwrap()),
             Some("switch") if args["tabId"].as_i64().is_none() => Err(invalid("action=switch requires `tabId`")),
             _ => Ok(()),
         },
@@ -188,7 +188,15 @@ async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
     if let Err(e) = validate(&def.schema, args).and_then(|_| validate_action(name, args)) {
         return ToolOutcome::rejected(name, operation_id, e);
     }
-    if name == "browser_tabs" {
+    if name == "browser_bookmarks" {
+        // This read belongs to the selected browser profile, not a page operation.
+        let properties = def.schema["properties"].as_object().unwrap();
+        let params = args.as_object().unwrap().iter().filter(|(key,_)|properties.contains_key(*key)).map(|(k,v)|(k.clone(),v.clone())).collect();
+        match state.registry.send_command("browser.bookmarks",Value::Object(params),CommandClass::Read,DEFAULT_TIMEOUT).await {
+            Ok(data) => ToolOutcome::success(name,None,true,Executed::No,Value::Null,data),
+            Err(error) => ToolOutcome::failure(name,None,true,error),
+        }
+    } else if name == "browser_tabs" {
         run_tabs(state, args).await
     } else {
         run_operation_tool(state, name, args, &def.schema).await
@@ -293,7 +301,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         ToolOutcome::failure(NAME, op, delivered, e)
     };
     match action {
-        "list" => match read("browser.tabs.list", json!({})).await {
+        "list" | "windows" => match read(if action == "windows" {"browser.windows.list"} else {"browser.tabs.list"}, json!({"windowId":args["windowId"]})).await {
             Ok(data) => ToolOutcome::success(NAME, None, true, Executed::No, Value::Null, data),
             Err(e) => delivered_failure(None, e),
         },
@@ -331,11 +339,25 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             }
         }
         "new" => {
-            let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
-            let queued = state.ops.with_checked(op_id, true, |op| {
-                let params = json!({ "url": args["url"], "operationId": op.id, "generation": op.generation });
+            // A dropped/cancelled creation must not strand a pending operation.
+            struct Reservation<'a> { state: &'a ServerState, id: Option<String> }
+            impl Drop for Reservation<'_> { fn drop(&mut self) { if let Some(id) = &self.id { let _ = self.state.ops.release(id); } } }
+            let selection = state.selection.lock().await;
+            let mut reservation = Reservation {state, id:None};
+            let new_id;
+            let op_id = if let Some(id) = args["operationId"].as_str() { id } else {
+                let client = state.registry.selected_client().unwrap_or_default();
+                match state.ops.reserve_new(&client) {
+                    Ok(op) => { new_id = op.id; reservation.id=Some(new_id.clone()); &new_id }
+                    Err(error) => return ToolOutcome::rejected(NAME,None,error),
+                }
+            };
+            let queued = state.ops.with_checked(op_id, false, |op| {
+                let params = json!({ "url": args["url"].as_str().unwrap_or("about:blank"), "operationId": op.id, "generation": op.generation,
+                    "windowId":args["windowId"],"sourceTabId":if op.current_tab_closed {None} else {Some(op.current_tab)} });
                 state.registry.queue_command_for(&op.client_id, "browser.tabs.create", params, CommandClass::Write)
             });
+            drop(selection);
             let queued = match queued {
                 Ok(queued) => queued,
                 Err(error) => return ToolOutcome::rejected(NAME, Some(op_id), error),
@@ -350,7 +372,10 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             });
             let joined = joined.and_then(|tab_id| state.ops.add_and_switch_tab(op_id, tab_id));
             match joined {
-                Ok(()) => ToolOutcome::success(NAME, Some(op_id), true, Executed::Yes, Value::Null, json!({ "tab": tab })),
+                Ok(()) => {
+                    reservation.id=None;
+                    ToolOutcome::success(NAME, Some(op_id), true, Executed::Yes, Value::Null, json!({ "tab": tab, "nextStep":"Use browser_snapshot before page actions; for about:blank first browser_navigate to an HTTP(S) URL." }))
+                },
                 Err(mut e) => {
                     // The tab exists even though the operation could not take it.
                     e.details = json!({ "executed": true, "tab": tab });
@@ -430,6 +455,19 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn cancelled_standalone_new_drops_its_reservation() {
+        let home=tempfile::tempdir().unwrap();
+        let state=ServerState::new(home.path().into(),crate::config::load_or_init(home.path()).unwrap());
+        let (tx,_rx)=tokio::sync::mpsc::unbounded_channel();state.registry.register("fixture",tx);
+        let mut pending=Box::pin(call_tool(&state,"browser_tabs",json!({"action":"new"})));
+        assert!(futures_util::poll!(pending.as_mut()).is_pending());
+        assert!(state.ops.current().unwrap().tabs.is_empty());
+        drop(pending);
+        assert!(state.ops.current().is_none());
+        assert!(state.ops.attach(7,"fixture").is_ok());
+    }
 
     #[tokio::test]
     async fn review_attach_creation_and_outcome_complete_in_the_same_poll() {

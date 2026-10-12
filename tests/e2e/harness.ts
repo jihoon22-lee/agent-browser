@@ -2,7 +2,7 @@ import { chromium, expect, type BrowserContext, type Page } from "@playwright/te
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { createServer, connect } from "node:net";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, cp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { once, EventEmitter } from "node:events";
 import WebSocket, { WebSocketServer } from "ws";
@@ -172,6 +172,15 @@ export class World {
       await this.startBridge();
       this.bridge.token = JSON.parse(await readFile(join(this.bridge.home, "config.json"), "utf8")).token;
       this.relay = await new ExtensionRelay(this.bridge.port).start();
+      if (process.env.AB_TEST_BOOKMARKS === '1') {
+        const fixtureExtension=join(this.dir,'fixture-extension');
+        await cp(this.config.extensionDir,fixtureExtension,{recursive:true});
+        const manifest=JSON.parse(await readFile(join(fixtureExtension,'manifest.json'),'utf8'));
+        manifest.permissions=[...manifest.permissions,'bookmarks'];
+        manifest.optional_permissions=(manifest.optional_permissions ?? []).filter((p:string)=>p!=='bookmarks');
+        await writeFile(join(fixtureExtension,'manifest.json'),JSON.stringify(manifest));
+        this.config.extensionDir=fixtureExtension;
+      }
       const customBrowser = !!this.config.browserExecutable;
       this.context = await chromium.launchPersistentContext(join(this.dir, "profile"), {
         ...(customBrowser ? { executablePath: this.config.browserExecutable } : { channel: "chromium" }),

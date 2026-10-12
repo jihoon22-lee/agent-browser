@@ -22,7 +22,7 @@ export async function getTab(api: ChromeApi, id?: number): Promise<chrome.tabs.T
         throw new ProtocolError('TAB_NOT_FOUND', 'The requested tab is no longer available.');
     }
 }
-export const describeTab = (t: chrome.tabs.Tab) => ({ tabId: t.id, windowId: t.windowId, url: t.url ?? '', title: t.title ?? '', active: t.active, attachable: isWeb(t.url) });
+export const describeTab = (t: chrome.tabs.Tab) => ({ tabId: t.id, windowId: t.windowId, url: t.url ?? '', title: t.title ?? '', active: t.active, index: t.index, openerTabId: t.openerTabId, status: t.status, pinned: t.pinned, attachable: isWeb(t.url) });
 export function aborted(signal: AbortSignal) { if (signal.aborted)
     throw signal.reason; }
 export function interruptible<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -42,7 +42,7 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
     const completed = new Promise<chrome.tabs.Tab>(r => { resolve = r; });
     let observed = false;
     const before = expectNavigation ? await getTab(api, id) : undefined;
-    const beforeDocument = expectNavigation ? (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId : undefined;
+    const beforeDocument = expectNavigation && isWeb(before?.url) ? (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId : undefined;
     const off = api.onTabUpdated((tid, change, tab) => {
         if (tid !== id) return;
         if (change.status === 'loading' || change.url) observed = true;

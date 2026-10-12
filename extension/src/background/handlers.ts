@@ -4,6 +4,7 @@ import type { ChromeApi, FrameInfo } from './chrome-api';
 import { frameRouter, type FrameError } from './frames';
 import { RefTable } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
+import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
 const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
@@ -85,27 +86,30 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
     async function dispatch(run: Running, snapshotAttempt = 0): Promise<unknown> {
         const { req, controller } = run, p = req.params, signal = controller.signal;
         await check(req, signal);
+        if (req.method === 'browser.bookmarks') return readBookmarks(api.bookmarks,p);
         if (req.method === 'browser.tabs.list')
-            return { tabs: (await api.tabsQuery({})).map(describeTab) };
+            return { tabs: (await api.tabsQuery(typeof p.windowId === 'number' ? {windowId:p.windowId} : {})).map(describeTab) };
+        if (req.method === 'browser.windows.list')
+            return {windows:(await api.windowsList?.() ?? []).map(w => ({windowId:w.id,focused:w.focused,state:w.state,type:w.type}))};
         if (req.method === 'browser.tabs.get') {
             const tab = await getTab(api, typeof p.tabId === 'number' ? p.tabId : undefined);
-            requireWeb(tab.url);
             return describeTab(tab);
         }
         if (req.method === 'browser.tabs.create') {
-            const url = String(p.url ?? '');
-            requireWeb(url);
-            await requireSnapshot(p);
+            const url = String(p.url ?? 'about:blank');
+            if (url !== 'about:blank') requireWeb(url);
+            const windowId = typeof p.windowId === 'number' ? p.windowId : typeof p.sourceTabId === 'number' ? (await getTab(api,p.sourceTabId)).windowId : undefined;
             await check(req, signal);
             run.started = true;
-            const created = await api.tabsCreate({ url, active: false });
+            const created = await api.tabsCreate({ url, active: false, ...(windowId === undefined ? {} : {windowId}) });
             if (!created.id)
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'Chrome did not return a new tab ID.', 'unsafe');
             const tab = await loadedTab(api, created.id, async () => { }, signal);
             return describeTab(tab);
         }
         const tab = await getTab(api, Number(p.tabId));
-        requireWeb(tab.url);
+        const goto = req.method === 'browser.navigate' && (p.action ?? 'goto') === 'goto';
+        if (!goto) requireWeb(tab.url);
         await check(req, signal);
         const tabId = tab.id!;
         if (req.method === 'browser.tabs.close') {
@@ -181,13 +185,13 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             const action = p.action ?? 'goto';
             if (action === 'goto')
                 requireWeb(String(p.url ?? ''));
-            const document = (await frames.list(tabId)).find(f=>f.frameId===0);
-            if (!document) throw new ProtocolError('FRAME_UNAVAILABLE', 'The top document is unavailable. Wait and take a fresh snapshot before navigating.');
+            const document = isWeb(tab.url) ? (await frames.list(tabId)).find(f=>f.frameId===0) : undefined;
+            if (!document && (!goto || isWeb(tab.url))) throw new ProtocolError('FRAME_UNAVAILABLE', 'The top document is unavailable. Wait and take a fresh snapshot before navigating.');
             const actions: Record<string, () => Promise<unknown>> = { goto: () => api.tabsUpdate(tabId, { url: String(p.url) }), back: () => api.tabsGoBack(tabId, document?.documentId), forward: () => api.tabsGoForward(tabId, document?.documentId), reload: () => api.tabsReload(tabId) };
             const act = actions[String(action)];
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
-            await requireSnapshot(p,tabId,document?.documentId);
+            if (isWeb(tab.url)) await requireSnapshot(p,tabId,document?.documentId);
             const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true);
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
@@ -235,6 +239,16 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string' && !frameRef && !ref)
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
+            if (req.method === 'browser.click' && p.newTab === true) {
+                const link = await interruptible(api.sendToFrame(tabId,frame,{kind:'cmd',method:'link',params:{...p,requestId:req.id}}),signal);
+                if (!link?.ok) { const e=link?.error; throw new ProtocolError(e?.code ?? 'ELEMENT_NOT_INTERACTABLE',e?.message ?? 'The ref is not an HTTP(S) anchor.'); }
+                const url=String(link.result?.url ?? ''); requireWeb(url);
+                await check(req,signal); run.started=true;
+                const created=await api.tabsCreate({url,active:false,windowId:tab.windowId,openerTabId:tabId});
+                if (!created.id) throw new ProtocolError('EXECUTION_UNKNOWN','New tab ID was not returned. Inspect tabs before retrying.','unsafe');
+                const loaded=await loadedTab(api,created.id,async()=>{},signal);
+                return {executed:true,openedTabs:[{...describeTab(loaded),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
+            }
             return send(tabId, frame, req.method.slice('browser.'.length), p, run);
         }
         throw new ProtocolError('FORBIDDEN_METHOD', `Unknown browser method ${req.method}.`);

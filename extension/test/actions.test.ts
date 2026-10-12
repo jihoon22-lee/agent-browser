@@ -161,3 +161,9 @@ it('review: pointer handlers cannot retarget a previously validated link before 
   await expect(runAction('click',{ref})).rejects.toMatchObject({code:'STALE_ELEMENT'});
   expect(clicked).not.toHaveBeenCalled();
 });
+
+it('file upload is explicitly unsupported and never treats a local path as a text value',async()=>{
+ document.body.innerHTML='<input type="file" aria-label="Upload">';
+ await expect(runAction('fill',{ref:refOf('Upload'),text:'/synthetic/file.txt'})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+ expect(document.querySelector('input')!.files).toHaveLength(0);
+});

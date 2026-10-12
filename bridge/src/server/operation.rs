@@ -84,6 +84,14 @@ impl OperationGate {
     }
 
     pub fn attach_request(&self, tab_id:i64, client_id:&str, request_id:Option<&str>)->Result<Operation,RpcError> {
+        self.begin(Some(tab_id),client_id,request_id)
+    }
+
+    pub fn reserve_new(&self,client_id:&str,request_id:Option<&str>)->Result<Operation,RpcError> {
+        self.begin(None,client_id,request_id)
+    }
+
+    fn begin(&self,tab_id:Option<i64>,client_id:&str,request_id:Option<&str>)->Result<Operation,RpcError> {
         let mut g = self.inner.lock().unwrap();
         Self::request_matches(&g,request_id,client_id)?;
         if let Some(op) = g.current.as_ref().filter(|o| o.state == OpState::Active) {
@@ -92,16 +100,16 @@ impl OperationGate {
                 .with_details(json!({ "operationId": op.id })));
         }
         g.generation += 1;
-        g.owned_tabs.clear(); g.owned_tabs.insert(tab_id); g.closed_tabs.clear();
+        g.owned_tabs.clear(); g.owned_tabs.extend(tab_id); g.closed_tabs.clear();
         let op = Operation {
             id: format!("op-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
             generation: g.generation,
-            tabs: vec![tab_id],
+            tabs: tab_id.into_iter().collect(),
             opened_tabs: vec![],
-            current_tab: tab_id,
+            current_tab: tab_id.unwrap_or(0),
             client_id: client_id.to_string(),
             state: OpState::Active,
-            current_tab_closed: false,
+            current_tab_closed: tab_id.is_none(),
         };
         g.current = Some(op.clone());
         Ok(op)
@@ -276,6 +284,18 @@ impl OperationGate {
 mod tests {
     use super::*;
     use crate::rpc::ErrorCode;
+
+    #[test]
+    fn standalone_new_respects_request_owner_without_requiring_a_default_tab() {
+        let g=OperationGate::default();g.begin_request("new-request","browser",None).unwrap();
+        assert!(g.reserve_new("browser",None).is_err());
+        assert!(g.reserve_new("other",Some("new-request")).is_err());
+        let op=g.reserve_new("browser",Some("new-request")).unwrap();
+        assert!(op.tabs.is_empty());g.add_and_switch_tab(&op.id,42).unwrap();
+        assert!(g.begin_request("next","browser",Some(7)).is_err());
+        g.end_request("new-request","browser").unwrap();
+        assert!(g.reserve_new("browser",Some("new-request")).is_err());
+    }
 
     #[test]
     fn request_target_is_captured_and_explicit_target_wins() {

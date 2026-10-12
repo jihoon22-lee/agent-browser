@@ -174,3 +174,12 @@ Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 
 
 
 독립 검토 보완: top document가 열거되지 않으면 history 이동은 dispatch 전에 거부하며 새 문서로 fallback하지 않는다. 닫기 사전 검사 후 frame/document 집합을 다시 확인하여 교체·추가·제거된 iframe이 있으면 닫지 않는다. 여러 frame의 폼 검사는 원자적 트랜잭션이 아니므로 검사 후의 동시 편집까지 저장 여부를 보장하지 않는다. 포인터 이벤트 처리 중 href/DOM identity가 바뀌면 실제 click 직전에 다시 검사하여 STALE_ELEMENT로 중단한다.
+
+
+## 새 탭 시작·즐겨찾기 읽기 후속 계약
+
+`browser_tabs new`는 operationId를 생략하면 선택된 Chrome에 새 작업을 예약한 뒤 탭을 생성한다. 기존 operationId가 있으면 그 작업에 추가하며 페이지 snapshot은 요구하지 않는다. URL 생략은 about:blank, 선택 windowId는 new/list에 사용한다. 예약은 drop/실패/취소 시 해당 ID만 해제하며 다른 활성 작업이 있으면 생성 전에 BROWSER_BUSY다. 늦은 새 작업 응답 취소도 기존 attach와 같은 연결별 정리 경로를 사용한다.
+
+제한 페이지 attach는 메타데이터 대상 선정만 허용한다. attachable=false는 DOM 접근 불가 의미로 유지하고 snapshot/read는 계속 UNSUPPORTED_PAGE다. 명시적 HTTP(S) goto만 DOM snapshot 없이 허용한다. `browser_click newTab=true`는 ref의 일반 HTTP(S) anchor href를 읽어 새 탭을 생성하고 기존 작업에 채택한다. source click handler는 실행하지 않는다. JavaScript 버튼·download 링크는 거부한다.
+
+`browser_bookmarks`는 operationId 없이 선택된 연결 Chrome에서 list/search를 수행하는 읽기 도구다. 별도 변경/권한 요청 도구는 없다. 선택 bookmarks 권한이 없거나 읽기 중 철회되면 FORBIDDEN_METHOD다. 폴더 탐색은 list+folderId, 검색은 search+query, 페이지는 offset/limit를 사용한다. 결과·권한·제약은 [지원표](./browser-capabilities.md)에 명시한다.
