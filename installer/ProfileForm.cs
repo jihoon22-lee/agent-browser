@@ -55,6 +55,8 @@ namespace AgentBrowser.Installer {
             if(String.IsNullOrWhiteSpace(directory))throw new IOException("작업 폴더를 지정하세요.");
             var existing=NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(state,new []{"profile","list","--json"}));
             foreach(var item in (System.Collections.IEnumerable)existing["profiles"])if((string)((Dictionary<string,object>)item)["id"]==id)throw new IOException("같은 ID의 프로필이 있습니다. 새 ID를 선택하세요.");
+            if(candidate.Kind=="windows"&&candidate.Executable!=null&&candidate.Executable.EndsWith(".cmd",StringComparison.OrdinalIgnoreCase)&&candidate.Executable.IndexOfAny(new[]{'%','!','&','|','<','>','^','"'})>=0)
+                throw new IOException("A .cmd launcher path cannot contain cmd metacharacters; select its underlying .exe instead");
             Discovery.Version(candidate);
             if(candidate.Kind=="wsl") {
                 if(!directory.StartsWith("/")||String.IsNullOrWhiteSpace(candidate.Distribution))throw new IOException("WSL 배포판과 절대 Linux 작업 폴더가 필요합니다.");

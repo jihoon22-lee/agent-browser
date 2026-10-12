@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using System.Text;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -11,6 +13,30 @@ using System.Threading;
 using Microsoft.Win32;
 
 namespace AgentBrowser.Installer {
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")]
+    internal class ShellLink {}
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IShellLinkW {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, IntPtr data, uint flags);
+        void GetIDList(out IntPtr idList);
+        void SetIDList(IntPtr idList);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string value);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string value);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder value, int count);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string value);
+        void GetHotkey(out short value);
+        void SetHotkey(short value);
+        void GetShowCmd(out int value);
+        void SetShowCmd(int value);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder path, int count, out int index);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string path, int index);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string path, uint reserved);
+        void Resolve(IntPtr window, uint flags);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string path);
+    }
+
     public sealed class OwnedFile { public string Path {get;set;} public string Sha256 {get;set;} }
     public sealed class PackageManifest { public string Product {get;set;} public string Platform {get;set;} public string Version {get;set;} public OwnedFile[] Files {get;set;} }
     public sealed class StartupRecord { public string Path {get;set;} public string Sha256 {get;set;} }
@@ -31,7 +57,7 @@ namespace AgentBrowser.Installer {
     }
     internal sealed class Change { public string Path,Expected,User;public byte[] Bytes; }
     internal sealed class InstallPlan {
-        public SetupOptions Options;public InstallState Old,Next;public string StateHash;
+        public SetupOptions Options;public InstallState Old,Next;public string StateHash,OldStartupHash,NextStartupHash;
         public readonly List<Change> Changes=new List<Change>();
         public readonly List<string> Summary=new List<string>();
         public string Preview {get{return String.Join(Environment.NewLine,Summary);}}
@@ -93,6 +119,12 @@ namespace AgentBrowser.Installer {
             var list=new List<McpRecord>();if(state==null) return list;
             if(state.Mcps!=null) list.AddRange(state.Mcps);if(state.Mcp!=null&&!list.Any(x=>Same(x.Path,state.Mcp.Path))) list.Add(state.Mcp);return list;
         }
+        static string BackupSettings(InstallPlan plan,string data,string source,byte[] bytes) {
+            string backup=Path.Combine(data,"settings-backups",Guid.NewGuid().ToString("N")+".bak");
+            Add(plan,backup,bytes);
+            Add(plan,backup+".json",NativeIO.Utf8.GetBytes(NativeIO.Json.Serialize(new {Path=source,Sha256=NativeIO.Hash(bytes)})));
+            return backup;
+        }
         static object Entry(InstallState state,McpRecord registration) {
             string exe=state.CurrentExe;
             var environment=new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}};
@@ -107,13 +139,19 @@ namespace AgentBrowser.Installer {
         public static InstallPlan Prepare(SetupOptions options) {
             string root=Root(options.InstallDir);options.InstallDir=root;
             var p=new InstallPlan{Options=options,Old=State(root),StateHash=HashOrMissing(Path.Combine(root,StateName))};Owned(p.Old);
+            if(p.Old!=null&&p.Old.Startup!=null)p.OldStartupHash=HashOrMissing(p.Old.Startup.Path);
             bool uninstall=options.Operation=="uninstall";
             if((options.Operation=="update"||uninstall)&&p.Old==null) throw new IOException("No owned installation was found in the selected folder.");
             if(uninstall) {
                 p.Summary.Add("제거 대상: "+root+"\r\n버전: "+p.Old.Version+"\r\n페어링·프로필·사용자 데이터는 보존합니다.");
                 foreach(var record in Registrations(p.Old)) if(File.Exists(record.Path)) {
-                    var edit=Jsonc.Edit(File.ReadAllText(record.Path,NativeIO.Utf8),null,record.EntryHash,true,record.CreatedMcp);
-                    if(edit.Changed) Add(p,record.Path,NativeIO.Utf8.GetBytes(edit.Text),record.User);
+                    byte[] original=File.ReadAllBytes(record.Path);var edit=Jsonc.Edit(NativeIO.Utf8.GetString(original),null,record.EntryHash,true,record.CreatedMcp);
+                    // Comments are user content too: only remove a whitespace-only empty object.
+                    if(edit.Changed) {
+                        BackupSettings(p,p.Old.DataDir,record.Path,original);
+                        Add(p,record.Path,record.CreatedFile&&Regex.IsMatch(edit.Text,@"^\s*\{\s*\}\s*$")?null:NativeIO.Utf8.GetBytes(edit.Text),record.User);
+                        if(HashOrMissing(record.Path)!=NativeIO.Hash(original))throw new IOException("Settings changed during preview. Preview it again.");
+                    }
                     p.Summary.Add("소유한 browser MCP 등록 제거: "+record.Path);
                 }
                 foreach(var file in p.Old.OwnedFiles) Add(p,NativeIO.SafePath(root,file.Path),null);
@@ -144,10 +182,18 @@ namespace AgentBrowser.Installer {
                 var wslTarget=NativeIO.MapWsl(record.Path);
                 if(wslTarget!=null&&(record.Kind!="wsl"||!Same(wslTarget.Distribution,record.Distribution)))throw new IOException("The selected WSL settings path and distribution do not match.");
                 var previous=oldRecords.FirstOrDefault(x=>Same(x.Path,record.Path));
-                bool existed=File.Exists(record.Path);string original=existed?File.ReadAllText(record.Path,NativeIO.Utf8):"{}";
+                bool existed=File.Exists(record.Path);byte[] originalBytes=existed?File.ReadAllBytes(record.Path):NativeIO.Utf8.GetBytes("{}");string original=NativeIO.Utf8.GetString(originalBytes);
                 var edit=Jsonc.Edit(original,Entry(next,record),previous==null?null:previous.EntryHash);
                 var updated=new McpRecord{Path=record.Path,Kind=record.Kind,Distribution=record.Distribution,User=record.User,EntryHash=edit.EntryHash,CreatedMcp=edit.CreatedMcp||(previous!=null&&previous.CreatedMcp),CreatedFile=!existed||(previous!=null&&previous.CreatedFile),Backups=previous==null?new string[0]:previous.Backups};
-                records.Add(updated);if(edit.Changed) Add(p,record.Path,NativeIO.Utf8.GetBytes(edit.Text),record.User);
+                records.Add(updated);if(edit.Changed) {
+                    if(existed) {
+                        // Durable backups inherit the private data directory ACL and survive uninstall.
+                        string backup=BackupSettings(p,data,record.Path,originalBytes);
+                        updated.Backups=(updated.Backups??new string[0]).Concat(new[]{backup}).ToArray();
+                    }
+                    Add(p,record.Path,NativeIO.Utf8.GetBytes(edit.Text),record.User);
+                    if(HashOrMissing(record.Path)!=(existed?NativeIO.Hash(originalBytes):"missing"))throw new IOException("Settings changed during preview. Preview it again.");
+                }
                 p.Summary.Add("일반 CLI용 browser MCP "+(previous==null?"등록: ":"갱신: ")+record.Path);
             }
             next.Mcps=records.ToArray();next.Mcp=records.Count==1?records[0]:null;
@@ -156,7 +202,7 @@ namespace AgentBrowser.Installer {
                 if(String.IsNullOrEmpty(options.StartupDir)) throw new IOException("Select a Startup folder.");
                 string shortcut=Path.Combine(Full(options.StartupDir),"AgentBrowser.lnk");NativeIO.PlainPath(shortcut);
                 if(File.Exists(shortcut)&&(p.Old==null||p.Old.Startup==null||!Same(p.Old.Startup.Path,shortcut))) throw new IOException("An unowned Startup shortcut already exists.");
-                next.Startup=new StartupRecord{Path=shortcut};p.Summary.Add("로그인 시 Bridge 시작: "+shortcut);
+                next.Startup=new StartupRecord{Path=shortcut};p.NextStartupHash=HashOrMissing(shortcut);p.Summary.Add("로그인 시 Bridge 시작: "+shortcut);
             }
             p.Summary.Insert(0,(p.Old==null?"설치: ":"업데이트: ")+manifest.Version+"\r\n대상: "+root+"\r\n데이터: "+data+"\r\nBridge 포트: "+next.Port);
             p.Summary.Add(options.Start?"적용 후 Bridge를 시작합니다.":"파일 설치 후 Bridge 시작은 보류합니다.");
@@ -171,15 +217,11 @@ namespace AgentBrowser.Installer {
             Directory.SetAccessControl(path,acl);
         }
         static byte[] Shortcut(string stage,string target,string root) {
-            string path=Path.Combine(stage,"startup.lnk");object shell=Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell"));object shortcut=null;
+            string path=Path.Combine(stage,"startup.lnk");object shortcut=new ShellLink();
             try {
-                shortcut=shell.GetType().InvokeMember("CreateShortcut",System.Reflection.BindingFlags.InvokeMethod,null,shell,new object[]{path});
-                var type=shortcut.GetType();type.InvokeMember("TargetPath",System.Reflection.BindingFlags.SetProperty,null,shortcut,new object[]{target});
-                type.InvokeMember("Arguments",System.Reflection.BindingFlags.SetProperty,null,shortcut,new object[]{"--start "+NativeIO.Quote(root)});
-                type.InvokeMember("WorkingDirectory",System.Reflection.BindingFlags.SetProperty,null,shortcut,new object[]{root});
-                type.InvokeMember("WindowStyle",System.Reflection.BindingFlags.SetProperty,null,shortcut,new object[]{7});
-                type.InvokeMember("Save",System.Reflection.BindingFlags.InvokeMethod,null,shortcut,null);return File.ReadAllBytes(path);
-            } finally {if(shortcut!=null) System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shell);if(File.Exists(path)) File.Delete(path);}
+                var link=(IShellLinkW)shortcut;link.SetPath(target);link.SetArguments("--start "+NativeIO.Quote(root));link.SetWorkingDirectory(root);link.SetShowCmd(7);
+                ((System.Runtime.InteropServices.ComTypes.IPersistFile)shortcut).Save(path,true);return File.ReadAllBytes(path);
+            } finally {System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);if(File.Exists(path)) File.Delete(path);}
         }
         public static string Apply(InstallPlan p,CancellationToken cancel,Action<string> progress) {
             string root=p.Options.InstallDir,lockPath=Path.Combine(root,".agent-browser-install.lock");Directory.CreateDirectory(root);
@@ -207,15 +249,16 @@ namespace AgentBrowser.Installer {
                     }
                     int n=0;foreach(var change in p.Changes) {cancel.ThrowIfCancellationRequested();progress("파일 적용 "+(++n)+" / "+p.Changes.Count);transaction.Write(change);}
                     if(p.Next!=null) {
-                        if(p.Old!=null&&p.Old.Startup!=null&&(p.Next.Startup==null||!Same(p.Old.Startup.Path,p.Next.Startup.Path))) transaction.Write(new Change{Path=p.Old.Startup.Path,Expected=p.Old.Startup.Sha256});
-                        if(p.Next.Startup!=null) {var bytes=Shortcut(transaction.Stage,p.Next.SetupExe,root);string expectedShortcut=p.Old!=null&&p.Old.Startup!=null&&Same(p.Old.Startup.Path,p.Next.Startup.Path)?p.Old.Startup.Sha256:"missing";transaction.Write(new Change{Path=p.Next.Startup.Path,Expected=expectedShortcut,Bytes=bytes});p.Next.Startup.Sha256=NativeIO.Hash(bytes);}
+                        if(p.Old!=null&&p.Old.Startup!=null&&(p.Next.Startup==null||!Same(p.Old.Startup.Path,p.Next.Startup.Path))) transaction.Write(new Change{Path=p.Old.Startup.Path,Expected=p.OldStartupHash});
+                        if(p.Next.Startup!=null) {var bytes=Shortcut(transaction.Stage,p.Next.SetupExe,root);transaction.Write(new Change{Path=p.Next.Startup.Path,Expected=p.NextStartupHash,Bytes=bytes});p.Next.Startup.Sha256=NativeIO.Hash(bytes);}
                         cancel.ThrowIfCancellationRequested();
                         transaction.Write(new Change{Path=Path.Combine(root,StateName),Expected=p.StateHash,Bytes=NativeIO.Utf8.GetBytes(NativeIO.Json.Serialize(p.Next))});
                         if(p.Options.Start) {progress("Bridge 시작 확인 중");BridgeControl.Start(p.Next);newStarted=true;}
                     } else transaction.Write(new Change{Path=Path.Combine(p.Old.DataDir,".installer-bridge-process.json"),Expected=HashOrMissing(Path.Combine(p.Old.DataDir,".installer-bridge-process.json"))});
-                    complete=true;transaction.Cleanup();
+                    complete=true;string warning="";
+                    try {transaction.Cleanup();}catch(Exception) {warning="\r\n경고: 설치 변경은 완료됐지만 임시 복구 파일 정리는 실패했습니다. 보존된 경로: "+transaction.Stage;progress(warning);}
                     try {using(var registry=Registry.CurrentUser.CreateSubKey(@"Software\AgentBrowser\Installations")) {if(p.Next==null) registry.DeleteSubKey(p.Old.InstallId,false);else using(var item=registry.CreateSubKey(p.Next.InstallId)) item.SetValue("Path",root);}} catch(Exception) {progress("설치는 완료됐지만 다음 실행의 설치 위치 자동 등록은 실패했습니다. 폴더를 직접 선택할 수 있습니다.");}
-                    return p.Next==null?"제거 완료. 페어링·프로필 데이터와 OpenCode 설정의 다른 항목을 보존했습니다.":"설치 완료: "+p.Next.Version+"\r\nChrome 확장 폴더: "+Path.Combine(root,"extension")+"\r\nChrome에서 확장을 로드 또는 새로고침하고 페어링하세요.";
+                    return (p.Next==null?"제거 완료. 페어링·프로필 데이터와 OpenCode 설정의 다른 항목을 보존했습니다.":"설치 완료: "+p.Next.Version+"\r\nChrome 확장 폴더: "+Path.Combine(root,"extension")+"\r\nChrome에서 확장을 로드 또는 새로고침하고 페어링하세요.")+warning;
                 } catch(Exception error) {
                     if(transaction!=null&&!complete) {
                         try {if(newStarted) BridgeControl.Stop(p.Next);transaction.Rollback();if(restartOld) BridgeControl.Start(p.Old);foreach(var id in stoppedProfiles) BridgeControl.Invoke(p.Old,new [] {"runtime","start","--profile",id},60000);transaction.Cleanup();}
@@ -274,19 +317,21 @@ namespace AgentBrowser.Installer {
             InstallerEngine.Owned(state);
             var existing=Marker(state);
             using(var verified=Verify(state,existing)) {if(verified!=null&&InstallerEngine.Same((string)existing["Executable"],state.CurrentExe)&&Convert.ToInt32(existing["Port"])==state.Port)return;}
-            var output=NativeIO.Json.Deserialize<Dictionary<string,object>>(Invoke(state,new [] {"start","--port",state.Port.ToString()}));
-            int pid=Convert.ToInt32(output["pid"]);
-            if(!Convert.ToBoolean(output["running"])||Convert.ToInt32(output["port"])!=state.Port||!InstallerEngine.Same(InstallerEngine.Full((string)output["home"]),state.DataDir)||pid<=0) throw new IOException("Bridge start did not confirm selected data and port.");
-            if(!File.Exists(Path.Combine(state.DataDir,"serve.pid"))||Int32.Parse(File.ReadAllText(Path.Combine(state.DataDir,"serve.pid")).Trim())!=pid) throw new IOException("Bridge PID file does not match.");
+            using(var startup=new BridgeStartJob(state.CurrentExe,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},state.Port)) {
+            startup.Wait();
+            int pid;string pidPath=Path.Combine(state.DataDir,"serve.pid");
+            if(!File.Exists(pidPath)||!Int32.TryParse(File.ReadAllText(pidPath).Trim(),out pid)||pid<=0)throw new IOException("Bridge PID publication failed.");
+            startup.RequireChild(pid);
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
                 foreach(ManagementObject process in query.Get()) using(process) {
                     if(!InstallerEngine.Same(InstallerEngine.Full((string)process["ExecutablePath"]),state.CurrentExe)||!Regex.IsMatch((string)process["CommandLine"],@"(?:^|\s)serve\s+--port\s+"+state.Port+@"(?:\s|$)")) throw new IOException("Bridge process identity could not be verified.");
                     var marker=new Dictionary<string,object>{{"Product",InstallerEngine.Product},{"InstallId",state.InstallId},{"Pid",pid},{"Executable",state.CurrentExe},{"Port",state.Port},{"CreatedAt",ManagementDateTimeConverter.ToDateTime((string)process["CreationDate"]).ToUniversalTime().ToString("o")}};
-                    try {NativeIO.WriteText(Path.Combine(state.DataDir,".installer-bridge-process.json"),NativeIO.Json.Serialize(marker));}
-                    catch {using(var again=Verify(state,marker))if(again!=null)using(var child=Process.GetProcessById(pid)){child.Kill();child.WaitForExit(5000);}throw;}
+                    NativeIO.WriteText(Path.Combine(state.DataDir,".installer-bridge-process.json"),NativeIO.Json.Serialize(marker));
+                    startup.Commit();
                     return;
                 }
             }throw new IOException("Bridge process disappeared during startup.");
+            }
         }
         public static List<string> StopRuntimes(InstallState state,List<string> stopped=null) {
             var ids=stopped??new List<string>();if(!File.Exists(Path.Combine(state.DataDir,"runtime.json"))) return ids;

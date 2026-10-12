@@ -17,6 +17,10 @@ using System.Security.Cryptography;
 internal static class GuiSmokeTests {
     [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]static extern IntPtr SendMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
+    [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
+    [DllImport("user32.dll")]static extern IntPtr GetParent(IntPtr h);
+    [DllImport("user32.dll")]static extern int GetDlgCtrlID(IntPtr h);
     [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
     [DllImport("kernel32.dll")]static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")]static extern bool AttachThreadInput(uint a,uint b,bool attach);
@@ -26,10 +30,11 @@ internal static class GuiSmokeTests {
     [DllImport("user32.dll",SetLastError=true)]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int width,int height,uint flags);
     [DllImport("user32.dll")]static extern bool SetCursorPos(int x,int y);
     [DllImport("user32.dll")]static extern void mouse_event(uint f,uint x,uint y,uint d,UIntPtr e);
-    static AutomationElement window;static Process process;static bool doubleApply;
+    static AutomationElement window;static Process process;static bool doubleApply,useUia;
     static AutomationElement Find(string name){var e=window.FindFirst(TreeScope.Descendants,new PropertyCondition(AutomationElement.NameProperty,name));if(e==null)throw new Exception("Control missing: "+name);return e;}
     static void Click(string name){
         Console.WriteLine("CLICK requested "+name+" gui="+process.Id+" hwnd="+process.MainWindowHandle);
+        if(useUia){var control=Find(name);var handle=new IntPtr(control.Current.NativeWindowHandle);uint pid;GetWindowThreadProcessId(handle,out pid);if(pid!=process.Id)throw new Exception("Action target is not the owned GUI");if(!PostMessage(handle,0xf5,IntPtr.Zero,IntPtr.Zero))throw new Exception("Cannot post owned GUI action");if(doubleApply&&(name=="Apply"||name=="SaveProfile"))PostMessage(handle,0xf5,IntPtr.Zero,IntPtr.Zero);Thread.Sleep(150);return;}
         var element=Find(name);ShowWindow(process.MainWindowHandle,9);SetForegroundWindow(process.MainWindowHandle);Thread.Sleep(100);
         if(GetForegroundWindow()!=process.MainWindowHandle) {uint pid;uint foregroundThread=GetWindowThreadProcessId(GetForegroundWindow(),out pid),thread=GetCurrentThreadId();bool attached=AttachThreadInput(thread,foregroundThread,true);try{SetForegroundWindow(process.MainWindowHandle);}finally{if(attached)AttachThreadInput(thread,foregroundThread,false);}Thread.Sleep(100);}
         var rect=element.Current.BoundingRectangle;
@@ -59,11 +64,14 @@ internal static class GuiSmokeTests {
     }
     static void Close(){if(process==null)return;if(!process.HasExited){Click("Cancel");if(!process.WaitForExit(10000))throw new Exception("Owned test GUI did not close.");}process.Dispose();process=null;}
     static void Screenshot(string path){var r=window.Current.BoundingRectangle;using(var b=new Bitmap((int)r.Width,(int)r.Height))using(var g=Graphics.FromImage(b)){g.CopyFromScreen((int)r.X,(int)r.Y,0,0,b.Size);b.Save(path,System.Drawing.Imaging.ImageFormat.Png);}}
-    static void Choose(string name,int index){Click(name);SendKeys.SendWait("{HOME}"+String.Concat(Enumerable.Repeat("{DOWN}",index))+"{ENTER}");Thread.Sleep(100);}
+    static void Choose(string name,int index){
+        if(useUia){var control=Find(name);var handle=new IntPtr(control.Current.NativeWindowHandle);uint pid;GetWindowThreadProcessId(handle,out pid);if(pid!=process.Id)throw new Exception("Selection target is not the owned GUI");if(SendMessage(handle,0x14e,new IntPtr(index),IntPtr.Zero).ToInt32()!=index)throw new Exception("Selection item missing: "+name);SendMessage(GetParent(handle),0x111,new IntPtr((GetDlgCtrlID(handle)&0xffff)|0x10000),handle);Thread.Sleep(100);return;}
+        Click(name);uint foregroundPid;GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);if(foregroundPid!=process.Id)throw new Exception("Keyboard target is not the owned GUI; no keys sent");SendKeys.SendWait("{HOME}"+String.Concat(Enumerable.Repeat("{DOWN}",index))+"{ENTER}");Thread.Sleep(100);
+    }
     static string Quote(string text){return "\""+text+"\"";}
     [STAThread] public static int Main(string[] args){
         string root=args[1],package=Path.Combine(root,"extracted"),install=Path.Combine(root,"GUI 설치 & space"),startup=Path.Combine(root,"GUI Startup"),settings=args[2];
-        doubleApply=args.Contains("--double");bool resume=args.Contains("--resume");Directory.CreateDirectory(root);if(!resume)ZipFile.ExtractToDirectory(args[0],package);
+        doubleApply=args.Contains("--double");useUia=args.Contains("--uia");bool resume=args.Contains("--resume");Directory.CreateDirectory(root);if(!resume)ZipFile.ExtractToDirectory(args[0],package);
         var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();int port=((IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();
         if(resume) {string existingState=File.ReadAllText(Path.Combine(install,".agent-browser-install.json"));port=Int32.Parse(System.Text.RegularExpressions.Regex.Match(existingState,"\"Port\"\\s*:\\s*([0-9]+)").Groups[1].Value);}
         string common="--no-discover --package-dir "+Quote(package)+" --install-dir "+Quote(install)+" --startup-dir "+Quote(startup)+" --port "+port;
@@ -115,6 +123,13 @@ internal static class GuiSmokeTests {
             Console.WriteLine("PASS actual GUI repeat/update preserves user settings and single registration");
             File.WriteAllText(Path.Combine(root,"installed-test-root.txt"),install);
             if(args.Contains("--installed-uninstall"))exe=(string)new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(Path.Combine(install,".agent-browser-install.json")))["SetupExe"];
+            if(args.Contains("--legacy-gui")) {
+                var json=new JavaScriptSerializer();string marker=Path.Combine(install,".agent-browser-install.json");var state=json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(marker));
+                string legacy=Path.Combine(install,"AgentBrowser-Setup.exe");File.Copy((string)state["SetupExe"],legacy);
+                string digest;using(var sha=SHA256.Create())digest=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(legacy))).Replace("-","").ToLowerInvariant();
+                ((System.Collections.ArrayList)state["OwnedFiles"]).Add(new System.Collections.Generic.Dictionary<string,object>{{"Path","AgentBrowser-Setup.exe"},{"Sha256",digest}});
+                File.WriteAllText(marker,json.Serialize(state),new System.Text.UTF8Encoding(false));exe=legacy;
+            }
             Launch(exe,common);Choose("Operation",2);Click("Preview");Wait(()=>Get("Status").Contains("아직 변경"),"uninstall preview failed");if(!Get("ChangePreview").Contains(install))throw new Exception("uninstall preview missing target");Screenshot(Path.Combine(root,"uninstall-preview.png"));Click("Apply");Wait(()=>Get("Status").StartsWith("제거 완료"),"GUI uninstall failed");Screenshot(Path.Combine(root,"uninstall-complete.png"));Close();
             if(File.Exists(Path.Combine(install,".agent-browser-install.json"))||!File.Exists(Path.Combine(install,"data","gui-preserve.json")))throw new Exception("uninstall data ownership failure");
             string final=File.ReadAllText(settings);if(final.Contains("\"browser\"")||!final.Contains("test/user-edited")||!final.Contains("// preserve")||(original.Contains("\"other\"")?!final.Contains("\"other\""):final.Contains("\"mcp\"")))throw new Exception("uninstall did not preserve the original MCP state");

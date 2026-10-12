@@ -7,8 +7,67 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Web.Script.Serialization;
+using System.Runtime.InteropServices;
 
 namespace AgentBrowser.Installer {
+    // Assign the suspended launcher before it can spawn serve. The job disallows
+    // breakaway, so Bridge's existing detached fallback stays in this owned tree.
+    // Failed startup can terminate that tree even when PID publication or WMI fails.
+    internal sealed class BridgeStartJob : IDisposable {
+        [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)] struct Startup {
+            public int Size;public string Reserved,Desktop,Title;public uint X,Y,Width,Height,CharsX,CharsY,Fill,Flags;public ushort Show,ReservedSize;public IntPtr ReservedBytes,Input,Output,Error;
+        }
+        [StructLayout(LayoutKind.Sequential)] struct Created {public IntPtr Process,Thread;public uint Pid,Tid;}
+        [StructLayout(LayoutKind.Sequential)] struct Accounting {public long User,Kernel,PeriodUser,PeriodKernel;public uint Faults,Total,Active,Terminated;}
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr security,string name);
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateProcess(string application,StringBuilder command,IntPtr processSecurity,IntPtr threadSecurity,bool inherit,uint flags,string environment,string directory,ref Startup startup,out Created created);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool inside);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateProcess(IntPtr process,uint code);
+        [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,out Accounting data,int length,IntPtr returned);
+        [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle,uint milliseconds);
+        [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+        IntPtr job,launcher;bool committed;
+        static IOException Error(string operation){return new IOException(operation+": "+new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message);}
+        public BridgeStartJob(string executable,string directory,IDictionary<string,string> environment,int port) {
+            job=CreateJobObject(IntPtr.Zero,null);if(job==IntPtr.Zero)throw Error("Cannot create owned Bridge startup job");
+            Created child=new Created();bool assigned=false;
+            try {
+                var values=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+                foreach(System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())values[(string)entry.Key]=(string)entry.Value;
+                foreach(var entry in environment)values[entry.Key]=entry.Value;
+                var block=new StringBuilder();foreach(var entry in values)block.Append(entry.Key).Append('=').Append(entry.Value).Append('\0');block.Append('\0');
+                var startup=new Startup{Size=Marshal.SizeOf(typeof(Startup))};
+                if(!CreateProcess(executable,new StringBuilder(NativeIO.Quote(executable)+" start --port "+port),IntPtr.Zero,IntPtr.Zero,false,0x08000404,block.ToString(),directory,ref startup,out child))throw Error("Cannot create Bridge launcher");
+                launcher=child.Process;
+                if(!AssignProcessToJobObject(job,launcher))throw Error("Cannot own Bridge launcher");assigned=true;
+                if(ResumeThread(child.Thread)==UInt32.MaxValue)throw Error("Cannot resume Bridge launcher");
+            } catch {
+                if(child.Process!=IntPtr.Zero&&!assigned){TerminateProcess(child.Process,1);WaitForSingleObject(child.Process,5000);}
+                Dispose();throw;
+            } finally {if(child.Thread!=IntPtr.Zero)CloseHandle(child.Thread);}
+        }
+        public void Wait() {
+            if(WaitForSingleObject(launcher,20000)!=0)throw new IOException("Owned Bridge startup did not finish.");
+            uint code;if(!GetExitCodeProcess(launcher,out code))throw Error("Cannot read Bridge startup result");
+            if(code!=0)throw new IOException("Owned Bridge startup failed ("+code+").");
+        }
+        public void RequireChild(int pid) {
+            using(var process=Process.GetProcessById(pid)) {bool inside;if(!IsProcessInJob(process.Handle,job,out inside))throw Error("Cannot verify startup child ownership");if(!inside||process.HasExited)throw new IOException("Bridge PID does not belong to this startup.");}
+        }
+        public void Commit(){committed=true;}
+        public void Dispose() {
+            try {
+                if(job!=IntPtr.Zero&&!committed) {
+                    if(!TerminateJobObject(job,1))throw Error("Cannot stop owned startup processes");
+                    var timer=Stopwatch.StartNew();for(;;){Accounting data;if(!QueryInformationJobObject(job,1,out data,Marshal.SizeOf(typeof(Accounting)),IntPtr.Zero))throw Error("Cannot verify startup cleanup");if(data.Active==0)break;if(timer.ElapsedMilliseconds>5000)throw new IOException("Owned startup cleanup did not finish.");System.Threading.Thread.Sleep(25);}
+                }
+            } finally {if(launcher!=IntPtr.Zero){CloseHandle(launcher);launcher=IntPtr.Zero;}if(job!=IntPtr.Zero){CloseHandle(job);job=IntPtr.Zero;}}
+        }
+    }
     internal sealed class CommandResult {
         public int ExitCode; public string Output; public string Error;
     }

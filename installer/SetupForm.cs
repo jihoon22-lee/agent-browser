@@ -122,9 +122,11 @@ namespace AgentBrowser.Installer {
         // Installed maintenance runs outside its owned files so Windows can remove
         // or replace them. Reuse only an exact-hash private temporary executable.
         static bool RelaunchInstalled(string[] args) {
-            string exe=Application.ExecutablePath;var version=Directory.GetParent(exe);if(version==null||version.Parent==null||version.Parent.Name!="app"||version.Parent.Parent==null)return false;
-            string root=version.Parent.Parent.FullName;var state=InstallerEngine.State(root);
-            if(state==null||String.IsNullOrEmpty(state.SetupExe)||!InstallerEngine.Same(state.SetupExe,exe))return false;
+            string exe=Application.ExecutablePath;var directory=Directory.GetParent(exe);if(directory==null)return false;
+            // Legacy scripts put the GUI at the install root; updates retain old
+            // versioned GUIs. Any owned running copy would otherwise lock removal.
+            string root=directory.Parent!=null&&directory.Parent.Name=="app"&&directory.Parent.Parent!=null?directory.Parent.Parent.FullName:directory.FullName;
+            var state=InstallerEngine.State(root);if(state==null)return false;
             InstallerEngine.Owned(state);string hash=NativeIO.FileHash(exe);
             if(!state.OwnedFiles.Any(f=>InstallerEngine.Same(NativeIO.SafePath(root,f.Path),exe)&&InstallerEngine.Same(f.Sha256,hash)))throw new IOException("Installed setup ownership is invalid.");
             string cache=Path.Combine(Path.GetTempPath(),"AgentBrowser-Setup",hash);InstallerEngine.PrivateDirectory(cache);string copy=Path.Combine(cache,"AgentBrowser-Setup.exe");

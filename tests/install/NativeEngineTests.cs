@@ -65,6 +65,7 @@ namespace AgentBrowser.Installer {
                         Assert(NativeIO.Json.Serialize(NativeIO.Json.DeserializeObject(Jsonc.Minify(File.ReadAllText(settings))))==windowsBefore,"multi-target uninstall changed unrelated Windows settings");
                     } finally {var installed=InstallerEngine.State(wslInstall);if(installed!=null) {BridgeControl.StopRuntimes(installed);BridgeControl.Stop(installed);}}
                 }
+                count+=InstallerReviewTests.Run(Path.Combine(root,"review-regressions"),package1);
                 Console.WriteLine("TOTAL "+count+" PASS");Console.WriteLine("ARTIFACTS "+root);return 0;
             } catch(Exception error){Console.Error.WriteLine(error);return 1;}
         }
