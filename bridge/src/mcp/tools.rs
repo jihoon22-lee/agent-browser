@@ -13,6 +13,7 @@ pub fn all() -> Vec<ToolDef> {
             schema: json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["list","attach","new","switch","release"]},
                 "tabId":{"type":"integer","description":"For attach (omit to use the user's current tab) and switch"},
+                "requestId":{"type":"string","description":"For attach: requestId supplied with the current panel request. Omit tabId to use its captured active tab; an explicit user target takes priority."},
                 "url":{"type":"string","description":"For new: http(s) URL to open"},
                 "operationId": op()},
                 "required":["action"],"additionalProperties":false}) },

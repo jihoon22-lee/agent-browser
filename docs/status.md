@@ -1,3 +1,15 @@
+## 활성 탭 기본 선택 — 독립 로컬 브랜치
+
+`feat/request-active-tab`, 기준 `fb2bcdbb4672a09395c7d7cc2ee75e6796e897c1`. 운영 설치에 적용하지 않았으며 push/PR/릴리스하지 않았다.
+
+- 패널 요청마다 제출 시점의 포커스된 Chrome 창(normal/popup)의 활성 HTTP(S) 탭을 캡처한다. 모호한 포커스·이동 중·제한 페이지에서는 기본 대상을 만들지 않는다.
+- 요청 ID로 Bridge에 예약하고, attach에서 해당 ID를 요구한다. 명시적 tabId가 기본 대상보다 우선한다. 실행 중 포커스 이동은 operation을 변경하지 않는다.
+- 다른 요청의 예약, 오래된 operation, 닫힌 대상에서 다른 탭으로 대체하지 않는다. 완료된 같은 messageID의 응답과 서버 idle 확인 후 예약을 해제한다. 패널/worker 재시작 시 session storage로 식별자를 복원하며 다음 제출에서도 완료를 재검증한다.
+- 일반 프롬프트는 OpenCode v1 system 필드로 요청 문맥을 전달한다. 커맨드는 v1 계약의 file part로 전달한다. 기존 CLI의 요청 ID 없는 attach는 패널 예약이 없을 때 기존 동작을 유지한다.
+- 수정 전 새 Rust 게이트 API 및 TypeScript 모듈 부재로 회귀 검사가 실패하는 것을 확인했다. Rust operation 15개 및 도구 계약 2개 통과. 관련 Extension 회귀·타입 검사·빌드와 Windows 통합 결과는 아래 실행 명령으로 재현한다.
+- Windows Chrome 154.0.8037.99 + 새 MSVC debug Bridge + 빌드 확장 + 합성 OpenCode로 9개 통합 검사 통과: 탭 전환 중 고정, 동시 예약 거부, 명시 대상 우선, 이전 operation 무효화, 새 탭 편입/종료, 닫힌 기본 대상, 모호한 기본 대상, 실제 패널의 두 번째 창/팝업 캡처, 완료 해제. 실제 모델 호출 0회. 결과는 ignored `tests/agent/results/request-target.json`.
+- iframe 조사는 별도 조사 폴더에서 v0.1.4 전체 경로로 수행했다. iframe 제품 수정은 이 브랜치에 포함하지 않는다.
+
 # 진행 상태
 
 ## 현재 단계

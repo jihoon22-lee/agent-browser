@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-export async function startOpenCodeFixture() {
+export async function startOpenCodeFixture({ responseDelayMs = 30 } = {}) {
   const password = randomBytes(16).toString('hex'), username = 'opencode';
   const auth = 'Basic ' + Buffer.from(username + ':' + password).toString('base64');
   const streams = new Set(), timers = new Set();
@@ -18,7 +18,7 @@ export async function startOpenCodeFixture() {
   const spec = JSON.parse(await readFile(new URL('../../docs/reference/opencode-1.18.29-openapi.json', import.meta.url), 'utf8'));
   const emit = (type, properties) => { const event = { id: next('evt'), type, properties }; for (const stream of streams) stream.write('data: ' + JSON.stringify(event) + '\n\n'); return event; };
   const status = (id, type) => { state.statuses[id] = { type }; emit('session.status', { sessionID: id, status: { type } }); };
-  const schedule = fn => { const timer = setTimeout(() => { timers.delete(timer); fn(); }, 30); timers.add(timer); };
+  const schedule = fn => { const timer = setTimeout(() => { timers.delete(timer); fn(); }, responseDelayMs); timers.add(timer); };
   function session(body = {}, dir = directory) {
     const value = { id: next('ses'), slug: 'synthetic', projectID: 'synthetic', directory: dir, title: body.title || '새 합성 세션', version: '1.18.29', time: { created: Date.now(), updated: Date.now() }, ...(body.model ? { model: body.model } : {}), ...(body.agent ? { agent: body.agent } : {}), ...(body.parentID ? { parentID: body.parentID } : {}) };
     state.sessions.push(value); state.messages.set(value.id, []); emit('session.created', { info: value }); return value;

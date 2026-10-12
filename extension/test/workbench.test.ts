@@ -48,6 +48,34 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi
 async function render() { await act(async () => { root.render(createElement(App)); await new Promise(resolve => setTimeout(resolve, 0)); }); }
 const button = (text: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find(element => element.textContent === text)!;
 
+it('captures a fresh active tab for each prompt and sends its request context in system',async()=>{
+  const win={id:4,focused:true,tabs:[{id:31,active:true,url:'https://mail.test'}]};
+  (chrome as any).windows={getLastFocused:vi.fn(async()=>structuredClone(win))};
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-prepare'?{ok:true,result:{system:`requestId=${message.lease.requestId}; captured=${message.target.tabId}`}}:original(message));
+  await render();await draftValue('첫 요청');await act(async()=>button('보내기').click());
+  win.tabs[0]!.id=42;
+  await draftValue('다음 요청');await act(async()=>button('보내기').click());
+  const prepares=runtime.mock.calls.map(([m])=>m).filter(m=>m.kind==='request-prepare');
+  expect(prepares.map(m=>m.target.tabId)).toEqual([31,42]);
+  expect(prepares[0].lease.requestId).not.toBe(prepares[1].lease.requestId);
+  const sends=test.post.mock.calls.filter(([path])=>path.endsWith('/prompt_async'));
+  expect(sends[0]![1].system).toContain('captured=31');expect(sends[1]![1].system).toContain('captured=42');
+  expect(sends[0]![1].messageID).toBe(prepares[0].lease.messageId);
+});
+
+it('discards an unsent reservation when the selected session changes during preparation',async()=>{
+  secondSession();await render();const pending=deferred<any>();
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation((message:any)=>message.kind==='request-prepare'?pending.promise:original(message));
+  await draftValue('전송 대기');await act(async()=>button('보내기').click());
+  await selectOtherSession();
+  await act(async()=>pending.resolve({ok:true,result:{system:'request'}}));
+  expect(test.post.mock.calls.some(([path])=>path.endsWith('/prompt_async'))).toBe(false);
+  const messages=runtime.mock.calls.map(([m])=>m);
+  expect(messages.find(m=>m.kind==='request-discard')?.requestId).toBe(messages.find(m=>m.kind==='request-prepare').lease.requestId);
+});
+
 it("restores the selected profile/session and isolates streaming messages by session", async () => {
   await render(); expect(host.textContent).toContain("기존 질문"); expect(host.textContent).toContain("사내 모델");
   await act(async () => test.stream({ id: "evt-other", type: "message.part.updated", properties: { sessionID: "ses-other", part: { id: "prt-other", messageID: "msg-other", sessionID: "ses-other", type: "text", text: "다른 세션 비밀" } } }));

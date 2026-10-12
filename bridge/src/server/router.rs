@@ -299,11 +299,14 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         },
         "attach" => {
             let _selection = state.selection.lock().await;
-            let params = match args["tabId"].as_i64() {
+            let client = state.registry.selected_client().unwrap_or_default();
+            let target=match state.ops.request_target(args["requestId"].as_str(),&client,args["tabId"].as_i64()) {
+                Ok(target)=>target,Err(e)=>return ToolOutcome::rejected(NAME,None,e),
+            };
+            let params = match target {
                 Some(id) => json!({ "tabId": id }),
                 None => json!({}),
             };
-            let client = state.registry.selected_client().unwrap_or_default();
             let queued = match state.registry.queue_command_for(&client, "browser.tabs.get", params, CommandClass::Read) {
                 Ok(queued) => queued,
                 Err(error) => return delivered_failure(None, error),
@@ -315,7 +318,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let Some(tab_id) = tab["tabId"].as_i64() else {
                 return ToolOutcome::failure(NAME, None, true, RpcError::new(ErrorCode::Internal, Retry::Never, "browser did not report a tab id"));
             };
-            match state.ops.attach(tab_id, &client) {
+            match state.ops.attach_request(tab_id, &client,args["requestId"].as_str()) {
                 Ok(op) => ToolOutcome::success(
                     NAME,
                     Some(&op.id),

@@ -302,3 +302,17 @@ $testExe = '<copied Windows lib test exe>'
 소유자 신원 게시를 늦추고 초기 runtime.json 저장을 실패시켜, cleanup 이후 서버 역할의 명령이 뒤늦게 실행되지 않는지 검사한다.
 Unix lib의 `review_wsl_launch_requires_matching_persisted_start_permit`는 같은 launch shell이 permit 없음/다른 nonce에서는 exec하지 않고 일치하는 저장 허가 뒤에만 실행하는지 검사한다.
 UI 후속 회귀는 기존 `workbench.test.ts`의 `review ` 테스트 7개로 초기·검색·추가 목록, 연결 중 선택/삭제, 반복 재연결/프로필 전환의 요청 상한을 검증한다.
+
+
+## 요청별 활성 탭 회귀
+
+새 동작은 패널에서 생성한 requestId를 `browser_tabs action=attach`에 전달한다. 명시적인 tabId가 없으면 전송 당시 캡처한 기본 탭을 사용하며, 이후 사용자 탭 전환을 따라가지 않는다. Chrome 확장 권한은 추가하지 않는다.
+
+```powershell
+# 고정 pnpm 의존성 및 extension/dist, Windows Bridge 빌드가 준비된 독립 복제본
+node tests/e2e/request-target.windows.mjs
+```
+
+기본 exe는 `target/x86_64-pc-windows-msvc/debug/browser-bridge.exe`이며 `AB_BRIDGE_EXE`로 변경할 수 있다. Chrome은 설치된 Windows Chrome을 사용한다. 테스트는 자체 포트·임시 HOME/profile·합성 HTTP/SSE만 사용하고 생성한 프로세스를 정리한다. `Extensions.loadUnpacked`는 공식 CDP API로 호출하며 새 확장 권한/정책 설정을 추가하지 않는다. 현재 PC에서 플래그를 수동 추가하지 않고 로드에 성공했다. 다른 환경에서 실패하면 오류를 그대로 보고한다.
+
+추가 단위 회귀: `extension/test/request-target.test.ts`, `extension/test/panel-requests.test.ts`, `workbench.test.ts`의 요청 캡처/전송 취소; Rust `server::operation`과 `mcp::tools`. 실제 모델이 요청 문맥을 따르는지는 이 결정적 테스트의 검증 범위가 아니다. 요청 ID를 누락하거나 종료된 operation을 재사용하면 조작 전에 거부한다.

@@ -25,6 +25,10 @@
         "url": {
           "description": "For new: http(s) URL to open",
           "type": "string"
+        },
+        "requestId": {
+          "type": "string",
+          "description": "For attach: requestId supplied with the current panel request. Omit tabId to use its captured active tab; an explicit user target takes priority."
         }
       },
       "required": [

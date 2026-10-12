@@ -42,7 +42,7 @@ impl Role {
     /// Methods a connection of this role may call on serve. Anything else is FORBIDDEN_METHOD.
     fn allows(self, method: &str) -> bool {
         match self {
-            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
+            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "request.begin" | "request.end" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
             Role::Mcp => matches!(method, "tool.call" | "tool.cancel"),
         }
     }
@@ -478,6 +478,24 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
     match method {
         "heartbeat" => Envelope::ok(id, json!({ "at": now_ms() })),
         "status.get" => Envelope::ok(id, state.status()),
+        "request.begin" | "request.end" => {
+            let Some(request)=params["requestId"].as_str().filter(|s|!s.is_empty()&&s.len()<=128) else {
+                return Envelope::err(id,RpcError::new(ErrorCode::InvalidParams,Retry::Never,"requestId is required"));
+            };
+            let Some(client)=params["clientId"].as_str().filter(|s|Some(*s)==state.registry.selected_client().as_deref()) else {
+                return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
+            };
+            let result=if method=="request.begin" {
+                state.ops.begin_request(request,client,params["tabId"].as_i64().filter(|n|*n>0)).map(|_|None)
+            } else { state.ops.end_request(request,client) };
+            match result {
+                Ok(operation)=>{
+                    if let Some(op)=operation {state.registry.notify_for(&op.client_id,"browser.cancel",json!({"operationId":op.id,"generation":op.generation}));}
+                    state.broadcast_status();Envelope::ok(id,json!({"requestId":request}))
+                },
+                Err(error)=>Envelope::err(id,error),
+            }
+        },
         "operation.abort" => {
             let operation_id = params.get("operationId").and_then(Value::as_str);
             match state.ops.abort(operation_id) {

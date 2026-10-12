@@ -1,0 +1,116 @@
+import {createRequire} from 'node:module';
+import {spawn} from 'node:child_process';
+import {createInterface} from 'node:readline';
+import {mkdtemp,readFile,writeFile,rm,mkdir} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,dirname,resolve} from 'node:path';
+import {createServer as httpServer} from 'node:http';
+import {fileURLToPath} from 'node:url';
+import {createServer,connect} from 'node:net';
+import assert from 'node:assert/strict';
+const require=createRequire(import.meta.url);
+const {chromium}=require('@playwright/test');
+const {startOpenCodeFixture}=await import('../fixtures/opencode.mjs');
+const api=await startOpenCodeFixture({responseDelayMs:1500});
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'../..'), owned=[], report={branch:'feat/request-active-tab',checks:[]};
+const temp=await mkdtemp(join(tmpdir(),'agent-browser-iframe-full-'));
+let context;
+const fixtureServer=httpServer((req,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');res.end(req.url.startsWith('/case')?'<title>Task A</title><iframe src="/mail"></iframe>':req.url.startsWith('/mail')?'<title>Inbox</title><a href="/body" target="_blank">New tab</a>':'<title>Task B</title><p>Opened body</p>');});
+await new Promise(r=>fixtureServer.listen(0,'127.0.0.1',r));
+const fixturePort=fixtureServer.address().port;
+const child=(exe,args,options={})=>{const p=spawn(exe,args,{windowsHide:true,stdio:['pipe','pipe','pipe'],...options});owned.push(p);p.stderr.on('data',()=>{});return p;};
+const firstLine=p=>new Promise((resolve,reject)=>{const l=createInterface({input:p.stdout});l.once('line',s=>{l.close();resolve(s)});p.once('error',reject)});
+try{
+ const server=createServer();await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port;await new Promise(r=>server.close(r));
+ const env={...process.env,AGENT_BROWSER_HOME:join(temp,'home'),AGENT_BROWSER_PORT:String(port)};
+ const exe=process.env.AB_BRIDGE_EXE ?? join(root,'target/x86_64-pc-windows-msvc/debug/browser-bridge.exe');
+ const bridge=child(exe,['serve','--port',String(port)],{env});bridge.stdout.resume();
+ for(let i=0;;i++){const ready=await new Promise(r=>{const s=connect(port,'127.0.0.1');s.once('connect',()=>{s.destroy();r(true)});s.once('error',()=>r(false))});if(ready)break;if(i>100)throw Error('Bridge startup');await new Promise(r=>setTimeout(r,100));}
+ const mcp=child(exe,['mcp'],{env});let seq=0;const pending=new Map();
+ createInterface({input:mcp.stdout}).on('line',s=>{const v=JSON.parse(s);assert.equal(v.jsonrpc,'2.0');const p=pending.get(v.id);if(p){pending.delete(v.id);clearTimeout(p.timer);v.error?p.reject(v.error):p.resolve(v.result)}});
+ const rpc=(method,params)=>new Promise((resolve,reject)=>{const id=++seq;const timer=setTimeout(()=>reject(Error('MCP timeout '+method)),20000);pending.set(id,{resolve,reject,timer});mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n')});
+ report.initialize=await rpc('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'iframe-investigation',version:'1'}});mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+ report.tools=await rpc('tools/list',{});
+ const call=async(name,args)=>{const r=await rpc('tools/call',{name,arguments:args});return JSON.parse(r.content.find(c=>c.type==='text').text)};
+ const ok=async(name,args)=>{const r=await call(name,args);assert.equal(r.ok,true,JSON.stringify(r));return r;};
+
+ context=await chromium.launchPersistentContext(join(temp,'profile'),{executablePath:'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',headless:true,ignoreDefaultArgs:['--disable-extensions']});
+ const cdp=await context.browser().newBrowserCDPSession();
+ report.browser=await cdp.send('Browser.getVersion');
+ report.extensionLoad=await cdp.send('Extensions.loadUnpacked',{path:join(root,'extension/dist')});
+ const admin=await context.newPage();await admin.goto(`chrome-extension://${report.extensionLoad.id}/src/options/index.html`);
+ const {token}=JSON.parse(await readFile(join(temp,'home/config.json'),'utf8'));
+ await admin.evaluate(({token,port})=>chrome.storage.local.set({pairingToken:token,bridgeUrl:`ws://127.0.0.1:${port}/extension`}),{token,port});
+ for(let i=0;;i++){const s=await admin.evaluate(()=>chrome.runtime.sendMessage({kind:'get-conn-status'}));if(s?.state==='connected')break;if(i>200)throw Error('Connection timeout');await admin.waitForTimeout(100);}
+ const page=await context.newPage();await page.goto(`http://127.0.0.1:${fixturePort}/case`);
+ const tab=await admin.evaluate(async url=>(await chrome.tabs.query({})).find(t=>t.url===url),page.url());
+ const management=async(method,params)=>{const r=await admin.evaluate(({method,params})=>chrome.runtime.sendMessage({kind:'bridge',method,params}),{method,params});assert(r.ok,JSON.stringify(r));return r.result;};
+ await management('profile.save',{profile:{id:'request-fixture',name:'Synthetic request test',kind:'external',baseUrl:api.origin,username:api.username,password:api.password,directory:api.directory},makeDefault:true});
+ const session=api.session();
+ const makeLease=id=>({requestId:id,messageId:'msg_'+id,sessionId:session.id,profileId:'request-fixture',directory:api.directory});
+ const prepare=(id,target)=>admin.evaluate(({lease,target})=>chrome.runtime.sendMessage({kind:'request-prepare',lease,target}),{lease:makeLease(id),target});
+ const complete=id=>{api.saveMessage({info:{id:'msg_reply_'+id,role:'assistant',sessionID:session.id,parentID:'msg_'+id,time:{completed:Date.now()},finish:'stop'},parts:[]});api.state.statuses[session.id]={type:'idle'};};
+ const second=await context.newPage();await second.goto(`http://127.0.0.1:${fixturePort}/body`);
+ const tabB=await admin.evaluate(async url=>(await chrome.tabs.query({})).find(t=>t.url===url),second.url());
+ const r1=await prepare('first',{tabId:tab.id,windowId:tab.windowId});assert(r1.ok,JSON.stringify(r1));
+ await second.bringToFront();
+ assert.equal((await call('browser_tabs',{action:'attach'})).ok,false);
+ const op1=(await ok('browser_tabs',{action:'attach',requestId:'first'})).operationId;
+ assert.equal((await ok('browser_snapshot',{operationId:op1})).data.tabId,tab.id);
+ report.checks.push('Submission target remains A after active tab changes to B; missing requestId rejected');
+ assert.equal((await prepare('concurrent',{tabId:tabB.id,windowId:tabB.windowId})).ok,false);
+ report.checks.push('Concurrent request rejected before replacing current operation');
+ complete('first');assert((await prepare('second',{tabId:tabB.id,windowId:tabB.windowId})).ok);
+ assert.equal((await call('browser_snapshot',{operationId:op1})).ok,false);
+ const op2=(await ok('browser_tabs',{action:'attach',requestId:'second',tabId:tab.id})).operationId;
+ assert.equal((await ok('browser_snapshot',{operationId:op2})).data.tabId,tab.id);
+ report.checks.push('Completed request replaced; stale operation rejected; explicit A overrides default B');
+ const snap=await ok('browser_snapshot',{operationId:op2});const frame=snap.data.frames.find(f=>f.url.endsWith('/mail'));
+ await ok('browser_click',{operationId:op2,ref:frame.elements.find(e=>e.name==='New tab').ref});
+ const childSnapshot=await ok('browser_snapshot',{operationId:op2});assert(childSnapshot.data.url.endsWith('/body'));assert.notEqual(childSnapshot.data.tabId,tab.id);
+ await admin.evaluate(id=>chrome.tabs.remove(id),childSnapshot.data.tabId);
+ assert.equal((await call('browser_snapshot',{operationId:op2})).error.code,'TAB_CLOSED');
+ await ok('browser_tabs',{action:'switch',operationId:op2,tabId:tab.id});
+ report.checks.push('Popup child adoption, closed-current-tab rejection and explicit return preserved');
+ complete('second');assert((await prepare('closed',{tabId:tabB.id,windowId:tabB.windowId})).ok);await second.close();
+ assert.equal((await call('browser_tabs',{action:'attach',requestId:'closed'})).error.code,'TAB_NOT_FOUND');
+ report.checks.push('Captured tab closed before attach: no fallback');
+ complete('closed');assert((await prepare('ambiguous',null)).ok);
+ assert.equal((await call('browser_tabs',{action:'attach',requestId:'ambiguous'})).error.code,'TAB_NOT_FOUND');
+ await ok('browser_tabs',{action:'attach',requestId:'ambiguous',tabId:tab.id});
+ report.checks.push('No safe default: implicit attach rejected, explicit target works');
+ complete('ambiguous');
+ // Exercise actual panel submission and capture in a different focused Chrome window.
+ await admin.evaluate(id=>chrome.storage.local.set({'lastProfileId':'request-fixture','recentSession:request-fixture':id}),session.id);
+ const panel=await context.newPage();await panel.goto(`chrome-extension://${report.extensionLoad.id}/src/sidepanel/index.html`);
+ await panel.waitForFunction(()=>document.querySelector('textarea')&&document.querySelector('option[value="fixture/fixture"]'));
+ const win=await admin.evaluate(url=>chrome.windows.create({url,focused:true,type:'normal'}),`http://127.0.0.1:${fixturePort}/body?window=second`);
+ const captured=win.tabs[0].id;
+ await panel.evaluate(()=>{const t=document.querySelector('textarea[aria-label="메시지"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'현재 페이지를 읽어 주세요');t.dispatchEvent(new Event('input',{bubbles:true}));});
+ await panel.waitForTimeout(100);
+ await panel.evaluate(()=>document.querySelector('textarea').closest('form').requestSubmit());
+ for(let i=0;;i++){const req=api.state.requests.findLast(r=>r.path.endsWith('/prompt_async'));if(req){report.prompt={messageID:req.body.messageID,system:req.body.system};break;}if(i>100)throw Error('Panel request not submitted: '+await panel.locator('body').innerText());await panel.waitForTimeout(100);}
+ assert(report.prompt.system.includes(String(captured)));assert(report.prompt.system.includes('requestId='));
+ const held=await admin.evaluate(async()=> (await chrome.storage.session.get('panelBrowserRequest')).panelBrowserRequest);
+ const op=(await ok('browser_tabs',{action:'attach',requestId:held.requestId})).operationId;
+ assert.equal((await ok('browser_snapshot',{operationId:op})).data.tabId,captured);
+ report.checks.push('Actual panel prompt captures focused second-window tab and carries requestId through MCP');
+ for(let i=0;;i++){const saved=await admin.evaluate(async()=> (await chrome.storage.session.get('panelBrowserRequest')).panelBrowserRequest);if(!saved)break;if(i>100)throw Error('Completed request was not released');await panel.waitForTimeout(100);}
+ assert.equal((await call('browser_snapshot',{operationId:op})).ok,false);
+ report.checks.push('Final response releases request and rejects late operation calls');
+ const popup=await admin.evaluate(url=>chrome.windows.create({url,focused:true,type:'popup'}),`http://127.0.0.1:${fixturePort}/body?popup=1`);
+ await panel.evaluate(()=>{const t=document.querySelector('textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'팝업 페이지를 읽어 주세요');t.dispatchEvent(new Event('input',{bubbles:true}));});
+ await panel.waitForTimeout(100);await panel.evaluate(()=>document.querySelector('textarea').closest('form').requestSubmit());
+ for(let i=0;;i++){const req=api.state.requests.findLast(r=>r.path.endsWith('/prompt_async'));if(req&&req.body.messageID!==report.prompt.messageID){assert(req.body.system.includes(String(popup.tabs[0].id)));report.popupPrompt={messageID:req.body.messageID,system:req.body.system};break;}if(i>100)throw Error('Popup request not submitted');await panel.waitForTimeout(100);}
+ report.checks.push('Next actual panel request captures focused popup instead of previous request tab');
+ report.pass=true;console.log(JSON.stringify({pass:true,checks:report.checks},null,2));
+}catch(e){report.error=String(e);throw e;}finally{
+ await context?.close();
+ await api.close();
+ fixtureServer.closeAllConnections();await new Promise(r=>fixtureServer.close(r));
+ for(const p of owned.reverse()){if(p.exitCode===null){p.stdin?.end();p.kill();await new Promise(r=>{if(p.exitCode!==null)return r();p.once('exit',r);});}}
+ report.ownedProcessesStopped=owned.every(p=>p.exitCode!==null||p.signalCode!==null);
+ await mkdir(join(root,'tests/agent/results'),{recursive:true});
+ await writeFile(join(root,'tests/agent/results/request-target.json'),JSON.stringify(report,null,2));
+ await rm(temp,{recursive:true,force:true});
+}
