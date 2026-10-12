@@ -34,6 +34,26 @@ try{
  $new=Join-Path $unc 'new.jsonc';Write-Utf8Atomic $new '{}' 'missing'
  Assert ((Read-Utf8Text $new) -eq '{}') 'New WSL file was not published'
  Write-Output 'PASS new WSL configuration file'
+
+ $transactionRoot=Join-Path ([IO.Path]::GetTempPath()) ('AgentBrowser-rollback-' + [guid]::NewGuid().ToString('N'))
+ $null=New-Item -ItemType Directory -Path $transactionRoot
+ try {
+  foreach($concurrent in @($false,$true)) {
+   Write-Utf8Atomic $path $original
+   $transaction=New-FileTransaction $transactionRoot
+   Set-TransactionText $transaction $path $edit.Text (Get-FileSha256 $path)
+   $external=$original.Replace('keep/model','concurrent/model')
+   if($concurrent){Write-Utf8Atomic $path $external}
+   $caught=$false;try{Undo-FileTransaction $transaction}catch{$caught=$true}
+   if($concurrent){Assert $caught 'Rollback accepted a concurrent WSL settings edit';Assert ((Read-Utf8Text $path) -eq $external) 'Rollback overwrote concurrent WSL user settings';Assert (Test-Path -LiteralPath $transaction.Journal[0].Backup) 'Rollback conflict lost its backup'}
+   else {Assert (-not $caught -and (Read-Utf8Text $path) -eq $original) 'Unchanged WSL transaction did not roll back'}
+   Assert ((Invoke-NativeCapture $wsl @('-d',$WslDistribution,'--exec','stat','-c','%u:%g:%a','--',$linuxPath) ([IO.Path]::GetTempPath())) -eq $identity) 'Rollback changed WSL permissions'
+   Write-Output ('PASS WSL rollback concurrent=' + $concurrent + ', settings and backup preservation')
+  }
+ } finally {
+  if(-not ([IO.Path]::GetFullPath($transactionRoot)).StartsWith([IO.Path]::GetTempPath(),[StringComparison]::OrdinalIgnoreCase)){throw 'Unexpected transaction fixture root'}
+  Remove-Item -LiteralPath $transactionRoot -Recurse -Force
+ }
 }finally{
  foreach($leaf in @($path,(Join-Path $unc 'new.jsonc'))){if(Test-Path -LiteralPath $leaf){Remove-Item -LiteralPath $leaf -Force}}
  $null=Invoke-NativeCapture $wsl @('-d',$WslDistribution,'--exec','rmdir','--',$linux) ([IO.Path]::GetTempPath())

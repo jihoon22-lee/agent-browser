@@ -15,7 +15,7 @@ namespace AgentBrowser.Installer {
             Directory.CreateDirectory(destination);var manifest=InstallerEngine.Read<PackageManifest>(Path.Combine(source,"package-manifest.json"));
             var files=manifest.Files.Where(f=>f.Path!="AgentBrowser-Setup.exe").ToList();files.Add(new OwnedFile{Path="AgentBrowser-Setup.exe",Sha256=NativeIO.FileHash(gui)});
             foreach(var f in files){string from=f.Path=="AgentBrowser-Setup.exe"?gui:NativeIO.SafePath(source,f.Path),target=NativeIO.SafePath(destination,f.Path);Directory.CreateDirectory(Path.GetDirectoryName(target));File.Copy(from,target);}
-            manifest.Files=files.ToArray();manifest.Version=version;NativeIO.WriteText(Path.Combine(destination,"package-manifest.json"),NativeIO.Json.Serialize(manifest));
+            string extensionPath=Path.Combine(destination,"extension","manifest.json");var extension=InstallerEngine.Read<Dictionary<string,object>>(extensionPath);extension["version"]=version;NativeIO.WriteText(extensionPath,NativeIO.Json.Serialize(extension));files.Single(f=>f.Path=="extension/manifest.json").Sha256=NativeIO.FileHash(extensionPath);manifest.Files=files.ToArray();manifest.Version=version;NativeIO.WriteText(Path.Combine(destination,"package-manifest.json"),NativeIO.Json.Serialize(manifest));
         }
         [STAThread] public static int Main(string[] args){
             var synthetic=InstallerReviewTests.SyntheticBridge(args);if(synthetic.HasValue)return synthetic.Value;

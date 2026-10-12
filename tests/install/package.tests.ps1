@@ -43,6 +43,13 @@ try {
     Write-Utf8Atomic (Join-Path $badExtension 'fixture-results.json') '{"synthetic":"must not ship"}'
     Assert-Throws { & (Join-Path $Scripts 'build-release.ps1') -SkipBuild -BridgeExe $BridgeExe -ExtensionDir $badExtension -OutDir (Join-Path $root 'bad-output') } 'Unexpected JSON artifact entered release'
     Assert-Throws { & (Join-Path $Scripts 'build-release.ps1') -SkipBuild -BridgeExe $BridgeExe -Version '99.99.99' -OutDir (Join-Path $root 'wrong-version') } 'Wrong executable version accepted'
+
+    Remove-Item -LiteralPath (Join-Path $badExtension 'fixture-results.json')
+    $extension=Read-Utf8Text (Join-Path $badExtension 'manifest.json') | ConvertFrom-Json
+    $extension.version='99.0.0';Write-Utf8Atomic (Join-Path $badExtension 'manifest.json') (ConvertTo-Json $extension -Depth 50)
+    Assert-Throws { & (Join-Path $Scripts 'build-release.ps1') -SkipBuild -BridgeExe $BridgeExe -ExtensionDir $badExtension -OutDir (Join-Path $root 'wrong-extension-version') } 'Wrong extension version was packaged'
+    $manifestPath=Join-Path $extract 'package-manifest.json';$manifestText=Read-Utf8Text $manifestPath
+    try{$manifest=$manifestText | ConvertFrom-Json;$manifest.Version='99.0.0';Write-Utf8Atomic $manifestPath (ConvertTo-Json $manifest -Depth 50);Assert-Throws { Read-VerifiedPackage $extract } 'Verifier accepted mismatched extension version'}finally{Write-Utf8Atomic $manifestPath $manifestText}
     Write-Output 'PASS unexpected artifacts and mismatched version are rejected'
     # Exercise the documented native entry point: advanced-script defaults differ
     # under Windows PowerShell 5.1 -File, so direct & invocation is insufficient.
