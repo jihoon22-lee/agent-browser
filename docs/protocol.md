@@ -150,7 +150,7 @@ Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 
 
 `request.end {requestId, clientId, abort?:boolean}`는 정확히 일치하는 예약을 끝내고 content 명령을 취소한다. 정상 완료는 Released, 사용자 Stop(`abort:true`)은 Aborted로 남겨 이전 operation 호출에 CANCELLED를 반환한다. Stop 후 같은 client의 requestId 없는 attach/new는 30초 동안 CANCELLED이며, 명시적인 새 사용자 requestId는 즉시 사용할 수 있다. 이 유한한 중단 표시가 Bridge 재시작이나 30초 이후까지 모든 늦은 호출을 막는다고 보장하지 않는다. MCP tool.cancel/응답 전송 실패의 operation abort는 예약과 캡처한 기본 탭을 유지한다. Extension의 operation.abort는 사용자 중단으로 예약도 끝낸다.
 
-background는 활성 worker에서 15초 주기, suspended worker에서는 30초 alarm으로 예약을 확인한다(Chrome 스케줄링에 따른 지연 가능). 패널이 닫혀도 같은 session/message의 완료 응답과 busy/retry가 아닌 상태를 확인하면 정상 해제한다. 사용 불가능하거나 삭제된 프로필은 runtime을 시작하지 않고 Bridge gate를 닫은 뒤 lease를 정리한다. 연결된 서버의 메시지 조회가 불명확하게 실패하면 lease를 보존한다. Stop은 gate가 닫히면 런타임 발견/abort 실패와 무관하게 lease를 정리하고, 패널은 Bridge 실패와 관계없이 선택된 OpenCode 세션의 /abort를 시도한다.
+background는 활성 worker에서 15초 주기, suspended worker에서는 1분 alarm으로 예약을 확인한다(Chrome 스케줄링에 따른 지연 가능). 패널이 닫혀도 같은 session/message의 완료 응답과 busy/retry가 아닌 상태를 확인하면 정상 해제한다. 사용 불가능하거나 삭제된 프로필은 runtime을 시작하지 않고 Bridge gate를 닫은 뒤 lease를 정리한다. 연결된 서버의 메시지 조회가 불명확하게 실패하면 lease를 보존한다. Stop은 gate가 닫히면 런타임 발견/abort 실패와 무관하게 lease를 정리하고, 패널은 Bridge 실패와 관계없이 선택된 OpenCode 세션의 /abort를 시도한다.
 
 
 ### 프레임 대기

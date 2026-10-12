@@ -30,7 +30,8 @@ chrome.runtime.onInstalled.addListener(() => {
 // Alarms wake a suspended worker; the timer makes completion prompt while the
 // WebSocket keeps it alive. Neither path starts an unavailable OpenCode profile.
 const reconcile=()=>{ if(lastStatus.state==='connected')void requests.reconcile().catch(()=>{}); };
-void chrome.alarms.create('panel-request-reconcile',{periodInMinutes:0.5});
+// Keep the alarm compatible with the existing minimum Chrome 116.
+void chrome.alarms.create('panel-request-reconcile',{periodInMinutes:1});
 setInterval(reconcile,15_000);
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === "bridge-keepalive") conn.ensure();

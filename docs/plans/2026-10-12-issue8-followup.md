@@ -12,3 +12,5 @@
 - [x] WP5: F9. about:blank close 계약은 유지하고 설명과 오류 메시지를 맞춘다.
 
 실행 결과와 미검증은 `docs/status.md`에 기록한다. push/PR/Release/운영 설치 변경은 요청 범위에 없다.
+
+최종 검증 완료: Extension 370, Rust 전체, Node 28, Linux/Windows E2E 각각 81 통과(각 bookmarks opt-in 2 skipped). 마지막 Chrome 116 alarm 호환성 조정은 빌드와 Windows F16 재검증으로 확인했다. 상세 실패·수정·통과 기록은 status.md를 따른다.

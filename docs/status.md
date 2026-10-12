@@ -1,6 +1,6 @@
 # Issue #8 후속 수정 (2026-10-12)
 
-기준 `db397ea`, `feat/issue8-followup`. [계획](./plans/2026-10-12-issue8-followup.md)의 WP2 → WP1 → WP3 → WP4 → WP5 순서로 진행한다.
+기준 `db397ea`, 브랜치 `feat/issue8-followup`. [이슈 #8](https://github.com/jihoon22-lee/agent-browser/issues/8) §2의 **WP2 → WP1 → WP3 → WP4 → WP5 구현 완료**. [계획](./plans/2026-10-12-issue8-followup.md)에 과제별 완료를 기록했다. 모든 커밋은 로컬이며 push/PR/Release/운영 설치 변경은 하지 않았다.
 
 ## WP2 완료
 
@@ -10,11 +10,11 @@
 - 먼저 추가한 회귀 13건이 실패함을 확인했다. 수정 후 관련 Vitest 3파일 49/49, Extension TypeScript/Vite 빌드와 E2E 타입 검사 통과.
 - `bash scripts/test-windows.sh -- issue8-content.spec.ts board-navigation.spec.ts -g 'F4|F8|F11|B08'`: 실제 Windows Node 24.18.1 / Chrome 154.0.8037.99 / MSVC release exe로 **8/8 통과**. 격리 headless 프로필과 합성 페이지만 사용했다.
 - 최초 Windows 실행은 fixture 임의 포트 6566에 대한 Chrome ERR_UNSAFE_PORT로 실패했다. 실행 목록에 새 spec을 등록한 최종 재실행 결과가 위 8/8이다. jsdom은 min/max range의 파싱 초기값을 50으로 남기는 차이가 있어 해당 경계는 실제 Chrome에서 검증했다.
-- 전체 마일스톤 검사는 아직 실행하지 않았다. 모델 호출, push/PR/Release, 운영 설치 변경은 하지 않았다.
+- WP2 시점에는 전체 마일스톤 검사를 실행하지 않았다. 이후 전체 결과는 아래 WP5 기록과 구분한다. 모델 호출, push/PR/Release, 운영 설치 변경은 하지 않았다.
 
 ## WP1 완료
 
-- F1/F16: runtime.ensure 없이 실행 중 연결만 조회하고, 삭제/중단/오류 프로필은 gate 종료 후 lease를 정리한다. 프로필 삭제 경로와 background 15초 timer/30초 alarm에도 정리를 연결했다. 정상 완료는 동일 session/message와 서버 상태로 확인한다.
+- F1/F16: runtime.ensure 없이 실행 중 연결만 조회하고, 삭제/중단/오류 프로필은 gate 종료 후 lease를 정리한다. 프로필 삭제 경로와 background 15초 timer/1분 alarm에도 정리를 연결했다. 정상 완료는 동일 session/message와 서버 상태로 확인한다.
 - F2/F3/F12: 패널은 Bridge 실패와 무관하게 /abort를 시도하며 오류를 합쳐 표시한다. request.end abort:true는 CANCELLED로 종료하고 같은 client의 범위 없는 attach/new를 30초 거부한다. 명시적인 새 사용자 요청은 허용한다. MCP operation abort는 예약/대상 탭을 유지한다.
 - 실패 회귀: UI/lease 7건 실패 및 새 Rust 취소 API 부재를 확인했다. 구현 후 UI/lease 97/97, Rust operation 19/19와 conn 2/2 통과. 연결정보/doctor 비밀정보 분리 합성 HTTP 검사 1/1 통과(최초 sandbox loopback bind 거부 후 권한 있는 실행으로 검증).
 - Extension 빌드 및 E2E 타입 검사 통과. 초기 타입 오류는 명시적 storage lease 타입과 합성 메시지 created 시각으로 수정했다.
@@ -41,9 +41,10 @@
 
 - about:blank close의 UNSUPPORTED_PAGE 계약을 유지하며 전용 안내를 추가했다. browser_tabs 설명과 계약 fixture에 빈 탭 예외를 명시했다. browser_wait 설명도 WP3의 최상위 탭 URL 조건과 맞췄다.
 - 메시지·도구 설명 회귀 2건의 수정 전 실패를 확인했다. handlers 43/43, Rust 도구 계약/설명/6,000자 예산 3/3 통과. 실제 Windows C07도 계속 통과했다.
-- 전체 검증: Extension **34파일 370/370**, Rust 전체 검사 통과, Node 보조 **28/28**, 빌드·E2E 타입 검사·문서 링크 검사 통과. Clippy는 종료 0(기존 스타일 경고와 새 중단 처리의 접을 수 있는 if 경고). 링크 검사는 초기 sandbox의 git spawn EPERM 후 읽기 권한 있는 실행에서 30개 파일 통과.
+- 전체 검증: Extension **34파일 370/370**, Rust 전체 검사 통과, Node 보조 **28/28**, 빌드·E2E 타입 검사·문서 링크 검사 통과. Clippy는 종료 0(스타일/복잡도 경고 유지). 링크 검사는 초기 sandbox의 git spawn EPERM 후 읽기 권한 있는 실행에서 30개 파일 통과.
 - `AB_TEST_BFCACHE=1`을 WSLENV로 Windows Node에 전달한 `scripts/test-windows.sh`: **81 통과 / 별도 bookmarks 권한 fixture 2 skipped**. 실제 BFCache persisted=true 확인. Windows Chrome 154.0.8037.99와 새 MSVC release exe를 사용했다.
-- Linux Chromium 전체 E2E는 별도로 진행 중이다. 전체 결과를 Windows 증거로 대체하지 않는다.
+- Linux Chromium 156.0.8078.4 / Linux 시험용 Bridge / Node 24.18.0의 전체 E2E도 **81 통과 / bookmarks 권한 fixture 2 skipped**, 실제 BFCache 복원 확인. Linux와 Windows 결과는 별도 실행이다.
+- 최종 호환성 검토에서 alarm 간격을 기존 최소 Chrome 116에 맞는 1분으로 조정했다(활성 worker의 15초 timer 유지). 이 한 줄 변경 후 재빌드와 직접 영향받는 실제 Windows F16 **1/1 재검증 통과(16.8초)**. Chrome 116 자체에서 실행한 검증은 아니다.
 
 ---
 
