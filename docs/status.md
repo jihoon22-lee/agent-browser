@@ -3,19 +3,20 @@
 GUI PR #5와 분리된 Windows 작업 복사본에서 진행한다. 운영 설치와 사용자 Chrome 프로필은 변경하지 않았다. iframe 제품 변경은 현재 권한(tabs/scripting/webNavigation 등) 내에서 수행하며 debugger 권한을 추가하지 않았다.
 
 - 활성 탭 독립 리뷰: 준비 중 Stop 이후 제출, HTTP admission 거절 후 예약 누수, OpenCode 중단 오류가 예약 종료를 가리는 문제를 실패 회귀로 재현하고 수정했다(`9ced9eb`). 늦은 동일 세션 취소는 정확한 requestId로 구분하고, 중단 API 실패 시 재시도할 신원을 보존한다.
-- 완료 판정 추가 리뷰: 이전의 terminal 단계 뒤에 미완료 단계가 생겼을 때 자동 해제하지 않는다. 최신 matching assistant의 terminal finish 또는 completed error와 서버 idle을 함께 확인한다.
+- 완료 판정 추가 리뷰: 이전의 terminal 단계 뒤에 미완료 단계가 생겼을 때 자동 해제하지 않는다. 최신 matching assistant의 time.completed와 서버 idle을 함께 확인하고 명시적인 tool-calls/unknown finish는 제외한다. v1의 선택 필드 finish가 없어도 정상 완료를 인정한다.
 - iframe: 합성 클릭의 로컬 viewport 좌표·버튼 상태, 명시적 이벤트/키보드 초점 후보, snapshot 문서에 결합된 frameRef 대기를 구현했다. 본문 DOM 교체는 허용하고 문서 이동·닫힌 프레임은 오래된 참조를 거부한다.
-- Extension 전체 32 suites / 312 tests 통과. Rust MCP 계약 2 tests 통과, Windows MSVC debug 빌드 성공. 실제 Windows Chrome 154.0.8037.99에서 같은 출처·다른 출처·중첩 iframe과 OOPIF 2개 전체 경로 통과. 좌표 조건·체크박스·새 탭·프레임 범위·stale 참조를 확인했다.
+- Extension 전체 32 suites / 317 tests, 타입 검사·빌드 통과. Rust 전체 143 tests 통과(1 ignored), Windows MSVC debug 빌드 성공. 실제 Windows Chrome 154.0.8037.99에서 같은 출처·다른 출처·중첩 iframe과 OOPIF 2개 전체 경로 통과. 좌표 조건·체크박스·새 탭·프레임 범위·stale 참조를 확인했다.
+- PR #6 첫 코드 리뷰의 예약 복구·완료 후 Stop·선택적 finish·삭제된 세션 404 결함을 실패 회귀로 재현하고 수정했다. 예약 신원은 Chrome 재시작에도 남는 local storage에 보존한다. 관련 최종 회귀 91개와 실제 패널 12개 검사, 실제 WSL OpenCode→MCP→Windows Chrome iframe 경로를 통과했다. 자체 WSL 런타임의 stopped 상태와 프로세스 정리를 확인했다.
 - 합성 입력은 isTrusted=false이며 trusted 입력을 요구하는 fixture는 열리지 않는다. 사내 서비스와 실제 LLM 호출은 이번 검증에 포함하지 않는다.
-- WSL 원본 748f8d5, dad0216을 cd872f2, f2b0403으로 순서대로 통합했다. 문서 충돌은 양쪽 시험 구간을 유지했다. GUI main 통합과 최종 배포 검증을 진행한다.
+- WSL 원본 748f8d5, dad0216을 cd872f2, f2b0403으로 순서대로 통합했다. 문서 충돌은 양쪽 시험 구간을 유지했다. GUI main 통합과 게시판 안정성 최종 인계를 기다리며, 같은 PR에서 통합·최종 배포 검증을 진행한다.
 
-## 활성 탭 기본 선택 — 독립 로컬 브랜치
+## 활성 탭 기본 선택 — 초기 독립 로컬 검증 기록
 
 `feat/request-active-tab`, 기준 `fb2bcdbb4672a09395c7d7cc2ee75e6796e897c1`. 운영 설치에 적용하지 않았으며 push/PR/릴리스하지 않았다.
 
 - 패널 요청마다 제출 시점의 포커스된 Chrome 창(normal/popup)의 활성 HTTP(S) 탭을 캡처한다. 모호한 포커스·이동 중·제한 페이지에서는 기본 대상을 만들지 않는다.
 - 요청 ID로 Bridge에 예약하고, attach에서 해당 ID를 요구한다. 명시적 tabId가 기본 대상보다 우선한다. 실행 중 포커스 이동은 operation을 변경하지 않는다.
-- 다른 요청의 예약, 오래된 operation, 닫힌 대상에서 다른 탭으로 대체하지 않는다. 완료된 같은 messageID의 응답과 서버 idle 확인 후 예약을 해제한다. 패널/worker 재시작 시 session storage로 식별자를 복원하며 다음 제출에서도 완료를 재검증한다.
+- 다른 요청의 예약, 오래된 operation, 닫힌 대상에서 다른 탭으로 대체하지 않는다. 완료된 같은 messageID의 응답과 서버 idle 확인 후 예약을 해제한다. 패널/worker 재시작 시 durable local storage로 식별자를 복원하며 다음 제출에서도 완료를 재검증한다.
 - 일반 프롬프트는 OpenCode v1 system 필드로 요청 문맥을 전달한다. 커맨드는 v1 계약의 file part로 전달한다. 기존 CLI의 요청 ID 없는 attach는 패널 예약이 없을 때 기존 동작을 유지한다.
 - 수정 전 새 Rust 게이트 API 및 TypeScript 모듈 부재로 회귀 검사가 실패하는 것을 확인했다. Rust operation 15개 및 도구 계약 2개 통과. 관련 Extension 회귀·타입 검사·빌드와 Windows 통합 결과는 아래 실행 명령으로 재현한다.
 - Windows Chrome 154.0.8037.99 + 새 MSVC debug Bridge + 빌드 확장 + 합성 OpenCode로 9개 통합 검사 통과: 탭 전환 중 고정, 동시 예약 거부, 명시 대상 우선, 이전 operation 무효화, 새 탭 편입/종료, 닫힌 기본 대상, 모호한 기본 대상, 실제 패널의 두 번째 창/팝업 캡처, 완료 해제. 실제 모델 호출 0회. 결과는 ignored `tests/agent/results/request-target.json`.

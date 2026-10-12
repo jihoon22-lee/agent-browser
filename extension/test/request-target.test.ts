@@ -34,9 +34,9 @@ it('does not release on an earlier final step when a newer step is incomplete',(
   const info={role:'assistant',sessionID:'s',parentID:'m'};
   expect(completedRequest({sessionId:'s',messageId:'m'},[{info:{...info,time:{completed:1},finish:'stop'}},{info:{...info,time:{created:2}}}])).toBe(false);
 });
-it('requires terminal finish or a completed provider error, not an unexplained incomplete finish',()=>{
+it('accepts optional finish in completed v1 responses and rejects explicit nonterminal steps',()=>{
   const lease={sessionId:'s',messageId:'m'},info={role:'assistant',sessionID:'s',parentID:'m',time:{completed:1}};
-  expect(completedRequest(lease,[{info}])).toBe(false);
+  expect(completedRequest(lease,[{info}])).toBe(true);
   expect(completedRequest(lease,[{info:{...info,error:{name:'APIError'}}}])).toBe(true);
   expect(completedRequest(lease,[{info:{...info,finish:'tool-calls'}}])).toBe(false);
 });

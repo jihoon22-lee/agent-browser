@@ -27,7 +27,7 @@ it('click supplies local viewport coordinates and button state, preserving nativ
   expect(el.checked).toBe(true);
 });
 it('discovers explicit inline and keyboard click candidates without treating every row as interactive',()=>{
-  document.body.innerHTML='<div onclick="void 0">Inline mail</div><div tabindex="0">Keyboard mail</div><div tabindex="-1">programmatic</div><div>plain</div>';
+  document.body.innerHTML='<div onclick="void 0">Inline mail</div><div tabindex="0">Keyboard mail</div><div tabindex="-1">programmatic</div><div>plain</div><div onkeydown="void 0">unfocusable keyboard handler</div>';
   expect(snap().elements.map(e=>e.name)).toEqual(['Inline mail','Keyboard mail']);
 });
 it('clicks a real fragment of a wrapped inline link instead of whitespace in its bounding box',async()=>{

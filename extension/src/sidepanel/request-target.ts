@@ -17,5 +17,5 @@ export function requestInstructions(requestId:string,target:RequestTarget|null):
 export function completedRequest(lease:Pick<RequestLease,'messageId'|'sessionId'>,messages:Array<{info:Record<string,any>;parts?:unknown[]}>):boolean {
   const info=messages.filter(({info})=>info.role==='assistant'&&info.sessionID===lease.sessionId&&info.parentID===lease.messageId).at(-1)?.info;
   return !!info && typeof info.time?.completed==='number' &&
-    (!!info.error || (typeof info.finish==='string' && !['tool-calls','unknown'].includes(info.finish)));
+    (!!info.error || !['tool-calls','unknown'].includes(info.finish));
 }

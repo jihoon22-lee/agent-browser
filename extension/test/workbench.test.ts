@@ -99,7 +99,8 @@ it('closes the browser reservation even when OpenCode abort fails',async()=>{
 });
 it('Stop still owns the earlier request after a premature next submission is rejected',async()=>{
   await render();let saved:any;
-  (chrome.storage as any).session={get:async()=>({panelBrowserRequest:saved})};
+  const localGet=chrome.storage.local.get as ReturnType<typeof vi.fn>,getStorage=localGet.getMockImplementation() as ()=>Promise<Record<string,any>>;
+  localGet.mockImplementation(async()=>({...await getStorage(),panelBrowserRequest:saved}));
   const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
   runtime.mockImplementation(async(message:any)=>{
     if(message.kind==='request-prepare'){
@@ -112,6 +113,14 @@ it('Stop still owns the earlier request after a premature next submission is rej
   await draftValue('too soon');await act(async()=>button('보내기').click());
   await act(async()=>button('응답 중단').click());
   expect(runtime.mock.calls.map(([m])=>m).find(m=>m.kind==='request-cancel').scope.requestId).toBe(saved.requestId);
+});
+it('still aborts subsequent session work when a completed prompt has no remaining lease',async()=>{
+  await render();await draftValue('completed request');await act(async()=>button('보내기').click());
+  const runtime=chrome.runtime.sendMessage as ReturnType<typeof vi.fn>,original=runtime.getMockImplementation() as (message:any)=>Promise<any>;
+  runtime.mockImplementation(async(message:any)=>message.kind==='request-cancel'?{ok:true,result:false}:original(message));
+  await act(async()=>test.stream({type:'session.status',properties:{sessionID:'ses-one',status:{type:'busy'}}}));
+  await act(async()=>button('응답 중단').click());
+  expect(test.post).toHaveBeenCalledWith('/session/ses-one/abort',undefined);
 });
 it("restores the selected profile/session and isolates streaming messages by session", async () => {
   await render(); expect(host.textContent).toContain("기존 질문"); expect(host.textContent).toContain("사내 모델");

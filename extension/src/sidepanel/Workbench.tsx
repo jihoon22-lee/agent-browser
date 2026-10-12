@@ -16,7 +16,7 @@ type Props = { operation: Operation | null; stopHandler: RefObject<(operationId:
 export function Workbench({ operation, stopHandler, view, onViewChange }: Props) {
   const wb = useWorkbench();
   const [requestHeld,setRequestHeld]=useState(false);
-  useEffect(()=>{let active=true;void chrome.storage.session?.get("panelBrowserRequest").then(saved=>{const r=saved.panelBrowserRequest as any;if(active)setRequestHeld(r?.profileId===wb.profileId&&r?.directory===wb.directory&&r?.sessionId===wb.sessionId);});return ()=>{active=false;};},[wb.profileId,wb.directory,wb.sessionId]);
+  useEffect(()=>{let active=true;void chrome.storage.local?.get("panelBrowserRequest").then(saved=>{const r=saved.panelBrowserRequest as any;if(active)setRequestHeld(r?.profileId===wb.profileId&&r?.directory===wb.directory&&r?.sessionId===wb.sessionId);});return ()=>{active=false;};},[wb.profileId,wb.directory,wb.sessionId]);
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
   const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState("");
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -46,7 +46,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   useEffect(()=>{
     if(!requestHeld||running)return;
     let active=true;
-    void chrome.storage.session?.get('panelBrowserRequest').then(async saved=>{
+    void chrome.storage.local?.get('panelBrowserRequest').then(async saved=>{
       const lease=saved.panelBrowserRequest as RequestLease|undefined;
       if(!lease||lease.sessionId!==wb.sessionId||lease.profileId!==wb.profileId||lease.directory!==wb.directory||!completedRequest(lease,messages))return;
       const response=await chrome.runtime.sendMessage({kind:'request-finish',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId}});
@@ -198,11 +198,11 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       if(attempt.submitted&&error instanceof OpenCodeApiError&&[400,401,403,404,422].includes(error.status)) {
         try { await discard(); } catch(cleanup) { if(current())wb.setError(String(cleanup));return; }
       }
-      if(!attempt.submitted&&!attempt.cancelled&&chrome.storage.session){
+      if(!attempt.submitted&&!attempt.cancelled&&chrome.storage.local){
         // A rejected next submission must not replace the still-running owner's
         // Stop token with the rejected attempt's token.
         try {
-          const saved=(await chrome.storage.session.get('panelBrowserRequest')).panelBrowserRequest as RequestLease|undefined;
+          const saved=(await chrome.storage.local.get('panelBrowserRequest')).panelBrowserRequest as RequestLease|undefined;
           if(current()&&submission.current===attempt){
             const owned=saved?.profileId===wb.profileId&&saved.directory===wb.directory&&saved.sessionId===wb.sessionId;
             attempt.requestId=owned?saved.requestId:undefined;setRequestHeld(owned);
@@ -327,7 +327,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
             if(attempt)attempt.cancelled=true;
             const stopped=await chrome.runtime.sendMessage({kind:'request-cancel',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId,...(attempt?.requestId?{requestId:attempt.requestId}:{})}});
             if(stopped?.ok===false)throw Error(stopped.error?.message);
-            if(!attempt?.requestId&&stopped?.result!==true){
+            if(stopped?.result===false||(!attempt?.requestId&&stopped?.result!==true)){
               if(operation&&stopsOperation(operation.id))await bridgeRequest('operation.abort',{operationId:operation.id});
               await selectedApi.post(path+'/abort');
             }

@@ -1,14 +1,28 @@
 import {panelRequests} from '../src/background/panel-requests';
+import {OpenCodeApiError} from '../src/agents/opencode-v1/client';
 const api=vi.hoisted(()=>({get:vi.fn(),post:vi.fn()}));
-vi.mock('../src/agents/opencode-v1/client',()=>({OpenCodeV1Client:class {get=api.get;post=api.post;}}));
+vi.mock('../src/agents/opencode-v1/client',async original=>({...await original<typeof import('../src/agents/opencode-v1/client')>(),OpenCodeV1Client:class {get=api.get;post=api.post;}}));
 const lease=(id:string)=>({requestId:id,messageId:'msg-'+id,sessionId:'session-'+id,profileId:'native',directory:'/fixture'});
 let storage:Record<string,any>,call:ReturnType<typeof vi.fn<(method:string,params:Record<string,unknown>)=>Promise<any>>>;
 beforeEach(()=>{
   storage={};api.get.mockReset().mockResolvedValue([]);api.post.mockReset().mockResolvedValue({});
   call=vi.fn(async(method:string,_params:Record<string,unknown>)=>method==='runtime.ensure'?{state:'ready',baseUrl:'http://127.0.0.1:4444'}:{});
-  vi.stubGlobal('chrome',{storage:{local:{get:async()=>({clientId:'browser'})},session:{get:async()=>structuredClone(storage),set:async(v:any)=>Object.assign(storage,v),remove:async(k:string)=>{delete storage[k]}}}});
+  vi.stubGlobal('chrome',{storage:{local:{get:async()=>({clientId:'browser',...structuredClone(storage)}),set:async(v:any)=>Object.assign(storage,v),remove:async(k:string)=>{delete storage[k]}}}});
 });
 afterEach(()=>vi.unstubAllGlobals());
+it('can stop a reservation after Chrome session storage is cleared on restart',async()=>{
+  const durable:Record<string,any>={clientId:'browser'};let transient:Record<string,any>={};
+  (chrome.storage as any).local={get:async()=>structuredClone(durable),set:async(v:any)=>Object.assign(durable,v),remove:async(k:string)=>{delete durable[k];}};
+  (chrome.storage as any).session={get:async()=>structuredClone(transient),set:async(v:any)=>Object.assign(transient,v),remove:async(k:string)=>{delete transient[k];}};
+  await panelRequests(call).prepare(lease('one'),null);transient={};
+  await panelRequests(call).cancel(lease('one'));
+  expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser'});
+});
+it('releases a deleted session after closing its gate even when abort returns 404',async()=>{
+  storage.panelBrowserRequest=lease('one');api.post.mockRejectedValueOnce(new OpenCodeApiError(404,'deleted'));
+  await expect(panelRequests(call).cancel(lease('one'))).resolves.toBe(true);
+  expect(storage.panelBrowserRequest).toBeUndefined();
+});
 it('ignores a delayed cancellation for an older request in the same session',async()=>{
   storage.panelBrowserRequest=lease('one');
   await panelRequests(call).cancel({...lease('one'),requestId:'older'});

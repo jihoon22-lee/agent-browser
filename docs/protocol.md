@@ -66,7 +66,7 @@ Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 
 
 | 방향 | 메서드 |
 |---|---|
-| Extension → serve | `heartbeat`, `status.get`, `operation.abort`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
+| Extension → serve | `heartbeat`, `status.get`, `request.begin`, `request.end`, `operation.abort`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
 | Mcp → serve | `tool.call`, `tool.cancel` |
 | serve → Extension | `browser.*` 명령(`browser.click` 등) |
 | 그 밖 | `FORBIDDEN_METHOD` |
@@ -148,7 +148,7 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 
 Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 브라우저의 새 사용자 요청을 예약한다. 하나의 요청만 예약할 수 있다. tabId 누락은 안전한 기본 대상이 없음을 뜻하며 attach 시 현재 탭으로 대체하지 않는다. `browser_tabs action=attach`의 선택적 requestId가 예약과 일치해야 한다. 명시적 tabId는 캡처된 기본값보다 우선한다. 기존 CLI는 예약이 없을 때 requestId 없이 attach할 수 있다.
 
-`request.end {requestId, clientId}`는 정확히 일치하는 예약과 그 operation을 해제하고 content 명령을 취소한다. 이전 operation으로 뒤늦게 들어온 도구 호출은 거부한다. Stop은 operation과 연결된 예약도 무효화한다. 완료 판단은 동일 OpenCode session/message 응답과 authoritative idle 상태로 확인하며, API 응답이 불명확하면 session storage의 예약 식별자를 보존한다.
+`request.end {requestId, clientId}`는 정확히 일치하는 예약과 그 operation을 해제하고 content 명령을 취소한다. 이전 operation으로 뒤늦게 들어온 도구 호출은 거부한다. Stop은 operation과 연결된 예약도 무효화한다. 완료 판단은 동일 OpenCode session/message 응답과 authoritative idle 상태로 확인하며, API 응답이 불명확하면 durable local storage의 예약 식별자를 보존한다.
 
 
 ### 프레임 대기
