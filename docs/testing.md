@@ -410,3 +410,9 @@ AB_TEST_BFCACHE는 Playwright의 기본 `--disable-back-forward-cache` 인수를
 ## 새 탭·창·즐겨찾기 기능 검사
 
 `browser-capabilities.spec.ts` C01–C07은 실제 MCP 호출로 standalone new, snapshot 없는 new, blank→HTTP goto, windows/windowId, anchor newTab, 생산 optional permission 기본 거부, about:blank 보안 경계를 검사한다. `bookmarks.spec.ts` F01–F02는 별도 `AB_TEST_BOOKMARKS=1` 시험 확장 복사본과 빈 프로필에서 만든 합성 즐겨찾기로 폴더/검색/페이지/비방문/변경 도구 거부를 검사한다. 일반 실행에서는 F01–F02를 skip하고 허용 상태 검증으로 집계하지 않는다. 시험 manifest 차이와 실제 사용자 동의 UI의 검증 한계는 [지원표](./browser-capabilities.md)에 기록한다.
+
+## 관리 런타임 업데이트 회귀
+
+기존 NativeEngineTests가 idle/busy/retry/잘못된 상태 응답, 취소 복구, Start=false, 변경 없는 재적용을 검사한다. 외부 프로필의 URL은 시험에서 도달 불가능한 값이며 호출하지 않아야 한다.
+
+`tests/install/ManagedRuntimeUpgradeTests.cs`를 installer C# 소스와 함께 별도 Main으로 컴파일하면 실제 Windows/WSL 업데이트를 시험할 수 있다. 인수는 기존 0.1.5 패키지, 후보 0.1.6 패키지, **새 개인 Windows fixture 폴더**, 미리 생성한 격리 Linux 작업 폴더다. Linux 폴더에는 빈 `opencode.json`을 두며 XDG config/data/state/cache는 그 아래로 격리한다. 현재 시험 대상은 Ubuntu의 `/home/jihoon/.opencode/bin/opencode` 1.18.29다. 테스트는 합성 페어링을 자신의 데이터에만 기록하고 빈 세션만 생성하며 모델 요청/사용자 Chrome 접근을 하지 않는다. 완료 또는 실패 시 자신의 설치를 uninstall한다. 사용자 운영 폴더에 실행하지 않는다.

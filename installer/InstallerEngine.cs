@@ -279,7 +279,10 @@ namespace AgentBrowser.Installer {
                     foreach(var change in p.Changes) if(HashOrMissing(change.Path)!=change.Expected) throw new IOException("A file changed after preview: "+change.Path);
                     cancel.ThrowIfCancellationRequested();transaction=new FileTransaction(root);
                     if(p.Old!=null) {
-                        if(p.Next==null) BridgeControl.StopRuntimes(p.Old,stoppedProfiles);
+                        if(p.Next==null||!Same(p.Old.CurrentExe,p.Next.CurrentExe)||p.Old.Port!=p.Next.Port) {
+                            if(p.Next!=null) BridgeControl.RequireIdleRuntimes(p.Old);
+                            BridgeControl.StopRuntimes(p.Old,stoppedProfiles);
+                        }
                         restartOld=BridgeControl.Stop(p.Old);
                     }
                     if(p.Next!=null) {
@@ -302,7 +305,11 @@ namespace AgentBrowser.Installer {
                     } else transaction.Write(new Change{Path=Path.Combine(p.Old.DataDir,".installer-bridge-process.json"),Expected=HashOrMissing(Path.Combine(p.Old.DataDir,".installer-bridge-process.json"))});
                     cancel.ThrowIfCancellationRequested();
                     complete=true;string warning="";
-                    try {transaction.Cleanup();}catch(Exception) {warning="\r\n경고: 설치 변경은 완료됐지만 임시 복구 파일 정리는 실패했습니다. 보존된 경로: "+transaction.Stage;progress(warning);}
+                    // Files are committed before starting the new runtime overlay.
+                    // A restart failure must not roll back files under a new MCP process.
+                    if(p.Next!=null&&p.Options.Start&&stoppedProfiles.Count>0)try{RestartProfiles(p.Next,stoppedProfiles);}
+                    catch(Exception) {warning="\r\n경고: 업데이트는 완료됐지만 일부 OpenCode 프로필을 다시 시작하지 못했습니다. 진단에서 확인하고 프로필을 다시 시작하세요.";progress(warning);}
+                    try {transaction.Cleanup();}catch(Exception) {warning+="\r\n경고: 설치 변경은 완료됐지만 임시 복구 파일 정리는 실패했습니다. 보존된 경로: "+transaction.Stage;progress(warning);}
                     try {using(var registry=Registry.CurrentUser.CreateSubKey(@"Software\AgentBrowser\Installations")) {if(p.Next==null) registry.DeleteSubKey(p.Old.InstallId,false);else using(var item=registry.CreateSubKey(p.Next.InstallId)) item.SetValue("Path",root);}} catch(Exception) {string registryWarning="\r\n경고: 파일 변경은 완료됐지만 설치 위치 등록 또는 제거가 실패했습니다. 다음 실행에서 폴더를 직접 선택할 수 있습니다.";warning+=registryWarning;progress(registryWarning);}
                     return (p.Next==null?"제거 완료. 페어링·프로필 데이터와 OpenCode 설정의 다른 항목을 보존했습니다.":"설치 완료: "+p.Next.Version+"\r\nChrome 확장 폴더: "+Path.Combine(root,"extension")+"\r\nChrome에서 확장을 로드 또는 새로고침하고 페어링하세요.")+warning;
                 } catch(Exception error) {
@@ -400,6 +407,40 @@ namespace AgentBrowser.Installer {
                     return;
                 }
             }throw new IOException("Bridge process disappeared during startup.");
+            }
+        }
+        public static void RequireIdleRuntimes(InstallState state) {
+            NativeIO.PlainPath(state.DataDir);
+            string path=Path.Combine(state.DataDir,"runtime.json");if(!File.Exists(path))return;
+            try {
+                var snapshot=InstallerEngine.Read<Dictionary<string,object>>(path);
+                var records=(Dictionary<string,object>)snapshot["runtimes"];
+                if(records.Count==0)return;
+                var profiles=(Dictionary<string,object>)snapshot["profiles"];
+                foreach(var entry in records) {
+                    var profile=(Dictionary<string,object>)profiles[entry.Key];
+                    if((string)profile["kind"]=="external")continue;
+                    var record=(Dictionary<string,object>)entry.Value;Uri uri;
+                    if(!Uri.TryCreate((string)record["baseUrl"],UriKind.Absolute,out uri)||uri.Scheme!="http"||!uri.IsLoopback||uri.AbsolutePath!="/"||!String.IsNullOrEmpty(uri.UserInfo)||!String.IsNullOrEmpty(uri.Query)||!String.IsNullOrEmpty(uri.Fragment))throw new IOException();
+                    string username=(string)record["username"],password=(string)record["password"];
+                    if(String.IsNullOrEmpty(username)||String.IsNullOrEmpty(password))throw new IOException();
+                    var request=(System.Net.HttpWebRequest)System.Net.WebRequest.Create(new Uri(uri,"/session/status"));
+                    request.Proxy=null;request.AllowAutoRedirect=false;request.Timeout=5000;request.ReadWriteTimeout=5000;
+                    request.Headers["Authorization"]="Basic "+Convert.ToBase64String(Encoding.UTF8.GetBytes(username+":"+password));
+                    using(var response=(System.Net.HttpWebResponse)request.GetResponse())
+                    using(var reader=new StreamReader(response.GetResponseStream())) {
+                        if(response.StatusCode!=System.Net.HttpStatusCode.OK)throw new IOException();
+                        var statuses=NativeIO.Json.DeserializeObject(reader.ReadToEnd()) as Dictionary<string,object>;
+                        if(statuses==null)throw new IOException();
+                        foreach(var status in statuses.Values) {
+                            var value=status as Dictionary<string,object>;object type;
+                            if(value==null||!value.TryGetValue("type",out type)||!(type is string)||(string)type!="idle")throw new IOException();
+                        }
+                    }
+                }
+            } catch(Exception) {
+                // Do not include URLs, server payloads or credentials in UI errors.
+                throw new IOException("OpenCode 작업이 진행 중이거나 유휴 상태를 확인할 수 없습니다. 작업을 마친 뒤 다시 시도하거나 관리 프로필을 중지하세요. 업데이트와 런타임 중지를 시작하지 않았습니다.");
             }
         }
         public static List<string> StopRuntimes(InstallState state,List<string> stopped=null) {

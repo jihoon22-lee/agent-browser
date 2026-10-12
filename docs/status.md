@@ -1,3 +1,15 @@
+# v0.1.6 후속 패치 준비 — 관리 MCP 업데이트 (2026-10-12)
+
+- 기존 v0.1.5 `db397ea`와 게시 자산은 변경하지 않는다. 같은 후속 작업 공간에서 탭 닫기 수정 `8cedffc`를 기반으로 설치기 수정과 0.1.6 버전을 통합했다.
+- PR #6 [옛 MCP 유지 리뷰](https://github.com/jihoon22-lee/agent-browser/pull/6#discussion_r4246249880)를 개인 운영 업데이트와 격리 Windows fixture에서 재현했다. 기존 엔진은 업데이트 때 관리 OpenCode를 남겨 이전 버전 MCP 경로가 계속 쓰였다.
+- 실행 파일 경로 또는 포트가 바뀌는 업데이트는 관리 프로필의 인증된 `/session/status`를 확인한다. busy/retry, 알 수 없는 상태·응답·접속 실패는 프로세스 중지/파일 적용 전에 거절한다. 외부 프로필은 검사·중지 대상에서 제외한다. 유휴 확인은 순간 관찰이며 이후 사용자가 새 요청을 시작하는 경합을 잠그지 않는다.
+- 확인 뒤 소유 런타임만 중지한다. 취소/파일 실패는 실제 중지한 프로필을 기존 실행 파일로 복구한다. 파일 적용과 새 Bridge 시작이 성공한 뒤 새 MCP 경로로 프로필을 다시 시작한다. 이 마지막 단계 실패는 설치를 되돌리지 않고 경고/재시작 안내를 제공한다.
+- 시작 체크를 끄면 이전 런타임을 중지한 상태로 남겨 다음 명시적 시작에서 새 MCP를 사용한다. 경로/포트가 동일한 재적용은 기존 런타임을 유지한다.
+- Windows 네이티브 전체 회귀 65개 통과 후, 시작 체크 보완에 영향받는 6개 업데이트 회귀를 별도로 실행했다. 이전 코드에서 경로 전환/상태 차단/취소 복구 실패를 먼저 확인했다. 로그: 로컬 `patch-validation/runtime-red.log`, `native-full.log`, `runtime-final.log`.
+- 실제 Windows Bridge + WSL OpenCode 1.18.29: 격리 XDG 데이터와 합성 페어링으로 0.1.5 → 0.1.6 업데이트 통과. 새 runtime instance, 새 MCP exe 경로, browser MCP connected, 설치 ID/페어링/프로필/생성한 테스트 세션 보존을 확인했다. 모델 요청과 사용자 Chrome/세션 접근은 없다. fixture의 소유 Bridge/OpenCode는 uninstall로 정리했다. `ManagedRuntimeUpgradeTests.cs`, `patch-validation/real-wsl.log`.
+- 통합 탭 닫기 수정의 Extension 342개 및 실제 Windows Chrome 게시판 10개는 아래 인계 기록을 따른다. 최종 검사 뒤 경합 및 기존 checkbox 보수적 거절은 이 패치가 해결했다고 주장하지 않는다.
+- 운영 개인 PC는 Bridge/MCP 0.1.5이며 Chrome 실제 확장 새로고침은 Windows 잠금 해제 후 확인해야 한다. 이 패치 시험으로 운영 설치를 다시 변경하지 않았다. 최종 원격 CI/리뷰와 패치 릴리스는 별도 확인 항목이다.
+
 # v0.1.5 후속 검토 — iframe 닫기 전 재검사 (2026-10-12)
 
 - 기준: origin/main 및 v0.1.5 `db397ea19f970fcfdf4959a32ac0643d22aeb071`. 독립 worktree `/home/jihoon/projects/agent-browser-close-recheck`, branch `fix/close-frame-edit-race`. PR #6 [discussion_r4246249886](https://github.com/jihoon22-lee/agent-browser/pull/6#discussion_r4246249886)의 08:58 UTC P1은 이 기준에도 남아 있었다. 기존 board-navigation 등 다른 worktree는 사용/수정하지 않았다. 이 변경은 로컬이며 push/PR/릴리스는 하지 않았다.
