@@ -57,6 +57,8 @@ namespace AgentBrowser.Installer {
             if(!System.Text.RegularExpressions.Regex.IsMatch(id??"","^[A-Za-z0-9_-]{1,64}$")||String.IsNullOrWhiteSpace(name))throw new IOException("프로필 ID와 이름을 확인하세요.");
             if(String.IsNullOrWhiteSpace(directory))throw new IOException("작업 폴더를 지정하세요.");
             if(candidate.Kind=="wsl")ValidateWslPaths(candidate,directory);
+            else if(candidate.Kind=="windows") {if(!Discovery.IsPlainLocalPath(candidate.Executable,false)||!Discovery.IsPlainLocalPath(directory,true))throw new IOException("Windows 실행 파일과 작업 폴더는 심볼릭 링크가 없는 로컬 절대 경로여야 합니다.");}
+            else throw new IOException("Windows 또는 WSL을 선택하세요.");
             var existing=NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(state,new []{"profile","list","--json"}));
             foreach(var item in (System.Collections.IEnumerable)existing["profiles"])if((string)((Dictionary<string,object>)item)["id"]==id)throw new IOException("같은 ID의 프로필이 있습니다. 새 ID를 선택하세요.");
             if(candidate.Kind=="windows"&&candidate.Executable!=null&&candidate.Executable.EndsWith(".cmd",StringComparison.OrdinalIgnoreCase)&&candidate.Executable.IndexOfAny(new[]{'%','!','&','|','<','>','^','"'})>=0)
@@ -64,8 +66,7 @@ namespace AgentBrowser.Installer {
             Discovery.Version(candidate);
             if(candidate.Kind=="wsl") {
                 var args=new List<string>{"--distribution",candidate.Distribution};if(!String.IsNullOrWhiteSpace(candidate.User))args.AddRange(new []{"--user",candidate.User});args.AddRange(new []{"--exec","/usr/bin/test","-d",directory});NativeIO.RunChecked(NativeIO.WslExe,args);
-            } else if(candidate.Kind=="windows") {if(!Path.IsPathRooted(directory)||!Directory.Exists(directory)||!Path.IsPathRooted(candidate.Executable)||!File.Exists(candidate.Executable))throw new IOException("Windows 실행 파일과 작업 폴더를 확인하세요.");}
-            else throw new IOException("Windows 또는 WSL을 선택하세요.");
+            }
             var profile=new Dictionary<string,object>{{"id",id},{"name",name},{"kind",candidate.Kind},{"executable",candidate.Executable},{"directory",directory}};
             if(candidate.Kind=="wsl"){profile.Add("distribution",candidate.Distribution);if(!String.IsNullOrWhiteSpace(candidate.User))profile.Add("user",candidate.User);}
             return profile;

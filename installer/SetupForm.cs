@@ -104,9 +104,9 @@ namespace AgentBrowser.Installer {
         async Task Prepare() {
             if(working)return;working=true;prepare.Enabled=false;input.Enabled=false;status.Text="패키지와 대상 소유권, 설정 변경 내용을 확인합니다.";
             try {
-                if(register.Checked&&selected.Count==0)throw new IOException("CLI에 등록할 설정을 먼저 추가하세요.");
+                if(operation.SelectedIndex!=2&&register.Checked&&selected.Count==0)throw new IOException("CLI에 등록할 설정을 먼저 추가하세요.");
                 var options=new SetupOptions{Operation=new []{"install","update","uninstall"}[operation.SelectedIndex],InstallDir=folder.Text,PackageDir=package.Text,Port=(int)port.Value,Start=start.Checked,Startup=startup.Checked,StartupDir=startupPath.Text};
-                if(register.Checked) options.Registrations.AddRange(selected);
+                if(options.Operation!="uninstall"&&register.Checked) options.Registrations.AddRange(selected);
                 plan=await Task.Run(()=>InstallerEngine.Prepare(options));preview.Text=plan.Preview+"\r\n\r\n변경 파일: "+plan.Changes.Count+"개\r\n진행하려면 적용을 누르세요.";input.Visible=false;review.Visible=true;prepare.Visible=false;back.Visible=true;apply.Visible=true;status.Text="아직 변경하지 않았습니다. 대상과 등록할 설정을 확인하세요.";
             }catch(Exception error){status.Text=error.Message;}finally{working=false;prepare.Enabled=true;input.Enabled=true;}
         }
@@ -120,7 +120,8 @@ namespace AgentBrowser.Installer {
     }
     internal static class Program {
         // Installed maintenance runs outside its owned files so Windows can remove
-        // or replace them. Reuse only an exact-hash private temporary executable.
+        // or replace them. Reuse only an exact-hash private per-user maintenance executable.
+        internal static void PrepareMaintenanceCache(string cache) {InstallerEngine.Root(cache);InstallerEngine.PrivateDirectory(cache);InstallerEngine.Root(cache);}
         static bool RelaunchInstalled(string[] args) {
             string exe=Application.ExecutablePath;var directory=Directory.GetParent(exe);if(directory==null)return false;
             // Legacy scripts put the GUI at the install root; updates retain old
@@ -129,9 +130,9 @@ namespace AgentBrowser.Installer {
             var state=InstallerEngine.State(root);if(state==null)return false;
             InstallerEngine.Owned(state);string hash=NativeIO.FileHash(exe);
             if(!state.OwnedFiles.Any(f=>InstallerEngine.Same(NativeIO.SafePath(root,f.Path),exe)&&InstallerEngine.Same(f.Sha256,hash)))throw new IOException("Installed setup ownership is invalid.");
-            string cache=Path.Combine(Path.GetTempPath(),"AgentBrowser-Setup",hash);InstallerEngine.PrivateDirectory(cache);string copy=Path.Combine(cache,"AgentBrowser-Setup.exe");
-            if(File.Exists(copy)){NativeIO.PlainPath(copy);if(NativeIO.FileHash(copy)!=hash)throw new IOException("Temporary setup ownership is invalid.");}
-            else {File.Copy(exe,copy);if(NativeIO.FileHash(copy)!=hash)throw new IOException("Temporary setup verification failed.");}
+            string cache=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentBrowser-Setup",hash);PrepareMaintenanceCache(cache);string copy=Path.Combine(cache,"AgentBrowser-Setup.exe");
+            if(File.Exists(copy)){NativeIO.PlainPath(copy);if(NativeIO.FileHash(copy)!=hash)throw new IOException("Maintenance setup ownership is invalid.");}
+            else {File.Copy(exe,copy);if(NativeIO.FileHash(copy)!=hash)throw new IOException("Maintenance setup verification failed.");}
             var forwarded=new List<string>(args);if(!args.Contains("--install-dir"))forwarded.AddRange(new[]{"--install-dir",root});
             using(var child=Process.Start(new ProcessStartInfo(copy,String.Join(" ",forwarded.Select(NativeIO.Quote))){UseShellExecute=false})) {if(child==null)throw new IOException("Could not open installed maintenance.");}
             return true;

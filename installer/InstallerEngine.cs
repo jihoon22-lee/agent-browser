@@ -133,13 +133,15 @@ namespace AgentBrowser.Installer {
             foreach(var required in new [] {"browser-bridge.exe","extension/manifest.json","AgentBrowser-Setup.exe","README-install.md","LICENSE"}) if(!seen.Contains(required)) throw new IOException("Extract the complete GUI package; missing "+required+".");
             var bytes=File.ReadAllBytes(Path.Combine(root,"browser-bridge.exe"));int offset=bytes.Length>=64?BitConverter.ToInt32(bytes,60):-1;
             if(bytes.Length<128||bytes[0]!=77||bytes[1]!=90||offset<0||offset>bytes.Length-6||BitConverter.ToUInt32(bytes,offset)!=17744||BitConverter.ToUInt16(bytes,offset+4)!=34404) throw new IOException("Bridge is not a Windows x64 executable.");
+            var extension=NativeIO.Json.Deserialize<Dictionary<string,object>>(NativeIO.Utf8.GetString(CapturePackageFile(root,m.Files.Single(f=>Same(f.Path.Replace('\\','/'),"extension/manifest.json")))));
+            object version;if(!extension.TryGetValue("version",out version)||!String.Equals(version as string,m.Version,StringComparison.Ordinal))throw new IOException("Extension version does not match the package version.");
             return m;
         }
-        static void Add(InstallPlan p,string path,byte[] bytes,string user=null) {
+        static void Add(InstallPlan p,string path,byte[] bytes,string user=null,bool trackMissing=false) {
             if(p.Changes.Any(c=>Same(c.Path,path))) throw new IOException("Two planned changes target the same file: "+path);
             NativeIO.PlainPath(path);if(Directory.Exists(path)) throw new IOException("A directory blocks a file: "+path);
             var expected=HashOrMissing(path);if(bytes!=null&&NativeIO.Hash(bytes)==expected) return;
-            if(bytes==null&&expected=="missing") return;
+            if(bytes==null&&expected=="missing"&&!trackMissing) return;
             p.Changes.Add(new Change{Path=path,Expected=expected,Bytes=bytes,User=user});
         }
         static List<McpRecord> Registrations(InstallState state) {
@@ -171,7 +173,8 @@ namespace AgentBrowser.Installer {
             if((options.Operation=="update"||uninstall)&&p.Old==null) throw new IOException("No owned installation was found in the selected folder.");
             if(uninstall) {
                 p.Summary.Add("제거 대상: "+root+"\r\n버전: "+p.Old.Version+"\r\n페어링·프로필·사용자 데이터는 보존합니다.");
-                foreach(var record in Registrations(p.Old)) if(File.Exists(record.Path)) {
+                foreach(var record in Registrations(p.Old)) {
+                    if(!File.Exists(record.Path)) {Add(p,record.Path,null,record.User,true);continue;}
                     byte[] original=File.ReadAllBytes(record.Path);var edit=Jsonc.Edit(NativeIO.Utf8.GetString(original),null,record.EntryHash,true,record.CreatedMcp);
                     // Comments are user content too: only remove a whitespace-only empty object.
                     if(edit.Changed) {
@@ -240,10 +243,14 @@ namespace AgentBrowser.Installer {
         }
         public static void PrivateDirectory(string path) {
             NativeIO.PlainPath(path);Directory.CreateDirectory(path);
-            var acl=Directory.GetAccessControl(path,AccessControlSections.Access);acl.SetAccessRuleProtection(true,false);
+            var acl=PrivateAcl(Directory.GetAccessControl(path,AccessControlSections.Access|AccessControlSections.Owner));Directory.SetAccessControl(path,acl);
+        }
+        internal static DirectorySecurity PrivateAcl(DirectorySecurity acl) {
+            RequireTrustedOwner(acl);
+            acl.SetAccessRuleProtection(true,false);
             foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,false,typeof(SecurityIdentifier))) acl.RemoveAccessRuleAll(rule);
             foreach(var sid in new [] {WindowsIdentity.GetCurrent().User,new SecurityIdentifier("S-1-5-18"),new SecurityIdentifier("S-1-5-32-544")}) acl.AddAccessRule(new FileSystemAccessRule(sid,FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
-            Directory.SetAccessControl(path,acl);
+            return acl;
         }
         static byte[] Shortcut(string stage,string target,string root) {
             string path=Path.Combine(stage,"startup.lnk");object shortcut=new ShellLink();
@@ -338,9 +345,11 @@ namespace AgentBrowser.Installer {
             if((string)marker["Product"]!=InstallerEngine.Product||(string)marker["InstallId"]!=state.InstallId) throw new IOException("Bridge process ownership marker mismatch.");
             int pid=Convert.ToInt32(marker["Pid"]);if(pid<=0) throw new IOException("Invalid owned PID.");
             string expected=InstallerEngine.Full((string)marker["Executable"]);
-            if(!state.OwnedFiles.Any(f=>InstallerEngine.Same(NativeIO.SafePath(state.InstallDir,f.Path),expected)&&InstallerEngine.Same(NativeIO.FileHash(expected),f.Sha256))) throw new IOException("Recorded Bridge executable is not owned.");
+            var owned=state.OwnedFiles.Where(f=>InstallerEngine.Same(NativeIO.SafePath(state.InstallDir,f.Path),expected)).ToArray();
+            if(owned.Length!=1) throw new IOException("Recorded Bridge executable is not owned.");
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
                 foreach(ManagementObject process in query.Get()) {
+                    if(!File.Exists(expected)||!InstallerEngine.Same(NativeIO.FileHash(expected),owned[0].Sha256)){process.Dispose();throw new IOException("Recorded Bridge executable is missing or changed; the live process was retained.");}
                     DateTime created=ManagementDateTimeConverter.ToDateTime((string)process["CreationDate"]).ToUniversalTime();
                     var expectedCreated=DateTime.Parse((string)marker["CreatedAt"],null,System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime();
                     if(!InstallerEngine.Same(InstallerEngine.Full((string)process["ExecutablePath"]),expected)||!Regex.IsMatch((string)process["CommandLine"],@"(?:^|\s)serve\s+--port\s+"+Convert.ToInt32(marker["Port"])+@"(?:\s|$)")||created!=expectedCreated) {process.Dispose();throw new IOException("Recorded PID identity changed. No process was stopped.");}
@@ -382,8 +391,12 @@ namespace AgentBrowser.Installer {
             }
         }
         public static List<string> StopRuntimes(InstallState state,List<string> stopped=null) {
+            NativeIO.PlainPath(state.DataDir);
+            var ids=stopped??new List<string>();string path=Path.Combine(state.DataDir,"runtime.json");if(!File.Exists(path)) return ids;
+            var snapshot=InstallerEngine.Read<Dictionary<string,object>>(path);object records;
+            if(!snapshot.TryGetValue("runtimes",out records)||!(records is Dictionary<string,object>))throw new IOException("Managed runtime records could not be verified; installation was retained.");
+            if(((Dictionary<string,object>)records).Count==0)return ids;
             ValidateLaunch(state);
-            var ids=stopped??new List<string>();if(!File.Exists(Path.Combine(state.DataDir,"runtime.json"))) return ids;
             var result=NativeIO.Run(state.CurrentExe,new [] {"runtime","stop-all","--json"},state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},120000);
             if(String.IsNullOrWhiteSpace(result.Output))throw new IOException("Managed runtime cleanup did not return a report; installation was retained.");
             var report=NativeIO.Json.Deserialize<Dictionary<string,object>>(result.Output);

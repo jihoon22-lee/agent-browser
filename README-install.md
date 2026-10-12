@@ -6,7 +6,15 @@ Windows Chrome 안에서 기존 OpenCode v1으로 작업하는 도구입니다. 
 
 ## 1. 설치와 로그인 자동 시작
 
-배포 ZIP을 별도 임시 폴더에 모두 압축 해제하고 **AgentBrowser-Setup.exe**를 실행합니다. 설치·업데이트·제거를 같은 창에서 선택합니다. 기본 .NET Framework를 사용하며 관리자 권한, 추가 패키지 다운로드, PowerShell 실행 정책 변경을 요구하지 않습니다.
+[공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 ZIP과 같은 버전의 `SHA256SUMS`를 각각 다운로드합니다. **압축 해제와 실행 전에** 다음 명령의 SHA256 값을 별도로 받은 `SHA256SUMS`의 해당 ZIP 행(또는 GitHub 릴리스 자산의 SHA256 digest)과 비교하세요.
+
+```powershell
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.5-windows-x64.zip
+```
+
+값이 다르면 실행하지 말고 공식 릴리스에서 다시 받으세요. 현재 실행 파일은 Authenticode 서명되지 않았으며, ZIP 내부 `package-manifest.json`만으로 다운로드 출처를 검증할 수 없습니다.
+
+해시가 일치하면 배포 ZIP을 별도 임시 폴더에 모두 압축 해제하고 **AgentBrowser-Setup.exe**를 실행합니다. 설치·업데이트·제거를 같은 창에서 선택합니다. 기본 .NET Framework를 사용하며 관리자 권한, 추가 패키지 다운로드, PowerShell 실행 정책 변경을 요구하지 않습니다.
 
 1. 기존 설치 폴더를 확인하거나 새 전용 폴더를 선택합니다. 기본값은 `%LOCALAPPDATA%\AgentBrowser`입니다. 오른쪽 기존 설치 목록에서도 선택할 수 있습니다.
 2. Bridge 포트와 로그인 시 시작 여부를 확인합니다.
@@ -14,7 +22,7 @@ Windows Chrome 안에서 기존 OpenCode v1으로 작업하는 도구입니다. 
 4. **변경 내용 확인**에서 대상과 변경 사항을 읽고 **적용**을 누릅니다. 이전으로 돌아가거나 취소할 수 있습니다.
 5. 관리 서버는 **관리 프로필 설정**에서 별도로 준비합니다. 실행 환경·배포판·사용자·실행 파일과 작업 폴더를 확인한 뒤 저장합니다. 서버 시작은 Chrome 페어링 후 확장 Options에서 진행합니다.
 
-업데이트는 새 ZIP의 실행파일에서 기존 설치 폴더를 선택합니다. 제거는 배포 ZIP 또는 설치 폴더의 `app\<버전>\AgentBrowser-Setup.exe`에서 **제거**를 선택하고 대상을 확인합니다. 설치된 GUI는 자신의 파일을 잠그지 않도록 소유권과 해시를 검증한 임시 실행본으로 열립니다. 기본 제거는 페어링·프로필 데이터를 보존합니다. Chrome 확장은 chrome://extensions에서 별도로 제거합니다.
+업데이트는 새 ZIP의 실행파일에서 기존 설치 폴더를 선택합니다. 제거는 배포 ZIP 또는 설치 폴더의 `app\<버전>\AgentBrowser-Setup.exe`에서 **제거**를 선택하고 대상을 확인합니다. 설치된 GUI는 자신의 파일을 잠그지 않도록 소유자·상위 폴더 권한·해시를 검증한 `%LOCALAPPDATA%\AgentBrowser-Setup` 아래 유지보수 실행본으로 열립니다. 기본 제거는 페어링·프로필 데이터를 보존합니다. Chrome 확장은 chrome://extensions에서 별도로 제거합니다.
 
 새 설치 폴더에는 현재 사용자 전용 쓰기 권한을 설정합니다. 다른 일반 사용자가 설치 폴더를 소유하거나, 설치 폴더에 쓰기 권한 또는 상위 폴더에 교체 권한이 있으면 설치·업데이트·제거를 중단합니다. 개인 전용 로컬 폴더를 선택하세요. 연결된 네트워크 드라이브는 지원하지 않습니다. 기존 폴더의 권한은 자동 변경하지 않습니다.
 
@@ -52,7 +60,7 @@ Options에서 실행 환경을 추가합니다.
 
 ## 4. 업데이트와 제거
 
-새 ZIP을 별도 폴더에 모두 압축 해제하고 새 `AgentBrowser-Setup.exe`를 실행합니다. **업데이트**와 기존 설치 폴더를 선택합니다. 페어링·프로필·세션 데이터는 유지됩니다. 업데이트 후 `chrome://extensions`에서 AgentBrowser를 새로고침합니다.
+1절의 SHA256 비교로 새 ZIP을 검증한 뒤 별도 폴더에 모두 압축 해제하고 새 `AgentBrowser-Setup.exe`를 실행합니다. **업데이트**와 기존 설치 폴더를 선택합니다. 페어링·프로필·세션 데이터는 유지됩니다. 업데이트 후 `chrome://extensions`에서 AgentBrowser를 새로고침합니다.
 
 제거 전에 패널에서 진행 중인 작업을 멈춥니다. GUI의 **제거 → 변경 내용 확인 → 적용**을 사용합니다. 소유권이 확인된 관리 OpenCode 서버를 중지한 뒤 Bridge와 설치 파일, 시작 바로가기, 소유한 MCP 항목을 제거합니다. 다른 프로그램이 시작한 외부 서버와 다른 MCP·모델·인증·OpenCode 세션은 유지합니다. 데이터는 기본 보존하며 GUI에는 데이터 삭제 기능이 없습니다.
 

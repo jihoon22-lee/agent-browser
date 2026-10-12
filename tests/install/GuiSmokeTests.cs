@@ -52,12 +52,12 @@ internal static class GuiSmokeTests {
     static void Launch(string exe,string arguments){
         process=Process.Start(new ProcessStartInfo(exe,arguments){UseShellExecute=false});
         int launched=process.Id;string digest;using(var sha=SHA256.Create())digest=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(exe))).Replace("-","").ToLowerInvariant();
-        string expected=Path.Combine(Path.GetTempPath(),"AgentBrowser-Setup",digest,"AgentBrowser-Setup.exe");bool handedOff=false;
+        string expected=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentBrowser-Setup",digest,"AgentBrowser-Setup.exe");bool handedOff=false;
         var timer=Stopwatch.StartNew();while(timer.ElapsedMilliseconds<15000){
             process.Refresh();IntPtr handle=IntPtr.Zero;try{if(!process.HasExited)handle=process.MainWindowHandle;}catch(InvalidOperationException){if(!process.HasExited)throw;}if(handle!=IntPtr.Zero){window=AutomationElement.FromHandle(handle);return;}
             if(!handedOff&&process.HasExited)using(var query=new ManagementObjectSearcher("SELECT ProcessId,ExecutablePath FROM Win32_Process WHERE ParentProcessId="+launched))foreach(ManagementObject child in query.Get()) {
                 if(!String.Equals(child["ExecutablePath"] as string,expected,StringComparison.OrdinalIgnoreCase))continue;
-                process.Dispose();process=Process.GetProcessById(Convert.ToInt32(child["ProcessId"]));handedOff=true;Console.WriteLine("PASS verified installed GUI handoff to exact-hash temporary executable");break;
+                process.Dispose();process=Process.GetProcessById(Convert.ToInt32(child["ProcessId"]));handedOff=true;Console.WriteLine("PASS verified installed GUI handoff to exact-hash per-user maintenance executable");break;
             }
             Thread.Sleep(100);
         }throw new Exception("GUI did not open.");

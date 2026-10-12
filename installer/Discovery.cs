@@ -25,6 +25,19 @@ namespace AgentBrowser.Installer {
             try {string root=Path.GetPathRoot(path);if(root==null||root.Length!=3||root[1]!=':'||root[2]!='\\')return false;var type=new DriveInfo(root).DriveType;return type==DriveType.Fixed||type==DriveType.Removable||type==DriveType.CDRom||type==DriveType.Ram;}
             catch(ArgumentException){return false;}catch(IOException){return false;}
         }
+        public static bool IsPlainLocalPath(string path,bool directory) {
+            if(!IsLocalCandidatePath(path))return false;
+            try {
+                string full=Path.GetFullPath(path),current=Path.GetPathRoot(full);var attributes=File.GetAttributes(current);
+                // Inspect each component before touching descendants: GetFileAttributes
+                // reports the link itself, so a local junction cannot redirect a probe to SMB.
+                foreach(string part in full.Substring(current.Length).Split(new[]{Path.DirectorySeparatorChar},StringSplitOptions.RemoveEmptyEntries)) {
+                    if((attributes&FileAttributes.ReparsePoint)!=0)return false;
+                    current=Path.Combine(current,part);attributes=File.GetAttributes(current);
+                }
+                return (attributes&FileAttributes.ReparsePoint)==0&&((attributes&FileAttributes.Directory)!=0)==directory;
+            } catch(ArgumentException){return false;}catch(IOException){return false;}catch(UnauthorizedAccessException){return false;}catch(NotSupportedException){return false;}
+        }
         public static void AddInstall(DiscoveryResult result,string path) {
             try {
                 if(String.IsNullOrEmpty(path)) return;
@@ -53,7 +66,7 @@ namespace AgentBrowser.Installer {
                 if(String.IsNullOrWhiteSpace(directory)) continue;
                 try { foreach(var name in new [] {"opencode.exe","opencode.cmd"}) candidates.Add(Path.Combine(directory.Trim('"'),name)); } catch(ArgumentException) { }
             }
-            foreach(var executable in candidates) if(IsLocalCandidatePath(executable)&&File.Exists(executable)) {
+            foreach(var executable in candidates) if(IsPlainLocalPath(executable,false)) {
                 var candidate=new OpenCodeCandidate { Kind="windows",Home=home,Executable=Path.GetFullPath(executable) };
                 AddConfigFiles(candidate,Path.Combine(home,@".config\opencode"));
                 // Enumeration must not execute an unselected PATH candidate.
