@@ -30,6 +30,13 @@
 - 실제 Windows 최종 코드: 게시판 8건 통과(BFCache opt-in 1건 skip); 별도 최종 실행 `issue8-timing.spec.ts browser-capabilities.spec.ts` **13/13 통과**. 무한 loading snapshot 약 0.3초, newTab 등록/후속 읽기 약 0.4초, 폼 OR wait 약 1초, 숨겨진 history가 있는 양쪽 경계 약 1.6–1.8초.
 - 첫 Windows 실행에서 빈 초기 URL 편입 누락과 시험 폼 GET query 덮어쓰기를 확인해 보완했다. 다음 실행의 C01은 fixture 포트 5061에서 접근 불가였고, 새 fixture 포트로 실행한 최종 13/13에서 통과했다. 이전 6566과 같은 임의 포트 제한 가능성이 있으며 제품 실패로 단정하지 않는다.
 
+## WP4 완료
+
+- F15: launch_wsl에서 home 경로 매핑을 먼저 검증하고 UNC/확장 경로를 panic 대신 INVALID_PARAMS로 반환한다. keeper/process를 만들기 전에 거부한다.
+- F14: managed HTTP 정상/MCP 실패를 state:error/httpReady:true로 구분한다. doctor가 이 상태에서도 /mcp를 조회해 executable_missing 등 세부 원인을 반환하고 원문 비밀정보는 계속 숨긴다.
+- 추가한 두 회귀의 수정 전 실패를 확인했다. Linux 합성 runtime 검사 **2/2**, cargo-xwin으로 빌드해 Windows 개발 폴더에 복사한 native 테스트 exe의 같은 검사 **2/2 통과**. 실제 Windows listener 소유권 검사와 합성 Basic-auth HTTP/MCP 응답을 사용했다.
+- F15 Windows 테스트는 UNC/확장 경로를 거부하는 사전 검증이다. 원격 공유나 실제 WSL 실행을 수행했다고 주장하지 않는다. F14는 합성 MCP ENOENT이며 실제 모델/OpenCode 프로세스를 실행하지 않았다.
+
 ---
 
 # v0.1.5 단일 통합 릴리스 준비

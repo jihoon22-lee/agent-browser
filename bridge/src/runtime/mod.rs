@@ -318,7 +318,12 @@ impl Manager {
             if inspection.listener {
                 if !self.overlay_current(&record) { let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Bridge MCP configuration changed. Stop this profile in Options, then start it again; its existing runtime was left running."); return Ok(value); }
                 if let Ok(version) = health(&record.base_url,Some(&record.username),Some(&record.password),true).await {
-                    if browser_mcp(&profile,&record).await.is_ok() { record.version = Some(version); return Ok(info(&profile,&record,"ready",false,&self.home)); }
+                    record.version = Some(version);
+                    if browser_mcp(&profile,&record).await.is_ok() { return Ok(info(&profile,&record,"ready",false,&self.home)); }
+                    let mut value=info(&profile,&record,"error",false,&self.home);
+                    value["httpReady"]=json!(true);
+                    value["error"]=json!("OpenCode HTTP is available but browser MCP is not ready");
+                    return Ok(value);
                 }
                 let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Owned runtime failed its authenticated v1 HTTP or browser MCP readiness check"); return Ok(value);
             }
@@ -358,7 +363,7 @@ impl Manager {
             if profile.kind != Kind::External { checks.push(installation_check(&profile).await); }
             let status = self.status(&id).await?;
             checks.push(json!({"id":"opencode","profileId":id,"status":if status["state"] == "ready" {"ok"} else if status["state"] == "stopped" || status["state"] == "starting" {"warning"} else {"error"},"message":status["error"].as_str().unwrap_or(status["state"].as_str().unwrap_or("unknown")),"runtime":status}));
-            if status["state"] == "ready" {
+            if status["state"] == "ready" || status["httpReady"] == true {
                 let mcp = self.diagnostic_api(&profile,"mcp").await;
                 checks.push(diagnostics::mcp_check(&id,profile.kind != Kind::External,mcp.as_ref()));
                 let providers = self.diagnostic_api(&profile,"provider").await;
@@ -890,5 +895,55 @@ mod wsl_persist_failure_tests {
         assert!(pending && persist_failed,"Fixture must reach initial persistence failure with a pending owner");
         assert!(ended,"Synthetic WSL process must be cleaned up");
         assert!(stopped && !late_execution,"Pending cleanup returned before ownership was published; child executed after persistence failed");
+    }
+}
+
+#[cfg(test)]
+mod issue8_runtime_tests {
+    use super::*;
+    #[tokio::test]
+    async fn f15_unmappable_home_returns_invalid_params_before_launch() {
+        let profile:Profile=serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"wsl","distribution":"Ubuntu","directory":"/tmp","executable":"/bin/true"})).unwrap();
+        for home in [r"\\server\share\agent-browser",r"\\?\C:\fixture\agent-browser"] {
+            let manager=Manager::new(home.into(),4317);
+            let result=manager.launch_wsl(&profile,65531,"fixture".into(),"fixture".into(),BTreeMap::new(),vec!["/bin/true".into()]).await;
+            let error=match result {Err(error)=>error,Ok(_)=>panic!("Unmappable home must fail before spawning")};
+            assert_eq!(error.code,crate::rpc::ErrorCode::InvalidParams);
+            assert!(error.message.contains("Windows Bridge home"),"{}",error.message);
+        }
+    }
+    #[tokio::test]
+    async fn f14_managed_http_ready_mcp_failure_reaches_doctor_details() {
+        use tokio::io::{AsyncReadExt,AsyncWriteExt};
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port=listener.local_addr().unwrap().port();
+        let server=tokio::spawn(async move {
+            loop {
+                let Ok((mut stream,_))=listener.accept().await else {break};
+                tokio::spawn(async move {
+                    let mut bytes=[0;8192];let n=stream.read(&mut bytes).await.unwrap();
+                    let request=String::from_utf8_lossy(&bytes[..n]);
+                    let authorized=request.to_ascii_lowercase().contains("authorization: basic ");
+                    let value=if request.contains("/global/health") {json!({"healthy":true,"version":"1.18.29"})}
+                        else if request.contains("/doc") {json!({"paths":{"/session":{},"/provider":{},"/event":{},"/mcp":{}}})}
+                        else if request.contains("/mcp") {json!({"browser":{"status":"failed","error":"spawn missing.exe ENOENT private-fixture-detail"}})}
+                        else {json!({})};
+                    let body=value.to_string();let status=if authorized {"200 OK"} else {"401 Unauthorized"};
+                    let response=format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body);
+                    let _=stream.write_all(response.as_bytes()).await;
+                });
+            }
+        });
+        let home=tempfile::tempdir().unwrap();let manager=Manager::new(home.path().into(),0);
+        let profile:Profile=serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":home.path(),"executable":home.path().join("absent-opencode.exe")})).unwrap();
+        manager.save(profile,false).unwrap();
+        let identity=process::identity(std::process::id()).unwrap();
+        manager.persist(&RuntimeRecord{profile_id:"fixture".into(),instance:"fixture".into(),base_url:format!("http://127.0.0.1:{port}"),username:"opencode".into(),password:"private-fixture-password".into(),launcher:identity.clone(),server:Some(identity),wsl_owner_file:None,version:None,bridge_port:Some(0),bridge_executable:Some(std::env::current_exe().unwrap().to_string_lossy().into_owned()),wsl_keeper:None}).unwrap();
+        let status=manager.status("fixture").await.unwrap();
+        assert_eq!(status["state"],"error");
+        let doctor=manager.doctor(Some("fixture")).await.unwrap();server.abort();
+        assert!(doctor["checks"].as_array().unwrap().iter().any(|check|check["id"]=="mcp"&&check["reason"]=="executable_missing"),"{doctor}");
+        assert!(!doctor.to_string().contains("private-fixture"));
+        assert!(!status.to_string().contains("private-fixture"));
     }
 }

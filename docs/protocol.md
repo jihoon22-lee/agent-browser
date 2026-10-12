@@ -116,7 +116,7 @@ serve는 해당 연결의 요청 future만 정리하며, registry는 그 요청�
 
 런타임 결과의 공통 필드는 `profileId`, `directory`, `state`, `owned`다. `state`는 `ready`, `stopped`, `starting`, `error`이고 연결 가능하면 `baseUrl`, `version`, `attachCommand`가 추가된다. 관리 서버 실패에는 `error` 설명이 추가된다. `runtime.ensure`는 정상 RPC 응답(`ok:true`) 안에 `state:"error"`를 반환할 수 있으므로 호출자는 두 상태를 구분해야 한다.
 
-`runtime.ensure`의 `ready` 결과에는 HTTP 클라이언트가 사용할 `username`, `password`가 포함될 수 있다. 이는 인증된 Extension에만 전달하며 URL·화면·로그·클립보드·브라우저 영구 저장에 넣지 않는다. `runtime.status` 기본 응답, 프로필 요약, 진단에는 비밀번호를 넣지 않는다. background 완료 확인은 `runtime.status {includeConnection:true}`로 실행 중 연결만 조회하며 인증정보는 메모리에서만 사용한다. `attachCommand`는 비밀번호 대신 Bridge의 `--home ... attach --profile ...` 호출을 표시한다. CLI는 저장된 인증정보를 자식 OpenCode의 환경변수로 전달한다.
+`runtime.ensure`의 `ready` 결과에는 HTTP 클라이언트가 사용할 `username`, `password`가 포함될 수 있다. 이는 인증된 Extension에만 전달하며 URL·화면·로그·클립보드·브라우저 영구 저장에 넣지 않는다. `runtime.status` 기본 응답, 프로필 요약, 진단에는 비밀번호를 넣지 않는다. managed 서버의 HTTP health는 통과했으나 MCP가 실패하면 state:error/httpReady:true로 구분하고 doctor는 MCP 세부 진단을 계속한다. background 완료 확인은 `runtime.status {includeConnection:true}`로 실행 중 연결만 조회하며 인증정보는 메모리에서만 사용한다. `attachCommand`는 비밀번호 대신 Bridge의 `--home ... attach --profile ...` 호출을 표시한다. CLI는 저장된 인증정보를 자식 OpenCode의 환경변수로 전달한다.
 
 관리 서버는 인증 없는 health 요청이 401이고 인증된 `/global/health`가 v1 정상 상태이며 `/doc`에 필요한 v1 경로가 있을 때 사용한다. 프로세스가 남아 있지만 listener 소유권을 검증할 수 없으면 중복 서버를 시작하지 않고 오류를 반환한다. 관리 작업은 프로필별 프로세스 잠금으로 중복 실행을 막는다. 종료 확인 실패 시 소유권 기록을 유지한다.
 
