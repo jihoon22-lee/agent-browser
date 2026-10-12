@@ -9,11 +9,11 @@ fn r#ref() -> Value { json!({"type":"string","description":"Latest snapshot ref,
 pub fn all() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
-            "List tabs/windows, attach, new, switch, close or release. New needs no snapshot; omit operationId to start an operation. Omit url for about:blank. Close only operation-created tabs; about:blank tabs cannot be closed. Switch back explicitly. Switch changes the operation target.",
+            "List tabs/windows. Panel attach/standalone new needs current requestId. New needs no snapshot; omit operationId to start; url defaults to about:blank. Close only created tabs; about:blank tabs cannot be closed. Switch changes target; switch back explicitly.",
             schema: json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["list","windows","attach","new","switch","close","release"]},
                 "tabId":{"type":"integer","description":"Attach target (omit for request default), or switch target"},
-                "requestId":{"type":"string","description":"Current panel requestId for attach or standalone new"},
+                "requestId":{"type":"string","description":"Panel attach or standalone new: latest requestId from Browser context (REQUIRED)."},
                 "url":{"type":"string","description":"For new: HTTP(S) URL or about:blank (default)"},
                 "windowId":{"type":"integer","minimum":1,"description":"Filter list or choose window for new; IDs from windows"},
                 "operationId": op()},

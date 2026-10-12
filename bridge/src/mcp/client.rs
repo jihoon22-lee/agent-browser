@@ -85,7 +85,7 @@ fn spawn_windows_without_handles(exe: &Path, port: u16) -> std::io::Result<()> {
     use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::{
         CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
         CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
-        CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS,
+        CREATE_UNICODE_ENVIRONMENT,
     }};
 
     let mut application: Vec<u16> = exe.as_os_str().encode_wide().collect();
@@ -99,7 +99,9 @@ fn spawn_windows_without_handles(exe: &Path, port: u16) -> std::io::Result<()> {
     command_line.extend(format!("\" serve --port {port}").encode_utf16());
     command_line.push(0);
     application.push(0);
-    let base = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
+    // Do not combine DETACHED_PROCESS with CREATE_NO_WINDOW: Windows ignores
+    // the latter, allowing launcher descendants to create visible consoles.
+    let base = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
     for (extra, method) in [(CREATE_BREAKAWAY_FROM_JOB, "windows-breakaway"), (0, "windows-detached-fallback")] {
         let mut command = command_line.clone();
         let startup = STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..Default::default() };

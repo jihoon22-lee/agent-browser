@@ -416,3 +416,17 @@ AB_TEST_BFCACHE는 Playwright의 기본 `--disable-back-forward-cache` 인수를
 기존 NativeEngineTests가 idle/busy/retry/잘못된 상태 응답, 취소 복구, Start=false, 변경 없는 재적용을 검사한다. 외부 프로필의 URL은 시험에서 도달 불가능한 값이며 호출하지 않아야 한다.
 
 `tests/install/ManagedRuntimeUpgradeTests.cs`를 installer C# 소스와 함께 별도 Main으로 컴파일하면 실제 Windows/WSL 업데이트를 시험할 수 있다. 인수는 기존 0.1.5 패키지, 후보 0.1.6 패키지, **새 개인 Windows fixture 폴더**, 미리 생성한 격리 Linux 작업 폴더다. Linux 폴더에는 빈 `opencode.json`을 두며 XDG config/data/state/cache는 그 아래로 격리한다. 현재 시험 대상은 Ubuntu의 `/home/jihoon/.opencode/bin/opencode` 1.18.29다. 테스트는 합성 페어링을 자신의 데이터에만 기록하고 빈 세션만 생성하며 모델 요청/사용자 Chrome 접근을 하지 않는다. 완료 또는 실패 시 자신의 설치를 uninstall한다. 사용자 운영 폴더에 실행하지 않는다.
+
+
+### 실제 OpenCode와 headed Windows 사이드 패널
+
+`tests/e2e/opencode-panel.windows.mjs`는 Windows Node에서 실행한다. `scripts/test-windows.sh --prepare-only`로 Windows 개발 폴더에 최신 exe·Extension·고정 Playwright 의존성을 준비한 후 그 폴더에서 실행한다.
+
+```powershell
+node tests/e2e/opencode-panel.windows.mjs
+node tests/e2e/opencode-panel.windows.mjs --wsl
+```
+
+설치된 Windows OpenCode 1.18.29의 기본 검증 경로는 `%LOCALAPPDATA%/AgentBrowser-dev/opencode/1.18.29/opencode.exe`이며 `AB_OPENCODE_EXE`로 바꿀 수 있다. WSL 검사는 Ubuntu의 `/home/jihoon/.opencode/bin/opencode`를 사용하고 `AB_WSL_OPENCODE`로 변경할 수 있다. `AB_BRIDGE_EXE`·`AB_EXTENSION_DIR`로 최종 패키지를 지정할 수 있다. 실제 `sidePanel.open`과 CDP/DOM 입력을 사용하며 물리 마우스 입력은 아니다.
+
+각 실행은 격리된 설정·프로필·포트·합성 페이지와 localhost provider를 사용한다. WSL provider는 WSL loopback에서 실행한다. 두 탭의 새 요청, ID 누락 오류 뒤 교정, attach/snapshot, 정상·오류 응답 뒤 lease/중단 버튼 정리를 확인하고 관리 runtime을 중지한다. 결과 JSON·패널 PNG는 개발 `tests/agent/results`에만 저장한다. Zen 검사는 `--model opencode/<무료 모델 ID>`를 별도로 지정한다. 카탈로그 갱신과 모든 비용 0·공식 live 목록 가용성 확인을 통과해야 실행하며, 외부 모델 성공 여부는 합성 검사와 별도로 보고한다.

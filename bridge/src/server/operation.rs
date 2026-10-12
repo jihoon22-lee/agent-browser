@@ -62,12 +62,14 @@ impl OperationGate {
     }
 
     fn request_matches(g:&GateInner,id:Option<&str>,client:&str)->Result<(),RpcError> {
-        if id.is_none() && g.stopped_clients.get(client).is_some_and(|until| *until > std::time::Instant::now()) {
+        if g.request.is_none() && id.is_none() && g.stopped_clients.get(client).is_some_and(|until| *until > std::time::Instant::now()) {
             return Err(RpcError::new(ErrorCode::Cancelled,Retry::Never,"A panel request was stopped. Unscoped attach is blocked for 30 seconds; wait for a new user request."));
         }
         match (&g.request,id) {
             (None,None)=>Ok(()),
             (Some(r),Some(id)) if r.id==id && r.client==client=>Ok(()),
+            (Some(r),None) if r.client==client=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Safe,
+                "Missing requestId. No browser action ran. Copy requestId from the Browser context for the latest user request into browser_tabs attach/new arguments and retry. Do not reuse an earlier requestId or operationId; if that context is unavailable, stop and ask for a new panel request.")),
             _=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"A panel request owns the browser. Wait for completion or stop it in the panel; scoped calls must use that requestId.")),
         }
     }
@@ -500,6 +502,28 @@ mod tests {
 #[cfg(test)]
 mod issue8_tests {
     use super::*;
+    #[test]
+    fn omitted_request_id_can_be_corrected_without_releasing_or_exposing_the_owner() {
+        let g=OperationGate::default();g.begin_request("private-request","browser",Some(7)).unwrap();
+        let error=g.request_target(None,"browser",None).unwrap_err();
+        assert_eq!(error.code,ErrorCode::OperationInvalid);
+        assert_eq!(error.retry,Retry::Safe);
+        assert!(error.message.contains("requestId") && error.message.contains("latest user request"));
+        assert!(!error.message.contains("private-request"));
+        assert_eq!(g.request_target(Some("wrong"),"browser",None).unwrap_err().retry,Retry::Never);
+        assert_eq!(g.request_target(None,"other-client",None).unwrap_err().retry,Retry::Never);
+        assert_eq!(g.request_target(Some("private-request"),"browser",None).unwrap(),Some(7));
+        let op=g.attach_request(7,"browser",Some("private-request")).unwrap();
+        g.end_request("private-request","browser").unwrap();
+        assert!(g.check(&op.id).is_err());
+        assert!(g.request_target(Some("private-request"),"browser",None).is_err());
+        g.begin_request("cancel-me","browser",Some(7)).unwrap();
+        g.cancel_request("cancel-me","browser").unwrap();
+        assert_eq!(g.request_target(None,"browser",None).unwrap_err().code,ErrorCode::Cancelled);
+        g.begin_request("after-stop","browser",Some(8)).unwrap();
+        assert_eq!(g.request_target(None,"browser",None).unwrap_err().retry,Retry::Safe);
+        assert_eq!(g.request_target(Some("cancel-me"),"browser",None).unwrap_err().retry,Retry::Never);
+    }
     #[test]
     fn stop_cancels_the_operation_and_blocks_unscoped_reattach() {
         let g=OperationGate::default();g.begin_request("req","browser",Some(7)).unwrap();
