@@ -1,6 +1,25 @@
+# v0.1.6 Windows preview 릴리스 준비 (2026-10-12)
+
+사용자 요청으로 문서·버전을 갱신하고 v0.1.6 태그와 GitHub prerelease를 게시한다. 기존 v0.1.5 태그·자산은 보존한다. 운영 설치 변경은 요청받지 않았으며 검증은 격리된 설치·Chrome 프로필에서 진행한다. [릴리스 계획](./plans/2026-10-12-release-0.1.6.md)을 따른다.
+
+- 기준: PR #9 병합 `ba5c979`. 기능 최종 `dd009ba`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38250547986)는 Linux·Windows 모두 성공했다.
+- Extension 단위 **392/392**, Linux E2E **86 통과/3 skipped**, Windows E2E **87 통과/2 skipped** 및 별도 bookmarks **2/2**, Rust·빌드·문서·설치·패키징·GUI 회귀 검사 통과. 코드·보안 리뷰는 추가 문제 없이 완료됐으며 리뷰 스레드 10개를 해결했다.
+- 버전·문서 변경 후 패키지 빌드, 최종 CI, 게시본 해시·격리 실행 검증은 아래에 실제 결과를 기록한다. 앞선 기능 검증을 새 버전의 실행 결과로 대체하지 않는다.
+
+## v0.1.6 로컬 패키지 검증
+
+- Cargo workspace·lockfile의 Bridge와 Extension manifest를 **0.1.6**으로 맞췄다. CHANGELOG·설치 예시·중단/탐색/예약 안내를 갱신하고 PR #9 병합 기록을 반영했다. 문서 링크 검사와 기존 보조 테스트 3개, Python 패키지 테스트 3개가 통과했다.
+- `cargo xwin build --locked --release --target x86_64-pc-windows-msvc`와 Extension TypeScript/Vite 빌드, 잠긴 의존성 163개 고지 생성 완료. WSL 파일시스템 임시 exe 실행은 PermissionError로 실패해 Windows 개발 경로를 출력 디렉터리로 지정한 패키징을 사용했다.
+- Windows x64 PE와 실제 exe 버전, Extension/패키지 manifest 버전, ZIP 내부 35개 파일과 SHA-256, 배포 문서 링크·제외 항목을 확인했다. 별도 디렉터리의 두 빌드는 동일한 ZIP SHA-256 `82787c4000edaa052bc8f15494974a205b3fa8b73c911fdb4e3e1ee53e5e6c5c`였다.
+- 게시된 v0.1.5 ZIP의 해시를 검증한 뒤 별도 Windows 경로에서 새 v0.1.6 설치/재설치와 v0.1.5→v0.1.6 업데이트를 실행했다. 실제 Bridge 인증 시작, 버전·설치 ID·페어링·합성 데이터·JSONC 설정 보존, 제거 후 소유 MCP 정리와 데이터 보존이 통과했다. 설치 엔진 직접 호출 시험이며 GUI 클릭 시험으로 보고하지 않는다.
+- 임시 검증 드라이버의 클래스명 오류와 JSONC 개행까지 동일하다고 요구한 assertion을 수정한 뒤 새 fixture에서 최종 실행했다. 제품 코드는 변경하지 않았다. 운영 설치·전역 OpenCode 설정·모델은 사용하지 않았다.
+- 최종 릴리스 PR/CI와 태그·게시 결과는 이 준비 기록 이후 GitHub PR·Release에도 기록한다. 위 ZIP은 아직 로컬 후보이며 게시 완료를 의미하지 않는다.
+
+---
+
 # Issue #8 후속 수정 (2026-10-12)
 
-기준 `db397ea`, 브랜치 `feat/issue8-followup`. [이슈 #8](https://github.com/jihoon22-lee/agent-browser/issues/8) §2의 **WP2 → WP1 → WP3 → WP4 → WP5 구현 완료**. [계획](./plans/2026-10-12-issue8-followup.md)에 과제별 완료를 기록했다. 후속 사용자 요청에 따라 브랜치를 push하고 PR의 CI·리뷰 통과 후 main 병합을 진행한다. Release 게시와 운영 설치 변경은 이번 범위에 없다.
+기준 `db397ea`, 브랜치 `feat/issue8-followup`. [이슈 #8](https://github.com/jihoon22-lee/agent-browser/issues/8) §2의 **WP2 → WP1 → WP3 → WP4 → WP5 구현 완료**. [계획](./plans/2026-10-12-issue8-followup.md)에 과제별 완료를 기록했다. PR #9는 최종 `dd009ba`의 Linux·Windows CI와 코드·보안 리뷰 통과 후 `ba5c979`로 병합됐고 이슈 #8은 종료됐다. 당시 Release는 범위 밖이었으며 이후 사용자가 v0.1.6 릴리스 작업을 요청했다.
 
 ## PR #9 첫 리뷰와 CI 후속
 

@@ -9,7 +9,7 @@ Windows Chrome 안에서 기존 OpenCode v1으로 작업하는 도구입니다. 
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 ZIP과 같은 버전의 `SHA256SUMS`를 각각 다운로드합니다. **압축 해제와 실행 전에** 다음 명령의 SHA256 값을 별도로 받은 `SHA256SUMS`의 해당 ZIP 행(또는 GitHub 릴리스 자산의 SHA256 digest)과 비교하세요.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.5-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.6-windows-x64.zip
 ```
 
 값이 다르면 실행하지 말고 공식 릴리스에서 다시 받으세요. 현재 실행 파일은 Authenticode 서명되지 않았으며, ZIP 내부 `package-manifest.json`만으로 다운로드 출처를 검증할 수 없습니다.
