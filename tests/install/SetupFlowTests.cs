@@ -41,6 +41,35 @@ namespace AgentBrowser.Installer {
     try{InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,m=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Field<ComboBox>(form,"Operation").SelectedIndex=2;Invoke(form,"Prepare");Assert(Field<TextBox>(form,"ChangePreview").Text.Contains(settings),"uninstall preview omitted the registered settings target");}}
     finally{Uninstall(root);File.Delete(settings);}
    });
+   Case("connection guide rejects modified extension files",()=>{
+    string root=Path.Combine(fixture,"changed-extension");byte[] bytes=null;string file=null;
+    try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,m=>{});file=Path.Combine(root,"extension","manifest.json");bytes=File.ReadAllBytes(file);File.AppendAllText(file," ");
+     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Invoke(form,"ShowConnection");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0,"modified extension was exposed for Chrome loading");Assert(Field<TextBox>(form,"Status").Text.Contains("modified"),"ownership failure was not shown");}
+    }finally{if(bytes!=null)File.WriteAllBytes(file,bytes);Uninstall(root);}
+   });
+   Case("confirmation includes advanced destinations and version",()=>{
+    string root=Path.Combine(fixture,"advanced-preview"),startup=Path.Combine(fixture,"chosen-startup");
+    using(var form=new SetupForm(new[]{"--no-discover","--no-start","--install-dir",root,"--package-dir",package,"--startup-dir",startup,"--port","49527"})){Invoke(form,"Prepare");string text=Field<TextBox>(form,"ChangePreview").Text;Assert(text.Contains("49527")&&text.Contains(Path.Combine(startup,"AgentBrowser.lnk"))&&text.Contains(InstallerEngine.Read<PackageManifest>(Path.Combine(package,"package-manifest.json")).Version),"advanced confirmation omitted version, port or Startup destination");}
+   });
+   Case("remove cannot enter connection-only wizard",()=>{
+    string root=Path.Combine(fixture,"remove-connection");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,m=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Field<ComboBox>(form,"Operation").SelectedIndex=2;Assert(!Field<Button>(form,"ManageConnection").Enabled,"connection-only action is available during removal");Invoke(form,"ShowConnection");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0,"removal entered connection-only flow");Assert(InstallerEngine.State(root)!=null,"test removed the installation");}}finally{Uninstall(root);}
+   });
+   Case("installation discovery retains malformed-marker diagnostics",()=>{
+    string root=Path.Combine(fixture,"broken-marker"),key=@"Software\AgentBrowser\Installations\"+Guid.NewGuid().ToString("N");Directory.CreateDirectory(root);File.WriteAllText(Path.Combine(root,InstallerEngine.StateName),"not JSON");
+    try{using(var registry=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(key))registry.SetValue("Path",root);object result=typeof(Discovery).GetMethod("InstalledPaths").Invoke(null,null);var discovery=result as DiscoveryResult;Assert(discovery!=null&&discovery.Notices.Any(n=>n.Contains(root)),"installation-discovery notices were discarded");}
+    finally{Microsoft.Win32.Registry.CurrentUser.DeleteSubKey(key,false);Directory.Delete(root,true);}
+   });
+   Case("slow installation discovery does not block the welcome window",()=>{
+    var constructor=typeof(SetupForm).GetConstructor(new[]{typeof(string[]),typeof(Func<DiscoveryResult>)});Assert(constructor!=null,"installer discovery cannot be isolated from the UI constructor");
+    using(var entered=new ManualResetEventSlim())using(var release=new ManualResetEventSlim()){
+     var result=new DiscoveryResult();result.Notices.Add("Synthetic unreadable installation notice");Func<DiscoveryResult> scan=()=>{entered.Set();release.Wait(5000);return result;};
+     var timer=System.Diagnostics.Stopwatch.StartNew();using(var form=(SetupForm)constructor.Invoke(new object[]{new[]{"--install-dir",Path.Combine(fixture,"slow-discovery")},scan})){
+      Assert(!entered.IsSet,"constructor started filesystem discovery");form.Show();Assert(timer.ElapsedMilliseconds<1500,"welcome window was delayed by discovery");
+      var timeout=DateTime.UtcNow.AddSeconds(5);while(!entered.IsSet&&DateTime.UtcNow<timeout){Application.DoEvents();Thread.Sleep(10);}Assert(entered.IsSet,"Shown did not start discovery");Assert(Field<Button>(form,"Preview").Enabled,"slow discovery blocked navigation");release.Set();
+      timeout=DateTime.UtcNow.AddSeconds(5);while(!Field<TextBox>(form,"Status").Text.Contains("Synthetic")&&DateTime.UtcNow<timeout){Application.DoEvents();Thread.Sleep(10);}Assert(Field<TextBox>(form,"Status").Text.Contains("Synthetic"),"welcome discovery notices were not shown");form.Close();
+     }
+    }
+   });
    Case("permission rejection identifies the affected directory and recovery",()=>{string root=Path.Combine(fixture,"shared");InstallerEngine.PrivateDirectory(root);var acl=Directory.GetAccessControl(root);byte[] saved=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.Modify,AccessControlType.Allow));Directory.SetAccessControl(root,acl);try{string message="";try{InstallerEngine.Root(root);}catch(IOException error){message=error.Message;}Assert(message.Contains(root)&&message.Contains("기본 위치로 되돌리기"),"permission error omits path or recovery");}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(saved,AccessControlSections.Access);Directory.SetAccessControl(root,restore);}});
    Case("volume root exception retains replacement and owner protection",()=>{
     var acl=new DirectorySecurity();acl.SetOwner(WindowsIdentity.GetCurrent().User);var everyone=new SecurityIdentifier("S-1-1-0");
