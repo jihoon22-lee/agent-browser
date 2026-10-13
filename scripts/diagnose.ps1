@@ -12,6 +12,7 @@ function ConvertTo-SafeDiagnostic($Doctor,[string]$Version) {
             $number=$profiles[$key]
         }
         $item=[ordered]@{check=[string]$check.id;profile=$number;status=[string]$check.status}
+        if($check.version -and ([string]$check.version).Length -lt 40 -and $check.version -match '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$'){$item.version=[string]$check.version}
         if($check.reason){$item.reason=[string]$check.reason}
         if($null -ne $check.exitCode){$item.exitCode=$check.exitCode}
         if($check.runtime.wslProbe){$item.reason=[string]$check.runtime.wslProbe.reason;$item.exitCode=$check.runtime.wslProbe.exitCode}
