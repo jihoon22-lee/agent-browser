@@ -1,3 +1,30 @@
+# v0.1.9 상세 검토·연속 작업 보강 배포 완료 — 2026-10-13 KST
+
+[v0.1.9 Windows preview](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.9)를 **2026-10-13 07:37:43 UTC / 16:37:43 KST**에 게시했다. [상세 검토와 사례표](./review-2026-10-13.md), [설치·업데이트 안내](../README-install.md), [완료 계획](./plans/2026-10-13-final-review.md)을 함께 갱신했다. 현재 문서와 새 ZIP에서 실제 배포 환경의 식별 경로·계정·구성 비율·정책 사례를 제거·일반화했다. 과거 태그·자산·Git 이력은 교체하지 않았다.
+
+- **태그:** `f07732e4a82fd82006cf17645821b565426d99b9`, [PR #15](https://github.com/jihoon22-lee/agent-browser/pull/15). 최종 PR `ccd45d8`의 [CI 38361382156](https://github.com/jihoon22-lee/agent-browser/actions/runs/38361382156)와 배포 대상 [main CI 38362610664](https://github.com/jihoon22-lee/agent-browser/actions/runs/38362610664)가 Linux·Windows 모두 성공했다.
+- **배포 ZIP:** 3,670,969 bytes / 37 files. SHA256 **`e840ed4558b299131f7a7d7e17cf774e673975bf07c9b6d66cc8affd934ab3ff`**. main에서 WSL cargo xwin으로 Windows x64 exe를 만들고 확장·설치 GUI·문서를 패키징했다. 이전 후보와 Bridge 바이트가 달라 이 최종 ZIP으로 다시 실행했다.
+- **최종 ZIP:** 실제 Windows 신규/재설치·게시 v0.1.8 업데이트·인증 Bridge 시작·제거, 설치 ID/페어링/데이터/JSONC 보존 통과. 실제 Windows Chrome의 연속 작업 **52/52**도 이 ZIP의 exe와 확장으로 통과했다.
+- **다운로드본:** GitHub 자산 digest, 별도 SHA256SUMS, 배포 전 ZIP과의 전체 바이트, manifest의 모든 파일 해시를 검증했다. 그 다운로드본으로 위 설치/업데이트/제거, PowerShell의 이전 설치 진단·기록/해시 보존·보고서 개인정보 제외·NoStartup/수동 시작/페어링/업데이트/진단/제거를 다시 실행해 통과했다.
+- **WSL 관리 업데이트:** 최종 ZIP과 게시 다운로드본 각각 Windows Bridge + 별도 Ubuntu 24.04 + 명시한 합성 사용자 + 실제 OpenCode 1.18.29에서 v0.1.8 → v0.1.9 전환이 통과했다. 새 runtime/MCP 실행 경로, browser MCP connected, 페어링·프로필·세션 보존을 확인했다.
+
+| 검증 영역 | 실제 실행 결과와 경계 |
+|---|---|
+| Windows Chrome 전체 | **140 통과**. 기본 제외 bookmarks fixture 2개는 별도 허용 fixture에서 **2/2** 통과. 요청 대상 경계와 iframe **3개**도 통과. Windows Chrome 154.0.8037.99, Node 24.18.1 |
+| 추가 연속 작업 | 위 전체에 포함된 **52개**. 기존/새 탭·두 창·검색/입력/저장·닫기/팝업/중첩 복귀·다음 요청·잘못된 ID/창/주소·중단·오래된 참조·편집 보호 |
+| 실제 사이드패널/OpenCode | Windows·WSL 각각 **기존 2개 요청 + 추가 12개 연속 작업 + provider 오류 정리** 통과. 실제 OpenCode 1.18.29/MCP/Bridge/Chrome을 지나며 도구 선택은 합성 provider |
+| 설치 | 로컬 엔진 **64/64**, 마법사 **16/16**. PR CI의 임시 NTFS 볼륨 사례 포함 마법사 **17/17**. PowerShell 수명주기 **14/14**, 패키지 **5개 그룹**, 진단/소유권/관리 런타임 회귀 통과 |
+| 코드·계약 | Linux Rust **163개 통과 / 1개 플랫폼 제외**, Windows 전용 WSL 단위 **7/7**, 확장 **399/399**, Node helper **28개**, Python 패키징 **3개**, 타입/링크/워크플로 검사 통과. clippy의 기존 스타일 경고는 유지 |
+| 실제 모델 | 무료 카탈로그·가격·가용성 확인 뒤 Zen Big Pickle 요청을 시도했으나 **HTTP 403 FreeTierError**로 도구 실행 전 거부. 실제 모델 판단 성공은 미검증이며 유료 전환·제한 우회 없음 |
+
+테스트 전용 Ubuntu 24.04는 게시본 검사 후 생성 전 소유 기록과 대조해 그 배포판만 제거했다. 기존 배포판 목록을 보존했고 기존 Ubuntu PID 1 시작 시각 **2026-10-10 12:47:15**도 유지됐다. 테스트 배포판 제거로 사라진 일시적 Windows 실행 등록은 기존 Ubuntu를 종료·재시작하지 않고 복구했으며 실제 Windows 명령 실행도 확인했다. 이 처리는 개발 테스트 환경 정리이며 제품의 자동 복구나 사용자용 정책 변경 기능이 아니다.
+
+운영 설치·사용자 Chrome 프로필·전역 OpenCode 설정·실제 대화/업무 페이지는 변경하거나 시험 데이터로 사용하지 않았다. 실제 모델 추론, 접근하지 않은 배포 환경, 모든 Chrome·WSL 버전의 성공은 주장하지 않는다. GUI·스크립트가 신뢰할 수 없는 기존 설치 경로를 거부할 수 있으며 권한을 우회해 업데이트하지 않는다.
+
+아래는 후보 검증·수정과 과거 배포의 이력이다. 중간 실패·후보 해시는 최종 게시 결과와 구분한다.
+
+---
+
 # v0.1.9 최종 검토·연속 작업 검증 중 — 2026-10-13 KST
 
 설치·진단·업데이트 상세 검토, 문서 일반화, 새 탭/기존 탭/닫기/팝업 복귀 보완을 진행하고 있다. 아직 v0.1.9를 게시하지 않았다. [진행 계획](./plans/2026-10-13-final-review.md), [검토 결과와 사례표](./review-2026-10-13.md)를 따른다.
