@@ -79,7 +79,7 @@ GUI 업데이트로 Bridge 실행 경로나 포트가 바뀌면 유휴 상태의
    CI의 main 실행도 확인한다. 이미 게시한 태그/동일 이름 zip을 강제로 바꾸지 않는다.
 7. `package.tests.ps1`로 필수 문서·zip 내부 링크·allowlist·manifest·체크섬·재현성을 검사한다.
    `SHA256SUMS`와 zip을 같은 Release에 게시하고 GitHub asset digest와 로컬 해시가 같은지 확인한다.
-8. Release 안내에는 설치 시작점, CHANGELOG, 검증 환경을 적는다.
+8. Release 본문은 [.github/RELEASE_TEMPLATE.md](../.github/RELEASE_TEMPLATE.md)의 `다운로드와 실행 → 달라진 점 → 검증과 제한` 제목·순서를 따른다. 게시 후 본문을 다시 읽어 양식과 링크가 반영됐는지 확인한다. 설치 시작점, CHANGELOG, 검증 환경을 포함한다.
    `docs/status.md`에 실제 명령·결과·태그/PR/CI 링크를 기록한다. 실행 로그나 사용자 데이터는 게시하지 않는다.
 
 `README-install.md`, `CHANGELOG.md`, `LICENSE`, `SECURITY.md`, `docs/user-guide.md`,
