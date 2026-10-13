@@ -179,6 +179,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native installer test compilation failed' }
           & $testExe $package (Join-Path $package 'AgentBrowser-Setup.exe') (Join-Path $fixture 'cases')
           if ($LASTEXITCODE -ne 0) { throw 'Native installer regression failed' }
+          $wizardExe=Join-Path $fixture 'SetupFlowTests.exe'
+          $wizardSource=Join-Path $env:GITHUB_WORKSPACE 'tests\install\SetupFlowTests.cs'
+          & $compiler /nologo /codepage:65001 /target:exe /main:AgentBrowser.Installer.SetupFlowTests ('/out:' + $wizardExe) /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Management.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll @sources $wizardSource
+          if ($LASTEXITCODE -ne 0) { throw 'Setup wizard test compilation failed' }
+          & $wizardExe (Join-Path $fixture 'wizard') $package
+          if ($LASTEXITCODE -ne 0) { throw 'Setup wizard regression failed' }
       - name: Upload Windows package and checksum
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

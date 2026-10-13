@@ -62,6 +62,8 @@ internal static class GuiSmokeTests {
             Thread.Sleep(100);
         }throw new Exception("GUI did not open.");
     }
+    static AutomationElement EnterDialog(string title){var parent=window;Wait(()=>{var match=new PropertyCondition(AutomationElement.NameProperty,title);var dialog=parent.FindFirst(TreeScope.Descendants,match)??AutomationElement.RootElement.FindFirst(TreeScope.Children,new AndCondition(new PropertyCondition(AutomationElement.ProcessIdProperty,process.Id),match));if(dialog==null)return false;window=dialog;return true;},"dialog missing: "+title);return parent;}
+    static void PairingStep(){Click("Preview");Wait(()=>{try{return Find("PairingToken").Current.IsPassword;}catch{return false;}},"pairing step did not open");}
     static void Close(){if(process==null)return;if(!process.HasExited){Click("Cancel");if(!process.WaitForExit(10000))throw new Exception("Owned test GUI did not close.");}process.Dispose();process=null;}
     static void Screenshot(string path){var r=window.Current.BoundingRectangle;using(var b=new Bitmap((int)r.Width,(int)r.Height))using(var g=Graphics.FromImage(b)){g.CopyFromScreen((int)r.X,(int)r.Y,0,0,b.Size);b.Save(path,System.Drawing.Imaging.ImageFormat.Png);}}
     static void Choose(string name,int index){
@@ -79,22 +81,22 @@ internal static class GuiSmokeTests {
         try {
             if(!resume) {
             if(args.Contains("--discovery")) {
-                Launch(exe,common.Replace("--no-discover ",""));Wait(()=>Find("Discover").Current.IsEnabled,"automatic discovery did not complete",90000);Screenshot(Path.Combine(root,"automatic-discovery.png"));
+                Launch(exe,common.Replace("--no-discover ",""));Wait(()=>Find("ExistingInstallations").Current.IsEnabled,"installation discovery did not complete",90000);Screenshot(Path.Combine(root,"automatic-discovery.png"));
                 Choose("ExistingInstallations",0);if(!File.Exists(Path.Combine(Get("InstallFolder"),".agent-browser-install.json")))throw new Exception("discovered installation selection missing");
-                Set("InstallFolder",install);Choose("Operation",0);Click("Discover");Set("OpenCodeConfig",settings);Wait(()=>Find("Discover").Current.IsEnabled,"discovery did not finish",90000);
-                if(Get("OpenCodeConfig")!=settings)throw new Exception("late discovery overwrote manual config");Close();Console.WriteLine("PASS actual GUI automatic discovery, existing-install selection and manual-input freshness");
+                Choose("Operation",0);Click("Preview");Set("InstallFolder",install);Click("AdvancedSettings");var advancedParent=EnterDialog("AgentBrowser 고급 설정");Click("Discover");Set("OpenCodeConfig",settings);Wait(()=>Find("Discover").Current.IsEnabled,"discovery did not finish",90000);
+                if(Get("OpenCodeConfig")!=settings)throw new Exception("late discovery overwrote manual config");Click("CloseAdvanced");window=advancedParent;Close();Console.WriteLine("PASS actual GUI automatic discovery, existing-install selection and manual-input freshness");
             }
-            Launch(exe,common);Click("Preview");Wait(()=>Get("Status").Contains("아직 변경"),"preview failed");Screenshot(Path.Combine(root,"preview-cancel.png"));Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("아직 변경"),"second preview failed");Close();
+            Launch(exe,common);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"preview failed");Screenshot(Path.Combine(root,"preview-cancel.png"));Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"second preview failed");Close();
             if(File.Exists(Path.Combine(install,".agent-browser-install.json")))throw new Exception("Cancel installed product");
             Console.WriteLine("PASS actual GUI preview/back/cancel without installation");
-            Launch(exe,common);Click("RegisterMcp");Choose("OpenCodeKind",1);Set("Distribution","Ubuntu");Set("OpenCodeConfig",settings);Click("AddRegistration");Click("Preview");Wait(()=>Get("Status").Contains("아직 변경"),"WSL preview failed");Screenshot(Path.Combine(root,"wsl-preview.png"));
-            if(args.Contains("--failure")) {var blocker=new TcpListener(IPAddress.Loopback,port);try{blocker.Start();Click("Apply");Wait(()=>Get("Status").Contains("다시 시도"),"expected startup failure missing",50000);Screenshot(Path.Combine(root,"startup-failure.png"));if(File.Exists(Path.Combine(install,".agent-browser-install.json"))||File.ReadAllText(settings)!=original)throw new Exception("failed install did not roll back files/config");}finally{blocker.Stop();}Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("아직 변경"),"retry preview failed");Console.WriteLine("PASS actual GUI startup failure rollback and retry preview");}
+            Launch(exe,common);Click("Preview");Click("AdvancedSettings");var advancedWindow=EnterDialog("AgentBrowser 고급 설정");Click("RegisterMcp");Choose("OpenCodeKind",1);Set("Distribution","Ubuntu");Set("OpenCodeConfig",settings);Click("AddRegistration");Click("CloseAdvanced");window=advancedWindow;Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"WSL preview failed");Screenshot(Path.Combine(root,"wsl-preview.png"));
+            if(args.Contains("--failure")) {var blocker=new TcpListener(IPAddress.Loopback,port);try{blocker.Start();Click("Apply");Wait(()=>Get("Status").Contains("다시 시도"),"expected startup failure missing",50000);Screenshot(Path.Combine(root,"startup-failure.png"));if(File.Exists(Path.Combine(install,".agent-browser-install.json"))||File.ReadAllText(settings)!=original)throw new Exception("failed install did not roll back files/config");}finally{blocker.Stop();}Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"retry preview failed");Console.WriteLine("PASS actual GUI startup failure rollback and retry preview");}
             Click("Apply");Wait(()=>Get("Status").StartsWith("설치 완료"),"GUI install failed");Screenshot(Path.Combine(root,"install-complete.png"));Close();
             Console.WriteLine("PASS actual GUI install and WSL missing-mcp registration");
             if(args.Contains("--profiles")) {
                 // A freshly installed GUI should save a new managed profile via
                 // the real Bridge CLI, without starting OpenCode or a model.
-                Launch(exe,common);var parent=window;Click("ManagedProfiles");
+                Launch(exe,common);Click("ManageConnection");PairingStep();Click("Preview");var parent=window;Click("ManagedProfiles");
                 Wait(()=>{var title=new PropertyCondition(AutomationElement.NameProperty,"AgentBrowser 관리 OpenCode 프로필");var dialog=parent.FindFirst(TreeScope.Descendants,title)??AutomationElement.RootElement.FindFirst(TreeScope.Children,new AndCondition(new PropertyCondition(AutomationElement.ProcessIdProperty,process.Id),title));if(dialog==null)return false;window=dialog;return true;},"profile dialog missing");
                 Set("ProfileId","gui-profile-test");Set("ProfileName","GUI isolated profile");Choose("ProfileKind",1);Set("ProfileDistribution","Ubuntu");Set("ProfileExecutable","/home/jihoon/.opencode/bin/opencode");Set("ProfileDirectory",Path.GetDirectoryName(settings.Substring(settings.IndexOf("\\tmp\\",StringComparison.Ordinal))).Replace('\\','/'));
                 if(args.Contains("--async-profile")) {
@@ -110,14 +112,18 @@ internal static class GuiSmokeTests {
                 Close();
                 if(!File.ReadAllText(Path.Combine(install,"data","runtime.json")).Contains("gui-profile-test"))throw new Exception("saved profile missing");
                 Console.WriteLine("PASS actual GUI managed WSL profile validation/save without runtime/model start");
-                Launch(exe,common);parent=window;string pidBefore=File.ReadAllText(Path.Combine(install,"data","serve.pid"));Click("StartInstalledBridge");Wait(()=>Get("Status").Contains("Bridge가 실행 중"),"existing Bridge start failed");if(File.ReadAllText(Path.Combine(install,"data","serve.pid"))!=pidBefore)throw new Exception("Start unnecessarily replaced the running owned Bridge");Click("Pairing");Wait(()=>{var dialog=parent.FindFirst(TreeScope.Descendants,new PropertyCondition(AutomationElement.NameProperty,"AgentBrowser 페어링"));if(dialog==null)return false;window=dialog;return true;},"pairing dialog missing");
-                if(!Find("PairingToken").Current.IsPassword||Get("PairingUrl")!="ws://127.0.0.1:"+port+"/extension")throw new Exception("pairing dialog must mask token and show current port");Screenshot(Path.Combine(root,"pairing-masked.png"));Click("ClosePairing");window=parent;Close();Console.WriteLine("PASS actual GUI masked pairing dialog; token not read or copied by test");
+                Launch(exe,common);Click("ManageConnection");string pidBefore=File.ReadAllText(Path.Combine(install,"data","serve.pid"));PairingStep();
+                if(File.ReadAllText(Path.Combine(install,"data","serve.pid"))!=pidBefore)throw new Exception("pairing preparation replaced the running owned Bridge");
+                if(!Find("PairingToken").Current.IsPassword||Get("PairingUrl")!="ws://127.0.0.1:"+port+"/extension")throw new Exception("pairing step must mask token and show current port");
+                Screenshot(Path.Combine(root,"pairing-masked.png"));Click("Back");if(!Get("ExtensionFolder").EndsWith("extension"))throw new Exception("Back did not return to Chrome extension step");
+                PairingStep();Click("Preview");Screenshot(Path.Combine(root,"runtime-step.png"));Click("Preview");Screenshot(Path.Combine(root,"wizard-complete.png"));
+                if(Find("Cancel").Current.Name!="Cancel")throw new Exception("Finish action missing");Close();Console.WriteLine("PASS sequential Chrome/pairing/runtime/completion and masked token; token not read or copied by test");
             }
             string first=File.ReadAllText(settings);if(!first.Contains("\"browser\"")||!first.Contains("// preserve"))throw new Exception("WSL settings or comment missing");
             File.WriteAllText(Path.Combine(install,"data","gui-preserve.json"),"{\"synthetic\":true}");
             File.WriteAllText(settings,first.Replace("test/model","test/user-edited"),new System.Text.UTF8Encoding(false));
             }
-            Launch(exe,common);Choose("Operation",1);Click("Preview");Wait(()=>Get("Status").Contains("아직 변경"),"update preview failed");Click("Apply");Wait(()=>Get("Status").StartsWith("설치 완료"),"GUI update failed");Screenshot(Path.Combine(root,"update-complete.png"));Close();
+            Launch(exe,common);Choose("Operation",1);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"update preview failed");Click("Apply");Wait(()=>Get("Status").StartsWith("설치 완료"),"GUI update failed");Screenshot(Path.Combine(root,"update-complete.png"));Close();
             string updated=File.ReadAllText(settings);if(!updated.Contains("test/user-edited")||System.Text.RegularExpressions.Regex.Matches(updated,"\"browser\"").Count!=1)throw new Exception("update duplicated MCP or lost model");
             if(args.Contains("--upgrade")) {string state=File.ReadAllText(Path.Combine(install,".agent-browser-install.json"));if(!state.Contains("\"Version\":\"0.1.5\"")||!state.Contains(File.ReadAllText(Path.Combine(root,"old-identity.txt"))))throw new Exception("cross-version update lost version/identity");using(var sha=System.Security.Cryptography.SHA256.Create()){string hash=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(Path.Combine(install,"data","config.json")))).Replace("-","").ToLowerInvariant();if(hash!=File.ReadAllText(Path.Combine(root,"old-config-sha.txt")))throw new Exception("upgrade changed pairing data");}Console.WriteLine("PASS actual GUI published 0.1.4 Bridge installation upgraded to 0.1.5; identity/pairing preserved");}
             Console.WriteLine("PASS actual GUI repeat/update preserves user settings and single registration");
@@ -130,7 +136,7 @@ internal static class GuiSmokeTests {
                 ((System.Collections.ArrayList)state["OwnedFiles"]).Add(new System.Collections.Generic.Dictionary<string,object>{{"Path","AgentBrowser-Setup.exe"},{"Sha256",digest}});
                 File.WriteAllText(marker,json.Serialize(state),new System.Text.UTF8Encoding(false));exe=legacy;
             }
-            Launch(exe,common);Choose("Operation",2);Click("Preview");Wait(()=>Get("Status").Contains("아직 변경"),"uninstall preview failed");if(!Get("ChangePreview").Contains(install))throw new Exception("uninstall preview missing target");Screenshot(Path.Combine(root,"uninstall-preview.png"));Click("Apply");Wait(()=>Get("Status").StartsWith("제거 완료"),"GUI uninstall failed");Screenshot(Path.Combine(root,"uninstall-complete.png"));Close();
+            Launch(exe,common);Choose("Operation",2);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"uninstall preview failed");if(!Get("ChangePreview").Contains(install))throw new Exception("uninstall preview missing target");Screenshot(Path.Combine(root,"uninstall-preview.png"));Click("Apply");Wait(()=>Get("Status").StartsWith("제거 완료"),"GUI uninstall failed");Screenshot(Path.Combine(root,"uninstall-complete.png"));Close();
             if(File.Exists(Path.Combine(install,".agent-browser-install.json"))||!File.Exists(Path.Combine(install,"data","gui-preserve.json")))throw new Exception("uninstall data ownership failure");
             string final=File.ReadAllText(settings);if(final.Contains("\"browser\"")||!final.Contains("test/user-edited")||!final.Contains("// preserve")||(original.Contains("\"other\"")?!final.Contains("\"other\""):final.Contains("\"mcp\"")))throw new Exception("uninstall did not preserve the original MCP state");
             Console.WriteLine("PASS actual GUI uninstall target confirmation, no-mcp restoration and data preservation");

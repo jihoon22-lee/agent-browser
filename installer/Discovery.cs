@@ -50,7 +50,7 @@ namespace AgentBrowser.Installer {
                 if(!result.Installs.Any(p=>Same(p,path))) result.Installs.Add(path);
             } catch(Exception error) { result.Notices.Add("설치 상태를 확인하지 못했습니다: "+path+" · "+error.Message); }
         }
-        public static DiscoveryResult Find() {
+        public static string[] InstalledPaths() {
             var result=new DiscoveryResult();
             AddInstall(result,Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentBrowser"));
             // These product-owned registry entries only identify install roots.
@@ -58,6 +58,10 @@ namespace AgentBrowser.Installer {
             using(var root=Registry.CurrentUser.OpenSubKey(@"Software\AgentBrowser\Installations")) {
                 if(root!=null) foreach(var id in root.GetSubKeyNames()) using(var key=root.OpenSubKey(id)) AddInstall(result,key==null?null:key.GetValue("Path") as string);
             }
+            return result.Installs.ToArray();
+        }
+        public static DiscoveryResult Find() {
+            var result=new DiscoveryResult();result.Installs.AddRange(InstalledPaths());
             var candidates=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var home=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             candidates.Add(Path.Combine(home,@".opencode\bin\opencode.exe"));

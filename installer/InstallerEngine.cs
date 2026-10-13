@@ -78,22 +78,33 @@ namespace AgentBrowser.Installer {
         static readonly HashSet<string> TrustedOwners=new HashSet<string>{WindowsIdentity.GetCurrent().User.Value,"S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"};
         static void RequireTrustedOwner(DirectorySecurity acl) {
             var owner=acl.GetOwner(typeof(SecurityIdentifier));
-            if(owner==null||!TrustedOwners.Contains(owner.Value))throw new IOException("The installation path must be owned by the current user or a trusted Windows system account.");
+            if(owner==null||!TrustedOwners.Contains(owner.Value))throw new IOException("현재 사용자 또는 Windows 시스템 계정이 소유한 폴더가 아닙니다.");
         }
         static void RequirePrivateInstallRoot(string root) {
             for(var directory=new DirectoryInfo(root);directory!=null;directory=directory.Parent)
-                if(directory.Exists)RequireDirectorySecurity(directory.GetAccessControl(AccessControlSections.Access|AccessControlSections.Owner),Same(directory.FullName,root));
+                if(directory.Exists)CheckDirectorySecurity(directory,Same(directory.FullName,root));
         }
         static void RequirePrivateDestination(string root,string path) {
             for(var directory=new DirectoryInfo(Path.GetDirectoryName(path));directory!=null;directory=directory.Parent) {
-                if(directory.Exists)RequireDirectorySecurity(directory.GetAccessControl(AccessControlSections.Access|AccessControlSections.Owner),true);
+                if(directory.Exists)CheckDirectorySecurity(directory,true);
                 if(Same(directory.FullName,root))return;
             }
             throw new IOException("A package destination is outside its installation folder.");
         }
-        internal static void RequireDirectorySecurity(DirectorySecurity acl,bool installRoot) {
+        static void CheckDirectorySecurity(DirectoryInfo directory,bool installRoot) {
+            try {RequireDirectorySecurity(directory.GetAccessControl(AccessControlSections.Access|AccessControlSections.Owner),installRoot,directory.Parent==null);}
+            catch(IOException error) {throw PathPermissionError(directory.FullName,error);}
+            catch(UnauthorizedAccessException error) {throw PathPermissionError(directory.FullName,error);}
+        }
+        static IOException PathPermissionError(string path,Exception error) {
+            return new IOException("설치 위치의 권한을 확인할 수 없습니다: "+path+"\r\n"+error.Message+"\r\n[기본 위치로 되돌리기]를 누르거나 현재 사용자 전용 폴더를 지정하세요.",error);
+        }
+        internal static void RequireDirectorySecurity(DirectorySecurity acl,bool installRoot,bool volumeRoot=false) {
             RequireTrustedOwner(acl);
             var writes=FileSystemRights.Delete|FileSystemRights.DeleteSubdirectoriesAndFiles|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership;
+            // A volume root cannot itself be replaced via DELETE. Its child-delete,
+            // ACL-changing and ownership rights still protect the installation below it.
+            if(volumeRoot&&!installRoot)writes&=~FileSystemRights.Delete;
             if(installRoot)writes|=FileSystemRights.WriteData|FileSystemRights.AppendData|FileSystemRights.WriteExtendedAttributes|FileSystemRights.WriteAttributes;
             foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,true,typeof(SecurityIdentifier))) {
                 if(rule.AccessControlType!=AccessControlType.Allow||(!installRoot&&(rule.PropagationFlags&PropagationFlags.InheritOnly)!=0))continue;
@@ -103,7 +114,7 @@ namespace AgentBrowser.Installer {
                 string sid=rule.IdentityReference.Value;if(sid.StartsWith("S-1-15-2-",StringComparison.Ordinal)||sid.StartsWith("S-1-15-3-",StringComparison.Ordinal))continue;
                 bool trusted=TrustedOwners.Contains(rule.IdentityReference.Value)||rule.IdentityReference.Value=="S-1-3-0";
                 uint rights=unchecked((uint)rule.FileSystemRights);
-                if(!trusted&&((rule.FileSystemRights&writes)!=0||(rights&0x10000000)!=0||(installRoot&&(rights&0x40000000)!=0)))throw new IOException("Shared write or replacement permissions are not supported for an installation path. Choose a private per-user folder and ancestry.");
+                if(!trusted&&((rule.FileSystemRights&writes)!=0||(rights&0x10000000)!=0||(installRoot&&(rights&0x40000000)!=0)))throw new IOException("다른 사용자에게 이 폴더의 파일 쓰기 또는 폴더 교체 권한이 있습니다.");
             }
         }
         public static T Read<T>(string path) {NativeIO.PlainPath(path);return NativeIO.Json.Deserialize<T>(File.ReadAllText(path,NativeIO.Utf8));}
