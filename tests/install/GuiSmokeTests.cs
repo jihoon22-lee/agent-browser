@@ -83,8 +83,8 @@ internal static class GuiSmokeTests {
             if(!resume) {
             if(args.Contains("--discovery")) {
                 Launch(exe,common.Replace("--no-discover ",""));Wait(()=>Find("ExistingInstallations").Current.IsEnabled,"installation discovery did not complete",90000);Screenshot(Path.Combine(root,"automatic-discovery.png"));
-                Choose("ExistingInstallations",0);if(!File.Exists(Path.Combine(Get("InstallFolder"),".agent-browser-install.json")))throw new Exception("discovered installation selection missing");
-                Choose("Operation",0);Click("Preview");Set("InstallFolder",install);Click("AdvancedSettings");var advancedParent=EnterDialog("AgentBrowser 고급 설정");Click("Discover");Set("OpenCodeConfig",settings);Wait(()=>Find("Discover").Current.IsEnabled,"discovery did not finish",90000);
+                Choose("ExistingInstallations",0);Choose("Operation",0);Click("Preview");if(!File.Exists(Path.Combine(Get("InstallFolder"),".agent-browser-install.json")))throw new Exception("discovered installation selection missing");
+                Set("InstallFolder",install);Click("AdvancedSettings");var advancedParent=EnterDialog("AgentBrowser 고급 설정");Click("Discover");Set("OpenCodeConfig",settings);Wait(()=>Find("Discover").Current.IsEnabled,"discovery did not finish",90000);
                 if(Get("OpenCodeConfig")!=settings)throw new Exception("late discovery overwrote manual config");Click("CloseAdvanced");window=advancedParent;Close();Console.WriteLine("PASS actual GUI automatic discovery, existing-install selection and manual-input freshness");
             }
             Launch(exe,common);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"preview failed");Screenshot(Path.Combine(root,"preview-cancel.png"));Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"second preview failed");Close();
