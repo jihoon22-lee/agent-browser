@@ -88,6 +88,14 @@ namespace AgentBrowser.Installer {
      Assert(error.Contains("different previous and candidate versions"),"same-version fixture was not rejected");Assert(!File.Exists(Path.Combine(root,"GUI 설치 & space",InstallerEngine.StateName)),"same-version fixture installed before rejecting");
     }finally{Uninstall(Path.Combine(root,"GUI 설치 & space"));if(File.Exists(zip))File.Delete(zip);if(Directory.Exists(root))Directory.Delete(root,true);}
    });
+   foreach(string relative in new[]{"extension/manifest.json","extension/background.js"})Case("missing extension file requires repair: "+relative,()=>{
+    string root=Path.Combine(fixture,"missing-extension-"+Path.GetFileNameWithoutExtension(relative));var options=new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false};
+    try{InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,m=>{});string file=NativeIO.SafePath(root,relative);Assert(File.Exists(file),"fixture extension file is absent");File.Delete(file);
+     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Invoke(form,"ShowConnection");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0&&Field<TextBox>(form,"Status").Text.Contains("업데이트"),"missing extension was offered for Chrome loading");
+      options.Operation="update";InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,m=>{});Invoke(form,"ShowConnection");Assert(File.Exists(file)&&Field<TextBox>(form,"ExtensionFolder").Text==Path.Combine(root,"extension"),"update did not repair the extension guide");
+     }
+    }finally{Uninstall(root);}
+   });
    Case("permission rejection identifies the affected directory and recovery",()=>{string root=Path.Combine(fixture,"shared");InstallerEngine.PrivateDirectory(root);var acl=Directory.GetAccessControl(root);byte[] saved=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.Modify,AccessControlType.Allow));Directory.SetAccessControl(root,acl);try{string message="";try{InstallerEngine.Root(root);}catch(IOException error){message=error.Message;}Assert(message.Contains(root)&&message.Contains("기본 위치로 되돌리기"),"permission error omits path or recovery");}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(saved,AccessControlSections.Access);Directory.SetAccessControl(root,restore);}});
    Case("volume root exception retains replacement and owner protection",()=>{
     var acl=new DirectorySecurity();acl.SetOwner(WindowsIdentity.GetCurrent().User);var everyone=new SecurityIdentifier("S-1-1-0");

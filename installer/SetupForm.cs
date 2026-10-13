@@ -112,7 +112,14 @@ namespace AgentBrowser.Installer {
             manage.Enabled=profiles.Enabled=false;
             try{var old=InstallerEngine.State(folder.Text);bool changed=!InstallerEngine.Same(loadedFolder,folder.Text);if(old!=null){if(changed){if(operation.SelectedIndex!=2)operation.SelectedIndex=1;port.Value=old.Port;startup.Checked=old.Startup!=null;if(old.Startup!=null)startupPath.Text=Path.GetDirectoryName(old.Startup.Path);}profiles.Enabled=true;manage.Enabled=operation.SelectedIndex!=2;status.Text="기존 설치 "+old.Version+"을 찾았습니다.";}else{if(operation.SelectedIndex==1)operation.SelectedIndex=0;status.Clear();}loadedFolder=folder.Text;}catch(Exception error){status.Text=error.Message;}
         }
-        InstallState Installed(){var state=InstallerEngine.State(folder.Text);if(state==null)throw new IOException("아직 설치되지 않았습니다. [다음]을 눌러 설치를 완료하세요.");InstallerEngine.Root(folder.Text);InstallerEngine.Owned(state);return state;}
+        InstallState Installed(){
+            var state=InstallerEngine.State(folder.Text);if(state==null)throw new IOException("아직 설치되지 않았습니다. [다음]을 눌러 설치를 완료하세요.");
+            InstallerEngine.Root(folder.Text);InstallerEngine.Owned(state);
+            var extensionFiles=state.OwnedFiles.Where(file=>file.Path.Replace('\\','/').StartsWith("extension/",StringComparison.OrdinalIgnoreCase)).ToArray();
+            if(!extensionFiles.Any(file=>InstallerEngine.Same(file.Path.Replace('\\','/'),"extension/manifest.json")))throw new IOException("설치 기록에 Chrome 확장이 없습니다. 설치 폴더를 확인하세요.");
+            foreach(var file in extensionFiles){string path=NativeIO.SafePath(state.InstallDir,file.Path);if(!File.Exists(path))throw new IOException("Chrome 확장 파일이 없습니다. 업데이트로 복구한 뒤 연결하세요: "+path);}
+            return state;
+        }
         bool ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");profiles.Enabled=true;SetPage(4);status.Clear();return true;}catch(Exception error){status.Text=error.Message;return false;}}
         void ShowAdvanced(){
             using(var dialog=new Form{Text="AgentBrowser 고급 설정",ClientSize=new Size(800,404),Font=Font,BackColor=Color.White,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,StartPosition=FormStartPosition.CenterParent}){
