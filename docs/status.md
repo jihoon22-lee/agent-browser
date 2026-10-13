@@ -1,4 +1,19 @@
-# v0.1.7 배포 진행 — 2026-10-13 KST
+# v0.1.7 Windows preview 게시 완료 — 2026-10-13 KST
+
+[v0.1.7 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.7)를 **2026-10-13 03:27:58 UTC**에 게시했다. 사내 PC에서는 이 페이지의 `agent-browser-0.1.7-windows-x64.zip`과 `SHA256SUMS`를 받아 전체 압축을 풀고 `AgentBrowser-Setup.exe`를 실행한다. 설치·Chrome 추가·페어링·OpenCode 설정을 순서대로 진행하는 마법사다.
+
+- 태그 대상: `298f87856c8cc288a6690697cf281e38bdbab3ba`, [PR #13](https://github.com/jihoon22-lee/agent-browser/pull/13). 최종 `801aa4e`의 코드·보안 검토에 추가 지적이 없고 [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38340280805)와 [태그 대상 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38341072452)가 Linux·Windows 모두 통과했다. 검토 지적 12개는 회귀·실제 실행 또는 문서 대조로 보완하고 해결했다.
+- 자산: ZIP **3,625,011 bytes / 35 files**, SHA-256 **`d90c1a4a7a1a46d20e6cd09a2a2faccf09eee016a1cd8fd85f2c16ecf7336982`**. GitHub asset digest, 별도 SHA256SUMS, 재다운로드 바이트, 내부 파일 해시·버전·Windows x64 PE·문서 링크·배포 제외 항목을 확인했다. v0.1.6 등 이전 태그·자산은 변경하지 않았다.
+- 최종 main ZIP으로 실제 Windows 신규 설치/재설치·게시된 0.1.6 업데이트·인증 Bridge 시작·제거, 설치 ID·페어링·데이터·JSONC 보존을 확인했다. Windows Bridge + 격리된 WSL OpenCode 1.18.29의 새 runtime/MCP 경로 연결과 프로필·세션 보존도 통과했다.
+- 최종 ZIP의 네이티브 WinForms 컨트롤 자동화로 기존 설치 검색·입력 보존, 준비/뒤로/취소, 시작 실패 복구/재시도, WSL 등록, 프로필 확인/저장/중복 거절/비동기 닫기, 별도 Chrome/페어링/OpenCode/완료 단계, 업데이트와 설치본 handoff/제거를 확인했다. CI는 설치 엔진 **64/64**, 마법사·경로 **17/17**을 통과했고 소유한 실제 임시 NTFS 볼륨의 설치 검사도 포함한다. 기존 runner 드라이브나 사용자 폴더 ACL을 바꾸지 않았다.
+- **게시본 재다운로드 후** Windows 신규 설치/재설치·0.1.6 업데이트·제거와 WSL 관리 OpenCode 전환을 다시 실행해 통과했다. 기록은 개발 폴더의 `release-0.1.7-published-check-a0b4fb`에 있으며 배포물에 넣지 않았다. 개인 운영 설치에는 이번 버전을 적용하지 않았고 전역 OpenCode 설정·사용자 대화·Chrome 프로필을 변경하지 않았다.
+- **미검증:** 사내 설치 경로의 실제 소유자·권한, 물리 마우스 입력, Chrome 확장 수동 로드/토큰 붙여넣기, 실제 모델 작업은 이번 배포 검증의 성공으로 보고하지 않는다. 사내 경로 오류가 계속되면 기본 사용자 설치 위치를 선택할 수 있으며 기존 폴더 권한을 자동 변경하지 않는다.
+
+[릴리스 계획](./plans/2026-10-13-release-0.1.7.md)을 완료했다. 이 게시 결과는 태그 이후의 문서 기록이며 태그와 게시 자산을 교체하지 않는다. 아래는 준비·검토·이전 릴리스 이력이다.
+
+---
+
+# v0.1.7 배포 준비 이력 — 2026-10-13 KST
 
 사용자가 로컬 시험 파일 대신 버전을 올려 사내 PC에서 받을 수 있게 배포하라고 명시적으로 요청했다. Bridge·Extension을 0.1.7로 맞추고 [새 릴리스 계획](./plans/2026-10-13-release-0.1.7.md)에 따라 PR·CI·자동 검토·main 병합·GitHub prerelease 게시와 게시본 재다운로드 검증을 진행한다. 아래 로컬 시험 시점의 배포 제외 문구는 이 후속 요청으로 대체된다. 개인 운영 설치와 기존 태그·자산은 변경하지 않는다.
 
