@@ -38,7 +38,8 @@ async fn fake_extension(port: u16, token: String, reply: Reply) -> std::sync::Ar
 
 fn default_reply(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
     match method {
-        "browser.tabs.get" => Ok(json!({"tabId": 42, "url": "http://127.0.0.1/x", "title": "x", "active": true})),
+        "browser.tabs.get" if p["tabId"]==999 => Err(("TAB_NOT_FOUND","No such fixture tab")),
+        "browser.tabs.get" => Ok(json!({"tabId": p["tabId"].as_i64().unwrap_or(42), "url": "http://127.0.0.1/x", "title": "x", "active": true, "attachable":true})),
         "browser.tabs.create" => Ok(json!({"tabId": 77, "url": p["url"], "title": "new", "active": true})),
         "browser.snapshot" => Ok(json!({"snapshotId": 1, "url": "http://127.0.0.1/x", "elements": [], "tabId": p["tabId"]})),
         "browser.click" => Ok(json!({"executed": true, "verified": {"urlChanged": false, "domChanged": true}})),
@@ -312,9 +313,11 @@ async fn selected_extension_tab_closed_allows_switch_and_release() {
     let op = attached["operationId"].clone();
     let (mut mcp, _) = attach_with_socket(mcp, &mut ext, json!({"action":"new","operationId":op,"url":"http://127.0.0.1/y"})).await;
     let status = close_tab_and_status(&mut ext, 77).await;
-    assert_eq!(status["operation"]["currentTabClosed"], true);
-    let blocked = tool(&mut mcp, "browser_snapshot", json!({"operationId":op})).await;
-    assert_eq!(blocked["error"]["code"], "TAB_CLOSED");
+    assert_eq!(status["operation"]["currentTabClosed"], false);
+    assert_eq!(status["operation"]["currentTab"],42);
+    assert_eq!(status["operation"]["needsObservation"],true);
+    let blocked = tool(&mut mcp, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"do not retarget"})).await;
+    assert_eq!(blocked["error"]["code"], "STALE_ELEMENT");
     let (mut mcp, switched) = attach_with_socket(mcp, &mut ext, json!({"action":"switch","operationId":op,"tabId":42})).await;
     assert_eq!(switched["ok"], true, "{switched}");
     assert_eq!(close_tab_and_status(&mut ext, 42).await["operation"]["currentTabClosed"], true);
@@ -392,24 +395,26 @@ async fn r01_cancel_crossing_attach_response_releases_only_that_operation() {
 }
 
 #[tokio::test]
-async fn close_preserves_original_and_requires_switch_after_owned_tab_closes() {
+async fn close_requires_current_target_and_observation_after_return_then_allows_original_close() {
     let (_h, serve, cfg) = start_test_serve().await;
     let seen = fake_extension(serve.port, cfg.token.clone(), |method,p| {
-        if method == "browser.tabs.close" { assert_eq!(p["tabId"],77); return Ok(json!({"closed":true})); }
-        if method == "browser.tabs.get" { return Ok(json!({"tabId":p["tabId"].as_i64().unwrap_or(42)})); }
+        if method == "browser.tabs.close" { assert!(matches!(p["tabId"].as_i64(),Some(42|77))); return Ok(json!({"closed":true})); }
+        if method == "browser.tabs.get" { return Ok(json!({"tabId":p["tabId"].as_i64().unwrap_or(42),"attachable":true})); }
         default_reply(method,p)
     }).await;
     let mut mcp = mcp_client(serve.port,&cfg.token,"close-client").await;
     let a=tool(&mut mcp,"browser_tabs",json!({"action":"attach"})).await;
     let op=a["operationId"].as_str().unwrap();
-    let rejected=tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await;
-    assert_eq!(rejected["error"]["code"],"FORBIDDEN_METHOD");
+    let rejected=tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op,"tabId":77})).await;
+    assert_eq!(rejected["error"]["code"],"INVALID_PARAMS");
     assert!(!seen.lock().unwrap().iter().any(|m|m=="browser.tabs.close"));
     assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"new","operationId":op,"url":"https://example.test"})).await["ok"],true);
     assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op,"tabId":42})).await["error"]["code"],"INVALID_PARAMS");
     assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await["executed"],"yes");
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await["error"]["code"],"STALE_ELEMENT");
+    assert_eq!(tool(&mut mcp,"browser_snapshot",json!({"operationId":op})).await["data"]["tabId"],42);
+    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"close","operationId":op})).await["executed"],"yes");
     assert_eq!(tool(&mut mcp,"browser_snapshot",json!({"operationId":op})).await["error"]["code"],"TAB_CLOSED");
-    assert_eq!(tool(&mut mcp,"browser_tabs",json!({"action":"switch","operationId":op,"tabId":42})).await["ok"],true);
 }
 
 #[tokio::test]

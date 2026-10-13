@@ -237,6 +237,7 @@ impl OperationCommand<'_> { async fn wait(self, timeout: Duration) -> Result<Val
 
 fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass) -> Result<OperationCommand<'a>, RpcError> {
     state.ops.with_checked(op_id, true, |op| {
+        if class==CommandClass::Write && op.needs_observation {return Err(restored_target_needs_snapshot());}
         params.insert("operationId".into(), json!(op.id));
         params.insert("generation".into(), json!(op.generation));
         params.insert("tabId".into(), json!(op.current_tab));
@@ -258,6 +259,7 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             cancellation.expect("captured cancellation"),
         ),
         Ok(mut data) => {
+            if name=="browser_snapshot" && data["tabId"].as_i64()==Some(origin.current_tab) {state.ops.observe_target(origin);}
             if matches!(name,"browser_click"|"browser_press") {
                 let mut adopted = None;
                 if let Some(children) = data.get_mut("openedTabs").and_then(Value::as_array_mut) {
@@ -291,6 +293,10 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             ToolOutcome::failure(name, Some(op_id), delivered, e)
         }
     }
+}
+
+fn restored_target_needs_snapshot() -> RpcError {
+    RpcError::new(ErrorCode::StaleElement,Retry::Safe,"The current tab closed and this operation returned to a previously visited tab. Take browser_snapshot to confirm the restored target before changing or closing it.")
 }
 
 async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
@@ -388,11 +394,6 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             let tab_id = args["tabId"].as_i64().unwrap_or_default();
             let queued = state.ops.with_checked(op_id, false, |op| {
-                if !op.tabs.contains(&tab_id) {
-                    return Err(RpcError::new(ErrorCode::TabNotFound, Retry::Never,
-                        "That tab is not part of this operation. Use action=new or attach it first.")
-                        .with_details(json!({ "tabId": tab_id, "operationTabs": op.tabs })));
-                }
                 state.registry.queue_command_for(&op.client_id, "browser.tabs.get", json!({ "tabId": tab_id }), CommandClass::Read)
             });
             let queued = match queued {
@@ -400,10 +401,11 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 Err(error) => return ToolOutcome::rejected(NAME, Some(op_id), error),
             };
             match queued.wait(DEFAULT_TIMEOUT).await {
-                Ok(tab) => match state.ops.switch_tab(op_id, tab_id) {
+                Ok(tab) if tab["tabId"].as_i64()==Some(tab_id) && (tab["attachable"]==true || (matches!(tab["url"].as_str(),Some(""|"about:blank")) && state.ops.check_active(op_id).is_ok_and(|op|op.tabs.contains(&tab_id)))) => match state.ops.visit_verified_tab(op_id, tab_id) {
                     Ok(()) => ToolOutcome::success(NAME, Some(op_id), true, Executed::No, Value::Null, json!({ "tab": tab })),
                     Err(e) => ToolOutcome::failure(NAME, Some(op_id), true, e),
                 },
+                Ok(_) => ToolOutcome::rejected(NAME,Some(op_id),RpcError::new(ErrorCode::UnsupportedPage,Retry::Never,"Select an ordinary HTTP(S) tab from browser_tabs list")),
                 Err(e) => {
                     if e.code == ErrorCode::TabNotFound {
                         state.ops.remove_tab_for_operation(op_id, tab_id);
@@ -416,11 +418,8 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             // Target is the current operation tab; never accept an arbitrary tabId.
             let queued = state.ops.with_checked(op_id, true, |op| {
+                if op.needs_observation {return Err(restored_target_needs_snapshot());}
                 if args.get("tabId").is_some() { return Err(invalid("close targets the current tab; switch first")); }
-                if !op.opened_tabs.contains(&op.current_tab) {
-                    return Err(RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never,
-                        "Only tabs created by this operation may be closed. The attached original is preserved."));
-                }
                 let params = json!({"operationId":op.id,"generation":op.generation,"tabId":op.current_tab});
                 let queued = state.registry.queue_command_for(&op.client_id,"browser.tabs.close",params,CommandClass::Write)?;
                 Ok((op.current_tab, queued))
@@ -436,7 +435,8 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                     ToolOutcome::success(NAME,Some(op_id),true,Executed::Yes,json!({"closed":true}),
                         json!({"tabId":tab_id,"operationTabs":remaining.as_ref().map(|op| &op.tabs),
                             "abortedAfter":remaining.is_none(),
-                            "nextStep":"Use action=switch with a surviving operation tabId, then take a fresh snapshot."}))
+                            "currentTab":remaining.as_ref().filter(|op|!op.current_tab_closed).map(|op|op.current_tab),
+                            "nextStep":"Snapshot the restored target before continuing; if none remains, switch to an explicit listed HTTP(S) tab or create a new tab with this operationId."}))
                 }
                 Ok(_) => delivered_failure(Some(op_id),RpcError::new(ErrorCode::ExecutionUnknown,Retry::Unsafe,"Closure was not confirmed. Inspect tabs before retrying.")),
                 Err(error) => delivered_failure(Some(op_id),error),
@@ -515,7 +515,7 @@ mod tests {
                     if let Ok(Envelope::Req { id, method, params, .. }) = parse_envelope(&text) {
                         let value = match method.as_str() {
                             "browser.tabs.create" => json!({"tabId": 2, "owner": client}),
-                            "browser.tabs.get" => json!({"tabId": params["tabId"], "owner": client}),
+                            "browser.tabs.get" => json!({"tabId": params["tabId"], "owner": client, "attachable":true}),
                             _ => json!({"owner": client, "tabId": params["tabId"]}),
                         };
                         state.registry.handle_response(Envelope::ok(id, value));

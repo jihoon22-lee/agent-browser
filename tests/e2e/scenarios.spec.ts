@@ -248,13 +248,13 @@ test("R19 element references cannot cross tabs or navigated documents", async ()
   await expect(page.locator("#q")).toHaveValue("");
 });
 
-test("R20 closed current tab can switch to a remaining tab and release", async () => {
+test("R20 closed current tab returns to the prior tab, reobserves and releases", async () => {
   const { page, operationId } = await setup("search.html");
   const original = await world.tabId(page);
   const newTab = await world.ok("browser_tabs", { action: "new", operationId, url: `${world.fixture.base}/form.html` });
   await world.adminPage.evaluate((tabId) => (globalThis as any).chrome.tabs.remove(tabId), newTab.data.tab.tabId);
-  await expect.poll(async () => (await world.admin("status.get")).operation.currentTabClosed).toBe(true);
-  expect((await world.mcp.call("browser_snapshot", { operationId })).error?.code).toBe("TAB_CLOSED");
+  await expect.poll(async () => (await world.admin("status.get")).operation.currentTab).toBe(original);
+  expect((await world.ok("browser_snapshot", { operationId })).data.tabId).toBe(original);
   await world.ok("browser_tabs", { action: "switch", operationId, tabId: original });
   await page.close();
   await expect.poll(async () => (await world.admin("status.get")).operation.currentTabClosed).toBe(true);

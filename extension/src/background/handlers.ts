@@ -153,10 +153,12 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 await checkDocuments();
                 aborted(signal);
                 run.started = true;
-                // window.close preserves Chrome beforeunload/script-close rules.
-                // A disappearing reply is expected; ONLY onRemoved confirms success.
-                void api.sendToFrame(tabId, top, {kind:'cmd',method:'close',params:{...p,requestId:req.id}}).catch(() => {});
-                const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new ProtocolError('EXECUTION_UNKNOWN', 'Closure was not confirmed. A browser warning or script-close restriction may be keeping the tab open. Inspect tabs; do not force-close or automatically retry.', 'unsafe')), 3000); });
+                // Chrome's native close honors beforeunload even for existing
+                // tabs and blank-created tabs with navigation history. Do not
+                // await its promise (a cancelled dialog can leave it pending).
+                // Only onRemoved confirms closure; never retry automatically.
+                void api.tabsRemove(tabId).catch(()=>{});
+                const timeout = new Promise((_, reject) => { timer = setTimeout(() => reject(new ProtocolError('EXECUTION_UNKNOWN', 'Closure was not confirmed. A browser warning or another close restriction may be keeping the tab open. Inspect tabs; do not force-close or automatically retry.', 'unsafe')), 3000); });
                 return await interruptible(Promise.race([removed, timeout]), signal);
             } finally { off(); clearTimeout(timer); }
         }

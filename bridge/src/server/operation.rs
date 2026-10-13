@@ -17,6 +17,9 @@ pub struct Operation {
     pub client_id: String,
     pub state: OpState,
     pub current_tab_closed: bool,
+    pub needs_observation: bool,
+    #[serde(skip)]
+    pub target_epoch: u64,
 }
 
 #[derive(Debug)]
@@ -38,6 +41,8 @@ struct GateInner {
     finished: Vec<(String, OpState)>, // last 50 ended operations, to answer CANCELLED vs OPERATION_INVALID
     owned_tabs: std::collections::HashSet<i64>,
     closed_tabs: std::collections::HashSet<i64>,
+    // Explicitly visited targets, ordered for deterministic return after close.
+    recent_tabs: Vec<i64>,
     request: Option<RequestTarget>,
     stopped_clients: std::collections::HashMap<String, std::time::Instant>,
 }
@@ -117,12 +122,16 @@ impl OperationGate {
         let mut g = self.inner.lock().unwrap();
         Self::request_matches(&g,request_id,client_id)?;
         if let Some(op) = g.current.as_ref().filter(|o| o.state == OpState::Active) {
+            if op.client_id==client_id && request_id.is_some() {
+                return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Safe,"This request already has an operation. Use its operationId with action=new or switch to continue; do not create a new requestId per tab.").with_details(json!({"operationId":op.id})));
+            }
             return Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
                 "Another browser operation is running. Wait for it to finish or ask the user to press Stop.")
                 .with_details(json!({ "operationId": op.id })));
         }
         g.generation += 1;
         g.owned_tabs.clear(); g.owned_tabs.extend(tab_id); g.closed_tabs.clear();
+        g.recent_tabs.clear(); g.recent_tabs.extend(tab_id);
         let op = Operation {
             id: format!("op-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
             generation: g.generation,
@@ -132,6 +141,7 @@ impl OperationGate {
             client_id: client_id.to_string(),
             state: OpState::Active,
             current_tab_closed: tab_id.is_none(),
+            needs_observation:false,target_epoch:0,
         };
         g.current = Some(op.clone());
         Ok(op)
@@ -187,12 +197,6 @@ impl OperationGate {
         }
     }
 
-    fn with_active<T>(&self, id: &str, f: impl FnOnce(&mut Operation) -> Result<T, RpcError>) -> Result<T, RpcError> {
-        let mut g = self.inner.lock().unwrap();
-        Self::active(&g, id)?;
-        f(g.current.as_mut().expect("validated under the same lock"))
-    }
-
     pub fn add_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
         if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
@@ -206,8 +210,7 @@ impl OperationGate {
         g.owned_tabs.insert(tab);
         let op = g.current.as_mut().unwrap();
             if !op.tabs.contains(&tab) { op.tabs.push(tab); op.opened_tabs.push(tab); }
-            op.current_tab = tab;
-            op.current_tab_closed = false;
+        Self::select_tab(&mut g,tab);
         Ok(())
     }
 
@@ -223,52 +226,67 @@ impl OperationGate {
         let op = g.current.as_mut().unwrap();
         for tab in &tabs { if !op.tabs.contains(tab) { op.tabs.push(*tab); op.opened_tabs.push(*tab); } }
         // A concurrent explicit switch wins over an older click's new-tab result.
-        if op.current_tab == source { if let Some(tab) = tabs.first() { op.current_tab = *tab; op.current_tab_closed = false; } }
-        Ok(op.clone())
+        let target=if op.current_tab==source {tabs.first().copied()} else {None};
+        if let Some(tab)=target {Self::select_tab(&mut g,tab);}
+        Ok(g.current.as_ref().unwrap().clone())
+    }
+
+    fn select_tab(g: &mut GateInner, tab: i64) {
+        g.recent_tabs.retain(|visited| *visited != tab);
+        g.recent_tabs.push(tab);
+        let op=g.current.as_mut().unwrap();
+        op.current_tab=tab;op.current_tab_closed=false;
+        op.target_epoch+=1;op.needs_observation=false;
     }
 
     pub fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
-        self.with_active(id, |op| {
-            if !op.tabs.contains(&tab) {
-                return Err(RpcError::new(ErrorCode::TabNotFound, Retry::Never,
-                    "That tab is not part of this operation. Use action=new or attach it first.")
-                    .with_details(json!({ "tabId": tab, "operationTabs": op.tabs })));
+        let mut g=self.inner.lock().unwrap();let op=Self::active(&g,id)?;
+        if !op.tabs.contains(&tab) {return Err(RpcError::new(ErrorCode::TabNotFound,Retry::Never,"Tab has not been verified for this operation"));}
+        Self::select_tab(&mut g,tab);Ok(())
+    }
+
+    /// Only call after this operation's browser has returned the exact tab.
+    pub fn visit_verified_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
+        let mut g=self.inner.lock().unwrap();Self::active(&g,id)?;
+        if g.closed_tabs.contains(&tab) {return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The selected tab closed during verification"));}
+        g.owned_tabs.insert(tab);
+        let op=g.current.as_mut().unwrap();if !op.tabs.contains(&tab) {op.tabs.push(tab);}
+        Self::select_tab(&mut g,tab);Ok(())
+    }
+
+    fn remove_current_tab(g: &mut GateInner, tab: i64) {
+        g.closed_tabs.insert(tab);g.owned_tabs.remove(&tab);
+        g.recent_tabs.retain(|visited| *visited != tab);
+        if let Some(op)=g.current.as_mut() {
+            op.tabs.retain(|t| *t != tab);op.opened_tabs.retain(|t| *t != tab);
+            if op.current_tab==tab {
+                if let Some(previous)=g.recent_tabs.iter().rev().find(|id|op.tabs.contains(id)) {
+                    op.current_tab=*previous;op.current_tab_closed=false;
+                    op.target_epoch+=1;op.needs_observation=true;
+                } else {op.current_tab_closed=true;}
             }
-            op.current_tab = tab;
-            op.current_tab_closed = false;
-            Ok(())
-        })
+        }
+    }
+
+    pub fn observe_target(&self, origin: &Operation) {
+        let mut g=self.inner.lock().unwrap();
+        if let Some(op)=g.current.as_mut().filter(|op|op.id==origin.id && op.target_epoch==origin.target_epoch && op.current_tab==origin.current_tab && !op.current_tab_closed) {op.needs_observation=false;}
     }
 
     pub fn remove_tab(&self, tab: i64) {
-        let mut g = self.inner.lock().unwrap();
-        if g.current.is_some() { g.closed_tabs.insert(tab); }
-        if let Some(op) = g.current.as_mut() {
-            op.tabs.retain(|t| *t != tab);
-            op.opened_tabs.retain(|t| *t != tab);
-            if op.current_tab == tab { op.current_tab_closed = true; }
-        }
+        let mut g=self.inner.lock().unwrap();
+        if g.current.is_some() {Self::remove_current_tab(&mut g,tab);}
     }
 
     pub fn remove_tab_for_operation(&self, id: &str, tab: i64) {
-        let mut g = self.inner.lock().unwrap();
-        if g.current.as_ref().is_some_and(|op| op.id == id) { g.closed_tabs.insert(tab); }
-        if let Some(op) = g.current.as_mut().filter(|op| op.id == id) {
-            op.tabs.retain(|t| *t != tab);
-            op.opened_tabs.retain(|t| *t != tab);
-            if op.current_tab == tab { op.current_tab_closed = true; }
-        }
+        let mut g=self.inner.lock().unwrap();
+        if g.current.as_ref().is_some_and(|op|op.id==id) {Self::remove_current_tab(&mut g,tab);}
     }
 
-    /// The event's profile must still own the operation if selection changed concurrently.
+    /// A close event from another browser must not change this request's target.
     pub fn remove_tab_for_client(&self, client_id: &str, tab: i64) {
-        let mut g = self.inner.lock().unwrap();
-        if g.current.as_ref().is_some_and(|op| op.client_id == client_id) { g.closed_tabs.insert(tab); }
-        if let Some(op) = g.current.as_mut().filter(|op| op.client_id == client_id) {
-            op.tabs.retain(|t| *t != tab);
-            op.opened_tabs.retain(|t| *t != tab);
-            if op.current_tab == tab { op.current_tab_closed = true; }
-        }
+        let mut g=self.inner.lock().unwrap();
+        if g.current.as_ref().is_some_and(|op|op.client_id==client_id) {Self::remove_current_tab(&mut g,tab);}
     }
 
     fn finish(g: &mut GateInner, state: OpState) -> Option<Operation> {
@@ -391,6 +409,30 @@ mod tests {
         g.add_tab(&op.id, 7).unwrap();
         g.switch_tab(&op.id, 7).unwrap();
         assert_eq!(g.check(&op.id).unwrap().current_tab, 7);
+    }
+
+    #[test]
+    fn nested_close_returns_to_recent_targets_without_adopting_other_browsers() {
+        let gate=OperationGate::default();let op=gate.attach(1,"A").unwrap();
+        gate.add_and_switch_tab(&op.id,2).unwrap();gate.add_and_switch_tab(&op.id,3).unwrap();
+        gate.remove_tab_for_client("B",3);assert_eq!(gate.check(&op.id).unwrap().current_tab,3);
+        gate.remove_tab_for_client("A",3);assert_eq!(gate.check(&op.id).unwrap().current_tab,2);
+        gate.remove_tab_for_operation(&op.id,2);assert_eq!(gate.check(&op.id).unwrap().current_tab,1);
+        gate.observe_target(&op);assert!(gate.check(&op.id).unwrap().needs_observation,"An old snapshot from before the popup cannot acknowledge return");
+        let returned=gate.check(&op.id).unwrap();gate.observe_target(&returned);assert!(!gate.check(&op.id).unwrap().needs_observation);
+        gate.visit_verified_tab(&op.id,9).unwrap();assert!(!gate.check(&op.id).unwrap().opened_tabs.contains(&9));
+        gate.remove_tab(1);assert_eq!(gate.check(&op.id).unwrap().current_tab,9);
+        gate.remove_tab(9);assert_eq!(gate.check(&op.id).unwrap_err().code,ErrorCode::TabClosed);
+        gate.visit_verified_tab(&op.id,10).unwrap();assert_eq!(gate.check(&op.id).unwrap().current_tab,10);
+        assert_eq!(gate.visit_verified_tab(&op.id,9).unwrap_err().code,ErrorCode::TabClosed);
+    }
+
+    #[test]
+    fn unvisited_background_tabs_are_not_automatic_close_fallbacks() {
+        let gate=OperationGate::default();let op=gate.attach(1,"A").unwrap();
+        gate.add_tab(&op.id,2).unwrap();gate.remove_tab(1);
+        assert_eq!(gate.check(&op.id).unwrap_err().code,ErrorCode::TabClosed);
+        gate.switch_tab(&op.id,2).unwrap();assert_eq!(gate.check(&op.id).unwrap().current_tab,2);
     }
 
     #[test]

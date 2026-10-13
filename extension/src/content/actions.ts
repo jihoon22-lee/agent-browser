@@ -80,8 +80,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       if (!['http:','https:'].includes(new URL(el.href).protocol)) throw new ProtocolError('UNSUPPORTED_PAGE','Only HTTP(S) links can open in a new tab.');
       return {url:el.href};
     }
-    case "close-check":
-    case "close": {
+    case "close-check": {
       // Preserve edited controls even on sites that forgot beforeunload. A custom
       // editor cannot be certified clean, so leave it open as well.
       const controls: Element[] = [];
@@ -108,8 +107,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         return (el as HTMLElement).isContentEditable;
       });
       if (dirty) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'Edited form controls or an editable region may contain unsaved data; preserve this tab.');
-      if (method === 'close') window.close();
-      return {executed: method === 'close'};
+      return {executed: false};
     }
     case "click": {
       const el = resolveRef(String(p.ref));

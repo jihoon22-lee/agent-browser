@@ -9,6 +9,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { startPanelProvider } from '../fixtures/panel-provider.mjs';
+import { runPanelJourneys } from './panel-journeys.mjs';
 import { createServer as tcpServer } from 'node:net';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -33,7 +34,10 @@ const start = (executable, args, env) => {
 async function port() { const s = tcpServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const p = s.address().port; await new Promise(r => s.close(r)); return p; }
 async function until(fn, label, ms = 20000) { const end = Date.now() + ms; do { if (await fn()) return; await wait(100); } while (Date.now() < end); throw Error('Timed out: ' + label); }
 let provider, providerUrl;
-const site = createServer((req,res) => {res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<title>Panel fixture ${req.url === '/a' ? 'A' : 'B'}</title><h1>Panel fixture ${req.url === '/a' ? 'A' : 'B'}</h1><p>Only synthetic test content.</p>`);});
+const site = createServer(async(req,res) => {
+ const name=new URL(req.url,'http://localhost').pathname.slice(1);
+ if(['journey.html','journey-detail.html'].includes(name)){res.setHeader('Content-Type','text/html; charset=utf-8');res.end(await readFile(join(root,'tests/fixtures/site',name)));return;}
+ res.setHeader('Content-Type','text/html; charset=utf-8');res.end(`<title>Panel fixture ${req.url === '/a' ? 'A' : 'B'}</title><h1>Panel fixture ${req.url === '/a' ? 'A' : 'B'}</h1><p>Only synthetic test content.</p>`);});
 try {
 if(values.wsl) {
   const providerPort=await port();providerUrl=`http://127.0.0.1:${providerPort}`;
@@ -141,6 +145,8 @@ await new Promise(r => site.listen(0,'127.0.0.1',r));
   assert.notEqual(report.turns[0].requestId,report.turns[1].requestId);
   assert.notEqual(report.turns[0].tabId,report.turns[1].tabId);
   if(!values.model) {
+    for(const page of context.pages())if(page!==admin)await page.close();
+    await runPanelJourneys({context,admin,panel,api,sessionId,providerUrl,siteUrl:`http://127.0.0.1:${site.address().port}`,until,wait,report});
     await fetch(providerUrl+'/test/error');
     await panel(`(()=>{const t=document.querySelector('textarea[aria-label="메시지"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'오류 응답 완료 상태 검사');t.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await wait(100);await panel(`document.querySelector('textarea[aria-label="메시지"]').closest('form').requestSubmit()`);

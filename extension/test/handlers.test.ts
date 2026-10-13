@@ -20,7 +20,7 @@ function world() {
             throw Error('No tab'); return { ...t }; },
         tabsCreate: async (p) => { const t = { id: 9, windowId: 10, active: p.active, url: p.url, title: 'New', status: 'complete' } as chrome.tabs.Tab; tabs.set(9, t); return t; },
         tabsUpdate: async (id, p) => { const t = tabs.get(id)!; Object.assign(t, p); return { ...t }; },
-        tabsGoBack: async () => { }, tabsGoForward: async () => { }, tabsReload: async () => { },
+        tabsRemove: async () => { }, tabsGoBack: async () => { }, tabsGoForward: async () => { }, tabsReload: async () => { },
         captureVisibleTab: async () => 'data:image/png;base64,AQID',
         listFrames: async (id) => frames.get(id) ?? [],
         inject: async (_id, frame) => frame,
@@ -341,10 +341,8 @@ it('deduplicates confirmed tab close and requires a fresh operation snapshot', a
   await firstRef(h);
   let removed: (id:number)=>void = ()=>{}, closes=0;
   w.api.onTabRemoved=fn=>{removed=fn;return ()=>{};};
-  w.api.sendToFrame=async (_tab,_frame,msg:any)=>{
-    if(msg.method==='close') {closes++;removed(1);throw Error('document closed');}
-    return {ok:true,result:{}};
-  };
+  w.api.sendToFrame=async()=>({ok:true,result:{}});
+  w.api.tabsRemove=async id=>{closes++;removed(id);};
   const req=request('browser.tabs.close',{},'close-once');
   expect(await h(req)).toEqual({closed:true});
   expect(await h(req)).toEqual({closed:true});
@@ -391,6 +389,7 @@ it('review: edits to an earlier child during later checks preserve the same docu
   w.frames.get(1)!.push({frameId:2,documentId:'earlier',url:'https://example.test/form'},
     {frameId:3,documentId:'later',url:'https://example.test/form'});
   let dirty=false, closes=0;
+  w.api.tabsRemove=async()=>{closes++;};
   const checks:number[]=[];
   w.api.sendToFrame=async(_id,frame,msg:any)=>{
     if(msg.method==='close') {closes++;throw Error('must preserve the tab');}
@@ -408,6 +407,7 @@ it.each(['unavailable','replaced'] as const)('review: final close validation pre
   const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);
   w.frames.get(1)!.push({frameId:2,documentId:'child',url:'https://example.test/form'});
   let childChecks=0,closes=0;
+  w.api.tabsRemove=async()=>{closes++;};
   w.api.sendToFrame=async(_id,frame,msg:any)=>{
     if(msg.method==='close') {closes++;throw Error('must preserve the tab');}
     if(frame.frameId===2&&++childChecks===2) {
