@@ -439,7 +439,7 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                     Err(false) => continue,
                 };
                 match env {
-                    Envelope::Res { .. } => state.registry.handle_response(env),
+                    Envelope::Res { .. } => state.registry.handle_response(conn, env),
                     Envelope::Req { id, method, params, .. } => {
                         if Role::Extension.allows(&method) && (method.starts_with("profile.") || method.starts_with("runtime.") || method == "doctor.run") {
                             let state = state.clone(); let replies = replies.clone();

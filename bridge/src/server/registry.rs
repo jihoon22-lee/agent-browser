@@ -151,12 +151,19 @@ impl Registry {
         Ok(QueuedCommand { registry: self, id, conn_tx, class, rx: Some(rx), complete: false })
     }
 
-    pub fn handle_response(&self, env: Envelope) {
+    pub fn handle_response(&self, conn: ConnId, env: Envelope) {
         let Envelope::Res { id, ok, result, error, .. } = env else { return };
-        let Some(p) = self.inner.lock().unwrap().pending.remove(&id) else {
+        let mut g = self.inner.lock().unwrap();
+        let Some(p) = g.pending.get(&id) else {
             tracing::debug!(%id, "late or unknown response ignored");
             return;
         };
+        if p.conn != conn {
+            tracing::debug!(%id, "response from a different connection ignored");
+            return;
+        }
+        let p = g.pending.remove(&id).unwrap();
+        drop(g);
         let r = if ok { Ok(result.unwrap_or(Value::Null)) } else {
             Err(error.unwrap_or_else(|| RpcError::new(ErrorCode::Internal, Retry::Never, "error without details")))
         };
@@ -190,11 +197,11 @@ mod tests {
     async fn single_connection_is_auto_selected_and_answers() {
         let r = std::sync::Arc::new(reg());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        r.register("cli-1", tx);
+        let conn = r.register("cli-1", tx);
         let r2 = r.clone();
         let task = tokio::spawn(async move { r2.send_command("browser.tabs.list", json!({}), CommandClass::Read, Duration::from_secs(2)).await });
         let Envelope::Req { id, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
-        r.handle_response(Envelope::ok(id, json!({"tabs": []})));
+        r.handle_response(conn, Envelope::ok(id, json!({"tabs": []})));
         assert_eq!(task.await.unwrap().unwrap(), json!({"tabs": []}));
     }
 
@@ -288,14 +295,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_response_from_a_different_connection_does_not_complete_the_command() {
+        let r = reg();
+        let (a_tx, mut a_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (b_tx, _b_rx) = tokio::sync::mpsc::unbounded_channel();
+        let a = r.register("cli-1", a_tx);
+        let b = r.register("cli-2", b_tx);
+        let queued = r.queue_command_for("cli-1", "browser.snapshot", json!({}), CommandClass::Read).unwrap();
+        let Envelope::Req { id, .. } = parse_envelope(&a_rx.recv().await.unwrap()).unwrap() else { panic!() };
+        r.handle_response(b, Envelope::ok(id.clone(), json!({"forged": true})));
+        assert!(r.inner.lock().unwrap().pending.contains_key(&id), "a different connection completed the command");
+        r.handle_response(a, Envelope::ok(id, json!({"tabs": []})));
+        assert_eq!(queued.wait(Duration::from_secs(2)).await.unwrap(), json!({"tabs": []}));
+    }
+
+    #[tokio::test]
     async fn late_response_after_timeout_is_ignored() {
         let r = reg();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        r.register("cli-1", tx);
+        let conn = r.register("cli-1", tx);
         let _ = r.send_command("browser.snapshot", json!({}), CommandClass::Read, Duration::from_millis(50)).await;
         let Envelope::Req { id, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
         // must not panic or resolve anything
-        r.handle_response(Envelope::ok(id, json!({})));
+        r.handle_response(conn, Envelope::ok(id, json!({})));
     }
 
     #[tokio::test]
@@ -304,14 +326,14 @@ mod tests {
         let (old_tx, mut old_rx) = tokio::sync::mpsc::unbounded_channel();
         let (new_tx, mut new_rx) = tokio::sync::mpsc::unbounded_channel();
         r.register("cli-1", old_tx);
-        r.register("cli-1", new_tx); // service worker restarted before the old socket was reaped
+        let new_conn = r.register("cli-1", new_tx); // service worker restarted before the old socket was reaped
         assert_eq!(r.selected_client().as_deref(), Some("cli-1"));
         assert_eq!(r.snapshot().len(), 1);
         let r2 = r.clone();
         let task = tokio::spawn(async move { r2.send_command("browser.snapshot", json!({}), CommandClass::Read, Duration::from_millis(200)).await });
         let Envelope::Req { id, .. } = parse_envelope(&new_rx.recv().await.unwrap()).unwrap() else { panic!() };
         assert!(old_rx.try_recv().is_err(), "old connection must not receive the command");
-        r.handle_response(Envelope::ok(id, json!({})));
+        r.handle_response(new_conn, Envelope::ok(id, json!({})));
         assert!(task.await.unwrap().is_ok());
     }
 }
