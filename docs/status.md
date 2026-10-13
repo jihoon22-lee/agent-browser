@@ -1,3 +1,18 @@
+# v0.1.8 진단·설치 안내 게시 완료 — 2026-10-13 KST
+
+[v0.1.8 Windows preview](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.8)를 **2026-10-13 05:30:42 UTC / 14:30:42 KST**에 게시했다. 사내 WSL 시작·중지·삭제 실패의 원인은 여전히 미확정이며, 이 배포를 해당 장애의 해결 완료로 표시하지 않는다. 새 ZIP의 `diagnose.cmd`를 두 번 클릭하고 기존 설치 폴더를 선택하면 업데이트 없이 진단할 수 있다. 보고서는 `data/diagnostic-report.json`에 저장되며 오류 코드·확인된 OpenCode 버전을 포함하고 토큰·비밀번호·프로필 이름·작업 경로·설정 원문은 제외한다.
+
+- 태그 대상: `248db6093ebb7c074140b60a5f859849a650dcaa`, [PR #14](https://github.com/jihoon22-lee/agent-browser/pull/14). 최종 PR 커밋 `d9e1031`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38350166956)와 태그 대상 [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38350952561)가 Linux·Windows 모두 성공했다. 최초 PR CI는 버전 표시 보완으로 취소됐으며 성공 결과로 세지 않는다.
+- 게시 자산: ZIP **3,661,632 bytes / 37 files**, SHA256 **`eb8ecf6bd4ad84f6641426b8307283a21cffb13e4010bd410181570fb8712026`**. main에서 공식 `build-release-wsl.sh`로 다시 빌드·패키징했고 Windows x64 PE, Bridge/Extension 버전, 내부 파일 해시와 SHA256SUMS를 검증했다. main 빌드의 exe 및 Windows 스크립트 줄바꿈 때문에 후보 ZIP과 바이트가 달라졌으므로 이 최종 ZIP으로 검증을 다시 실행했다.
+- **게시본 재다운로드 후** GitHub asset digest, SHA256SUMS, 로컬 배포본과의 바이트 일치, manifest의 모든 파일 해시를 확인했다. 이 다운로드본으로 실제 Windows 신규 설치/재설치·게시된 v0.1.7 업데이트·인증 Bridge 시작·제거, 설치 ID·페어링·데이터·JSONC 보존을 다시 실행해 통과했다.
+- 같은 게시본으로 Windows PowerShell 5.1에서 외부 Startup 충돌 → `-NoStartup` 설치 → 수동 시작 → 페어링 → 이전 설치 진단 → 업데이트 → 설치본 진단 → 제거가 통과했다. 합성 누락 owner 기록 진단의 오류 코드와 기존 exe/실행 기록 해시 보존, 보고서의 비밀값 제외도 확인했다.
+- 같은 게시본의 실제 Windows Bridge + 별도 Ubuntu 24.04 사용자 `abfixture` + OpenCode 1.18.29에서 v0.1.7 → v0.1.8 관리 서버 전환, 새 MCP 경로/연결, 페어링·프로필·세션 보존을 다시 확인했다. 추가 로컬 회귀는 Linux 런타임 **35/35**, 실제 Windows WSL 전용 **7/7**, GUI 흐름 **16/16**, PowerShell 보고서/패키징 검사다. 실제 모델 요청이나 사용자 페이지 접근은 하지 않았다.
+- 테스트 전용 `AgentBrowser-Test-Ubuntu24-20261013`은 모든 검증 후 제거했다. 생성 전 배포판 목록과 동일하게 `Ubuntu`, `docker-desktop`만 남았고, 제거 시 사라진 일시적 binfmt 등록을 복구해 Windows interop 호출을 확인했다. 기존 Ubuntu의 PID 1 시작 시각은 **2026-10-10 12:47:15**로 유지됐으며 기존 배포판 종료·재시작은 하지 않았다. 사용자 전역 OpenCode 설정을 수정하지 않았다. 검증 산출물은 개발용 `AgentBrowser-dev/install-recovery-20261013`에만 보관한다.
+
+**남은 확인:** 실제 사내 계정·보안 정책·D 드라이브에서 새 진단 결과를 받아 원인을 좁혀야 한다. GUI의 조직 관리 상위 폴더 소유자 제한 자체는 유지되며, 해당 환경의 PowerShell 대안을 문서와 오류 메시지로 안내한다. 원인을 확인할 수 없는 실행 기록을 강제로 삭제하거나 전체 WSL을 재시작하는 복구는 제공하지 않는다.
+
+---
+
 # WSL 실패 진단·스크립트 설치 복구 작업 중 — 2026-10-13 KST
 
 사내 `D:\Multimedia\AgentBrowser`에서 v0.1.7을 스크립트로 설치한 뒤 WSL 시작·중지·삭제가 모두 실패했다. 사내 Ubuntu-24.04에서 다른 작업이 실행 중이며, 해당 배포판 종료·재시작이나 실행 기록 강제 삭제를 해결책으로 사용하지 않는다. 사내 장애의 정확한 원인은 아직 미확정이다.
@@ -22,7 +37,7 @@
 
 - 최종 후보 2 ZIP: **37 files**, SHA256 `fd3056a5c864746278e860d38a1695ae99f85046a6895c2d72db7405cdf030c0`. 이 ZIP의 실제 Windows PowerShell + Ubuntu 24.04에서 이전 설치의 합성 누락 기록 진단/해시 보존, Startup 충돌/NoStartup/시작/페어링/업데이트/진단/제거와 실제 OpenCode 관리 서버 전환을 다시 실행해 통과했다. Linux 파일시스템의 기본 패키징 출력에서도 staging exe 실행 권한 문제 수정 후 ZIP 생성이 성공했다.
 
-현재 후보는 배포 완료가 아니다. 최종 소스/ZIP, PR·CI·게시본 재검증과 사내 환경 확인을 별도로 기록한다. 개발 검증 산출물은 로컬 `AgentBrowser-dev/install-recovery-20261013`에만 두며 Release에 넣지 않는다.
+다음은 게시 전 후보 검증 시점의 기록이다. 최종 소스/ZIP, PR·CI·게시본 결과는 위 게시 완료 기록에서 구분한다. 개발 검증 산출물은 로컬 `AgentBrowser-dev/install-recovery-20261013`에만 두며 Release에 넣지 않는다.
 
 ---
 
