@@ -217,7 +217,18 @@ function Remove-JsonProperty([string]$Text, $Tokens, $Property) {
     $start = $Tokens[$Property.Key].Start; $end = $Tokens[$Property.Last].End
     if ($Property.AfterComma -ge 0) { $end = $Tokens[$Property.AfterComma].End }
     elseif ($Property.BeforeComma -ge 0) { $start = $Tokens[$Property.BeforeComma].Start }
-    return $Text.Substring(0, $start) + $Text.Substring($end)
+    $removed = $Text.Substring($start, $end - $start)
+    $comments = New-Object 'System.Text.StringBuilder'
+    $inner = Get-JsonTokens $removed
+    $inner += [pscustomobject]@{ Start=$removed.Length; End=$removed.Length }
+    $previous = 0
+    foreach ($token in $inner) {
+        $gap = $removed.Substring($previous, $token.Start - $previous)
+        if ($gap.Contains('//') -or $gap.Contains('/*')) { $null = $comments.Append($gap).Append("`n") }
+        $previous = $token.End
+    }
+    $middle = if ($comments.Length -eq 0) { '' } else { "`n" + $comments.ToString() + "`n" }
+    return $Text.Substring(0, $start) + $middle + $Text.Substring($end)
 }
 function Edit-BrowserMcp {
     param([string]$Text, $Entry, [string]$ExpectedEntryHash, [switch]$Remove, [switch]$RemoveEmptyMcp)

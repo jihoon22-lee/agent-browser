@@ -27,3 +27,18 @@ Assert ((ConvertFrom-Json (Get-JsonMinified $empty.Text)).mcp.browser.enabled) '
 $changed = $edit.Text.Replace('browser-bridge.exe','different.exe')
 Assert-Throws { Edit-BrowserMcp -Text $changed -Entry $entry -ExpectedEntryHash $edit.EntryHash } 'User modified browser entry must conflict'
 Write-Output 'PASS JSONC merge, preservation, ownership and conflicts'
+
+$noted = '{' + "`r`n" + '  "mcp": { "browser": { // user note' + "`r`n" + '    "type": "local" }, "other": {"type":"local","command":["other.exe"]} }' + "`r`n" + '}'
+$notedHash = Get-TextHash (Get-JsonMinified '{"type": "local"}')
+$stripped = Edit-BrowserMcp -Text $noted -Remove -ExpectedEntryHash $notedHash
+Assert ($stripped.Text.Contains('user note')) 'Comment inside the removed entry was lost'
+$parsed = ConvertFrom-Json (Get-JsonMinified $stripped.Text)
+Assert ($null -eq $parsed.mcp.browser) 'Owned browser entry was not removed'
+Assert ($parsed.mcp.other.command[0] -eq 'other.exe') 'Other MCP disappeared on uninstall'
+
+$created = Edit-BrowserMcp -Text '{}' -Entry $entry
+$inner = $created.Text.Insert($created.Text.IndexOf('{', $created.Text.IndexOf('"mcp"')) + 1, "`n  // keep inside mcp`n")
+$removedMcp = Edit-BrowserMcp -Text $inner -Remove -RemoveEmptyMcp -ExpectedEntryHash $created.EntryHash
+Assert ($removedMcp.Text.Contains('// keep inside mcp')) 'Comment inside the removed mcp object was lost'
+Assert ((Get-JsonMinified $removedMcp.Text) -eq '{}') 'Empty mcp object was not removed'
+Write-Output 'PASS removal keeps comments inside the removed span'
