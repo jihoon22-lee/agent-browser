@@ -21,7 +21,7 @@ namespace AgentBrowser.Installer {
    using(var response=request.GetResponse())using(var reader=new StreamReader(response.GetResponseStream()))return NativeIO.Json.DeserializeObject(reader.ReadToEnd());
   }
   [STAThread] public static int Main(string[] args) {
-   if(args.Length!=4){Console.Error.WriteLine("old-package new-package new-private-fixture-root existing-isolated-linux-directory");return 2;}
+   if(args.Length!=4&&args.Length!=7){Console.Error.WriteLine("old-package new-package new-private-fixture-root existing-isolated-linux-directory [distribution user executable]");return 2;}
    string install=Path.GetFullPath(args[2]);if(Directory.Exists(install)){Console.Error.WriteLine("Use a fresh fixture directory");return 2;}
    var listener=new System.Net.Sockets.TcpListener(IPAddress.Loopback,0);listener.Start();int port=((IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();
    var options=new SetupOptions{PackageDir=Path.GetFullPath(args[0]),InstallDir=install,Startup=false,Start=true,Port=port};
@@ -36,7 +36,7 @@ namespace AgentBrowser.Installer {
     string pairingPath=Path.Combine(before.DataDir,"config.json");var pairing=InstallerEngine.Read<Dictionary<string,object>>(pairingPath);
     pairing["pairedExtensionId"]="abcdefghijklmnopabcdefghijklmnop";NativeIO.WriteText(pairingPath,NativeIO.Json.Serialize(pairing));BridgeControl.Start(before);
     var env=new Dictionary<string,string>{{"XDG_CONFIG_HOME",args[3]+"/config"},{"XDG_DATA_HOME",args[3]+"/data"},{"XDG_STATE_HOME",args[3]+"/state"},{"XDG_CACHE_HOME",args[3]+"/cache"},{"OPENCODE_CONFIG",args[3]+"/opencode.json"},{"OPENCODE_DISABLE_AUTOUPDATE","true"},{"OPENCODE_DISABLE_MODELS_FETCH","true"},{"OPENCODE_DISABLE_DEFAULT_PLUGINS","true"}};
-    var profile=new Dictionary<string,object>{{"id","upgrade-fixture"},{"name","Isolated upgrade fixture"},{"kind","wsl"},{"distribution","Ubuntu"},{"user","jihoon"},{"directory",args[3]},{"executable","/home/jihoon/.opencode/bin/opencode"},{"env",env}};
+    var profile=new Dictionary<string,object>{{"id","upgrade-fixture"},{"name","Isolated upgrade fixture"},{"kind","wsl"},{"distribution",args.Length==7?args[4]:"Ubuntu"},{"user",args.Length==7?args[5]:"jihoon"},{"directory",args[3]},{"executable",args.Length==7?args[6]:"/home/jihoon/.opencode/bin/opencode"},{"env",env}};
     ManagedProfile.Save(before,profile);
     BridgeControl.Invoke(before,new[]{"runtime","start","--profile","upgrade-fixture"},60000);
     var old=Record(before);Assert((string)old["bridgeExecutable"]==before.CurrentExe,"old MCP path mismatch");

@@ -128,7 +128,7 @@ impl Manager {
             }
             if inspection.owned { return Err(failure("The owned runtime is running but its listener cannot be verified; stop it before retrying")); }
             if profile.kind == Kind::Wsl && !matches!(inspection.state, WslState::NotStarted | WslState::Stopped) {
-                return Err(failure("The WSL runtime is starting or cannot be inspected; its ownership record was retained. Check the distribution and retry Stop."));
+                return Err(failure(format!("{}: WSL ownership could not be verified; its record was retained. Run diagnose.cmd in the installation folder.",diagnostics::wsl_probe_reason(inspection.probe_code))));
             }
             if profile.kind == Kind::Wsl && self.terminate_wsl(profile,&record).await.is_none() { return Err(failure("Cannot safely stop the previous WSL interop keeper; retry Stop")); }
             self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
@@ -194,11 +194,11 @@ impl Manager {
         if profile.kind == Kind::Wsl {
             let code = wsl_control_status(profile,record,"inspect").await;
             let state = wsl_state_code(code,&record.launcher);
-            return Ok(Inspection {owned:matches!(code,Some(0|20)),listener:code == Some(0) && wsl_forwarder(record),state});
+            return Ok(Inspection {owned:matches!(code,Some(0|20)),listener:code == Some(0) && wsl_forwarder(record),state,probe_code:code});
         }
         let owned = self.owned(profile,record).await;
         let listener = owned && self.verify_listener(profile,record).await?;
-        Ok(Inspection {owned,listener,state:if owned {WslState::Running} else {WslState::Stopped}})
+        Ok(Inspection {owned,listener,state:if owned {WslState::Running} else {WslState::Stopped},probe_code:None})
     }
     async fn owned(&self, profile: &Profile, record: &RuntimeRecord) -> bool {
         if profile.kind == Kind::Wsl { wsl_control(profile, record, "check").await }
@@ -272,7 +272,8 @@ impl Manager {
                 self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
                 return Ok(json!({"stopped": stopped}));
             }
-            return Err(failure("Cannot confirm the WSL runtime stopped; check the distribution and interop, then retry. Ownership record was retained."));
+            let code=wsl_control_status(profile,&record,"state").await;
+            return Err(failure(format!("{}: Cannot confirm the WSL runtime stopped; ownership record was retained. Run diagnose.cmd in the installation folder.",diagnostics::wsl_probe_reason(code))));
         }
         let stopped = self.terminate(profile, &record).await;
         for _ in 0..20 { if !self.owned(profile,&record).await { break; } tokio::time::sleep(Duration::from_millis(100)).await; }
@@ -311,8 +312,8 @@ impl Manager {
         if let Some(mut record) = self.store.read()?.runtimes.get(id).cloned() {
             let inspection = self.inspect(&profile,&mut record).await?;
             match inspection.state {
-                WslState::Starting => return Ok(info(&profile,&record,"starting",false,&self.home)),
-                WslState::Unknown => { let mut value = info(&profile,&record,"error",false,&self.home); value["owned"] = json!(false); value["error"] = json!("WSL runtime or interop keeper cannot be verified; its ownership record was retained"); return Ok(value); }
+                WslState::Starting => { let mut value=info(&profile,&record,"starting",false,&self.home); value["wslProbe"]=json!({"reason":"WSL_START_PENDING","exitCode":inspection.probe_code}); return Ok(value); }
+                WslState::Unknown => { let mut value = info(&profile,&record,"error",false,&self.home); value["owned"] = json!(false); value["error"] = json!(format!("{}; ownership record was retained", diagnostics::wsl_probe_reason(inspection.probe_code))); value["wslProbe"] = json!({"reason":diagnostics::wsl_probe_reason(inspection.probe_code),"exitCode":inspection.probe_code}); return Ok(value); }
                 _ => {}
             }
             if inspection.listener {
@@ -360,6 +361,11 @@ impl Manager {
             json!({"id":"extension","status":"warning","message":"Check the connected and selected Chrome profile in the extension diagnostics"})];
         for id in ids {
             let profile = self.profile(&id)?;
+            if profile.kind == Kind::Wsl {
+                let owner=process::windows_to_wsl(&self.home.join("diagnostic-probe").to_string_lossy());
+                let code=if let Some(owner)=owner {interop::preflight_code(&profile,&owner,"",true).await} else {None};
+                checks.push(json!({"id":"wslPrerequisites","profileId":id,"status":if code==Some(0) {"ok"} else {"error"},"reason":if code==Some(0) {"WSL_PREREQUISITES_AVAILABLE"} else {diagnostics::wsl_probe_reason(code)},"exitCode":code}));
+            }
             if profile.kind != Kind::External { checks.push(installation_check(&profile).await); }
             let status = self.status(&id).await?;
             checks.push(json!({"id":"opencode","profileId":id,"status":if status["state"] == "ready" {"ok"} else if status["state"] == "stopped" || status["state"] == "starting" {"warning"} else {"error"},"message":status["error"].as_str().unwrap_or(status["state"].as_str().unwrap_or("unknown")),"runtime":status}));
@@ -513,7 +519,7 @@ exec "$@" </dev/null >/dev/null 2>&1"#;
 
 #[derive(Debug, PartialEq, Eq)]
 enum WslState { NotStarted, Starting, Running, Stopped, Unknown }
-struct Inspection { owned: bool, listener: bool, state: WslState }
+struct Inspection { owned: bool, listener: bool, state: WslState, probe_code: Option<i32> }
 fn wsl_state_code(code: Option<i32>, launcher: &Identity) -> WslState {
     match code {
         Some(0|20) => WslState::Running,
@@ -559,13 +565,14 @@ inspect_orphan_group() {
   return 12
 }
 validate_owner() {
-  [ -f "$1" ] || return 12
-  read -r pid ticks instance boot < "$1" || return 12
-  if [ "$pid" = pending ]; then [ "$ticks" = "$2" ] && [ -z "$instance$boot" ] || return 12; return 10; fi
-  [ "$instance" = "$2" ] || return 12
-  case $pid in ''|*[!0-9]*) return 12;; esac
-  case $ticks in ''|*[!0-9]*) return 12;; esac
-  [ "$pid" -gt 1 ] || return 12
+  [ -f "$1" ] || return 21
+  [ -r "$1" ] || return 22
+  read -r pid ticks instance boot < "$1" || return 23
+  if [ "$pid" = pending ]; then [ "$ticks" = "$2" ] && [ -z "$instance$boot" ] || return 24; return 10; fi
+  case $pid in ''|*[!0-9]*) return 23;; esac
+  case $ticks in ''|*[!0-9]*) return 23;; esac
+  [ "$pid" -gt 1 ] || return 23
+  [ "$instance" = "$2" ] || return 24
   if [ -n "$boot" ]; then
     case $boot in *[!0-9a-f-]*) return 12;; esac
     case $boot in ????????-????-????-????-????????????) ;; *) return 12;; esac
@@ -596,7 +603,7 @@ if [ "$3" = inspect ] && [ -n "${5:-}" ]; then
   ( validate_owner "$5" "$2" leader || exit 12
     read -r nonce socket < "$5.ready" || exit 12
     [ "$nonce" = "$2" ] && [ "$socket" = "${6:-}" ] && [ -S "$socket" ]
-  ) || exit 12
+  ) || exit 25
 fi
 if [ "$3" = listener ] || [ "$3" = inspect ]; then
   missing=1; [ "$3" != inspect ] || missing=20
@@ -627,7 +634,11 @@ async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &st
     let mut args = wsl_args(profile); args.extend(["--exec".into(),"/bin/sh".into(),"-c".into(),script.into(),"agent-browser".into(),owner.clone(),record.instance.clone(),mode.into(),format!("{:04X}",reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()).unwrap_or(0)),record.wsl_keeper.as_ref().map(|keeper| keeper.owner_file.clone()).unwrap_or_default(),record.wsl_keeper.as_ref().map(|keeper| keeper.socket.clone()).unwrap_or_default()]);
     let mut command = tokio::process::Command::new(process::wsl_executable()); command.args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] { command.creation_flags(0x08000000); }
-    tokio::time::timeout(Duration::from_secs(5),command.status()).await.ok()?.ok()?.code()
+    match tokio::time::timeout(Duration::from_secs(5),command.status()).await {
+        Err(_) => Some(-2),
+        Ok(Err(_)) => Some(-3),
+        Ok(Ok(status)) => status.code(),
+    }
 }
 async fn health(base: &str, username: Option<&str>, password: Option<&str>, managed: bool) -> Result<String,RpcError> {
     let client = http_client(base)?;
@@ -827,7 +838,7 @@ mod wsl_start_tests {
     #[test]
     fn r04_missing_corrupt_and_nonce_mismatched_markers_are_never_dead() {
         let home = tempfile::tempdir().unwrap(); let owner = home.path().join("owner");
-        assert_eq!(control(&owner, "fixture", "state"), Some(12));
+        assert_eq!(control(&owner, "fixture", "state"), Some(21));
         for marker in ["", "pending wrong\n", "pending fixture extra\n", "0 0 fixture\n", "1234 0 wrong\n", "1234 invalid fixture\n", "1234 123 fixture malformed-boot\n"] {
             std::fs::write(&owner, marker).unwrap();
             assert!(![Some(0),Some(10),Some(11)].contains(&control(&owner,"fixture","state")));

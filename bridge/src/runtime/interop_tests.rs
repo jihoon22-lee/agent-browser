@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn wsl_preflight_rejects_inaccessible_inputs_before_launch() {
+    let home=tempfile::tempdir().unwrap();let owner=home.path().join("owner");
+    let registry=home.path().join("binfmt");std::fs::create_dir(&registry).unwrap();
+    std::fs::write(registry.join("status"),"enabled\n").unwrap();
+    std::fs::write(registry.join("WSLInterop"),"enabled\ninterpreter /init\noffset 0\nmagic 4d5a\n").unwrap();
+    let script=interop::WSL_PREFLIGHT.replace("/proc/sys/fs/binfmt_misc",registry.to_str().unwrap());
+    std::fs::write(&owner,"pending fixture\n").unwrap();
+    let probe=|directory:&str, executable:&str|std::process::Command::new("/bin/sh").args(["-c",&script,"fixture",directory,owner.to_str().unwrap(),"fixture",executable]).status().unwrap().code();
+    assert_eq!(probe(home.path().to_str().unwrap(),"/bin/true"),Some(0));
+    assert_eq!(probe("/agent-browser-missing-fixture","/bin/true"),Some(31));
+    assert_eq!(probe(home.path().to_str().unwrap(),"/agent-browser-missing-fixture"),Some(32));
+    std::fs::remove_file(&owner).unwrap();
+    assert_eq!(probe(home.path().to_str().unwrap(),"/bin/true"),Some(33));
+}
+
+#[test]
+fn wsl_preflight_diagnoses_missing_interop_without_starting_a_runtime() {
+    let home=tempfile::tempdir().unwrap();let registry=home.path().join("binfmt");std::fs::create_dir(&registry).unwrap();
+    let absent_owner=home.path().join("not-created");
+    let script=interop::WSL_PREFLIGHT.replace("/proc/sys/fs/binfmt_misc",registry.to_str().unwrap());
+    let probe=||std::process::Command::new("/bin/sh").args(["-c",&script,"fixture",home.path().to_str().unwrap(),absent_owner.to_str().unwrap(),"fixture","/bin/true","diagnose"]).status().unwrap().code();
+    std::fs::write(registry.join("status"),"enabled\n").unwrap();
+    assert_eq!(probe(),Some(36));
+    std::fs::write(registry.join("WSLInterop-late"),"enabled\ninterpreter /init\nflags: P\noffset 0\nmagic 4d5a\n").unwrap();
+    assert_eq!(probe(),Some(0),"Do not depend on the registration entry's name");
+    std::fs::write(registry.join("status"),"disabled\n").unwrap();
+    assert_eq!(probe(),Some(36));
+    assert!(!absent_owner.exists(),"Diagnostic preflight must not create ownership records");
+}
+
+#[test]
+fn wsl_control_distinguishes_missing_malformed_and_foreign_owner_records() {
+    let home=tempfile::tempdir().unwrap(); let owner=home.path().join("owner");
+    let control=|| std::process::Command::new("/bin/sh").args(["-c",WSL_CONTROL,"fixture",owner.to_str().unwrap(),"fixture","state","0000"]).status().unwrap().code();
+    assert_eq!(control(),Some(21));
+    std::fs::write(&owner,"broken\n").unwrap();
+    assert_eq!(control(),Some(23));
+    std::fs::write(&owner,"123 456 foreign\n").unwrap();
+    assert_eq!(control(),Some(24));
+    std::fs::write(&owner,"pending fixture\n").unwrap();
+    assert_eq!(control(),Some(10));
+}
+
+#[test]
 fn review_previous_boot_is_stopped_even_when_keeper_is_also_gone() {
     let home=tempfile::tempdir().unwrap();
     let owner=home.path().join("owner"); let keeper=home.path().join("keeper");
