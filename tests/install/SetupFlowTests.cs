@@ -96,6 +96,12 @@ namespace AgentBrowser.Installer {
      }
     }finally{Uninstall(root);}
    });
+   Case("managed upgrade rejects a same-version package pair",()=>{
+    string root=Path.Combine(fixture,"managed-same-"+Guid.NewGuid().ToString("N"));
+    int result;var diagnostic=new StringWriter();var previousError=Console.Error;
+    try{Console.SetError(diagnostic);result=ManagedRuntimeUpgradeTests.Main(new[]{package,package,root,"/unused-same-version-fixture"});}finally{Console.SetError(previousError);}
+    Assert(result!=0&&!Directory.Exists(root)&&diagnostic.ToString().Contains("different previous and candidate versions"),"same-version managed upgrade did not stop before installation");
+   });
    Case("permission rejection identifies the affected directory and recovery",()=>{string root=Path.Combine(fixture,"shared");InstallerEngine.PrivateDirectory(root);var acl=Directory.GetAccessControl(root);byte[] saved=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.Modify,AccessControlType.Allow));Directory.SetAccessControl(root,acl);try{string message="";try{InstallerEngine.Root(root);}catch(IOException error){message=error.Message;}Assert(message.Contains(root)&&message.Contains("기본 위치로 되돌리기"),"permission error omits path or recovery");}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(saved,AccessControlSections.Access);Directory.SetAccessControl(root,restore);}});
    Case("volume root exception retains replacement and owner protection",()=>{
     var acl=new DirectorySecurity();acl.SetOwner(WindowsIdentity.GetCurrent().User);var everyone=new SecurityIdentifier("S-1-1-0");

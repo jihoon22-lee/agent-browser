@@ -26,6 +26,9 @@ namespace AgentBrowser.Installer {
    var listener=new System.Net.Sockets.TcpListener(IPAddress.Loopback,0);listener.Start();int port=((IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();
    var options=new SetupOptions{PackageDir=Path.GetFullPath(args[0]),InstallDir=install,Startup=false,Start=true,Port=port};
    try {
+    string previousVersion=InstallerEngine.Read<PackageManifest>(Path.Combine(options.PackageDir,"package-manifest.json")).Version;
+    string candidateVersion=InstallerEngine.Read<PackageManifest>(Path.Combine(Path.GetFullPath(args[1]),"package-manifest.json")).Version;
+    if(previousVersion==candidateVersion)throw new Exception("Managed upgrade requires different previous and candidate versions.");
     InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,s=>{});
     var before=InstallerEngine.State(install);BridgeControl.Invoke(before,new[]{"pair"});
     // Synthetic pairing only in this new private fixture; no Chrome/profile access.
@@ -44,13 +47,13 @@ namespace AgentBrowser.Installer {
     string result=InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,s=>{});
     Assert(!result.Contains("경고"),"update returned a recovery warning");
     var after=InstallerEngine.State(install);var current=Record(after);
-    Assert(after.Version=="0.1.6"&&before.Version=="0.1.5","unexpected version pair");
+    Assert(after.Version==candidateVersion&&before.Version==previousVersion,"unexpected version pair");
     Assert(after.InstallId==before.InstallId&&NativeIO.FileHash(Path.Combine(after.DataDir,"config.json"))==configHash,"identity/pairing changed");
     Assert(NativeIO.Json.Serialize(InstallerEngine.Read<Dictionary<string,object>>(Path.Combine(after.DataDir,"runtime.json"))["profiles"])==profiles,"profiles changed");
     Assert((string)current["instance"]!=(string)old["instance"]&&(string)current["bridgeExecutable"]==after.CurrentExe,"managed runtime retained old MCP");
     var mcp=(Dictionary<string,object>)Api(current,"/mcp");Assert((string)((Dictionary<string,object>)mcp["browser"])["status"]=="connected","new browser MCP not connected");
     var restored=(Dictionary<string,object>)Api(current,"/session/"+id);Assert((string)restored["id"]==id,"session lost");
-    Console.WriteLine("PASS actual Windows/WSL 0.1.5 -> 0.1.6: new runtime and MCP path, browser MCP connected, identity/pairing/profiles/session preserved");
+    Console.WriteLine("PASS actual Windows/WSL "+previousVersion+" -> "+candidateVersion+": new runtime and MCP path, browser MCP connected, identity/pairing/profiles/session preserved");
     return 0;
    }catch(Exception error){Console.Error.WriteLine(error.Message);return 1;}
    finally {var state=InstallerEngine.State(install);if(state!=null)InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=install}),CancellationToken.None,s=>{});}
