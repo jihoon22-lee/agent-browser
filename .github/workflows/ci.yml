@@ -174,7 +174,7 @@ jobs:
           Expand-Archive -LiteralPath (Get-ChildItem release/agent-browser-*-windows-x64.zip | Select-Object -First 1).FullName -DestinationPath $package
           $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
           $testExe=Join-Path $fixture 'NativeEngineTests.exe'
-          $sources=@('installer\NativeIO.cs','installer\Discovery.cs','installer\Jsonc.cs','installer\InstallerEngine.cs','installer\ProfileForm.cs','installer\SetupForm.cs','tests\install\NativeEngineTests.cs','tests\install\InstallerReviewTests.cs') | ForEach-Object { Join-Path $env:GITHUB_WORKSPACE $_ }
+          $sources=@('installer\NativeIO.cs','installer\Discovery.cs','installer\Jsonc.cs','installer\InstallerEngine.cs','installer\ProfileForm.cs','installer\SetupForm.cs','tests\install\NativeEngineTests.cs','tests\install\InstallerReviewTests.cs','tests\install\UpgradeFixture.cs') | ForEach-Object { Join-Path $env:GITHUB_WORKSPACE $_ }
           & $compiler /nologo /codepage:65001 /target:exe /main:AgentBrowser.Installer.NativeEngineTests ('/out:' + $testExe) /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Management.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll @sources
           if ($LASTEXITCODE -ne 0) { throw 'Native installer test compilation failed' }
           & $testExe $package (Join-Path $package 'AgentBrowser-Setup.exe') (Join-Path $fixture 'cases')

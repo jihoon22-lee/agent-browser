@@ -70,6 +70,24 @@ namespace AgentBrowser.Installer {
      }
     }
    });
+   Case("post-install verification failure remains visible and recoverable",()=>{
+    string root=Path.Combine(fixture,"post-install-change"),file=Path.Combine(root,"extension","manifest.json");byte[] original=null;
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-start","--no-startup","--install-dir",root,"--package-dir",package})){
+     form.Show();Invoke(form,"Prepare");SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+     var task=(Task)typeof(SetupForm).GetMethod("Apply",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);
+     var timeout=DateTime.UtcNow.AddSeconds(20);while(!File.Exists(Path.Combine(root,InstallerEngine.StateName))&&DateTime.UtcNow<timeout)Thread.Sleep(10);
+     Assert(File.Exists(Path.Combine(root,InstallerEngine.StateName)),"installation did not commit");original=File.ReadAllBytes(file);File.AppendAllText(file," ");
+     timeout=DateTime.UtcNow.AddSeconds(20);while(!task.IsCompleted&&DateTime.UtcNow<timeout){Application.DoEvents();Thread.Sleep(10);}Assert(task.IsCompleted,"post-install UI did not finish");task.GetAwaiter().GetResult();
+     Assert(Field<TextBox>(form,"Status").Text.Contains("modified"),"post-install ownership failure was overwritten by success");
+     Assert(!Field<ProgressBar>(form,"InstallProgress").Visible&&Field<Panel>(form,"WelcomePanel").Visible&&Field<Button>(form,"ManageConnection").Enabled,"verification failure left an unrecoverable progress page");form.Close();
+    }}finally{if(original!=null)File.WriteAllBytes(file,original);Uninstall(root);}
+   });
+   Case("same-version upgrade fixture rejects before installing",()=>{
+    string root=Path.Combine(fixture,"windows-setup-ui","same-"+Guid.NewGuid().ToString("N")),zip=root+".zip";Directory.CreateDirectory(Path.GetDirectoryName(root));
+    try{System.IO.Compression.ZipFile.CreateFromDirectory(package,zip);string error="";try{typeof(UpgradeFixture).GetMethod("Main",BindingFlags.Static|BindingFlags.NonPublic).Invoke(null,new object[]{new[]{package,zip,root,Path.Combine(root,"settings.json")}});}catch(TargetInvocationException failure){error=failure.GetBaseException().Message;}
+     Assert(error.Contains("different previous and candidate versions"),"same-version fixture was not rejected");Assert(!File.Exists(Path.Combine(root,"GUI 설치 & space",InstallerEngine.StateName)),"same-version fixture installed before rejecting");
+    }finally{Uninstall(Path.Combine(root,"GUI 설치 & space"));if(File.Exists(zip))File.Delete(zip);if(Directory.Exists(root))Directory.Delete(root,true);}
+   });
    Case("permission rejection identifies the affected directory and recovery",()=>{string root=Path.Combine(fixture,"shared");InstallerEngine.PrivateDirectory(root);var acl=Directory.GetAccessControl(root);byte[] saved=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.Modify,AccessControlType.Allow));Directory.SetAccessControl(root,acl);try{string message="";try{InstallerEngine.Root(root);}catch(IOException error){message=error.Message;}Assert(message.Contains(root)&&message.Contains("기본 위치로 되돌리기"),"permission error omits path or recovery");}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(saved,AccessControlSections.Access);Directory.SetAccessControl(root,restore);}});
    Case("volume root exception retains replacement and owner protection",()=>{
     var acl=new DirectorySecurity();acl.SetOwner(WindowsIdentity.GetCurrent().User);var everyone=new SecurityIdentifier("S-1-1-0");

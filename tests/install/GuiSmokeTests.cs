@@ -77,6 +77,7 @@ internal static class GuiSmokeTests {
         var listener=new TcpListener(IPAddress.Loopback,0);listener.Start();int port=((IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();
         string previousVersion="";string expectedVersion=(string)new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(Path.Combine(package,"package-manifest.json")))["Version"];
         if(resume) {string existingState=File.ReadAllText(Path.Combine(install,".agent-browser-install.json"));previousVersion=(string)new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(existingState)["Version"];port=Int32.Parse(System.Text.RegularExpressions.Regex.Match(existingState,"\"Port\"\\s*:\\s*([0-9]+)").Groups[1].Value);}
+        if(args.Contains("--upgrade")&&(!resume||previousVersion==expectedVersion))throw new Exception("Cross-version upgrade requires different previous and candidate versions.");
         string common="--no-discover --package-dir "+Quote(package)+" --install-dir "+Quote(install)+" --startup-dir "+Quote(startup)+" --port "+port;
         string exe=Path.Combine(package,"AgentBrowser-Setup.exe");string original=File.ReadAllText(settings);
         try {

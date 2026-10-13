@@ -13,6 +13,7 @@ namespace AgentBrowser.Installer {
    Directory.CreateDirectory(root);string next=Path.Combine(root,"extracted"),old=Path.Combine(root,"old-published-package");ZipFile.ExtractToDirectory(zip,next);Directory.CreateDirectory(old);
    var manifest=InstallerEngine.Read<PackageManifest>(Path.Combine(stock,"package-manifest.json"));
    string previousVersion=manifest.Version;
+   if(previousVersion==InstallerEngine.Read<PackageManifest>(Path.Combine(next,"package-manifest.json")).Version)throw new Exception("Upgrade fixture requires different previous and candidate versions.");
    foreach(var file in manifest.Files){string target=NativeIO.SafePath(old,file.Path);Directory.CreateDirectory(Path.GetDirectoryName(target));File.Copy(NativeIO.SafePath(stock,file.Path),target);}
    if(!manifest.Files.Any(f=>f.Path=="AgentBrowser-Setup.exe")){
     string gui=Path.Combine(old,"AgentBrowser-Setup.exe");File.Copy(Path.Combine(next,"AgentBrowser-Setup.exe"),gui);

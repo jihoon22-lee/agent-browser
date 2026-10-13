@@ -113,7 +113,7 @@ namespace AgentBrowser.Installer {
             try{var old=InstallerEngine.State(folder.Text);bool changed=!InstallerEngine.Same(loadedFolder,folder.Text);if(old!=null){if(changed){if(operation.SelectedIndex!=2)operation.SelectedIndex=1;port.Value=old.Port;startup.Checked=old.Startup!=null;if(old.Startup!=null)startupPath.Text=Path.GetDirectoryName(old.Startup.Path);}profiles.Enabled=true;manage.Enabled=operation.SelectedIndex!=2;status.Text="기존 설치 "+old.Version+"을 찾았습니다.";}else{if(operation.SelectedIndex==1)operation.SelectedIndex=0;status.Clear();}loadedFolder=folder.Text;}catch(Exception error){status.Text=error.Message;}
         }
         InstallState Installed(){var state=InstallerEngine.State(folder.Text);if(state==null)throw new IOException("아직 설치되지 않았습니다. [다음]을 눌러 설치를 완료하세요.");InstallerEngine.Root(folder.Text);InstallerEngine.Owned(state);return state;}
-        void ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");profiles.Enabled=true;SetPage(4);status.Clear();}catch(Exception error){status.Text=error.Message;}}
+        bool ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");profiles.Enabled=true;SetPage(4);status.Clear();return true;}catch(Exception error){status.Text=error.Message;return false;}}
         void ShowAdvanced(){
             using(var dialog=new Form{Text="AgentBrowser 고급 설정",ClientSize=new Size(800,404),Font=Font,BackColor=Color.White,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,StartPosition=FormStartPosition.CenterParent}){
                 advanced.Parent=dialog;advanced.Location=new Point(20,20);advanced.Visible=true;
@@ -164,7 +164,15 @@ namespace AgentBrowser.Installer {
         async Task Apply(){
             if(working||plan==null)return;working=true;cancellation=new CancellationTokenSource();SetPage(3);status.Text="설치 중입니다.";
             try{var result=await Task.Run(()=>InstallerEngine.Apply(plan,cancellation.Token,message=>BeginInvoke((Action)(()=>status.Text=message))));
-                if(plan.Next!=null)ShowConnection();else{manage.Enabled=profiles.Enabled=false;SetPage(7);done.Visible=false;review.Visible=true;preview.Visible=true;preview.Text=result;}
+                if(plan.Next!=null){
+                    if(!ShowConnection()){
+                        string failure=status.Text;plan=null;loadedFolder=null;LoadState();SetPage(0);
+                        heading.Text="연결 준비 실패";steps.Text="설치 파일을 확인한 뒤 연결 설정을 다시 열어 주세요.";cancel.Text="닫기";
+                        status.Text="설치 파일은 저장됐지만 연결 준비에 실패했습니다.\r\n"+failure;
+                        int warningIndex=result.IndexOf("경고:",StringComparison.Ordinal);if(warningIndex>=0)status.Text+="\r\n"+result.Substring(warningIndex);
+                        return;
+                    }
+                }else{manage.Enabled=profiles.Enabled=false;SetPage(7);done.Visible=false;review.Visible=true;preview.Visible=true;preview.Text=result;}
                 status.Text=plan.Next==null?"제거 완료.":"설치 완료.";
                 int warning=result.IndexOf("경고:",StringComparison.Ordinal);if(warning>=0)status.Text=result.Substring(warning);
             }catch(OperationCanceledException){SetPage(2);status.Text="취소됐습니다. 변경 사항을 복구했습니다.";}
