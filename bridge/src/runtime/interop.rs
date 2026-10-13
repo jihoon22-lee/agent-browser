@@ -9,6 +9,37 @@ pub struct Keeper {
     pub socket: String,
 }
 
+pub(super) const WSL_PREFLIGHT: &str = r#"set -eu
+[ -d "$1" ] && [ -x "$1" ] || exit 31
+[ -f "$4" ] && [ -x "$4" ] || exit 32
+[ "${5:-}" = diagnose ] || { [ -r "$2" ] && [ -w "$2" ] && [ "$(cat "$2")" = "pending $3" ] || exit 33; }
+[ -w "$(dirname "$2")" ] || exit 33
+for tool in /usr/bin/setsid /usr/bin/timeout /bin/kill; do [ -x "$tool" ] || exit 34; done
+for tool in awk cat grep tr readlink mv sleep; do command -v "$tool" >/dev/null || exit 34; done
+[ -r /proc/$$/environ ] && [ -r /proc/$$/stat ] && [ -r /proc/sys/kernel/random/boot_id ] || exit 35
+interop_root=/proc/sys/fs/binfmt_misc
+interop_found=0
+if [ "$(cat "$interop_root/status" 2>/dev/null)" = enabled ]; then
+  for registration in "$interop_root"/*; do
+    case "$registration" in */status|*/register) continue;; esac
+    [ -f "$registration" ] || continue
+    if grep -Fqx enabled "$registration" && grep -Fqx 'interpreter /init' "$registration" && grep -Fqx 'offset 0' "$registration" && grep -q '^magic 4d5a' "$registration"; then interop_found=1; break; fi
+  done
+fi
+[ "$interop_found" = 1 ] || exit 36
+"#;
+
+pub(super) async fn preflight_code(profile: &Profile, owner: &str, instance: &str, diagnostic: bool) -> Option<i32> {
+    let mut args=wsl_args(profile);
+    args.extend(["--exec".into(),"/bin/sh".into(),"-c".into(),WSL_PREFLIGHT.into(),"agent-browser-preflight".into(),profile.directory.clone(),owner.into(),instance.into(),profile.executable.clone().unwrap_or_default(),if diagnostic {"diagnose"} else {"launch"}.into()]);
+    let mut probe=tokio::process::Command::new(process::wsl_executable());
+    probe.args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
+    #[cfg(windows)] {probe.creation_flags(0x08000000);}
+    match tokio::time::timeout(Duration::from_secs(10),probe.status()).await {
+        Err(_) => Some(-2), Ok(Err(_)) => Some(-3), Ok(Ok(status)) => status.code(),
+    }
+}
+
 impl Manager {
     pub(super) fn revoke_wsl_permit(&self, record: &RuntimeRecord) -> bool {
         // Never derive a removal path from an unchecked runtime.json field.
@@ -23,11 +54,13 @@ impl Manager {
         false
     }
 
-    fn spawn_wsl_owned(&self, profile: &Profile, instance: &str, suffix: &str, command: Vec<String>, env: &BTreeMap<String,String>) -> Result<(Identity,String),RpcError> {
+    async fn spawn_wsl_owned(&self, profile: &Profile, instance: &str, suffix: &str, command: Vec<String>, env: &BTreeMap<String,String>) -> Result<(Identity,String),RpcError> {
         let owner = self.home.join("runtime").join(format!("{instance}.{suffix}"));
         std::fs::create_dir_all(owner.parent().unwrap()).map_err(|_| failure("Cannot create WSL ownership directory"))?;
         let mapped = process::windows_to_wsl(&owner.to_string_lossy()).ok_or_else(|| invalid("WSL runtimes require a Windows Bridge home on a drive mounted by WSL"))?;
         std::fs::write(&owner,format!("pending {instance}\n")).map_err(|_| failure("Cannot initialize WSL ownership marker"))?;
+        let code=preflight_code(profile,&mapped,instance,false).await;
+        if code != Some(0) {return Err(failure(format!("{}: WSL launch prerequisites could not be verified.",diagnostics::wsl_probe_reason(code))));}
         let mut args = wsl_args(profile);
         args.extend(["--exec".into(),"/usr/bin/setsid".into(),"--wait".into(),"/bin/sh".into(),"-c".into(),WSL_LAUNCH.into(),"agent-browser".into(),profile.directory.clone(),mapped.clone(),instance.into()]);
         args.extend(command);
@@ -47,7 +80,7 @@ impl Manager {
         let bridge = std::env::current_exe().map_err(|_| failure("Cannot resolve the Bridge executable"))?.to_string_lossy().into_owned();
         let probe = process::windows_to_wsl(&bridge).ok_or_else(|| invalid("The Bridge executable must be on a Windows drive"))?;
         let script = format!("{CANARY_FUNCTION}\n{KEEPER_SCRIPT}");
-        let (launcher,owner_file) = self.spawn_wsl_owned(profile,&instance,"keeper",vec!["/bin/sh".into(),"-c".into(),script,"agent-browser-keeper".into(),mapped,instance.clone(),probe.clone()],&env)?;
+        let (launcher,owner_file) = self.spawn_wsl_owned(profile,&instance,"keeper",vec!["/bin/sh".into(),"-c".into(),script,"agent-browser-keeper".into(),mapped,instance.clone(),probe.clone()],&env).await?;
         // This provisional record also covers a crash between keeper and server launch.
         let mut record = RuntimeRecord {profile_id:profile.id.clone(),instance:instance.clone(),base_url:format!("http://127.0.0.1:{port}"),username:"opencode".into(),password,launcher:launcher.clone(),server:None,wsl_owner_file:Some(owner_file.clone()),version:None,bridge_port:Some(self.port),bridge_executable:Some(bridge),wsl_keeper:Some(Keeper {launcher,owner_file,socket:String::new()})};
         if let Err(error) = self.persist(&record) { self.terminate_wsl(profile,&record).await; return Err(error); }
@@ -72,7 +105,7 @@ impl Manager {
             overlay["mcp"]["browser"]["environment"]["WSL_INTEROP"] = json!(&socket);
             overlay["mcp"]["browser"]["command"] = json!(["/bin/sh","-c",MCP_LAUNCH,"agent-browser-mcp",record.wsl_keeper.as_ref().unwrap().owner_file,instance,socket,probe]);
             env.insert("OPENCODE_CONFIG_CONTENT".into(),overlay.to_string());
-            let (launcher,owner) = self.spawn_wsl_owned(profile,&instance,"owner",command,&env)?;
+            let (launcher,owner) = self.spawn_wsl_owned(profile,&instance,"owner",command,&env).await?;
             record.launcher = launcher; record.wsl_owner_file = Some(owner);
             self.persist(&record)?;
             self.permit_wsl(&instance,"owner")?;
@@ -162,6 +195,39 @@ mod tests {
 #[cfg(all(test,windows))]
 mod persistence_tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "Requires local WSL; verifies preflight without starting a runtime"]
+    async fn unavailable_opencode_is_rejected_before_keeper_start() {
+        let distribution=std::env::var("AGENT_BROWSER_TEST_WSL_DISTRIBUTION").unwrap_or_else(|_|"Ubuntu".into());
+        let home=tempfile::tempdir().unwrap();let manager=Manager::new(home.path().into(),54329);
+        let instance=uuid::Uuid::new_v4().simple().to_string();
+        let profile:Profile=serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"wsl","distribution":distribution,"directory":"/tmp","executable":format!("/tmp/agent-browser-absent-{instance}")})).unwrap();
+        let env=BTreeMap::from([("AGENT_BROWSER_RUNTIME_ID".into(),instance.clone()),("OPENCODE_CONFIG_CONTENT".into(),"{}".into())]);
+        let error=match manager.launch_wsl(&profile,65531,instance.clone(),"fixture".into(),env,vec![profile.executable.clone().unwrap()]).await {Err(error)=>error,Ok(_)=>panic!("Missing executable launched")};
+        assert!(error.message.starts_with("WSL_EXECUTABLE_UNAVAILABLE"),"{}",error.message);
+        assert!(manager.store.read().unwrap().runtimes.is_empty());
+        assert_eq!(std::fs::read_to_string(home.path().join("runtime").join(format!("{instance}.keeper"))).unwrap(),format!("pending {instance}\n"),"No keeper process may publish ownership before executable validation");
+    }
+    #[tokio::test]
+    #[ignore = "Requires local WSL Ubuntu; only launches isolated failing fixtures"]
+    async fn explicit_wsl_user_failed_start_can_stop_delete_and_register_again() {
+        let distribution=std::env::var("AGENT_BROWSER_TEST_WSL_DISTRIBUTION").unwrap_or_else(|_|"Ubuntu".into());
+        let output=std::process::Command::new(process::wsl_executable()).args(["-d",&distribution,"--exec","id","-un"]).output().unwrap();
+        assert!(output.status.success());
+        let user=std::env::var("AGENT_BROWSER_TEST_WSL_USER").unwrap_or_else(|_|String::from_utf8(output.stdout).unwrap().trim().to_owned());
+        for explicit_user in [None,Some(user)] {
+            let home=tempfile::tempdir().unwrap(); let manager=Manager::new(home.path().into(),54329);
+            let instance=uuid::Uuid::new_v4().simple().to_string();
+            let profile:Profile=serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"wsl","distribution":distribution,"user":explicit_user,"directory":format!("/tmp/agent-browser-absent-{instance}"),"executable":"/bin/false"})).unwrap();
+            manager.save(profile.clone(),false).unwrap();
+            let env=BTreeMap::from([("AGENT_BROWSER_RUNTIME_ID".into(),instance.clone()),("OPENCODE_CONFIG_CONTENT".into(),"{}".into())]);
+            assert!(manager.launch_wsl(&profile,65531,instance,"fixture".into(),env,vec!["/bin/false".into()]).await.is_err());
+            manager.stop("fixture").await.expect("Failed start must permit Stop");
+            manager.delete("fixture").await.expect("Failed start must permit Delete");
+            manager.save(profile,false).expect("Deleted profile must permit registration again");
+            assert!(manager.store.read().unwrap().runtimes.is_empty());
+        }
+    }
     #[tokio::test]
     #[ignore = "Requires local WSL Ubuntu; only creates a delayed fixture"]
     async fn stop_revokes_permission_before_a_delayed_wsl_launch_can_exec() {

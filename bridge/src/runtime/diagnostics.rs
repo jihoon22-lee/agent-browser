@@ -1,6 +1,30 @@
 use crate::rpc::RpcError;
 use serde_json::{json, Value};
 
+pub(super) fn wsl_probe_reason(code: Option<i32>) -> &'static str {
+    match code {
+        Some(0|20) => "WSL_PROCESS_STILL_RUNNING",
+        Some(11) => "WSL_PROCESS_STOPPED_KEEPER_UNVERIFIED",
+        Some(-2) => "WSL_PROBE_TIMEOUT",
+        Some(-3) => "WSL_LAUNCH_UNAVAILABLE",
+        Some(10) => "WSL_START_PENDING",
+        Some(21) => "WSL_OWNER_FILE_MISSING",
+        Some(22) => "WSL_OWNER_FILE_UNREADABLE",
+        Some(23) => "WSL_OWNER_RECORD_INVALID",
+        Some(24) => "WSL_OWNER_NONCE_MISMATCH",
+        Some(25) => "WSL_KEEPER_UNVERIFIED",
+        Some(31) => "WSL_DIRECTORY_UNAVAILABLE",
+        Some(32) => "WSL_EXECUTABLE_UNAVAILABLE",
+        Some(33) => "WSL_DATA_ACCESS_DENIED",
+        Some(34) => "WSL_REQUIRED_TOOL_MISSING",
+        Some(35) => "WSL_PROC_ACCESS_DENIED",
+        Some(36) => "WSL_INTEROP_REGISTRATION_UNAVAILABLE",
+        Some(12) => "WSL_PROCESS_OR_KEEPER_UNVERIFIED",
+        None => "WSL_PROBE_RECORD_UNAVAILABLE",
+        _ => "WSL_CONTROL_FAILED",
+    }
+}
+
 pub(super) fn mcp_check(profile_id: &str, managed: bool, result: Result<&Value, &RpcError>) -> Value {
     let (reason, message) = match result {
         Err(error) if error.details["reason"] == "timeout" => ("query_timeout", "OpenCode MCP status request timed out; registration state is unknown."),

@@ -97,7 +97,7 @@ namespace AgentBrowser.Installer {
             catch(UnauthorizedAccessException error) {throw PathPermissionError(directory.FullName,error);}
         }
         static IOException PathPermissionError(string path,Exception error) {
-            return new IOException("설치 위치의 권한을 확인할 수 없습니다: "+path+"\r\n"+error.Message+"\r\n[기본 위치로 되돌리기]를 누르거나 현재 사용자 전용 폴더를 지정하세요.",error);
+            return new IOException("설치 위치의 권한을 확인할 수 없습니다: "+path+"\r\n"+error.Message+"\r\n[기본 위치로 되돌리기]를 누르거나 현재 사용자 전용 폴더를 지정하세요.\r\n회사 지정 폴더를 사용해야 한다면 압축 해제한 ZIP의 README-install.md에서 PowerShell 설치 절차를 확인하세요.",error);
         }
         internal static void RequireDirectorySecurity(DirectorySecurity acl,bool installRoot,bool volumeRoot=false) {
             RequireTrustedOwner(acl);
@@ -252,7 +252,7 @@ namespace AgentBrowser.Installer {
             if(options.Startup) {
                 if(String.IsNullOrEmpty(options.StartupDir)) throw new IOException("Select a Startup folder.");
                 string shortcut=Path.Combine(Full(options.StartupDir),"AgentBrowser.lnk");NativeIO.PlainPath(shortcut);
-                if(File.Exists(shortcut)&&(p.Old==null||p.Old.Startup==null||!Same(p.Old.Startup.Path,shortcut))) throw new IOException("An unowned Startup shortcut already exists.");
+                if(File.Exists(shortcut)&&(p.Old==null||p.Old.Startup==null||!Same(p.Old.Startup.Path,shortcut))) throw new IOException("이 설치가 소유하지 않은 Startup 바로가기가 있습니다. 기존 바로가기를 유지하려면 [Windows 로그인 시 자동 실행]을 해제한 뒤 다시 진행하세요.");
                 next.Startup=new StartupRecord{Path=shortcut};p.NextStartupHash=HashOrMissing(shortcut);p.Summary.Add("로그인 시 Bridge 시작: "+shortcut);
             }
             p.Summary.Insert(0,(p.Old==null?"설치: ":"업데이트: ")+manifest.Version+"\r\n대상: "+root+"\r\n데이터: "+data+"\r\nBridge 포트: "+next.Port);

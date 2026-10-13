@@ -24,6 +24,7 @@ def main():
         def copy(source,rel):
             if source.is_symlink() or not source.is_file(): raise ValueError("Nonregular package input: "+str(source))
             dest=stage/rel;dest.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(source,dest)
+            if dest.suffix.lower()==".exe": dest.chmod(0o755)
         copy(a.bridge,"browser-bridge.exe")
         binary=stage/"browser-bridge.exe";data=binary.read_bytes();offset=struct.unpack_from("<I",data,60)[0]
         if data[:2]!=b"MZ" or data[offset:offset+4]!=b"PE\0\0" or struct.unpack_from("<H",data,offset+4)[0]!=0x8664: raise ValueError("Not Windows x64 PE")
@@ -46,7 +47,7 @@ def main():
             copy(path,"extension/"+rel)
         extension=json.loads((stage/"extension/manifest.json").read_text())
         validate_extension(extension, version)
-        for name in ["setup.ps1","uninstall.ps1","installer-common.ps1","start-bridge.ps1","start-bridge.cmd","show-pairing.ps1"]: copy(ROOT/"scripts"/name,name)
+        for name in ["setup.ps1","uninstall.ps1","installer-common.ps1","start-bridge.ps1","start-bridge.cmd","show-pairing.ps1","diagnose.ps1","diagnose.cmd"]: copy(ROOT/"scripts"/name,name)
         for name in ["README-install.md","CHANGELOG.md","LICENSE","SECURITY.md","docs/user-guide.md","docs/troubleshooting.md","docs/browser-capabilities.md"]: copy(ROOT/name,name)
         for name in ["THIRD_PARTY_NOTICES","third-party-inventory.json"]: copy(a.notices/name,name)
         for name in ["profile-windows.json.template","profile-wsl.json.template","mcp-windows.json.template","mcp-wsl.json.template"]: copy(ROOT/"examples"/name,"examples/"+name)

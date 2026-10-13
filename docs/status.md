@@ -1,3 +1,41 @@
+# WSL 실패 진단·스크립트 설치 복구 작업 중 — 2026-10-13 KST
+
+사내 `D:\Multimedia\AgentBrowser`에서 v0.1.7을 스크립트로 설치한 뒤 WSL 시작·중지·삭제가 모두 실패했다. 사내 Ubuntu-24.04에서 다른 작업이 실행 중이며, 해당 배포판 종료·재시작이나 실행 기록 강제 삭제를 해결책으로 사용하지 않는다. 사내 장애의 정확한 원인은 아직 미확정이다.
+
+진행 중인 v0.1.8 후보에는 WSL 소유 기록/호출 오류 코드, 실행 전 경로·권한·기본 도구 검사, 두 번 클릭하는 `diagnose.cmd`, 비밀값을 제외한 보고서, 설치부터 제거까지의 PowerShell 안내를 추가했다. 새 ZIP의 진단기는 업데이트가 막힌 v0.1.7 설치를 파일 교체 없이 검사할 수 있다. GUI의 조직 관리 상위 폴더 소유자 제한 자체는 해제하지 않았으며, 경로 거절 메시지에 스크립트 대안을 안내한다.
+
+실행한 검증:
+
+- 새 shell 소유 기록 진단 테스트는 기존 코드의 `12` 반환으로 먼저 실패한 뒤 통과했다. 런타임 관련 Linux 단위 테스트 **35/35** 통과. 기존 누락 기록 테스트의 구체적인 종료 코드 기대값을 새 코드로 갱신했으며, 알 수 없는 기록을 종료된 것으로 취급하지 않는 검증은 유지했다.
+- 실제 Windows 테스트 exe + 기존 WSL Ubuntu에서 기본 사용자/명시 사용자 각각 시작 실패 → 중지 → 삭제 → 재등록 성공. 지연 시작 permit 취소, 초기 persist 실패 정리, hidden-console 포함 Windows 전용 테스트 **6/6** 통과. Linux 테스트를 이 결과로 대신하지 않았다.
+- 실제 Windows PowerShell 5.1에서 보고서의 토큰·비밀번호·프로필 이름·경로·원문 제외 테스트 통과. 후보 ZIP으로 기존 Startup 충돌 → `-NoStartup` 설치 → 수동 시작 → 페어링 → 업데이트 → 설치본 진단 → 제거와 외부 바로가기 보존 통과. 테스트 CLI의 `profile delete --id` 누락을 고쳐 다시 실행했다.
+- 후보 ZIP의 진단기로 v0.1.7에 만든 합성 누락 owner 기록을 검사해 `WSL_OWNER_FILE_MISSING`을 확인했다. 기존 exe와 실행 기록 해시는 유지됐다. 이 합성 오류를 사내 원인 재현이라고 보고하지 않는다.
+- 실제 Windows Bridge + WSL OpenCode 1.18.29에서 게시된 v0.1.7 → 후보 v0.1.8 업데이트, 새 runtime/MCP 경로, browser MCP 연결, 설치 ID·페어링·프로필·세션 보존 통과. 모델 요청·페이지 데이터 접근 없음.
+- `cargo clippy --all-targets`는 기존 경고와 함께 성공했다. 추가로 시도한 `-D warnings`는 기존 collapsible-if/type-complexity/large-error 경고 때문에 실패했으며 통과로 보고하지 않는다.
+
+추가 검증:
+
+- GUI 안내 회귀는 변경 전 **15 통과/1 실패**, 변경 후 **16/16 통과**. 경로 거절 메시지에 회사 지정 경로의 PowerShell 대안을 제공하고 Startup 충돌 시 자동 실행 해제를 안내한다.
+- Windows PowerShell 패키지 검사: allowlist·SHA·manifest·ZIP 재현성, 잘못된 버전/파일 거부, 실제 `-File` 신규 설치/재설치/health/제거(기본 경로와 명시 경로), 필수 문서 누락 거부 모두 통과.
+- [Canonical Ubuntu 24.04 WSL rootfs](https://cloud-images.ubuntu.com/wsl/releases/24.04/current/)를 공식 SHA256 `2a790896740b14d637dbdc583cce1ba081ac53b9e9cdb46dc09a2f73abbd9934`와 대조해 별도 `AgentBrowser-Test-Ubuntu24-20261013` 배포판을 생성했다. 실제 `/etc/os-release` Ubuntu 24.04, OpenCode 1.18.29, 합성 사용자 `abfixture`에서 기본/명시 사용자 실패 복구와 실제 관리 서버 v0.1.7 → v0.1.8 업데이트·MCP 연결·프로필/세션 보존이 통과했다. Windows 테스트 프로세스에서 inherited WSL interop 환경변수를 제거한 경우도 포함한다. 사내 보안 정책·계정·D 드라이브와 동일한 환경이라고 주장하지 않는다.
+- 위 테스트 후 개발 WSL의 binfmt 등록 항목이 사라져 Windows exe 호출이 `Exec format error`로 실패했다. 원인을 사내 장애와 동일시하지 않는다. [Microsoft WSL의 interop 구현](https://github.com/microsoft/WSL/blob/master/doc/docs/technical-documentation/interop.md)에 따라 `/init`으로 Windows WSL 명령을 호출해 누락된 일시적 등록을 복구했다. 기존 배포판 종료·재시작이나 전역 OpenCode 설정 변경은 하지 않았다. 제품에는 이 자동 복구를 넣지 않고 `WSL_INTEROP_REGISTRATION_UNAVAILABLE` 진단만 추가한다. 등록 이름 `WSLInterop-late`도 인식하며, 누락/비활성화 shell fixture는 먼저 실패한 뒤 수정했다.
+
+- 최종 후보 2 ZIP: **37 files**, SHA256 `fd3056a5c864746278e860d38a1695ae99f85046a6895c2d72db7405cdf030c0`. 이 ZIP의 실제 Windows PowerShell + Ubuntu 24.04에서 이전 설치의 합성 누락 기록 진단/해시 보존, Startup 충돌/NoStartup/시작/페어링/업데이트/진단/제거와 실제 OpenCode 관리 서버 전환을 다시 실행해 통과했다. Linux 파일시스템의 기본 패키징 출력에서도 staging exe 실행 권한 문제 수정 후 ZIP 생성이 성공했다.
+
+현재 후보는 배포 완료가 아니다. 최종 소스/ZIP, PR·CI·게시본 재검증과 사내 환경 확인을 별도로 기록한다. 개발 검증 산출물은 로컬 `AgentBrowser-dev/install-recovery-20261013`에만 두며 Release에 넣지 않는다.
+
+---
+
+# 사내 지정 경로의 PowerShell 설치 안내 — 2026-10-13 KST
+
+사용자가 `D:\Multimedia`는 사내 정책상 확장 등록에 필요한 유일한 경로이며 조직 관리 폴더라고 확인했다. v0.1.7 GUI의 상위 경로 소유자 검사 때문에 계속 거절되므로 기본 위치로 이동하라는 이전 안내는 해당 환경의 해결책이 아니다.
+
+사용자가 요청한 대안 중 **기존 배포 ZIP의 PowerShell 설치 경로**를 제공한다. `setup.ps1`은 GUI의 trusted-owner/상위 ACL 검사를 호출하지 않으며 상위 폴더 권한을 수정하지 않는다. 단, 기존 동작대로 설치 데이터 하위 폴더 DACL을 제한한다. README-install에 별도 압축 해제 위치, 정확한 지정 경로 설치 명령, Chrome 등록·토큰·Options 프로필 설정까지 추가했다. 제품 코드와 GUI 검사, 게시된 태그·자산은 변경하지 않았다.
+
+검증: GitHub의 v0.1.7 ZIP을 다시 다운로드하여 SHA-256 `d90c1a4a7a1a46d20e6cd09a2a2faccf09eee016a1cd8fd85f2c16ecf7336982`를 확인했고, 게시된 `setup.ps1`, `installer-common.ps1`, `show-pairing.ps1`, `start-bridge.ps1`이 검사한 저장소 소스와 바이트 단위로 일치했다. 명령 인수·기본 포트·자동 시작·토큰 출력 경로는 소스로 확인했다. 이번 후속에서 Windows 설치를 새로 실행하지 않았으며 사내 PC 설치 성공과 GUI 수정 완료를 주장하지 않는다. 기존 릴리스의 PowerShell CI 실행 결과와 이번 소스 검사를 구분한다.
+
+---
+
 # v0.1.7 Windows preview 게시 완료 — 2026-10-13 KST
 
 [v0.1.7 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.7)를 **2026-10-13 03:27:58 UTC**에 게시했다. 사내 PC에서는 이 페이지의 `agent-browser-0.1.7-windows-x64.zip`과 `SHA256SUMS`를 받아 전체 압축을 풀고 `AgentBrowser-Setup.exe`를 실행한다. 설치·Chrome 추가·페어링·OpenCode 설정을 순서대로 진행하는 마법사다.
