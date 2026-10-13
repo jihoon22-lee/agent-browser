@@ -183,9 +183,7 @@ jobs:
           $wizardSource=Join-Path $env:GITHUB_WORKSPACE 'tests\install\SetupFlowTests.cs'
           & $compiler /nologo /codepage:65001 /target:exe /main:AgentBrowser.Installer.SetupFlowTests ('/out:' + $wizardExe) /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Management.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll @sources $wizardSource
           if ($LASTEXITCODE -ne 0) { throw 'Setup wizard test compilation failed' }
-          $dataDrive=[System.IO.Path]::GetPathRoot($env:GITHUB_WORKSPACE)
-          & $wizardExe (Join-Path $fixture 'wizard') $package $dataDrive
-          if ($LASTEXITCODE -ne 0) { throw 'Setup wizard regression failed' }
+          .\tests\install\wizard-data-drive.tests.ps1 -TestExe $wizardExe -PackageDir $package -FixtureRoot $fixture
       - name: Upload Windows package and checksum
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
