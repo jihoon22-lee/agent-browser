@@ -53,32 +53,41 @@ export function chromeSessionStore(): SessionStore {
 }
 function storeOver(read: () => Promise<State | undefined>, write: (s: State) => Promise<void>): SessionStore {
     let tail: Promise<unknown> = Promise.resolve();
-    const transaction = <T>(fn: (s: State) => T): Promise<T> => {
+    const transaction = <T>(fn: (s: State) => T, mutates = true): Promise<T> => {
         const work = tail.then(async () => {
             const s = (await read()) ?? empty();
             const now = Date.now();
+            let pruned = false;
             for (const [k, v] of Object.entries(s.requests))
-                if (v.state === 'done' && now - v.at > TTL)
-                    delete s.requests[k];
+                if (v.state === 'done' && now - v.at > TTL) {
+                    delete s.requests[k]; pruned = true;
+                }
             for (const [k, v] of Object.entries(s.bindings))
-                if (now - v.at > TTL)
-                    delete s.bindings[k];
+                if (now - v.at > TTL) {
+                    delete s.bindings[k]; pruned = true;
+                }
+            for (const [k, v] of Object.entries(s.cancelled))
+                if (now - v > TTL) {
+                    delete s.cancelled[k]; pruned = true;
+                }
             const result = fn(s);
             // Evict only completed results: an in-flight marker must never be evicted to admit a replay.
             const done = Object.entries(s.requests).filter(([, e]) => e.state === 'done').sort((a, b) => b[1].at - a[1].at);
-            for (const [k] of done.slice(200))
-                delete s.requests[k];
+            for (const [k] of done.slice(200)) {
+                delete s.requests[k]; pruned = true;
+            }
             const snaps = Object.entries(s.bindings).sort((a, b) => b[1].at - a[1].at);
-            for (const [k] of snaps.slice(200))
-                delete s.bindings[k];
-            await write(s);
+            for (const [k] of snaps.slice(200)) {
+                delete s.bindings[k]; pruned = true;
+            }
+            if (mutates || pruned) await write(s);
             return result;
         });
         tail = work.catch(() => { });
         return work;
     };
     return {
-        getResult: id => transaction(s => s.requests[id]),
+        getResult: id => transaction(s => s.requests[id], false),
         claim: id => transaction(s => { const previous = s.requests[id]; if (!previous)
             s.requests[id] = { state: 'inflight', at: Date.now() }; return previous; }),
         markInFlight: id => transaction(s => { s.requests[id] = { state: 'inflight', at: Date.now() }; }),
@@ -91,10 +100,10 @@ function storeOver(read: () => Promise<State | undefined>, write: (s: State) => 
             if (!p.operationId && !p.requestId && typeof p.generation === 'number')
                 s.legacyGeneration = Math.max(s.legacyGeneration, p.generation);
         }),
-        isCancelled: (id, p) => transaction(s => !!s.cancelled['req:' + id] || !!s.cancelled['op:' + p.operationId] || (!p.operationId && typeof p.generation === 'number' && p.generation <= s.legacyGeneration)),
-        hasSnapshot: (operationId,tabId,documentId) => transaction(s => Object.values(s.bindings).some(b => b.frames.some(f => f.operationId === operationId && (tabId === undefined || f.tabId === tabId) && (documentId === undefined || f.documentId === documentId)))),
+        isCancelled: (id, p) => transaction(s => !!s.cancelled['req:' + id] || !!s.cancelled['op:' + p.operationId] || (!p.operationId && typeof p.generation === 'number' && p.generation <= s.legacyGeneration), false),
+        hasSnapshot: (operationId,tabId,documentId) => transaction(s => Object.values(s.bindings).some(b => b.frames.some(f => f.operationId === operationId && (tabId === undefined || f.tabId === tabId) && (documentId === undefined || f.documentId === documentId))), false),
         nextSnapshotId: () => transaction(s => { s.sequence = Math.max(s.sequence + 1, Date.now() * 1000); return s.sequence; }),
         bind: (id, frames) => transaction(s => { s.bindings[id] = { at: Date.now(), frames }; }),
-        binding: (id, frameId) => transaction(s => s.bindings[id]?.frames.find(f => f.frameId === frameId)),
+        binding: (id, frameId) => transaction(s => s.bindings[id]?.frames.find(f => f.frameId === frameId), false),
     };
 }
