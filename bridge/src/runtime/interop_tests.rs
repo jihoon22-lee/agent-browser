@@ -1,14 +1,19 @@
 use super::*;
 
+fn preflight_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf, String) {
+    use std::os::unix::fs::PermissionsExt;
+    let home=tempfile::tempdir().unwrap();let owner=home.path().join("owner");let canary=home.path().join("Windows Bridge.exe");
+    std::fs::write(&owner,"pending fixture\n").unwrap();
+    std::fs::write(&canary,"#!/bin/sh\n[ \"$1\" = --version ] || exit 1\nprintf 'browser-bridge 0.0.0\\n'\n").unwrap();
+    std::fs::set_permissions(&canary,std::fs::Permissions::from_mode(0o700)).unwrap();
+    let script=interop::WSL_PREFLIGHT.replace("/proc/sys/fs/binfmt_misc",home.path().join("absent-registry").to_str().unwrap());
+    (home,owner,canary,script)
+}
+
 #[test]
 fn wsl_preflight_rejects_inaccessible_inputs_before_launch() {
-    let home=tempfile::tempdir().unwrap();let owner=home.path().join("owner");
-    let registry=home.path().join("binfmt");std::fs::create_dir(&registry).unwrap();
-    std::fs::write(registry.join("status"),"enabled\n").unwrap();
-    std::fs::write(registry.join("WSLInterop"),"enabled\ninterpreter /init\noffset 0\nmagic 4d5a\n").unwrap();
-    let script=interop::WSL_PREFLIGHT.replace("/proc/sys/fs/binfmt_misc",registry.to_str().unwrap());
-    std::fs::write(&owner,"pending fixture\n").unwrap();
-    let probe=|directory:&str, executable:&str|std::process::Command::new("/bin/sh").args(["-c",&script,"fixture",directory,owner.to_str().unwrap(),"fixture",executable]).status().unwrap().code();
+    let (home,owner,canary,script)=preflight_fixture();
+    let probe=|directory:&str, executable:&str|std::process::Command::new("/bin/sh").args(["-c",&script,"fixture",directory,owner.to_str().unwrap(),"fixture",executable,"launch",canary.to_str().unwrap()]).status().unwrap().code();
     assert_eq!(probe(home.path().to_str().unwrap(),"/bin/true"),Some(0));
     assert_eq!(probe("/agent-browser-missing-fixture","/bin/true"),Some(31));
     assert_eq!(probe(home.path().to_str().unwrap(),"/agent-browser-missing-fixture"),Some(32));
@@ -17,18 +22,17 @@ fn wsl_preflight_rejects_inaccessible_inputs_before_launch() {
 }
 
 #[test]
-fn wsl_preflight_diagnoses_missing_interop_without_starting_a_runtime() {
-    let home=tempfile::tempdir().unwrap();let registry=home.path().join("binfmt");std::fs::create_dir(&registry).unwrap();
-    let absent_owner=home.path().join("not-created");
-    let script=interop::WSL_PREFLIGHT.replace("/proc/sys/fs/binfmt_misc",registry.to_str().unwrap());
-    let probe=||std::process::Command::new("/bin/sh").args(["-c",&script,"fixture",home.path().to_str().unwrap(),absent_owner.to_str().unwrap(),"fixture","/bin/true","diagnose"]).status().unwrap().code();
-    std::fs::write(registry.join("status"),"enabled\n").unwrap();
+fn wsl_preflight_checks_execution_instead_of_registration_metadata() {
+    let (home,owner,canary,script)=preflight_fixture();
+    std::fs::remove_file(&owner).unwrap();
+    let probe=||std::process::Command::new("/bin/sh").args(["-c",&script,"fixture",home.path().to_str().unwrap(),owner.to_str().unwrap(),"fixture","/bin/true","diagnose",canary.to_str().unwrap()]).status().unwrap().code();
+    assert_eq!(probe(),Some(0),"Readable binfmt metadata is not necessary when the Windows canary works");
+    // A success exit without the expected version is not a working Bridge.
+    std::fs::write(&canary,"#!/bin/sh\nprintf 'unexpected-output\\n'\n").unwrap();
     assert_eq!(probe(),Some(36));
-    std::fs::write(registry.join("WSLInterop-late"),"enabled\ninterpreter /init\nflags: P\noffset 0\nmagic 4d5a\n").unwrap();
-    assert_eq!(probe(),Some(0),"Do not depend on the registration entry's name");
-    std::fs::write(registry.join("status"),"disabled\n").unwrap();
+    std::fs::write(&canary,"#!/bin/sh\nexit 1\n").unwrap();
     assert_eq!(probe(),Some(36));
-    assert!(!absent_owner.exists(),"Diagnostic preflight must not create ownership records");
+    assert!(!owner.exists(),"Diagnostic preflight must not create ownership records");
 }
 
 #[test]
