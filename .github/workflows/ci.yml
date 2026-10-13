@@ -152,6 +152,9 @@ jobs:
       - name: PowerShell 5.1 JSONC preservation
         shell: powershell
         run: .\tests\install\jsonc.tests.ps1
+      - name: PowerShell 5.1 diagnostic report privacy
+        shell: powershell
+        run: .\tests\install\diagnostics.tests.ps1
       - name: PowerShell 5.1 install, upgrade, rollback and uninstall
         shell: powershell
         # No -WslDistribution: a hosted Windows runner is not evidence of WSL interop.

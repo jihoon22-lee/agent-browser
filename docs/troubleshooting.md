@@ -1,5 +1,25 @@
 # AgentBrowser 문제 해결
 
+## WSL 시작·중지·삭제가 모두 실패할 때
+
+설치 폴더에서 **diagnose.cmd**를 두 번 클릭합니다. 업데이트도 막혀 있으면 새 ZIP을 별도 폴더에 풀고 그 안의 **diagnose.cmd**를 실행한 뒤 기존 설치 폴더를 선택합니다. 설치 파일을 교체하거나 WSL 전체를 종료할 필요가 없습니다. 결과는 기존 설치의 `data/diagnostic-report.json`에 저장됩니다. 보고서는 프로필 이름·경로·토큰·비밀번호·설정 원문을 제외하고 검사 번호와 오류 코드를 남깁니다.
+
+| 코드 | 확인할 항목 |
+|---|---|
+| `WSL_START_PENDING` | 시작 소유 기록이 아직 확정되지 않았습니다. 반복 시작보다 현재 실행의 상태를 먼저 확인합니다. |
+| `WSL_PROBE_TIMEOUT` | 지정 배포판의 상태 확인이 제한시간 내에 끝나지 않았습니다. 실행 중인지 여부는 확정하지 않습니다. |
+| `WSL_LAUNCH_UNAVAILABLE`, `WSL_CONTROL_FAILED` | Windows에서 지정 배포판·사용자로 명령을 실행하지 못했습니다. 배포판·사용자 설정을 확인합니다. |
+| `WSL_OWNER_FILE_MISSING`, `WSL_OWNER_FILE_UNREADABLE`, `WSL_DATA_ACCESS_DENIED` | 선택한 WSL 사용자에게 설치 데이터의 Windows 마운트 경로가 보이고 읽기·쓰기가 가능한지 확인합니다. |
+| `WSL_OWNER_RECORD_INVALID`, `WSL_OWNER_NONCE_MISMATCH` | 실행 소유 기록을 확인할 수 없습니다. `runtime.json`이나 소유 기록을 임의 삭제하지 않습니다. |
+| `WSL_DIRECTORY_UNAVAILABLE`, `WSL_EXECUTABLE_UNAVAILABLE` | 프로필의 Linux 작업 폴더·OpenCode 절대 경로와 실행 권한을 확인합니다. |
+| `WSL_INTEROP_REGISTRATION_UNAVAILABLE` | WSL의 Windows 실행 파일 등록이 없거나 비활성화되어 있습니다. 다른 WSL 작업을 종료하지 말고 관리자가 해당 배포판의 interop 상태를 확인해야 합니다. 진단기는 이 시스템 설정을 변경하지 않습니다. |
+| `WSL_REQUIRED_TOOL_MISSING`, `WSL_PROC_ACCESS_DENIED` | 배포판의 기본 프로세스 도구 또는 `/proc` 접근이 불가능합니다. |
+| `WSL_KEEPER_UNVERIFIED`, `WSL_PROCESS_OR_KEEPER_UNVERIFIED` | 소유 프로세스나 전용 interop 연결을 확인할 수 없습니다. 다른 터미널의 interop 소켓을 대신 쓰지 않습니다. |
+| `WSL_PROCESS_STILL_RUNNING`, `WSL_PROCESS_STOPPED_KEEPER_UNVERIFIED` | 중지 확인이 완료되지 않았습니다. 실행 소유 기록을 보존합니다. |
+
+이 진단 도구는 서버 시작·중지, 모델 호출, 브라우저 조작을 하지 않습니다. 다른 WSL 작업이 열려 있다면 배포판 전체 종료나 재시작을 해결 절차로 사용하지 마세요. 지원 요청에는 위 보고서의 오류 코드를 사용하고 `runtime.json` 전체를 보내지 않습니다.
+
+
 사용 절차는 [사용 설명서](./user-guide.md), 설치·업데이트·제거는 [설치 안내](../README-install.md), 배포별 변경은 [변경 기록](../CHANGELOG.md)을 참고하세요.
 
 문제를 확인할 때는 **Chrome 확장 → Bridge → OpenCode 실행 환경 → 브라우저 MCP → 모델** 순서로 구분합니다. 패널 상단의 **연결됨**은 Bridge 연결 상태입니다. 이것만으로 OpenCode나 모델이 준비됐다는 뜻은 아닙니다.

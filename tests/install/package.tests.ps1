@@ -20,7 +20,7 @@ try {
     $archive=[IO.Compression.ZipFile]::OpenRead($second.Package)
     try {
         $names=@($archive.Entries | ForEach-Object { $_.FullName })
-        foreach ($required in @('browser-bridge.exe','AgentBrowser-Setup.exe','setup.ps1','uninstall.ps1','start-bridge.cmd','extension/manifest.json','README-install.md','CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md','THIRD_PARTY_NOTICES','third-party-inventory.json','package-manifest.json')) { Assert ($names -contains $required) ('Missing release file: ' + $required) }
+        foreach ($required in @('browser-bridge.exe','AgentBrowser-Setup.exe','setup.ps1','uninstall.ps1','start-bridge.cmd','diagnose.cmd','diagnose.ps1','extension/manifest.json','README-install.md','CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md','THIRD_PARTY_NOTICES','third-party-inventory.json','package-manifest.json')) { Assert ($names -contains $required) ('Missing release file: ' + $required) }
         Assert (@($names | Where-Object { $_ -match '(?:node_modules|\.env|\.log$|(^|/)data/|tests/|status\.md|opencode\.json$)' }).Count -eq 0) 'Release contains development/runtime/private files'
     } finally { $archive.Dispose() }
     $extract=Join-Path $root ('extracted ' + [char]0xD55C + [char]0xAE00 + ' spaces'); [IO.Compression.ZipFile]::ExtractToDirectory($second.Package,$extract)

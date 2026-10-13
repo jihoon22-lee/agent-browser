@@ -9,7 +9,7 @@ Windows Chrome 안에서 기존 OpenCode v1으로 작업하는 도구입니다. 
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 ZIP과 같은 버전의 `SHA256SUMS`를 각각 다운로드합니다. **압축 해제와 실행 전에** 다음 명령의 SHA256 값을 별도로 받은 `SHA256SUMS`의 해당 ZIP 행(또는 GitHub 릴리스 자산의 SHA256 digest)과 비교하세요.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.7-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.8-windows-x64.zip
 ```
 
 값이 다르면 실행하지 말고 공식 릴리스에서 다시 받으세요. 현재 실행 파일은 Authenticode 서명되지 않았으며, ZIP 내부 `package-manifest.json`만으로 다운로드 출처를 검증할 수 없습니다.
@@ -34,25 +34,41 @@ Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.7-windows-x64.zi
 
 ### 사내 지정 폴더에서 GUI 소유자 오류가 나는 경우
 
-v0.1.7 ZIP에는 기존 PowerShell 설치기도 포함되어 있습니다. GUI는 상위 폴더의 소유자까지 검사하지만 PowerShell 설치기는 이 소유자 제한을 적용하지 않습니다. `D:\Multimedia`처럼 조직 관리 계정 소유의 지정 경로를 사용해야 하고 기존 스크립트 실행이 허용된 환경에서는 다음 절차를 사용합니다.
+배포 ZIP에는 기존 PowerShell 설치기도 포함되어 있습니다. GUI는 상위 폴더의 소유자까지 검사하지만 PowerShell 설치기는 이 소유자 제한을 적용하지 않습니다. `D:\Multimedia`처럼 조직 관리 계정 소유의 지정 경로를 사용해야 하고 기존 스크립트 실행이 허용된 환경에서는 다음 절차를 사용합니다.
 
 1. 위에서 해시를 확인한 ZIP 전체를 `D:\Multimedia\AgentBrowser-package`에 풉니다. 이 폴더 바로 아래에 `setup.ps1`과 `package-manifest.json`이 있어야 합니다. 설치 대상 `AgentBrowser`와 압축 해제 폴더를 분리합니다.
 2. 일반 Windows PowerShell에서 실행합니다.
 
 ```powershell
-powershell.exe -NoProfile -File "D:\Multimedia\AgentBrowser-package\setup.ps1" -InstallDir "D:\Multimedia\AgentBrowser"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\Multimedia\AgentBrowser-package\setup.ps1" -InstallDir "D:\Multimedia\AgentBrowser"
 ```
 
 3. 설치기가 Bridge 시작과 로그인 자동 실행을 설정합니다. Chrome의 `chrome://extensions`에서 개발자 모드를 켜고 **압축해제된 확장 프로그램을 로드합니다**로 `D:\Multimedia\AgentBrowser\extension`을 선택합니다.
 4. 다음 명령으로 토큰을 확인하고 확장 옵션의 페어링 토큰에 입력합니다. 새 설치의 Bridge 주소는 `ws://127.0.0.1:4317/extension`입니다. 기존 설치는 명령이 표시하는 주소를 사용합니다.
 
 ```powershell
-powershell.exe -NoProfile -File "D:\Multimedia\AgentBrowser\show-pairing.ps1"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\Multimedia\AgentBrowser\show-pairing.ps1"
 ```
 
 5. 확장 옵션에서 Windows 또는 WSL OpenCode 프로필을 설정합니다(3절). 이 경로에서는 설치 GUI를 다시 열어 연결 설정을 진행하지 않습니다. GUI의 소유자 검사는 여전히 적용됩니다.
 
-스크립트는 상위 `D:\Multimedia`의 소유자·ACL을 변경하지 않습니다. 제품의 `data` 하위 폴더에는 기존 스크립트와 동일한 비공개 ACL을 설정하므로 해당 작업 권한은 필요합니다. 실제 사내 PC의 정책 허용 여부는 별도 확인 대상입니다. PowerShell 실행 정책을 변경할 필요는 없으며, 정책이 실행을 차단하면 조직의 승인 절차를 따릅니다.
+스크립트는 상위 `D:\Multimedia`의 소유자·ACL을 변경하지 않습니다. 제품의 `data` 하위 폴더에는 기존 스크립트와 동일한 비공개 ACL을 설정하므로 해당 작업 권한은 필요합니다. 실제 사내 PC의 정책 허용 여부는 별도 확인 대상입니다. 위 명령의 `-ExecutionPolicy Bypass`는 해당 PowerShell 프로세스에만 적용되며 시스템·사용자 실행 정책을 영구 변경하지 않습니다. 조직의 그룹 정책이 실행을 차단하는 경우에는 조직의 승인 절차를 따릅니다.
+
+### 스크립트 설치의 시작·업데이트·제거
+
+기존 Startup 바로가기를 이 설치가 소유하지 않아 설치가 중단되면 `setup.ps1` 명령 끝에 `-NoStartup`을 붙여 다시 실행합니다. 기존 바로가기는 보존됩니다. 이 경우 로그인 자동 시작은 등록하지 않으므로 설치 폴더의 `start-bridge.cmd`를 실행해 Bridge를 시작합니다. 다른 설치의 바로가기를 임의 삭제하지 마세요.
+
+업데이트는 새 ZIP을 별도 `AgentBrowser-package` 폴더에 압축 해제한 뒤 위 설치 명령을 같은 `-InstallDir`로 다시 실행합니다. 처음에 `-NoStartup`을 사용했다면 업데이트에도 붙입니다. 업데이트 후 Chrome에서 확장을 새로고침합니다. 실행 기록을 확인할 수 없다는 오류가 나면 아래 진단을 먼저 실행합니다.
+
+문제 확인은 **설치 폴더의 `diagnose.cmd`를 두 번 클릭**합니다. 업데이트가 막혔으면 새 ZIP의 `diagnose.cmd`를 실행하고 기존 설치 폴더를 선택합니다. 창에 검사 결과와 오류 코드가 표시되고 `data\diagnostic-report.json`에 저장됩니다. 이 보고서는 토큰·비밀번호·설정 원문·프로필 이름·작업 경로를 포함하지 않습니다. 프로필 번호는 진단 결과 안에서만 구분하기 위한 번호입니다. 진단은 서버를 시작·중지하거나 모델에 요청하지 않습니다.
+
+제거 전 진행 중인 작업을 마친 뒤 일반 Windows PowerShell에서 실행합니다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "D:\Multimedia\AgentBrowser\uninstall.ps1" -InstallDir "D:\Multimedia\AgentBrowser"
+```
+
+기본 제거는 페어링·프로필 데이터를 보존합니다. Chrome 확장은 별도로 제거합니다. 중지 확인이 실패하면 소유 기록을 임의 삭제하거나 WSL 전체를 종료하지 말고 진단 결과를 확인합니다.
 
 ## 2. Chrome 확장 로드와 페어링
 

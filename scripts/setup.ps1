@@ -56,7 +56,7 @@ if (-not $NoStartup) {
     if (-not $StartupDir) { throw 'Windows Startup folder is unavailable. Specify a user Startup directory or -NoStartup.' }
     Assert-PlainPath $StartupDir
     $startupPath = Join-Path (Get-FullPath $StartupDir) 'AgentBrowser.lnk'
-    if ((Test-Path -LiteralPath $startupPath) -and (-not $old -or -not $old.Startup -or $old.Startup.Path -ne $startupPath)) { throw 'An unowned AgentBrowser Startup shortcut already exists.' }
+    if ((Test-Path -LiteralPath $startupPath) -and (-not $old -or -not $old.Startup -or $old.Startup.Path -ne $startupPath)) { throw 'An unowned AgentBrowser Startup shortcut already exists. Retry with -NoStartup to preserve it, then use start-bridge.cmd for manual start.' }
 }
 if ($old -and $old.Startup -and (Test-Path -LiteralPath $old.Startup.Path)) {
     Assert-PlainPath $old.Startup.Path
