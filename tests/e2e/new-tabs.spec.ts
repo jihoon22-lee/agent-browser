@@ -103,5 +103,6 @@ for (const [name,kind] of [['새 탭 링크','blank'],['스크립트 새 탭','s
 test('N02 unrelated user-created tab is not added or selected',async()=>{
   const {operationId,original} = await setup(); const unrelated = await world.open('new-tab-child.html?kind=user'); const id = await world.tabId(unrelated);
   const status = await world.admin('status.get'); expect(status.operation.currentTab).toBe(original); expect(status.operation.tabs).not.toContain(id);
-  expect((await world.mcp.call('browser_tabs',{action:'switch',operationId,tabId:id})).error?.code).toBe('TAB_NOT_FOUND');
+  await world.ok('browser_tabs',{action:'switch',operationId,tabId:id});
+  expect((await world.ok('browser_snapshot',{operationId})).data.tabId).toBe(id);
 });

@@ -56,6 +56,19 @@ try {
     }
     $package1 = New-TestPackage 'package 1' '0.1.0'
     $package2 = New-TestPackage 'package 2' '0.2.0'
+    Case 'new installation root does not inherit other-account write access' {
+        $parent=Join-Path $testRoot 'inherited-write-parent'
+        $null=New-Item -ItemType Directory $parent
+        $acl=[IO.Directory]::GetAccessControl($parent)
+        $sid=New-Object Security.Principal.SecurityIdentifier('S-1-1-0')
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'Write','ContainerInherit,ObjectInherit','InheritOnly','Allow')))
+        [IO.Directory]::SetAccessControl($parent,$acl)
+        $privateInstall=Join-Path $parent 'private-install';$activeInstalls.Add($privateInstall)
+        $null=& (Join-Path $package1 'setup.ps1') -InstallDir $privateInstall -NoStartup -NoStart -Quiet
+        Assert ([IO.Directory]::GetAccessControl($privateInstall).AreAccessRulesProtected) 'New installation inherited untrusted write access'
+        $null=Assert-InstallRoot $privateInstall
+        $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $privateInstall -RemoveData -Quiet
+    }
     $install = Join-Path $testRoot '사용자 설치 & 공백'
     # Include a character outside legacy Windows ANSI code pages on every locale.
     $startup = Join-Path $testRoot ('합성 Startup ' + [char]::ConvertFromUtf32(0x1F9EA))
@@ -223,6 +236,9 @@ try {
             Assert ($upgraded.Running.pid -ne $firstPid) 'Upgrade did not replace its owned process'
             Assert (-not (Get-Process -Id $firstPid -ErrorAction SilentlyContinue)) 'Old owned process survived upgrade'
             $newPid=$upgraded.Running.pid
+            $noStart=& (Join-Path $package1 'setup.ps1') -InstallDir $liveInstall -StartupDir $liveStartup -Port $port -NoStart -Quiet
+            Assert ($null -eq $noStart.Running) 'NoStart update started a new Bridge'
+            Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'NoStart update retained the old Bridge process'
             $null=& (Join-Path $package2 'uninstall.ps1') -InstallDir $liveInstall -RemoveData -Quiet
             Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'Owned process survived uninstall'
         }

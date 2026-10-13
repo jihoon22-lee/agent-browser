@@ -1,0 +1,7 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><title>Synthetic detail</title>
+<h1 id="name">합성 상품 상세</h1><table><thead><tr><th>항목</th><th>값</th></tr></thead><tbody><tr><td>상품</td><td id="product"></td></tr><tr><td>가격</td><td id="price"></td></tr></tbody></table>
+<label>상세 메모 <input id="note"></label><button id="save">메모 저장</button><p id="saved"></p><a href="journey.html">목록으로</a>
+<script>
+const id=new URLSearchParams(location.search).get('id')||'A';document.querySelector('#name').textContent='합성 상품 '+id;document.querySelector('#product').textContent=id;document.querySelector('#price').textContent=id==='A'?'12000':'18000';
+document.querySelector('#save').onclick=()=>{const el=document.querySelector('#note');el.defaultValue=el.value;document.querySelector('#saved').textContent='저장됨: '+el.value};
+</script></html>

@@ -159,6 +159,9 @@ jobs:
         shell: powershell
         # No -WslDistribution: a hosted Windows runner is not evidence of WSL interop.
         run: .\tests\install\install.tests.ps1 -BridgeExe .\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
+      - name: PowerShell 5.1 installation trust boundaries
+        shell: powershell
+        run: .\tests\install\security-review.tests.ps1
       - name: PowerShell 5.1 managed-runtime ownership cleanup
         shell: powershell
         run: .\tests\install\runtime-cleanup.tests.ps1 -BridgeExe .\target\x86_64-pc-windows-msvc\release\browser-bridge.exe

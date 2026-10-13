@@ -17,23 +17,25 @@ pub(super) const WSL_PREFLIGHT: &str = r#"set -eu
 for tool in /usr/bin/setsid /usr/bin/timeout /bin/kill; do [ -x "$tool" ] || exit 34; done
 for tool in awk cat grep tr readlink mv sleep; do command -v "$tool" >/dev/null || exit 34; done
 [ -r /proc/$$/environ ] && [ -r /proc/$$/stat ] && [ -r /proc/sys/kernel/random/boot_id ] || exit 35
-interop_root=/proc/sys/fs/binfmt_misc
-interop_found=0
-if [ "$(cat "$interop_root/status" 2>/dev/null)" = enabled ]; then
-  for registration in "$interop_root"/*; do
-    case "$registration" in */status|*/register) continue;; esac
-    [ -f "$registration" ] || continue
-    if grep -Fqx enabled "$registration" && grep -Fqx 'interpreter /init' "$registration" && grep -Fqx 'offset 0' "$registration" && grep -q '^magic 4d5a' "$registration"; then interop_found=1; break; fi
-  done
-fi
-[ "$interop_found" = 1 ] || exit 36
+# Registration metadata can be unavailable even when interop works. Exercise
+# this exact Windows Bridge, without starting its server or changing WSL policy.
+version=$(/usr/bin/timeout -k 1 5 "$6" --version 2>/dev/null) || exit 36
+case "$version" in 'browser-bridge '*) ;; *) exit 36;; esac
 "#;
 
 pub(super) async fn preflight_code(profile: &Profile, owner: &str, instance: &str, diagnostic: bool) -> Option<i32> {
+    // Unit-test harness executables do not implement the Bridge CLI. Native
+    // persistence tests use the separately built real Bridge for this canary.
+    #[cfg(test)]
+    let executable=std::env::var_os("AGENT_BROWSER_TEST_EXE").map(std::path::PathBuf::from).or_else(||std::env::current_exe().ok());
+    #[cfg(not(test))]
+    let executable=std::env::current_exe().ok();
+    let bridge=executable.and_then(|path|process::windows_to_wsl(&path.to_string_lossy()));
+    let Some(bridge)=bridge else {return Some(36)};
     let mut args=wsl_args(profile);
-    args.extend(["--exec".into(),"/bin/sh".into(),"-c".into(),WSL_PREFLIGHT.into(),"agent-browser-preflight".into(),profile.directory.clone(),owner.into(),instance.into(),profile.executable.clone().unwrap_or_default(),if diagnostic {"diagnose"} else {"launch"}.into()]);
+    args.extend(["--exec".into(),"/bin/sh".into(),"-c".into(),WSL_PREFLIGHT.into(),"agent-browser-preflight".into(),profile.directory.clone(),owner.into(),instance.into(),profile.executable.clone().unwrap_or_default(),if diagnostic {"diagnose"} else {"launch"}.into(),bridge]);
     let mut probe=tokio::process::Command::new(process::wsl_executable());
-    probe.args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
+    probe.env_remove("WSL_INTEROP").args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] {probe.creation_flags(0x08000000);}
     match tokio::time::timeout(Duration::from_secs(10),probe.status()).await {
         Err(_) => Some(-2), Ok(Err(_)) => Some(-3), Ok(Ok(status)) => status.code(),
@@ -251,7 +253,7 @@ mod persistence_tests {
         assert!(!late,"Stop must revoke an already-persisted permit before a delayed WSL launch executes");
     }
     #[tokio::test]
-    #[ignore = "Requires local WSL Ubuntu; only creates its own gated keeper"]
+    #[ignore = "Requires local WSL Ubuntu and AGENT_BROWSER_TEST_EXE set to the real Windows Bridge"]
     async fn keeper_initial_persist_failure_cleans_the_unpermitted_group() {
         let home=tempfile::tempdir().unwrap(); let manager=Manager::new(home.path().into(),4317);
         std::fs::create_dir(home.path().join("runtime.json")).unwrap();
@@ -259,7 +261,8 @@ mod persistence_tests {
         let profile:Profile=serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"wsl","distribution":"Ubuntu","directory":"/tmp","executable":"/bin/true"})).unwrap();
         let env=BTreeMap::from([("AGENT_BROWSER_RUNTIME_ID".into(),instance.clone()),("OPENCODE_CONFIG_CONTENT".into(),"{}".into())]);
         let result=manager.launch_wsl(&profile,65531,instance.clone(),"fixture".into(),env,vec!["/bin/true".into()]).await;
-        assert!(result.is_err());
+        let error=result.err().expect("Fixture persistence must fail");
+        assert!(!error.message.starts_with("WSL_"),"Fixture must reach persistence, not fail its preflight: {}",error.message);
         let owner=home.path().join("runtime").join(format!("{instance}.keeper"));
         assert!(!home.path().join("runtime").join(format!("{instance}.keeper.ready")).exists());
         let record:RuntimeRecord=serde_json::from_value(json!({"profileId":"fixture","instance":instance,"baseUrl":"http://127.0.0.1:65531","username":"opencode","password":"fixture","launcher":{"pid":0,"created":0,"image":"absent"},"server":null,"wslOwnerFile":process::windows_to_wsl(&owner.to_string_lossy()),"version":null})).unwrap();

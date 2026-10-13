@@ -22,13 +22,39 @@ function Assert-PlainPath([string]$Path) {
         $current = $parent
     }
 }
+# Match the GUI trust boundary for roots, ancestors and existing destinations.
+function Assert-DirectorySecurity([string]$Path,[bool]$InstallRoot,[bool]$VolumeRoot=$false) {
+    $trusted=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $acl=[IO.Directory]::GetAccessControl($Path,([Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner))
+    if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted){throw 'Installation folder ownership could not be verified. Choose a private local folder.'}
+    $writes=[Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
+    if($VolumeRoot -and -not $InstallRoot){$writes=$writes -band (-bnot [Security.AccessControl.FileSystemRights]::Delete)}
+    if($InstallRoot){$writes=$writes -bor [Security.AccessControl.FileSystemRights]'WriteData,AppendData,WriteExtendedAttributes,WriteAttributes'}
+    foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
+        if($rule.AccessControlType -ne 'Allow' -or (-not $InstallRoot -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly))){continue}
+        $sid=$rule.IdentityReference.Value
+        if($sid -in $trusted -or $sid -eq 'S-1-3-0' -or $sid.StartsWith('S-1-15-2-') -or $sid.StartsWith('S-1-15-3-')){continue}
+        $rights=[int64]$rule.FileSystemRights
+        if(($rights -band $writes) -or ($rights -band 0x10000000) -or ($InstallRoot -and ($rights -band 0x40000000))){throw 'Another account can write or replace the installation folder. Choose a private local folder.'}
+    }
+}
+function Assert-PrivateInstallPath([string]$Root,[string]$Destination=$Root) {
+    $directory=[IO.DirectoryInfo]::new($Destination)
+    while($directory) {
+        if($directory.Exists){Assert-DirectorySecurity $directory.FullName ($directory.FullName.Length -ge $Root.Length) ($null -eq $directory.Parent)}
+        $directory=$directory.Parent
+    }
+}
 function Assert-InstallRoot([string]$Path) {
+    if(-not [IO.Path]::IsPathRooted($Path)){throw 'Choose an absolute dedicated installation directory.'}
     $full = Get-FullPath $Path
     if (-not [IO.Path]::IsPathRooted($full) -or $full -eq [IO.Path]::GetPathRoot($full).TrimEnd('\')) { throw 'Choose a dedicated absolute installation directory, not a drive root.' }
     foreach ($protected in @([Environment]::GetFolderPath('UserProfile'), [Environment]::GetFolderPath('LocalApplicationData'), [Environment]::GetFolderPath('ApplicationData'), $env:SystemRoot)) {
         if ($protected -and $full -eq (Get-FullPath $protected)) { throw "Choose a dedicated installation subdirectory: $full" }
     }
+    if($full.StartsWith('\\') -or ([IO.DriveInfo]::new([IO.Path]::GetPathRoot($full))).DriveType -notin @('Fixed','Removable','Ram')){throw 'Bridge installation requires a Windows local disk.'}
     Assert-PlainPath $full
+    Assert-PrivateInstallPath $full
     return $full
 }
 function Join-SafePath([string]$Root, [string]$Relative) {
@@ -98,7 +124,7 @@ function Read-InstallState([string]$Root) {
     if (-not (Test-Path -LiteralPath $path)) { return $null }
     Assert-PlainPath $path
     $state = (Read-Utf8Text $path) | ConvertFrom-Json
-    if ($state.Product -ne $script:AgentBrowserProduct -or (Get-FullPath $state.InstallDir) -ne (Get-FullPath $Root)) { throw 'Installation ownership marker does not match this directory.' }
+    if ($state.Product -ne $script:AgentBrowserProduct -or (Get-FullPath $state.InstallDir) -ne (Get-FullPath $Root) -or (Get-FullPath $state.DataDir) -ne (Get-FullPath (Join-Path $Root 'data')) -or $state.InstallId -notmatch '^[a-fA-F0-9]{32}$' -or $null -eq $state.OwnedFiles) { throw 'Installation ownership marker does not match this directory.' }
     return $state
 }
 
@@ -259,6 +285,7 @@ function Assert-OwnedFiles([string]$Root, $State) {
     if (-not $State) { return }
     foreach ($file in $State.OwnedFiles) {
         $path = Join-SafePath $Root $file.Path
+        Assert-PrivateInstallPath $Root ([IO.Path]::GetDirectoryName($path))
         if ((Test-Path -LiteralPath $path) -and ((-not (Test-Path -LiteralPath $path -PathType Leaf)) -or (Get-FileSha256 $path) -ne $file.Sha256)) { throw "An installed file was modified and will not be overwritten or deleted: $path" }
     }
 }
@@ -319,17 +346,8 @@ function Undo-FileTransaction($Transaction) {
         throw ('Rollback needs inspection: ' + ($conflicts -join '; '))
     }
 }
-function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
+function Set-PrivateDirectoryAccess([string]$Path) {
     Assert-PlainPath $Path
-    $ownerPath = Join-Path $Path '.agent-browser-data-owner.json'
-    if (Test-Path -LiteralPath $Path) {
-        if (Test-Path -LiteralPath $ownerPath) {
-            $owner = (Read-Utf8Text $ownerPath) | ConvertFrom-Json
-            if ($owner.Product -ne $script:AgentBrowserProduct -or $owner.InstallId -ne $InstallId) { throw 'Bridge data belongs to a different installation.' }
-        } elseif (@(Get-ChildItem -LiteralPath $Path -Force).Count -gt 0) { throw 'Existing unowned data directory will not be changed.' }
-    } else { $null = New-Item -ItemType Directory -Path $Path -Force }
-    # The directory is now verified as empty or owned; protect credentials even
-    # when the caller pre-created an empty data directory.
     $acl = [IO.Directory]::GetAccessControl($Path, [Security.AccessControl.AccessControlSections]::Access)
     $acl.SetAccessRuleProtection($true, $false)
     foreach ($existingRule in @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))) { $null = $acl.RemoveAccessRuleAll($existingRule) }
@@ -341,6 +359,30 @@ function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
     # Change only the DACL, preserving ownership and audit policy. Set-Acl on a
     # fresh descriptor may request SeSecurityPrivilege on repeated installation.
     [IO.Directory]::SetAccessControl($Path, $acl)
+}
+function New-PrivateInstallDirectory([string]$Path) {
+    if(-not (Test-Path -LiteralPath $Path)) {
+        $null=New-Item -ItemType Directory -Path $Path -Force
+        Assert-PlainPath $Path
+        $trusted=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+        $owner=[IO.Directory]::GetAccessControl($Path,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if($owner -notin $trusted){throw 'The new installation directory changed ownership; no permissions were changed.'}
+        Set-PrivateDirectoryAccess $Path
+    }
+    Assert-PrivateInstallPath $Path
+}
+function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
+    Assert-PlainPath $Path
+    $ownerPath = Join-Path $Path '.agent-browser-data-owner.json'
+    if (Test-Path -LiteralPath $Path) {
+        if (Test-Path -LiteralPath $ownerPath) {
+            $owner = (Read-Utf8Text $ownerPath) | ConvertFrom-Json
+            if ($owner.Product -ne $script:AgentBrowserProduct -or $owner.InstallId -ne $InstallId) { throw 'Bridge data belongs to a different installation.' }
+        } elseif (@(Get-ChildItem -LiteralPath $Path -Force).Count -gt 0) { throw 'Existing unowned data directory will not be changed.' }
+    } else { $null = New-Item -ItemType Directory -Path $Path -Force }
+    # The directory is now verified as empty or owned; protect credentials even
+    # when the caller pre-created an empty data directory.
+    Set-PrivateDirectoryAccess $Path
     if (-not (Test-Path -LiteralPath $ownerPath)) { Write-Utf8Atomic $ownerPath (ConvertTo-Json @{ Product=$script:AgentBrowserProduct; InstallId=$InstallId }) }
 }
 function Get-BridgeProcessMarker([string]$DataHome) {
@@ -362,6 +404,19 @@ function Get-VerifiedBridgeProcess($State) {
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$marker.Port) + '(?:\s|$)'
     if ((Get-FullPath $process.ExecutablePath) -ne $expectedExe -or $process.CommandLine -notmatch $role -or $created -ne $marker.CreatedAt) { throw 'Recorded PID identity changed; no process was terminated.' }
     return [pscustomobject]@{ Process=$process; Marker=$marker }
+}
+function Assert-NoManagedRuntimeForScriptUpdate($State) {
+    $path=Join-Path $State.DataDir 'runtime.json'
+    if(-not (Test-Path -LiteralPath $path)){return}
+    Assert-PlainPath $path
+    try {$runtime=(Read-Utf8Text $path)|ConvertFrom-Json} catch {throw 'Runtime ownership data could not be read. Run diagnose.cmd before updating.'}
+    if($runtime.version -ne 1 -or $null -eq $runtime.profiles -or $null -eq $runtime.runtimes){throw 'Runtime ownership data could not be verified. Run diagnose.cmd before updating.'}
+    foreach($entry in $runtime.runtimes.PSObject.Properties) {
+        $profile=$runtime.profiles.PSObject.Properties[$entry.Name]
+        if(-not $profile -or $profile.Value.kind -ne 'external') {
+            throw 'A managed runtime is still recorded. Finish work and stop its server in extension Options before a script update, or use AgentBrowser-Setup.exe.'
+        }
+    }
 }
 function Stop-OwnedBridge($State) {
     $verified = Get-VerifiedBridgeProcess $State

@@ -14,8 +14,8 @@
 | 탭 목록 | list, windowId 필터. tabId/windowId/index/openerTabId/status/pinned/active 메타데이터 | 선택된 연결 Chrome 프로필 범위 |
 | 창별 대상 선택 | windows로 일반 창 ID·focused·state 확인, list/new에 windowId 지정 | 창 생성·닫기·크기 변경 도구는 이번 범위 밖. 새 권한 없음 |
 | 기존 탭 연결 | attach에 tabId 지정. 제한 페이지도 메타데이터 연결 후 일반 URL로 이동 가능 | chrome:// 등의 DOM/스크린샷 접근은 허용하지 않음 |
-| 작업 탭 전환 | switch에 작업 소유 tabId | 사용자 전경 포커스를 바꾸지 않으며 진행 중인 요청 대상은 고정 |
-| 탭 닫기 | close로 현재 작업에서 생성한 웹 탭만, 원래 attach 탭은 보호 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
+| 작업 탭 전환 | 같은 Chrome에서 조회·검증한 HTTP(S) tabId로 명시 switch | 기존 탭과 새 탭을 오가며 사용자 전경 포커스는 바꾸지 않음 |
+| 탭 닫기 | close로 현재 명시 선택한 웹 탭. 기존 탭도 선택 후 닫기 가능 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
 | 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
 | back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰 | 일반 페이지 쓰기는 snapshot 필요. 빈/제한 페이지에서 HTTP(S) goto는 DOM 읽기 없이 가능 |
 | snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM | 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |

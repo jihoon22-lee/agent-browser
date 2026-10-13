@@ -12,12 +12,13 @@
 | `WSL_OWNER_FILE_MISSING`, `WSL_OWNER_FILE_UNREADABLE`, `WSL_DATA_ACCESS_DENIED` | 선택한 WSL 사용자에게 설치 데이터의 Windows 마운트 경로가 보이고 읽기·쓰기가 가능한지 확인합니다. |
 | `WSL_OWNER_RECORD_INVALID`, `WSL_OWNER_NONCE_MISMATCH` | 실행 소유 기록을 확인할 수 없습니다. `runtime.json`이나 소유 기록을 임의 삭제하지 않습니다. |
 | `WSL_DIRECTORY_UNAVAILABLE`, `WSL_EXECUTABLE_UNAVAILABLE` | 프로필의 Linux 작업 폴더·OpenCode 절대 경로와 실행 권한을 확인합니다. |
-| `WSL_INTEROP_REGISTRATION_UNAVAILABLE` | WSL의 Windows 실행 파일 등록이 없거나 비활성화되어 있습니다. 다른 WSL 작업을 종료하지 말고 관리자가 해당 배포판의 interop 상태를 확인해야 합니다. 진단기는 이 시스템 설정을 변경하지 않습니다. |
+| `WSL_WINDOWS_EXECUTION_FAILED` | 선택 배포판·사용자에서 Windows Bridge의 짧은 버전 실행을 확인하지 못했습니다. 실행 파일 접근·Windows 실행 허용 여부를 확인합니다. 실패만으로 특정 시스템 설정을 원인으로 단정하지 않습니다. |
+| `WSL_INTEROP_REGISTRATION_UNAVAILABLE` (v0.1.8) | 정적 등록 정보 검사 결과입니다. 실제 Windows exe 실행 불가를 증명하지 않으며 오탐 가능성이 있어 v0.1.9에서 실제 실행 검사로 대체했습니다. 이 코드만으로 시스템 설정을 변경하지 않습니다. |
 | `WSL_REQUIRED_TOOL_MISSING`, `WSL_PROC_ACCESS_DENIED` | 배포판의 기본 프로세스 도구 또는 `/proc` 접근이 불가능합니다. |
 | `WSL_KEEPER_UNVERIFIED`, `WSL_PROCESS_OR_KEEPER_UNVERIFIED` | 소유 프로세스나 전용 interop 연결을 확인할 수 없습니다. 다른 터미널의 interop 소켓을 대신 쓰지 않습니다. |
 | `WSL_PROCESS_STILL_RUNNING`, `WSL_PROCESS_STOPPED_KEEPER_UNVERIFIED` | 중지 확인이 완료되지 않았습니다. 실행 소유 기록을 보존합니다. |
 
-이 진단 도구는 서버 시작·중지, 모델 호출, 브라우저 조작을 하지 않습니다. 다른 WSL 작업이 열려 있다면 배포판 전체 종료나 재시작을 해결 절차로 사용하지 마세요. 지원 요청에는 위 보고서의 오류 코드를 사용하고 `runtime.json` 전체를 보내지 않습니다.
+진단은 관리 OpenCode 서버 시작·중지, 모델 호출, 브라우저 조작을 하지 않습니다. 실행 파일 버전과 WSL 전제 조건 확인을 위한 짧은 프로세스는 실행하며, 지정 WSL 배포판이 꺼져 있으면 해당 호출로 시작될 수 있습니다. 다른 WSL 작업이 열려 있다면 배포판 전체 종료나 재시작을 해결 절차로 사용하지 마세요. 지원 요청에는 위 보고서의 오류 코드를 사용하고 `runtime.json` 전체를 보내지 않습니다.
 
 
 사용 절차는 [사용 설명서](./user-guide.md), 설치·업데이트·제거는 [설치 안내](../README-install.md), 배포별 변경은 [변경 기록](../CHANGELOG.md)을 참고하세요.
@@ -28,7 +29,7 @@
 
 설치 마법사에서 **기본 위치로 되돌리기**를 누르면 현재 사용자의 `%LOCALAPPDATA%\AgentBrowser`를 선택합니다. 새 설치는 위치 선택 후 **다음 → 설치**로 진행하며 Bridge를 먼저 시작할 필요가 없습니다.
 
-권한 오류에는 문제가 된 설치 폴더 또는 상위 폴더의 경로를 표시합니다. 다른 사용자가 소유하거나 파일·폴더를 교체할 수 있는 경로는 사용할 수 없습니다. 설치 관리자가 기존 폴더의 소유자나 사내 권한 정책을 변경하지 않습니다. 사내 지정 경로가 필요하면 표시된 경로를 기준으로 관리자에게 확인하세요. D 드라이브라는 이유만으로 거부하지는 않습니다.
+권한 오류에는 문제가 된 설치 폴더 또는 상위 폴더의 경로를 표시합니다. 다른 사용자가 소유하거나 파일·폴더를 교체할 수 있는 경로는 사용할 수 없습니다. GUI와 PowerShell 모두 같은 신뢰 기준을 적용하며 기존 폴더의 소유자·권한을 자동 변경하지 않습니다. 사용할 경로가 거부되면 허용된 개인 전용 로컬 폴더를 선택합니다. 드라이브 문자만으로 허용·거부를 결정하지 않습니다.
 
 ## 1. 우선 확인할 것
 
@@ -74,11 +75,11 @@
 
 v0.1.3 이하에서 Windows PowerShell 5.1의 `powershell -File .\setup.ps1` 실행이 `GetFullPath`의 “경로의 형식이 잘못되었습니다” 오류로 중단될 수 있습니다. advanced script의 매개변수 기본값에서 `$PSScriptRoot`가 비는 결함이며 v0.1.4에서 설치·제거 스크립트의 기본 경로를 본문에서 초기화하도록 수정했습니다. 최신 Windows ZIP 전체를 별도 폴더에 풀고 [설치 안내](../README-install.md)에 따라 `AgentBrowser-Setup.exe`를 실행합니다.
 
-기존 v0.1.3 ZIP으로 진행해야 한다면 압축 해제 폴더에서 기존 설치 명령 끝에 `-PackageDir .`을 추가할 수 있습니다. 설치 위치를 바꾸는 옵션은 `-InstallDir "D:\Multimedia\AgentBrowser"`이며 `PackageDir`는 ZIP을 푼 원본 폴더를 뜻합니다. 이 오류를 해결하려고 전역 실행 정책이나 Chrome 정책을 변경할 필요는 없습니다.
+기존 v0.1.3 ZIP으로 진행해야 한다면 압축 해제 폴더에서 기존 설치 명령 끝에 `-PackageDir .`을 추가할 수 있습니다. 설치 위치를 바꾸는 옵션은 `-InstallDir`이며 `PackageDir`는 ZIP을 푼 원본 폴더를 뜻합니다. 이 오류를 해결하려고 전역 실행 정책이나 Chrome 정책을 변경할 필요는 없습니다.
 
 ### PowerShell이 스크립트 실행을 차단함
 
-현재 ZIP의 네이티브 `AgentBrowser-Setup.exe`를 사용합니다. GUI는 PowerShell 스크립트를 실행하지 않습니다. 전역·프로세스 실행 정책을 변경하지 마세요. 조직 정책이 EXE 또는 로컬 확장 실행도 차단한다면 담당자에게 승인된 설치 방법을 확인합니다.
+현재 ZIP의 네이티브 `AgentBrowser-Setup.exe`를 사용합니다. GUI는 PowerShell 스크립트를 실행하지 않습니다. 오류 해결을 위해 실행 정책을 영구 변경하지 않습니다. 스크립트가 필요한 경우 승인된 실행 방법을 사용합니다. 조직 정책이 EXE 또는 로컬 확장 실행도 차단한다면 담당자에게 승인된 설치 방법을 확인합니다.
 
 ### WSL 설정 저장 실패
 
@@ -164,12 +165,12 @@ Zen 무료 모델 목록 조회가 성공해도 실제 요청이 허용되는 �
 | 오류·증상 | 다음 조치 |
 |---|---|
 | `UNSUPPORTED_PAGE` | Chrome 설정·새 탭·확장 프로그램·Chrome Web Store 등 제한 페이지인지 확인합니다. 일반 HTTP/HTTPS 페이지를 연 뒤 URL·제목을 지정해서 다시 요청합니다. 오류 카드의 **오류 세부 정보**에서 기술 정보를 확인할 수 있습니다. |
-| `TAB_NOT_FOUND`, `TAB_CLOSED` | 대상 탭이 닫혔는지 확인하고 새 탭 목록에서 다시 연결하도록 지시합니다. |
-| `STALE_ELEMENT` | 페이지 이동·재렌더링 뒤 예전 요소 참조가 남았습니다. 새 스냅샷을 읽고 대상을 다시 확인합니다. |
+| `TAB_NOT_FOUND`, `TAB_CLOSED` | 남은 대상이 없거나 지정 탭이 닫혔습니다. 탭 목록의 살아 있는 HTTP(S) 탭을 명시적으로 선택하거나 새 탭에서 계속하도록 지시합니다. |
+| `STALE_ELEMENT` | 페이지·요소가 바뀌었거나 탭 닫기 뒤 이전 대상으로 복귀했습니다. 새 스냅샷을 읽고 대상을 확인한 뒤 조작합니다. |
 | `FRAME_UNAVAILABLE` | iframe의 접근 권한·sandbox·로딩 상태를 확인합니다. 접근할 수 없는 프레임을 읽었다고 간주하지 않습니다. |
 | `ELEMENT_NOT_INTERACTABLE` | 요소가 보이는지, 비활성·가려짐·다른 화면 상태인지 확인합니다. 비슷한 다른 요소를 임의로 누르지 않습니다. |
 | `NEEDS_TAB_ACTIVATION` | 화면 캡처할 작업 탭을 활성화한 뒤 다시 읽도록 지시합니다. |
-| `BROWSER_BUSY` | 기존 작업이 끝나거나 중단된 뒤 새 작업·브라우저 선택을 진행합니다. |
+| `BROWSER_BUSY` | 같은 요청에 작업이 이미 있으면 기존 operationId로 계속합니다. 다른 요청의 작업이라면 완료·중단 후 시작합니다. |
 | `BROWSER_DISCONNECTED` | Bridge와 확장 연결을 복구한 뒤 작업 탭·페이지 상태를 다시 확인합니다. |
 | `TIMEOUT`, `CANCELLED` | 대기 조건·작업 상태를 확인합니다. 클릭·제출이 포함됐다면 실행 여부부터 확인합니다. |
 | `EXECUTION_UNKNOWN` | 실행됐을 수도 있고 아닐 수도 있습니다. 페이지·서버 처리 내역을 확인하기 전 같은 클릭·제출·삭제를 반복하지 않습니다. |
@@ -188,20 +189,14 @@ Zen 무료 모델 목록 조회가 성공해도 실제 요청이 허용되는 �
 
 ## 9. 진단 수집과 문의
 
-설정의 **진단 실행** 결과에서 실패한 항목과 오류 메시지만 먼저 확인합니다. Bridge에 연결되지 않아 UI 진단을 못 쓰면 설치 상태 파일로 현재 exe와 데이터 경로를 읽어 직접 진단할 수 있습니다.
+설정의 **진단 실행**에서 실패한 항목을 확인합니다. 연결되지 않거나 공유용 결과가 필요하면 **설치 폴더의 `diagnose.cmd`를 두 번 클릭**합니다. 업데이트가 막혔으면 새 ZIP의 `diagnose.cmd`에서 기존 설치를 선택합니다.
 
-```powershell
-$agentBrowserInstall = 'D:\Multimedia\AgentBrowser'
-$agentBrowserState = Get-Content -LiteralPath (Join-Path $agentBrowserInstall '.agent-browser-install.json') -Raw | ConvertFrom-Json
-& $agentBrowserState.CurrentExe --home $agentBrowserState.DataDir doctor --json
-```
-
-기본 설치는 `$agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser'`로 바꿉니다. `doctor`는 모델 요청을 보내지 않습니다. 현재 exe 경로를 사용하므로 설치 후 루트에 `browser-bridge.exe`가 없더라도 정상입니다. 로그는 기본적으로 설치 폴더의 `data\logs` 아래에 있습니다.
+`data\diagnostic-report.json`은 허용된 검사·상태·오류 코드·버전과 익명 프로필 번호만 담습니다. 이 파일과 원본 `doctor --json`·제품 로그는 다릅니다. 원본 진단은 로컬 점검용 경로·주소를 포함할 수 있으므로 그대로 공유하지 않습니다. 로그는 설치 폴더의 `data\logs`에 있습니다.
 
 문의에는 다음을 포함하면 원인을 좁히기 쉽습니다.
 
 - AgentBrowser 배포 버전, Chrome 버전, OpenCode 버전.
-- Windows 네이티브·WSL·외부 서버 중 실행 방식. WSL이면 배포판 이름.
+- Windows 네이티브·WSL·외부 서버 중 실행 방식. 실제 계정·배포판 이름·작업 경로는 생략합니다.
 - 실패한 단계와 시각, 오류 코드, 재현할 수 있는 최소 절차.
 - 연결 진단의 실패 항목, 모델 요청 이전인지 이후인지, 브라우저 도구가 실제 실행됐는지.
 
@@ -235,3 +230,20 @@ v0.1.6부터 완료된 요청은 패널이 닫힌 동안에도 확인해 정리�
 진단에서는 OpenCode HTTP 인증/health와 브라우저 MCP 연결 상태를 구분합니다. HTTP가 정상이어도 MCP 초기화가 실패하면 준비 완료가 아닙니다. 이 경우에도 doctor는 MCP 세부 원인(executable_missing, permission_denied, connection_timeout 등)을 표시합니다. WSL 프로필의 Bridge 데이터 home은 WSL이 마운트한 Windows 드라이브 경로여야 하며, 지원하지 않는 UNC/확장 경로는 INVALID_PARAMS로 반환합니다. 전용 keeper 소켓의 Windows canary가 실패하거나 소유권이 불명확하면 오류를 유지합니다. 해당 실행 환경을 명시적으로 중단한 뒤 다시 시작하고, 반복되면 Windows·WSL·커널·OpenCode 버전과 민감정보를 제거한 오류 코드를 확인하세요. 전역 OpenCode 설정, 운영 프로세스, WSL 전체 인스턴스를 임의로 지우거나 재시작하지 마세요.
 
 WSL 제어 호출은 같은 합성 fixture 비교에서 시작 6→2회, 일반 상태 확인 5회 합계 15→5회였습니다. 이는 전체 WSL 실행 횟수가 아니라 제어 호출 수이며, 별도 장기 keeper 세션 1개가 추가됩니다. 지연 시간 개선을 모든 PC에서 보장하는 수치는 아닙니다.
+
+
+## 새 탭을 열려는데 requestId 오류가 남
+
+패널은 메시지를 전송할 때 요청 ID를 만듭니다. 이 ID는 탭마다 만드는 값이 아닙니다. 새 탭을 여는 첫 `browser_tabs new`도 현재 요청 ID를 사용하며, 먼저 기존 페이지에 연결하거나 읽을 필요가 없습니다. 작업이 시작되면 같은 operationId로 추가 탭 생성·선택·닫기를 이어갑니다. 모델이 빠뜨리거나 이전 요청 ID를 재사용하면 탭을 만들기 전에 거부합니다.
+
+최신 버전으로 업데이트하고 확장을 새로고침한 뒤 새 메시지로 다시 요청합니다. 오류가 계속되면 해당 도구 이름·오류 코드만 확인합니다. 사용자가 ID를 만들어 입력하거나 토큰을 바꿀 필요는 없습니다.
+
+## 링크·팝업을 닫은 뒤 작업이 이어지지 않음
+
+v0.1.9부터 현재 작업에서 명시적으로 방문했던 살아 있는 탭으로 돌아갑니다. 중첩 팝업은 최근 방문 순서로 복귀합니다. 자동 복귀 뒤에는 페이지를 다시 읽기 전 변경·닫기를 거부합니다. 돌아갈 탭이 없으면 같은 작업에서 새 탭을 만들거나 목록의 기존 HTTP(S) 탭을 명시적으로 선택합니다. 다른 Chrome 프로필의 탭을 대신 고르지 않습니다.
+
+닫기는 현재 선택된 작업 탭만 대상으로 합니다. 다른 탭을 닫으려면 먼저 그 탭으로 전환해야 합니다. 편집된 폼·접근할 수 없는 프레임이 있으면 닫지 않으며 Chrome의 닫기 경고도 자동 승인하지 않습니다. 경고를 취소했거나 `EXECUTION_UNKNOWN`이면 탭 목록을 확인하고 다른 탭에서 작업을 계속할 수 있습니다.
+
+## 스크립트 업데이트가 관리 런타임 기록 때문에 멈춤
+
+새 Bridge 경로나 포트에 기존 OpenCode가 계속 연결되는 것을 막기 위한 검사입니다. 진행 중인 작업을 마치고 확장 옵션에서 관리 프로필의 **서버 중지**를 완료한 뒤 재시도합니다. 자동 관리 서버 전환은 GUI 업데이트를 사용합니다. 상태·소유권 오류로 중지할 수 없다면 `diagnose.cmd`로 코드를 확인하며 기록을 강제 삭제하지 않습니다. `-NoStart`도 이 검사를 생략하지 않습니다.

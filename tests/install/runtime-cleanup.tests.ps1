@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 param([Parameter(Mandatory=$true)][string]$BridgeExe, [string]$Scripts)
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=New-Object Text.UTF8Encoding($false)
@@ -54,11 +54,24 @@ try {
     Write-Utf8Atomic $extensionPath (ConvertTo-Json $extension -Depth 10)
     ($manifest.Files | Where-Object { $_.Path -eq 'extension/manifest.json' }).Sha256=Get-FileSha256 $extensionPath
     Write-Utf8Atomic (Join-Path $package 'package-manifest.json') (ConvertTo-Json $manifest -Depth 10)
+    $stateHash=Get-FileSha256 (Join-Path $install '.agent-browser-install.json')
+    $rejected=$false
+    try { $null=& (Join-Path $package 'setup.ps1') -InstallDir $install -NoStartup -NoStart -Quiet } catch { $rejected=$true }
+    Assert $rejected 'Script upgrade accepted a managed runtime with the old MCP path'
+    Assert ((Get-FileSha256 (Join-Path $install '.agent-browser-install.json')) -eq $stateHash) 'Rejected upgrade changed installation state'
+    Assert ((Read-Utf8Text (Join-Path $state.DataDir 'runtime.json')) -eq $validRuntime) 'Rejected upgrade changed runtime data'
+    $owned.Process.Refresh(); Assert (-not $owned.Process.HasExited) 'Rejected update stopped the managed runtime'
+    Write-Output 'PASS script upgrade refuses managed runtimes before mutation'
+    $null=Invoke-BridgeCapture $state @('runtime','stop-all','--json')
+    $owned.Process.Refresh(); Assert $owned.Process.HasExited 'Explicit stop did not terminate owned fixture'
     $null=& (Join-Path $package 'setup.ps1') -InstallDir $install -NoStartup -NoStart -Quiet
     $state=Read-InstallState $install
     $owned.Process.Refresh(); $external.Process.Refresh()
-    Assert ($state.Version -eq '0.2.0' -and -not $owned.Process.HasExited -and -not $external.Process.HasExited) 'Upgrade did not preserve managed and external runtimes'
-    Write-Output 'PASS upgrade preserves managed and external runtimes'
+    Assert ($state.Version -eq '0.2.0' -and $owned.Process.HasExited -and -not $external.Process.HasExited) 'Update after explicit stop failed or touched external runtime'
+    Write-Output 'PASS update after explicit stop preserves profiles and external runtime'
+    $owned.Process.Dispose(); $owned=New-SleepFixture
+    $records.owned.launcher=$owned.Identity; $records.owned.server=$owned.Identity
+    Write-Utf8Atomic (Join-Path $state.DataDir 'runtime.json') (ConvertTo-Json @{version=1;profiles=$profiles;defaultProfileId='owned';runtimes=$records} -Depth 10)
     $null=& (Join-Path $package 'uninstall.ps1') -InstallDir $install -Quiet
     $owned.Process.Refresh(); $external.Process.Refresh()
     Assert $owned.Process.HasExited 'Owned managed runtime survived uninstall'

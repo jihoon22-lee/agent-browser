@@ -33,6 +33,7 @@ export interface ChromeApi {
     tabsGoBack(id: number, documentId?: string): Promise<void>;
     tabsGoForward(id: number, documentId?: string): Promise<void>;
     tabsReload(id: number): Promise<void>;
+    tabsRemove(id:number):Promise<void>;
     historyEntry?(id:number,documentId:string):Promise<string|undefined>;
     captureVisibleTab(windowId: number): Promise<string>;
     listFrames(tabId: number): Promise<FrameInfo[]>;
@@ -51,6 +52,7 @@ export const realChromeApi: ChromeApi = {
         search: query => chrome.bookmarks.search(query),
     },
     windowsList: () => chrome.windows.getAll({windowTypes:['normal']}),
+    tabsRemove: id => chrome.tabs.remove(id),
     tabsQuery: q => chrome.tabs.query(q), tabsGet: id => chrome.tabs.get(id), tabsCreate: p => chrome.tabs.create(p),
     tabsUpdate: async (id, p) => { const tab = await chrome.tabs.update(id, p); if (!tab)
         throw new Error('Tab was closed'); return tab; }, // Traverse exactly one history entry. tabs.goBack/goForward behave like

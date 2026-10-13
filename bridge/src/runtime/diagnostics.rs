@@ -18,7 +18,7 @@ pub(super) fn wsl_probe_reason(code: Option<i32>) -> &'static str {
         Some(33) => "WSL_DATA_ACCESS_DENIED",
         Some(34) => "WSL_REQUIRED_TOOL_MISSING",
         Some(35) => "WSL_PROC_ACCESS_DENIED",
-        Some(36) => "WSL_INTEROP_REGISTRATION_UNAVAILABLE",
+        Some(36) => "WSL_WINDOWS_EXECUTION_FAILED",
         Some(12) => "WSL_PROCESS_OR_KEEPER_UNVERIFIED",
         None => "WSL_PROBE_RECORD_UNAVAILABLE",
         _ => "WSL_CONTROL_FAILED",

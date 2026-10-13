@@ -1,6 +1,6 @@
 [
   {
-    "description": "List tabs/windows. Panel attach/standalone new needs current requestId. New needs no snapshot; omit operationId to start; url defaults to about:blank. Close only created tabs; about:blank tabs cannot be closed. Switch changes target; switch back explicitly.",
+    "description": "requestId is per panel request, not per tab. First attach/new needs it; reuse operationId thereafter. Switch accepts listed HTTP(S) tabs. Close needs a snapshot; about:blank tabs cannot be closed. Close returns to the last visited surviving tab.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -21,11 +21,11 @@
           "type": "string"
         },
         "requestId": {
-          "description": "Panel attach or standalone new: latest requestId from Browser context (REQUIRED).",
+          "description": "Current Browser context requestId for first attach/new, even before a tab exists.",
           "type": "string"
         },
         "tabId": {
-          "description": "Attach target (omit for request default), or switch target",
+          "description": "Attach target (omit for request default), or explicit switch target",
           "type": "integer"
         },
         "url": {

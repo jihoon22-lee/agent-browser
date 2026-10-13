@@ -69,18 +69,18 @@ try{
  await ok('browser_click',{operationId:op2,ref:frame.elements.find(e=>e.name==='New tab').ref});
  const childSnapshot=await ok('browser_snapshot',{operationId:op2});assert(childSnapshot.data.url.endsWith('/body'));assert.notEqual(childSnapshot.data.tabId,tab.id);
  await admin.evaluate(id=>chrome.tabs.remove(id),childSnapshot.data.tabId);
- assert.equal((await call('browser_snapshot',{operationId:op2})).error.code,'TAB_CLOSED');
+ assert.equal((await ok('browser_snapshot',{operationId:op2})).data.tabId,tab.id);
  await ok('browser_tabs',{action:'switch',operationId:op2,tabId:tab.id});
  report.checks.push('Popup child adoption, closed-current-tab rejection and explicit return preserved');
  await ok('browser_tabs',{action:'new',operationId:op2,url:`http://127.0.0.1:${fixturePort}/body?owned=1`});
  const ownedChild=(await ok('browser_snapshot',{operationId:op2})).data;
  assert.notEqual(ownedChild.tabId,tab.id);
  assert.equal((await ok('browser_tabs',{action:'close',operationId:op2})).verified.closed,true);
- assert.equal((await call('browser_snapshot',{operationId:op2})).error.code,'TAB_CLOSED');
+ assert.equal((await ok('browser_snapshot',{operationId:op2})).data.tabId,tab.id);
  await ok('browser_tabs',{action:'switch',operationId:op2,tabId:tab.id});
  const returned=(await ok('browser_snapshot',{operationId:op2})).data;
  assert.equal(returned.tabId,tab.id);
- assert.equal((await call('browser_tabs',{action:'close',operationId:op2})).error.code,'FORBIDDEN_METHOD');
+
  const returnedFrame=returned.frames.find(f=>f.url.endsWith('/mail'));
  await ok('browser_wait',{operationId:op2,frameRef:returnedFrame.frameRef,text:'New tab',timeoutMs:500});
  assert.equal((await prepare('cannot-replace-after-close',{tabId:tabB.id,windowId:tabB.windowId})).ok,false);
@@ -88,7 +88,7 @@ try{
  await page.frame({url:`http://127.0.0.1:${fixturePort}/mail`}).evaluate(()=>document.querySelector('a').href='/body?recycled=1');
  assert.equal((await call('browser_click',{operationId:op2,ref:priorRef})).error.code,'STALE_ELEMENT');
  await ok('browser_wait',{operationId:op2,frameRef:returnedFrame.frameRef,text:'New tab',timeoutMs:500});
- report.checks.push('Owned child close preserves request reservation; explicit return restores iframe waits; original tab and recycled refs stay protected');
+ report.checks.push('Owned child close preserves request reservation; explicit return restores iframe waits; original tab remains available and recycled refs stay protected');
  complete('second');assert((await prepare('closed',{tabId:tabB.id,windowId:tabB.windowId})).ok);await second.close();
  assert.equal((await call('browser_tabs',{action:'attach',requestId:'closed'})).error.code,'TAB_NOT_FOUND');
  report.checks.push('Captured tab closed before attach: no fallback');

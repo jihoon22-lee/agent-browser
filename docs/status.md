@@ -1,6 +1,31 @@
+# v0.1.9 최종 검토·연속 작업 검증 중 — 2026-10-13 KST
+
+설치·진단·업데이트 상세 검토, 문서 일반화, 새 탭/기존 탭/닫기/팝업 복귀 보완을 진행하고 있다. 아직 v0.1.9를 게시하지 않았다. [진행 계획](./plans/2026-10-13-final-review.md), [검토 결과와 사례표](./review-2026-10-13.md)를 따른다.
+
+- 실제 Windows Chrome **154.0.8037.99**, Windows Node **24.18.1**, MSVC Bridge에서 현재 링크/팝업 탭을 닫으면 작업이 `TAB_CLOSED`에 머무는 문제, 기존 다른 탭 switch 거부, 빈 탭에서 이동한 페이지의 `window.close` 실패를 재현했다. 기존/새 탭의 native beforeunload 취소 시 탭 보존과 API Promise 미완료도 실제로 확인했다.
+- 수정 후 실제 **Windows 연속 작업 52/52** 통과. 현재 탭 수동 닫기·중첩 팝업·이전 대상 복귀·입력/저장·다음 요청, 잘못된 ID/창/주소·중단·오래된 ref·편집 폼 경계를 포함한다. 자동 복귀 뒤 새 snapshot 전 쓰기/닫기 거부와 늦은 과거 snapshot의 제한 해제 방지도 검증했다.
+- 기존 전체 E2E 확대 실행은 Windows **139 통과 / 1 실패 / 2 제외**, Linux **138 통과 / 1 실패 / 3 제외**였다. 유일한 실패는 R20이 이전의 “현재 탭 닫힘으로 작업 차단”을 기대한 것이며 새 복귀 동작으로 수정 후 양쪽 해당 테스트가 통과했다. R20 수정 뒤 새 0.1.9 Windows 전체 재실행은 **140/140 통과, 기본 bookmarks fixture 2개 제외**였으며 bookmarks 허용 fixture 2개를 별도 실행해 통과했다. 실제 요청 대상 경계와 iframe 3개도 통과했다. 원격 CI는 남아 있다. 별도 초기 Linux 52개 실행에서 safe FRAME_UNAVAILABLE 1건이 있었고 동일 사례 5회 및 후속 전체 실행에서는 재현되지 않았다. 원인을 확정한 제품 수정으로 세지 않는다.
+- 실제 사이드패널 → OpenCode **1.18.29** → MCP → Windows Bridge → Chrome 통합을 **Windows·WSL 각각 통과**했다. 각 실행은 기존 2개 현재 요청 읽기/ID 복구, 추가 12개 연속 작업, provider 오류 뒤 요청 해제·Stop 상태 검사를 포함한다. 도구 선택은 합성 provider가 결정하며 실제 모델 추론 성공으로 세지 않는다.
+- 별도 **Zen Big Pickle 무료 모델**은 갱신된 설치본 카탈로그와 공식 무료 가격/가용성을 확인한 뒤 실제 패널에서 한 번 시도했다. **HTTP 403 FreeTierError**로 도구 실행 전에 거부됐다. 유료 전환·제한 우회·추가 모델 호출 없이 중지했고 관리 runtime 정리를 확인했다.
+- WSL 정적 등록 검사 대신 실제 Windows Bridge 버전 실행을 쓰는 회귀는 수정 전 2 실패 → 수정 후 2 통과이며 위 실제 WSL 관리 패널 통합도 새 검사로 통과했다. 이 결과로 접근하지 않은 환경의 장애 원인을 단정하지 않는다.
+- PowerShell 경로/상태 경계 4개는 수정 전 거부 실패 → 수정 후 거부 성공. 정상 개인 경로 양성 대조군도 통과했다. 관리 기록이 남은 업데이트, NoStart 업데이트의 이전 Bridge 유지, 진단 임의 문자열 출력 회귀는 각각 수정 전 실패 후 통과했다. 실제 PowerShell 설치 수명주기 **13개**, 관리/외부 프로세스·업데이트·제거, 보고서 필터/대소문자 구분 검사가 통과했다. 개발 TEMP의 공유 쓰기 ACL은 바꾸지 않고 테스트 프로세스의 TEMP/TMP만 전용 폴더로 지정했다.
+- 확장 단위 테스트 **399/399**, E2E 타입 검사, 로컬 문서 링크 검사 통과. Rust 최초 전체 실행의 기존 router 기대값 3개를 새 동작/실제 tab metadata에 맞춰 수정했고 **router 21/21** 통과. 이후 Linux Rust 전체 **163개 통과 / 1개 플랫폼 제외**를 확인했다. clippy는 기존 스타일 경고를 표시하며 성공했다. Node helper 28개·Python 패키징 3개도 통과했다.
+- 현재 문서의 실제 환경 경로·계정·구성 비율·정책 사례를 일반화했다. 요구사항 문서에 중복된 과거 상태 이력은 status 참조로 정리했다. 기존 Git 태그·릴리스 자산·Git 이력은 교체하지 않았다.
+
+- 후보 ZIP SHA256 `e730e4133b8a128f2db9ed78e73028442c167cf00ab86e897d96cc9d8f5b08da`, 37 files. 실제 Windows 설치 엔진 **64/64**, 마법사 **16/16**, 신규/재설치·게시 v0.1.8 업데이트·인증 Bridge·설치 ID/페어링/데이터/JSONC 보존·제거가 통과했다. 마법사의 첫 수동 런처는 인수 순서를 잘못 전달해 실패했으며 올바른 인수의 별도 재실행 결과만 성공으로 센다.
+- 같은 ZIP의 실제 **Ubuntu 24.04 + 명시한 합성 사용자 + OpenCode 1.18.29** 관리 업데이트가 새 runtime/MCP 경로·MCP connected·프로필/세션 보존까지 통과했다. 새 ZIP의 이전 설치 진단/해시 보존·보고서 개인정보 제외·NoStartup 수명주기와 PowerShell 패키징 5개 그룹도 통과했다. 이 WSL은 공식 rootfs SHA256을 검증해 새로 만든 테스트 전용 배포판이며 기존 배포판은 종료하지 않았다.
+
+- Windows ignored WSL 단위 테스트 **7/7** 통과. 최초 6/7 실행은 Rust test harness를 Windows Bridge `--version` 대상으로 잘못 사용해 persist 단계에 도달하지 못한 것이었다. 테스트 빌드에만 실제 Bridge 경로를 전달하고 persist 도달도 명시 검증했다. 제품은 자기 exe를 사용한다.
+
+- 새 PowerShell 설치 루트가 상위 폴더의 하위 전용 쓰기 권한을 상속해 중간 설치에서 거부되는 경우를 추가 재현했다. GUI와 같이 새로 만든 신뢰된 제품 폴더만 비공개 DACL로 보호하고 기존 폴더·부모 ACL은 유지한다. 이 사례를 포함한 실제 Windows 설치 수명주기 **14/14** 최종 재실행이 통과했다.
+
+아래 내용은 이전 배포 시점의 기록이며 이번 후보의 성공 근거로 대신하지 않는다.
+
+---
+
 # v0.1.8 진단·설치 안내 게시 완료 — 2026-10-13 KST
 
-[v0.1.8 Windows preview](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.8)를 **2026-10-13 05:30:42 UTC / 14:30:42 KST**에 게시했다. 사내 WSL 시작·중지·삭제 실패의 원인은 여전히 미확정이며, 이 배포를 해당 장애의 해결 완료로 표시하지 않는다. 새 ZIP의 `diagnose.cmd`를 두 번 클릭하고 기존 설치 폴더를 선택하면 업데이트 없이 진단할 수 있다. 보고서는 `data/diagnostic-report.json`에 저장되며 오류 코드·확인된 OpenCode 버전을 포함하고 토큰·비밀번호·프로필 이름·작업 경로·설정 원문은 제외한다.
+[v0.1.8 Windows preview](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.8)를 **2026-10-13 05:30:42 UTC / 14:30:42 KST**에 게시했다. 배포 대상 WSL 시작·중지·삭제 실패의 원인은 여전히 미확정이며, 이 배포를 해당 장애의 해결 완료로 표시하지 않는다. 새 ZIP의 `diagnose.cmd`를 두 번 클릭하고 기존 설치 폴더를 선택하면 업데이트 없이 진단할 수 있다. 보고서는 `data/diagnostic-report.json`에 저장되며 오류 코드·확인된 OpenCode 버전을 포함하고 토큰·비밀번호·프로필 이름·작업 경로·설정 원문은 제외한다.
 
 - 태그 대상: `248db6093ebb7c074140b60a5f859849a650dcaa`, [PR #14](https://github.com/jihoon22-lee/agent-browser/pull/14). 최종 PR 커밋 `d9e1031`의 [CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38350166956)와 태그 대상 [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38350952561)가 Linux·Windows 모두 성공했다. 최초 PR CI는 버전 표시 보완으로 취소됐으며 성공 결과로 세지 않는다.
 - 게시 자산: ZIP **3,661,632 bytes / 37 files**, SHA256 **`eb8ecf6bd4ad84f6641426b8307283a21cffb13e4010bd410181570fb8712026`**. main에서 공식 `build-release-wsl.sh`로 다시 빌드·패키징했고 Windows x64 PE, Bridge/Extension 버전, 내부 파일 해시와 SHA256SUMS를 검증했다. main 빌드의 exe 및 Windows 스크립트 줄바꿈 때문에 후보 ZIP과 바이트가 달라졌으므로 이 최종 ZIP으로 검증을 다시 실행했다.
@@ -9,31 +34,31 @@
 - 같은 게시본의 실제 Windows Bridge + 별도 Ubuntu 24.04 사용자 `abfixture` + OpenCode 1.18.29에서 v0.1.7 → v0.1.8 관리 서버 전환, 새 MCP 경로/연결, 페어링·프로필·세션 보존을 다시 확인했다. 추가 로컬 회귀는 Linux 런타임 **35/35**, 실제 Windows WSL 전용 **7/7**, GUI 흐름 **16/16**, PowerShell 보고서/패키징 검사다. 실제 모델 요청이나 사용자 페이지 접근은 하지 않았다.
 - 테스트 전용 `AgentBrowser-Test-Ubuntu24-20261013`은 모든 검증 후 제거했다. 생성 전 배포판 목록과 동일하게 `Ubuntu`, `docker-desktop`만 남았고, 제거 시 사라진 일시적 binfmt 등록을 복구해 Windows interop 호출을 확인했다. 기존 Ubuntu의 PID 1 시작 시각은 **2026-10-10 12:47:15**로 유지됐으며 기존 배포판 종료·재시작은 하지 않았다. 사용자 전역 OpenCode 설정을 수정하지 않았다. 검증 산출물은 개발용 `AgentBrowser-dev/install-recovery-20261013`에만 보관한다.
 
-**남은 확인:** 실제 사내 계정·보안 정책·D 드라이브에서 새 진단 결과를 받아 원인을 좁혀야 한다. GUI의 조직 관리 상위 폴더 소유자 제한 자체는 유지되며, 해당 환경의 PowerShell 대안을 문서와 오류 메시지로 안내한다. 원인을 확인할 수 없는 실행 기록을 강제로 삭제하거나 전체 WSL을 재시작하는 복구는 제공하지 않는다.
+**남은 확인:** 실제 접근하지 않은 배포 환경에서 새 진단 결과를 받아 원인을 좁혀야 한다. 이전 배포 시점의 설치 안내 이력이다. 현재 설치 경로 검사와 유지보수는 최신 안내를 따른다. 원인을 확인할 수 없는 실행 기록을 강제로 삭제하거나 전체 WSL을 재시작하는 복구는 제공하지 않는다.
 
 ---
 
 # WSL 실패 진단·스크립트 설치 복구 작업 중 — 2026-10-13 KST
 
-사내 `D:\Multimedia\AgentBrowser`에서 v0.1.7을 스크립트로 설치한 뒤 WSL 시작·중지·삭제가 모두 실패했다. 사내 Ubuntu-24.04에서 다른 작업이 실행 중이며, 해당 배포판 종료·재시작이나 실행 기록 강제 삭제를 해결책으로 사용하지 않는다. 사내 장애의 정확한 원인은 아직 미확정이다.
+배포 대상 `<설치 폴더>`에서 v0.1.7을 스크립트로 설치한 뒤 WSL 시작·중지·삭제가 모두 실패했다. 배포 대상 WSL에서 다른 작업이 실행 중이며, 해당 배포판 종료·재시작이나 실행 기록 강제 삭제를 해결책으로 사용하지 않는다. 배포 대상 장애의 정확한 원인은 아직 미확정이다.
 
-진행 중인 v0.1.8 후보에는 WSL 소유 기록/호출 오류 코드, 실행 전 경로·권한·기본 도구 검사, 두 번 클릭하는 `diagnose.cmd`, 비밀값을 제외한 보고서, 설치부터 제거까지의 PowerShell 안내를 추가했다. 새 ZIP의 진단기는 업데이트가 막힌 v0.1.7 설치를 파일 교체 없이 검사할 수 있다. GUI의 조직 관리 상위 폴더 소유자 제한 자체는 해제하지 않았으며, 경로 거절 메시지에 스크립트 대안을 안내한다.
+진행 중인 v0.1.8 후보에는 WSL 소유 기록/호출 오류 코드, 실행 전 경로·권한·기본 도구 검사, 두 번 클릭하는 `diagnose.cmd`, 비밀값을 제외한 보고서, 설치부터 제거까지의 PowerShell 안내를 추가했다. 새 ZIP의 진단기는 업데이트가 막힌 v0.1.7 설치를 파일 교체 없이 검사할 수 있다. 당시 후보의 GUI 경로 제한은 유지했으며, 현재 안내는 최신 버전의 동일 신뢰 검사로 대체한다.
 
 실행한 검증:
 
 - 새 shell 소유 기록 진단 테스트는 기존 코드의 `12` 반환으로 먼저 실패한 뒤 통과했다. 런타임 관련 Linux 단위 테스트 **35/35** 통과. 기존 누락 기록 테스트의 구체적인 종료 코드 기대값을 새 코드로 갱신했으며, 알 수 없는 기록을 종료된 것으로 취급하지 않는 검증은 유지했다.
 - 실제 Windows 테스트 exe + 기존 WSL Ubuntu에서 기본 사용자/명시 사용자 각각 시작 실패 → 중지 → 삭제 → 재등록 성공. 지연 시작 permit 취소, 초기 persist 실패 정리, hidden-console 포함 Windows 전용 테스트 **6/6** 통과. Linux 테스트를 이 결과로 대신하지 않았다.
 - 실제 Windows PowerShell 5.1에서 보고서의 토큰·비밀번호·프로필 이름·경로·원문 제외 테스트 통과. 후보 ZIP으로 기존 Startup 충돌 → `-NoStartup` 설치 → 수동 시작 → 페어링 → 업데이트 → 설치본 진단 → 제거와 외부 바로가기 보존 통과. 테스트 CLI의 `profile delete --id` 누락을 고쳐 다시 실행했다.
-- 후보 ZIP의 진단기로 v0.1.7에 만든 합성 누락 owner 기록을 검사해 `WSL_OWNER_FILE_MISSING`을 확인했다. 기존 exe와 실행 기록 해시는 유지됐다. 이 합성 오류를 사내 원인 재현이라고 보고하지 않는다.
+- 후보 ZIP의 진단기로 v0.1.7에 만든 합성 누락 owner 기록을 검사해 `WSL_OWNER_FILE_MISSING`을 확인했다. 기존 exe와 실행 기록 해시는 유지됐다. 이 합성 오류를 배포 대상 원인 재현이라고 보고하지 않는다.
 - 실제 Windows Bridge + WSL OpenCode 1.18.29에서 게시된 v0.1.7 → 후보 v0.1.8 업데이트, 새 runtime/MCP 경로, browser MCP 연결, 설치 ID·페어링·프로필·세션 보존 통과. 모델 요청·페이지 데이터 접근 없음.
 - `cargo clippy --all-targets`는 기존 경고와 함께 성공했다. 추가로 시도한 `-D warnings`는 기존 collapsible-if/type-complexity/large-error 경고 때문에 실패했으며 통과로 보고하지 않는다.
 
 추가 검증:
 
-- GUI 안내 회귀는 변경 전 **15 통과/1 실패**, 변경 후 **16/16 통과**. 경로 거절 메시지에 회사 지정 경로의 PowerShell 대안을 제공하고 Startup 충돌 시 자동 실행 해제를 안내한다.
+- GUI 안내 회귀는 변경 전 **15 통과/1 실패**, 변경 후 **16/16 통과**. 당시 경로 거절·Startup 충돌 안내를 검사했다. 현재 경로 신뢰 기준과 안내는 v0.1.9에서 변경했다.
 - Windows PowerShell 패키지 검사: allowlist·SHA·manifest·ZIP 재현성, 잘못된 버전/파일 거부, 실제 `-File` 신규 설치/재설치/health/제거(기본 경로와 명시 경로), 필수 문서 누락 거부 모두 통과.
-- [Canonical Ubuntu 24.04 WSL rootfs](https://cloud-images.ubuntu.com/wsl/releases/24.04/current/)를 공식 SHA256 `2a790896740b14d637dbdc583cce1ba081ac53b9e9cdb46dc09a2f73abbd9934`와 대조해 별도 `AgentBrowser-Test-Ubuntu24-20261013` 배포판을 생성했다. 실제 `/etc/os-release` Ubuntu 24.04, OpenCode 1.18.29, 합성 사용자 `abfixture`에서 기본/명시 사용자 실패 복구와 실제 관리 서버 v0.1.7 → v0.1.8 업데이트·MCP 연결·프로필/세션 보존이 통과했다. Windows 테스트 프로세스에서 inherited WSL interop 환경변수를 제거한 경우도 포함한다. 사내 보안 정책·계정·D 드라이브와 동일한 환경이라고 주장하지 않는다.
-- 위 테스트 후 개발 WSL의 binfmt 등록 항목이 사라져 Windows exe 호출이 `Exec format error`로 실패했다. 원인을 사내 장애와 동일시하지 않는다. [Microsoft WSL의 interop 구현](https://github.com/microsoft/WSL/blob/master/doc/docs/technical-documentation/interop.md)에 따라 `/init`으로 Windows WSL 명령을 호출해 누락된 일시적 등록을 복구했다. 기존 배포판 종료·재시작이나 전역 OpenCode 설정 변경은 하지 않았다. 제품에는 이 자동 복구를 넣지 않고 `WSL_INTEROP_REGISTRATION_UNAVAILABLE` 진단만 추가한다. 등록 이름 `WSLInterop-late`도 인식하며, 누락/비활성화 shell fixture는 먼저 실패한 뒤 수정했다.
+- [Canonical Ubuntu 24.04 WSL rootfs](https://cloud-images.ubuntu.com/wsl/releases/24.04/current/)를 공식 SHA256 `2a790896740b14d637dbdc583cce1ba081ac53b9e9cdb46dc09a2f73abbd9934`와 대조해 별도 `AgentBrowser-Test-Ubuntu24-20261013` 배포판을 생성했다. 실제 `/etc/os-release` Ubuntu 24.04, OpenCode 1.18.29, 합성 사용자 `abfixture`에서 기본/명시 사용자 실패 복구와 실제 관리 서버 v0.1.7 → v0.1.8 업데이트·MCP 연결·프로필/세션 보존이 통과했다. Windows 테스트 프로세스에서 inherited WSL interop 환경변수를 제거한 경우도 포함한다. 배포 대상 보안 정책·계정·D 드라이브와 동일한 환경이라고 주장하지 않는다.
+- 위 테스트 후 개발 WSL의 binfmt 등록 항목이 사라져 Windows exe 호출이 `Exec format error`로 실패했다. 원인을 배포 대상 장애와 동일시하지 않는다. [Microsoft WSL의 interop 구현](https://github.com/microsoft/WSL/blob/master/doc/docs/technical-documentation/interop.md)에 따라 `/init`으로 Windows WSL 명령을 호출해 누락된 일시적 등록을 복구했다. 기존 배포판 종료·재시작이나 전역 OpenCode 설정 변경은 하지 않았다. 제품에는 이 자동 복구를 넣지 않고 `WSL_INTEROP_REGISTRATION_UNAVAILABLE` 진단만 추가한다. 등록 이름 `WSLInterop-late`도 인식하며, 누락/비활성화 shell fixture는 먼저 실패한 뒤 수정했다.
 
 - 최종 후보 2 ZIP: **37 files**, SHA256 `fd3056a5c864746278e860d38a1695ae99f85046a6895c2d72db7405cdf030c0`. 이 ZIP의 실제 Windows PowerShell + Ubuntu 24.04에서 이전 설치의 합성 누락 기록 진단/해시 보존, Startup 충돌/NoStartup/시작/페어링/업데이트/진단/제거와 실제 OpenCode 관리 서버 전환을 다시 실행해 통과했다. Linux 파일시스템의 기본 패키징 출력에서도 staging exe 실행 권한 문제 수정 후 ZIP 생성이 성공했다.
 
@@ -41,26 +66,22 @@
 
 ---
 
-# 사내 지정 경로의 PowerShell 설치 안내 — 2026-10-13 KST
+# 이전 PowerShell 설치 안내 검증 — 2026-10-13 KST
 
-사용자가 `D:\Multimedia`는 사내 정책상 확장 등록에 필요한 유일한 경로이며 조직 관리 폴더라고 확인했다. v0.1.7 GUI의 상위 경로 소유자 검사 때문에 계속 거절되므로 기본 위치로 이동하라는 이전 안내는 해당 환경의 해결책이 아니다.
-
-사용자가 요청한 대안 중 **기존 배포 ZIP의 PowerShell 설치 경로**를 제공한다. `setup.ps1`은 GUI의 trusted-owner/상위 ACL 검사를 호출하지 않으며 상위 폴더 권한을 수정하지 않는다. 단, 기존 동작대로 설치 데이터 하위 폴더 DACL을 제한한다. README-install에 별도 압축 해제 위치, 정확한 지정 경로 설치 명령, Chrome 등록·토큰·Options 프로필 설정까지 추가했다. 제품 코드와 GUI 검사, 게시된 태그·자산은 변경하지 않았다.
-
-검증: GitHub의 v0.1.7 ZIP을 다시 다운로드하여 SHA-256 `d90c1a4a7a1a46d20e6cd09a2a2faccf09eee016a1cd8fd85f2c16ecf7336982`를 확인했고, 게시된 `setup.ps1`, `installer-common.ps1`, `show-pairing.ps1`, `start-bridge.ps1`이 검사한 저장소 소스와 바이트 단위로 일치했다. 명령 인수·기본 포트·자동 시작·토큰 출력 경로는 소스로 확인했다. 이번 후속에서 Windows 설치를 새로 실행하지 않았으며 사내 PC 설치 성공과 GUI 수정 완료를 주장하지 않는다. 기존 릴리스의 PowerShell CI 실행 결과와 이번 소스 검사를 구분한다.
+v0.1.7의 GUI와 스크립트 검사 차이를 확인하고 스크립트 사용법을 보완했던 기록이다. 당시 게시 ZIP의 해시와 스크립트 소스 일치를 확인했으며 새 Windows 설치 성공으로 보고하지 않았다. 실제 배포 환경의 경로·계정·정책 설명은 문서에서 제거했다. v0.1.9부터는 GUI·PowerShell의 동일한 경로 신뢰 기준과 최신 설치 안내를 따른다.
 
 ---
 
 # v0.1.7 Windows preview 게시 완료 — 2026-10-13 KST
 
-[v0.1.7 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.7)를 **2026-10-13 03:27:58 UTC**에 게시했다. 사내 PC에서는 이 페이지의 `agent-browser-0.1.7-windows-x64.zip`과 `SHA256SUMS`를 받아 전체 압축을 풀고 `AgentBrowser-Setup.exe`를 실행한다. 설치·Chrome 추가·페어링·OpenCode 설정을 순서대로 진행하는 마법사다.
+[v0.1.7 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.7)를 **2026-10-13 03:27:58 UTC**에 게시했다. 배포 대상 PC에서는 이 페이지의 `agent-browser-0.1.7-windows-x64.zip`과 `SHA256SUMS`를 받아 전체 압축을 풀고 `AgentBrowser-Setup.exe`를 실행한다. 설치·Chrome 추가·페어링·OpenCode 설정을 순서대로 진행하는 마법사다.
 
 - 태그 대상: `298f87856c8cc288a6690697cf281e38bdbab3ba`, [PR #13](https://github.com/jihoon22-lee/agent-browser/pull/13). 최종 `801aa4e`의 코드·보안 검토에 추가 지적이 없고 [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38340280805)와 [태그 대상 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/38341072452)가 Linux·Windows 모두 통과했다. 검토 지적 12개는 회귀·실제 실행 또는 문서 대조로 보완하고 해결했다.
 - 자산: ZIP **3,625,011 bytes / 35 files**, SHA-256 **`d90c1a4a7a1a46d20e6cd09a2a2faccf09eee016a1cd8fd85f2c16ecf7336982`**. GitHub asset digest, 별도 SHA256SUMS, 재다운로드 바이트, 내부 파일 해시·버전·Windows x64 PE·문서 링크·배포 제외 항목을 확인했다. v0.1.6 등 이전 태그·자산은 변경하지 않았다.
 - 최종 main ZIP으로 실제 Windows 신규 설치/재설치·게시된 0.1.6 업데이트·인증 Bridge 시작·제거, 설치 ID·페어링·데이터·JSONC 보존을 확인했다. Windows Bridge + 격리된 WSL OpenCode 1.18.29의 새 runtime/MCP 경로 연결과 프로필·세션 보존도 통과했다.
 - 최종 ZIP의 네이티브 WinForms 컨트롤 자동화로 기존 설치 검색·입력 보존, 준비/뒤로/취소, 시작 실패 복구/재시도, WSL 등록, 프로필 확인/저장/중복 거절/비동기 닫기, 별도 Chrome/페어링/OpenCode/완료 단계, 업데이트와 설치본 handoff/제거를 확인했다. CI는 설치 엔진 **64/64**, 마법사·경로 **17/17**을 통과했고 소유한 실제 임시 NTFS 볼륨의 설치 검사도 포함한다. 기존 runner 드라이브나 사용자 폴더 ACL을 바꾸지 않았다.
 - **게시본 재다운로드 후** Windows 신규 설치/재설치·0.1.6 업데이트·제거와 WSL 관리 OpenCode 전환을 다시 실행해 통과했다. 기록은 개발 폴더의 `release-0.1.7-published-check-a0b4fb`에 있으며 배포물에 넣지 않았다. 개인 운영 설치에는 이번 버전을 적용하지 않았고 전역 OpenCode 설정·사용자 대화·Chrome 프로필을 변경하지 않았다.
-- **미검증:** 사내 설치 경로의 실제 소유자·권한, 물리 마우스 입력, Chrome 확장 수동 로드/토큰 붙여넣기, 실제 모델 작업은 이번 배포 검증의 성공으로 보고하지 않는다. 사내 경로 오류가 계속되면 기본 사용자 설치 위치를 선택할 수 있으며 기존 폴더 권한을 자동 변경하지 않는다.
+- **미검증:** 배포 대상 설치 경로의 실제 소유자·권한, 물리 마우스 입력, Chrome 확장 수동 로드/토큰 붙여넣기, 실제 모델 작업은 이번 배포 검증의 성공으로 보고하지 않는다. 배포 대상 경로 오류가 계속되면 기본 사용자 설치 위치를 선택할 수 있으며 기존 폴더 권한을 자동 변경하지 않는다.
 
 [릴리스 계획](./plans/2026-10-13-release-0.1.7.md)을 완료했다. 이 게시 결과는 태그 이후의 문서 기록이며 태그와 게시 자산을 교체하지 않는다. 아래는 준비·검토·이전 릴리스 이력이다.
 
@@ -68,7 +89,7 @@
 
 # v0.1.7 배포 준비 이력 — 2026-10-13 KST
 
-사용자가 로컬 시험 파일 대신 버전을 올려 사내 PC에서 받을 수 있게 배포하라고 명시적으로 요청했다. Bridge·Extension을 0.1.7로 맞추고 [새 릴리스 계획](./plans/2026-10-13-release-0.1.7.md)에 따라 PR·CI·자동 검토·main 병합·GitHub prerelease 게시와 게시본 재다운로드 검증을 진행한다. 아래 로컬 시험 시점의 배포 제외 문구는 이 후속 요청으로 대체된다. 개인 운영 설치와 기존 태그·자산은 변경하지 않는다.
+사용자가 로컬 시험 파일 대신 버전을 올려 배포 대상 PC에서 받을 수 있게 배포하라고 명시적으로 요청했다. Bridge·Extension을 0.1.7로 맞추고 [새 릴리스 계획](./plans/2026-10-13-release-0.1.7.md)에 따라 PR·CI·자동 검토·main 병합·GitHub prerelease 게시와 게시본 재다운로드 검증을 진행한다. 아래 로컬 시험 시점의 배포 제외 문구는 이 후속 요청으로 대체된다. 개인 운영 설치와 기존 태그·자산은 변경하지 않는다.
 
 ## PR #13 첫 검토 보완
 
@@ -104,9 +125,9 @@ CI 전용 helper가 고유한 256 MiB 동적 VHDX를 만들고, 그 이미지에
 
 # Windows 설치 마법사 수정 — 로컬 시험본 (2026-10-13 KST)
 
-사용자가 사내 PC의 `D:\Multimedia\AgentBrowser`에서 설치 전 Bridge 시작을 눌러 소유자 오류가 발생했다고 보고했다. 후속 요청에 따라 기능을 모아 둔 관리 화면을 **시작 → 설치 위치 → 준비 → 진행 → Chrome 확장 추가 → 페어링 → OpenCode 설정 → 완료**로 변경했다. Chrome 추가·페어링·프로필 설정을 한 화면에 배치한 중간안은 폐기했다. 각 화면은 한 작업만 제공하고, 고급 설정은 별도 창에서 연다. 설치·페어링 준비에서 Bridge를 자동 시작하며 마지막 화면에는 마침만 남는다. 창 크기·타이포그래피·여백·기본 버튼 색을 함께 정리했다.
+사용자가 배포 대상 PC의 `<설치 폴더>`에서 설치 전 Bridge 시작을 눌러 소유자 오류가 발생했다고 보고했다. 후속 요청에 따라 기능을 모아 둔 관리 화면을 **시작 → 설치 위치 → 준비 → 진행 → Chrome 확장 추가 → 페어링 → OpenCode 설정 → 완료**로 변경했다. Chrome 추가·페어링·프로필 설정을 한 화면에 배치한 중간안은 폐기했다. 각 화면은 한 작업만 제공하고, 고급 설정은 별도 창에서 연다. 설치·페어링 준비에서 Bridge를 자동 시작하며 마지막 화면에는 마침만 남는다. 창 크기·타이포그래피·여백·기본 버튼 색을 함께 정리했다.
 
-경로 검사 오류는 문제가 된 폴더와 한국어 복구 안내를 표시하며 **기본 위치로 되돌리기**로 개인 AppData 위치를 선택할 수 있다. 개인 PC의 D 드라이브 검사에서는 볼륨 루트 자체의 DELETE 권한을 설치 폴더 교체 권한으로 오인하는 별도 오류를 재현하고 수정했다. 하위 항목 삭제·ACL 변경·소유자 변경·다른 사용자 소유·일반 상위 폴더의 교체 권한 검사는 유지한다. **사내 경로의 실제 소유자와 권한은 접근할 수 없어 미확정이며, 이 수정으로 사내 설치가 해결됐다고 보고하지 않는다.** 기존 폴더·부모의 ACL과 운영 설치는 변경하지 않았다.
+경로 검사 오류는 문제가 된 폴더와 한국어 복구 안내를 표시하며 **기본 위치로 되돌리기**로 개인 AppData 위치를 선택할 수 있다. 개인 PC의 D 드라이브 검사에서는 볼륨 루트 자체의 DELETE 권한을 설치 폴더 교체 권한으로 오인하는 별도 오류를 재현하고 수정했다. 하위 항목 삭제·ACL 변경·소유자 변경·다른 사용자 소유·일반 상위 폴더의 교체 권한 검사는 유지한다. **배포 대상 경로의 실제 소유자와 권한은 접근할 수 없어 미확정이며, 이 수정으로 배포 대상 설치가 해결됐다고 보고하지 않는다.** 기존 폴더·부모의 ACL과 운영 설치는 변경하지 않았다.
 
 검증:
 
@@ -129,7 +150,7 @@ CI 전용 helper가 고유한 256 MiB 동적 VHDX를 만들고, 그 이미지에
 - 최종 ZIP으로 실제 관리 WSL OpenCode의 v0.1.5→v0.1.6 업데이트도 통과했다. 새 runtime instance·새 Bridge/MCP 경로·MCP connected, 세션·설치 ID·페어링·프로필 보존을 확인하고 해당 격리 설치를 제거했다.
 - 잠금 해제 후 설치 GUI의 실제 마우스 클릭·선택 키 경로가 통과했다. 미리보기/취소, 시작 실패/rollback/재시도, WSL 등록, 프로필 검증·저장·중복 방지·검증 중 닫기, 업데이트, 설치된 GUI의 handoff와 제거·데이터 보존을 확인했다. 최초 Documents/Codex 시험 경로는 공유 쓰기 권한 검사에서 거절되어 부모 ACL을 바꾸지 않고 새 개인 AppData 경로에서 재실행했다. 이때 검사한 Setup.exe는 최종 ZIP과 동일한 바이트다. 패널 입력은 별도로 CDP/DOM 이벤트를 사용했다.
 - **게시본 재다운로드 후** 실제 Windows 신규 설치/재설치, 게시된 v0.1.5에서 업데이트, 인증된 Bridge 시작, 버전·설치 ID·페어링·데이터·JSONC 보존, 제거와 데이터 보존을 다시 확인해 모두 통과했다. `/tmp/ab-published16-install-smoke.log`에 기록했다. 운영 설치는 읽기 전용 확인에서 여전히 v0.1.5였으며 자동 업데이트하지 않았다.
-- **미검증:** 실제 Zen 무료 모델은 0원 카탈로그·공식 가용성 확인 뒤 한 차례 호출했으나 HTTP 403/FreeTierError로 거부되어 도구 실행 0건이다. 실제 모델의 작업 수행 성공, 사내 환경, 최소 Chrome 116 자체의 검증은 통과로 보고하지 않는다. requestId 안내 개선이 모든 모델의 인자 누락을 방지한다고 보장하지 않는다.
+- **미검증:** 실제 Zen 무료 모델은 0원 카탈로그·공식 가용성 확인 뒤 한 차례 호출했으나 HTTP 403/FreeTierError로 거부되어 도구 실행 0건이다. 실제 모델의 작업 수행 성공, 배포 대상 환경, 최소 Chrome 116 자체의 검증은 통과로 보고하지 않는다. requestId 안내 개선이 모든 모델의 인자 누락을 방지한다고 보장하지 않는다.
 
 [릴리스 계획](./plans/2026-10-12-release-0.1.6.md)을 완료했다. 아래는 준비·회귀 검증의 시점별 이력이다. 이 게시 결과 기록은 태그 이후 문서 변경이며 릴리스 태그와 자산을 교체하지 않는다.
 
@@ -308,7 +329,7 @@ PR #7 통합 추가 검사: handlers/panel-requests 단위 **84/84**, 빌드·E2
 - 최종 v0.1.5 Windows Chrome 154.0.8037.99 핵심 경로: 실제 패널/요청 예약 13개, 게시판 8개 통과. 생성 탭 닫기 뒤 요청 유지·원래 탭 보호·명시적 복귀·iframe 대기·href 변경 참조 거부를 하나의 시나리오에서 확인했다. 실제 BFCache persisted=true와 beforeunload 취소 후 소유권/URL 보존을 확인했다.
 - 격리 WSL OpenCode 1.18.29가 구성한 MCP 명령→Windows Bridge 0.1.5→실제 Chrome 확장→same/cross/nested iframe·OOPIF 2개 경로가 통과했다. HTTP/MCP 준비, 자체 런타임 stopped 및 프로세스 정리를 확인했다. 모델 호출은 0회다.
 - PR 첫 리뷰의 Chrome 재시작 예약 유실, 완료 후 Stop 누락, 선택적 finish 미처리, 삭제 세션 404 고착을 실패 회귀로 재현하고 수정했다. 예약은 durable local storage에 보존하며 busy/retry 및 명시적 비종료 finish는 계속 보류한다. 선택 경합은 같은 selection lock으로 보호한다.
-- 합성 입력 isTrusted=false, 비표준 편집기의 저장 상태, 검사 뒤 동시 편집의 한계는 유지한다. 사내 서비스·구형 WSL VM·실제 WSL shutdown·커널 자원고갈을 검증했다고 주장하지 않는다. debugger 권한이나 Chrome 보안 설정을 추가하지 않는다.
+- 합성 입력 isTrusted=false, 비표준 편집기의 저장 상태, 검사 뒤 동시 편집의 한계는 유지한다. 배포 대상 서비스·구형 WSL VM·실제 WSL shutdown·커널 자원고갈을 검증했다고 주장하지 않는다. debugger 권한이나 Chrome 보안 설정을 추가하지 않는다.
 - 새 탭 생성·창 선택·링크 새 탭 열기·선택 권한 즐겨찾기 최종 8572c9b도 통합했다. standalone new를 패널 requestId와 연결하고 기본 탭이 없는 경우를 별도 회귀로 검증한다. 즐겨찾기는 optional permission이며 실제 사용자 동의를 자동 승인하지 않는다. 이후 최종 PR CI/유의미한 리뷰, 병합, 게시본 재다운로드·격리 설치/업데이트 검증까지 수행한다.
 
 아래는 각 독립 작업과 이전 릴리스의 검증 이력이다. 당시의 승인·배포 상태는 위 현재 상태와 구분한다.
@@ -413,7 +434,7 @@ snapshot 재시도는 같은 request의 tabId/operationId를 유지하고 읽기
 | 탭 전경 활성화 | switch는 작업 대상만 변경한다. 진행 중인 별도 활성 탭 작업과 중복 구현하지 않음 |
 | 향후 검토 | close-and-return 복합 동작, 안정된 목록 조건을 표현하는 wait 개선. 이번 검증된 명시적 조합으로 수행 가능 |
 
-실제 모델/OpenCode 판단, 사내 환경, 다른 Chrome 버전, 일반 사용자 사이트 데이터는 이번 시험에 포함되지 않았다. 닫힌 Shadow DOM/canvas 및 사이트 자체 메모리에만 있는 미저장 데이터는 일반 DOM 검사로 저장 여부를 보장할 수 없다. beforeunload 경고의 허용/거부 정책은 Chrome에 맡기며 우회하지 않는다. 같은 URL·같은 문서의 무관측 no-op history 이동은 timeout일 수 있다. DOM의 의미 정보가 동일한 채 JS closure만 바뀌는 임의 사이트의 논리까지 검증하지 않는다. load 완료가 지연 목록 준비를 뜻하지 않으므로 browser_wait와 새 snapshot이 계속 필요하다.
+실제 모델/OpenCode 판단, 배포 대상 환경, 다른 Chrome 버전, 일반 사용자 사이트 데이터는 이번 시험에 포함되지 않았다. 닫힌 Shadow DOM/canvas 및 사이트 자체 메모리에만 있는 미저장 데이터는 일반 DOM 검사로 저장 여부를 보장할 수 없다. beforeunload 경고의 허용/거부 정책은 Chrome에 맡기며 우회하지 않는다. 같은 URL·같은 문서의 무관측 no-op history 이동은 timeout일 수 있다. DOM의 의미 정보가 동일한 채 JS closure만 바뀌는 임의 사이트의 논리까지 검증하지 않는다. load 완료가 지연 목록 준비를 뜻하지 않으므로 browser_wait와 새 snapshot이 계속 필요하다.
 
 현재 범위의 구현 blocker는 없다. 배포·다른 작업과의 통합은 별도 승인 범위다.
 
@@ -424,7 +445,7 @@ snapshot 재시도는 같은 request의 tabId/operationId를 유지하고 읽기
 다음 개선 후보(검토 backlog): [M5 계획](./plans/2026-10-11-m5-usability-polish.md)의 "다음 개선 후보".
 
 **사용자 확인(2026-10-11)**: 사용자가 개인 PC의 WSL OpenCode로 실제 대화와 브라우저 제어가 동작함을 확인했다.
-이후 실제 사용 검증(실제 모델 반복 시연, 사내·다른 PC 환경, 로그인 후 자동 실행 등)은 별도의 남은 항목으로 두지 않는다.
+이후 실제 사용 검증(실제 모델 반복 시연, 배포 대상·다른 PC 환경, 로그인 후 자동 실행 등)은 별도의 남은 항목으로 두지 않는다.
 실제 사용 중 발견한 문제는 이슈로 받아 처리한다. 이 결정은 이전 Zen 무료 모델 파일럿(HTTP 403, 도구 0건)을 통과로 바꾸지 않는다.
 
 이전 단계의 계획·재개 기록은 git 이력에 있다(M1 계획, M2–M4 계획, 배포 준비 계획, `m1-resume.md`).
@@ -435,7 +456,7 @@ snapshot 재시도는 같은 request의 tabId/operationId를 유지하고 읽기
 - `[CmdletBinding()]` + `-File`에서는 param의 `$PSScriptRoot`가 비고, 본문과 직접 `&` 호출에서는 정상이다. 실패 경로는 setup → Read-VerifiedPackage → Get-FullPath다. 프로세스 조회 전에 실패하며 CIM 빈 경로 후보는 이번 수정에서 제외했다.
 - 기존 package 테스트에 실제 자식 `powershell.exe -File` 설치·제거를 추가했다. setup 수정 전 설치 실패, setup만 수정한 뒤 uninstall 실패를 각각 확인하고 두 기본값을 본문으로 옮겼다. 명시한 경로 인수는 그대로 유지한다.
 - 제품 로직 변경은 `scripts/setup.ps1`, `scripts/uninstall.ps1`의 기본 경로 초기화뿐이다. 버전은 Cargo workspace/lockfile·Extension manifest에서 함께 0.1.4로 갱신한다.
-- 최종 로컬 0.1.4 Windows exe로 package 5개 그룹(실제 ZIP·생략/명시 -File 수명주기 포함), 기존 installer 12개가 통과했다. Extension 타입 검사/빌드, 제3자 고지 생성, 문서 helper 3개·Markdown 링크 20개, `git diff --check`도 통과했다. 로컬 Windows exe SHA-256은 `c36b17f1401adbeb044b3b8bcae58480eaf66078720859440849980b3de819e9`다. PR 최신 head의 CI/코드/보안 리뷰를 완료한 뒤 병합하고, main CI 패키지를 재다운로드·실설치 검증한 후 게시한다. 사내 PC 직접 실행·실제 모델 요청·운영 설치 업데이트는 수행하지 않는다.
+- 최종 로컬 0.1.4 Windows exe로 package 5개 그룹(실제 ZIP·생략/명시 -File 수명주기 포함), 기존 installer 12개가 통과했다. Extension 타입 검사/빌드, 제3자 고지 생성, 문서 helper 3개·Markdown 링크 20개, `git diff --check`도 통과했다. 로컬 Windows exe SHA-256은 `c36b17f1401adbeb044b3b8bcae58480eaf66078720859440849980b3de819e9`다. PR 최신 head의 CI/코드/보안 리뷰를 완료한 뒤 병합하고, main CI 패키지를 재다운로드·실설치 검증한 후 게시한다. 배포 대상 PC 직접 실행·실제 모델 요청·운영 설치 업데이트는 수행하지 않는다.
 
 ## PR #3 3차 리뷰 수정 · v0.1.3
 
@@ -492,7 +513,7 @@ WSL 정리는 제한된 재시도 뒤에도 신원을 확인할 수 없으면 �
 테스트 중 한 번의 합성 runtime 실행은 호출 환경변수가 누락되어 제품 시작 전에 중단됐으며, 명시적 환경으로 다시 실행한 위 7개 결과만 제품 검증으로 집계했다.
 
 변경 파일: `bridge/src/runtime/mod.rs`, `extension/src/sidepanel/use-workbench.ts`, `extension/test/workbench.test.ts`, `CHANGELOG.md`, `docs/status.md`, `docs/testing.md`.
-실제 모델·OpenCode CLI 전체 통합·사내 환경은 미검증이다. 새 Windows→WSL 테스트는 WSL 없는 hosted CI에서 기본 제외하며 로컬에서 명시적으로 실행했다. 원격 CI 결과는 PR의 해당 head 실행을 별도로 확인한다. 병합·배포·release·설치본 업데이트는 수행하지 않는다.
+실제 모델·OpenCode CLI 전체 통합·배포 대상 환경은 미검증이다. 새 Windows→WSL 테스트는 WSL 없는 hosted CI에서 기본 제외하며 로컬에서 명시적으로 실행했다. 원격 CI 결과는 PR의 해당 head 실행을 별도로 확인한다. 병합·배포·release·설치본 업데이트는 수행하지 않는다.
 
 ## 리뷰 1차 수정 — 6030343 로컬 검증 (2026-10-11)
 
@@ -550,7 +571,7 @@ Clippy의 남은 경고는 기준 main의 동일 코드와 대조했다. `conn.r
 - Extension 회귀: `extension/test/actions.test.ts`, `extension/test/content-cancellation.test.ts`, `extension/test/handlers.test.ts`, `extension/test/keyboard.test.ts`, `extension/test/workbench.test.ts`.
 - 문서: `CHANGELOG.md`, `docs/protocol.md`, `docs/status.md`, `docs/testing.md`.
 
-남은 구현 blocker는 없다. 검증 범위는 Windows 11 + WSL Ubuntu 26의 합성 서버/API/DOM 및 실제 격리 Chrome이다. 실제 OpenCode CLI→모델 end-to-end, 실제 모델 추론, 사내 Windows/Ubuntu 24, RHEL, 원격 CI는 이번 작업에서 실행하지 않았다. Windows Rust의 나머지 integration target·일반 설치/패키징 전체도 이번 최종 실행에는 포함하지 않았다. R01은 고정 SDK/rmcp 취소 경로의 소스 확인 + 실제 MCP stdio 취소 프로토콜 검사이며, 실제 OpenCode 세션 취소 시연과 혼동하지 않는다. 요청하지 않은 배포·전역 OpenCode 설정 변경·무관한 프로세스 종료는 하지 않았다.
+남은 구현 blocker는 없다. 검증 범위는 Windows 11 + WSL Ubuntu 26의 합성 서버/API/DOM 및 실제 격리 Chrome이다. 실제 OpenCode CLI→모델 end-to-end, 실제 모델 추론, 접근하지 않은 OS·배포 환경, 원격 CI는 이번 작업에서 실행하지 않았다. Windows Rust의 나머지 integration target·일반 설치/패키징 전체도 이번 최종 실행에는 포함하지 않았다. R01은 고정 SDK/rmcp 취소 경로의 소스 확인 + 실제 MCP stdio 취소 프로토콜 검사이며, 실제 OpenCode 세션 취소 시연과 혼동하지 않는다. 요청하지 않은 배포·전역 OpenCode 설정 변경·무관한 프로세스 종료는 하지 않았다.
 
 로컬 검증 로그와 합성 결과 JSON은 별도 검증 작업 폴더에 보존했다. 테스트 exe·확장도 격리된 Windows 검증 폴더에만 생성했다. 운영 설치의 v0.1.2 파일은 대체하지 않았다.
 
