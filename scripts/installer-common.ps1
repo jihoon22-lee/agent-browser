@@ -346,17 +346,8 @@ function Undo-FileTransaction($Transaction) {
         throw ('Rollback needs inspection: ' + ($conflicts -join '; '))
     }
 }
-function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
+function Set-PrivateDirectoryAccess([string]$Path) {
     Assert-PlainPath $Path
-    $ownerPath = Join-Path $Path '.agent-browser-data-owner.json'
-    if (Test-Path -LiteralPath $Path) {
-        if (Test-Path -LiteralPath $ownerPath) {
-            $owner = (Read-Utf8Text $ownerPath) | ConvertFrom-Json
-            if ($owner.Product -ne $script:AgentBrowserProduct -or $owner.InstallId -ne $InstallId) { throw 'Bridge data belongs to a different installation.' }
-        } elseif (@(Get-ChildItem -LiteralPath $Path -Force).Count -gt 0) { throw 'Existing unowned data directory will not be changed.' }
-    } else { $null = New-Item -ItemType Directory -Path $Path -Force }
-    # The directory is now verified as empty or owned; protect credentials even
-    # when the caller pre-created an empty data directory.
     $acl = [IO.Directory]::GetAccessControl($Path, [Security.AccessControl.AccessControlSections]::Access)
     $acl.SetAccessRuleProtection($true, $false)
     foreach ($existingRule in @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))) { $null = $acl.RemoveAccessRuleAll($existingRule) }
@@ -368,6 +359,30 @@ function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
     # Change only the DACL, preserving ownership and audit policy. Set-Acl on a
     # fresh descriptor may request SeSecurityPrivilege on repeated installation.
     [IO.Directory]::SetAccessControl($Path, $acl)
+}
+function New-PrivateInstallDirectory([string]$Path) {
+    if(-not (Test-Path -LiteralPath $Path)) {
+        $null=New-Item -ItemType Directory -Path $Path -Force
+        Assert-PlainPath $Path
+        $trusted=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+        $owner=[IO.Directory]::GetAccessControl($Path,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value
+        if($owner -notin $trusted){throw 'The new installation directory changed ownership; no permissions were changed.'}
+        Set-PrivateDirectoryAccess $Path
+    }
+    Assert-PrivateInstallPath $Path
+}
+function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
+    Assert-PlainPath $Path
+    $ownerPath = Join-Path $Path '.agent-browser-data-owner.json'
+    if (Test-Path -LiteralPath $Path) {
+        if (Test-Path -LiteralPath $ownerPath) {
+            $owner = (Read-Utf8Text $ownerPath) | ConvertFrom-Json
+            if ($owner.Product -ne $script:AgentBrowserProduct -or $owner.InstallId -ne $InstallId) { throw 'Bridge data belongs to a different installation.' }
+        } elseif (@(Get-ChildItem -LiteralPath $Path -Force).Count -gt 0) { throw 'Existing unowned data directory will not be changed.' }
+    } else { $null = New-Item -ItemType Directory -Path $Path -Force }
+    # The directory is now verified as empty or owned; protect credentials even
+    # when the caller pre-created an empty data directory.
+    Set-PrivateDirectoryAccess $Path
     if (-not (Test-Path -LiteralPath $ownerPath)) { Write-Utf8Atomic $ownerPath (ConvertTo-Json @{ Product=$script:AgentBrowserProduct; InstallId=$InstallId }) }
 }
 function Get-BridgeProcessMarker([string]$DataHome) {

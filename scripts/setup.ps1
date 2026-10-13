@@ -97,7 +97,7 @@ if ($OpenCodeConfig) {
 }
 $state.OwnedFiles = @($owned.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Path=$_.Key; Sha256=$_.Value } })
 
-if (-not (Test-Path -LiteralPath $root)) { $null = New-Item -ItemType Directory -Path $root -Force }
+New-PrivateInstallDirectory $root
 $lockPath = Join-Path $root '.agent-browser-install.lock'
 $lock = $null; $transaction = $null; $committed = $false; $rollbackOk = $true; $stoppedOld = $false; $startedNew = $false
 try {
