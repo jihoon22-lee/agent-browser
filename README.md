@@ -5,10 +5,10 @@ Windows 네이티브와 WSL OpenCode 모두 같은 Windows Bridge를 사용합�
 
 ## 처음 사용하기
 
-[GitHub Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 Windows x64 zip을 받습니다.
-zip은 다운로드 폴더 등 **아무 임시 폴더에 압축 해제**하고 `setup.ps1`을 실행합니다.
-설치 프로그램이 고정 설치 경로에 파일을 복사합니다. 그 경로에 직접 압축을 풀 필요는 없습니다.
-기본 설치 위치는 `%LOCALAPPDATA%\AgentBrowser`이며, `D:\Multimedia\AgentBrowser` 같은 별도 위치는 `-InstallDir`로 지정합니다. Chrome에는 실제 설치 폴더 아래 `extension`을 로드합니다.
+[GitHub Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 Windows x64 ZIP과 같은 버전의 체크섬을 받습니다.
+해시를 확인하고 임시 폴더에 전체 압축을 푼 뒤 **AgentBrowser-Setup.exe**를 실행합니다.
+기본 설치 위치는 `%LOCALAPPDATA%\AgentBrowser`입니다. Chrome에는 실제 설치 폴더 아래 `extension`을 로드합니다.
+업데이트는 새 ZIP의 설치 관리자에서 기존 설치를 선택하고, 완료 후 Chrome 확장을 새로고침합니다.
 
 설치만 마쳤다면 **Chrome 확장 로드 → 토큰 페어링 → 패널의 실행 환경 선택 → 새 세션** 순서로 진행합니다.
 실행할 버튼과 명령은 [설치·첫 연결 안내](README-install.md)와 [사용 안내](docs/user-guide.md)에 있습니다.
@@ -31,7 +31,7 @@ zip은 다운로드 폴더 등 **아무 임시 폴더에 압축 해제**하고 `
 - 사용자 영역 설치, Startup 등록, 수동 업데이트와 소유 파일·프로세스만 제거.
 
 현재는 시험 배포입니다. 결정적 브라우저·API·설치 검증과 실제 모델 판단은 구분합니다.
-실제 모델 작업 수행과 사내 환경은 사용자 검증 대상으로 남아 있습니다. 닫힌 Shadow DOM·canvas 내부·OS 대화상자·대화형 터미널은 지원하지 않습니다.
+실제 모델 작업 수행과 배포 대상 환경은 사용자 검증 대상으로 남아 있습니다. 닫힌 Shadow DOM·canvas 내부·OS 대화상자·대화형 터미널은 지원하지 않습니다.
 세부 호환성은 [OpenCode v1 지원표](docs/opencode-v1-compatibility.md), 실행 증거는 [상태](docs/status.md)를 확인하세요.
 
 ## 개발·검증·배포

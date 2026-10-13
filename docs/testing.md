@@ -322,7 +322,7 @@ node tests/e2e/request-target.windows.mjs
 
 `node tests/e2e/iframe.windows.mjs`는 실제 Windows Chrome + MSVC Bridge + 빌드 확장으로 MCP → background → 격리 content 경로를 검사한다. `tests/fixtures/iframe.mjs`의 합성 같은 출처·다른 출처·중첩 iframe만 이용하며 새 임시 프로필·HOME·포트를 사용한다. `AB_BRIDGE_EXE`와 `AB_EXTENSION_DIR`로 격리 패키지를 지정할 수 있고 활성 탭 스크립트도 같은 변수를 지원한다. 운영 설치·Chrome 프로필은 읽거나 변경하지 않는다.
 
-검사 항목: inline/키보드 후보, 좌표 조건과 스크롤, isTrusted 거절 유지, 체크박스 기본 활성화, 새 탭 편입, frameRef의 텍스트·URL 범위, 본문 교체 후 대기, 오래된 요소 및 문서 이동 후 프레임 참조 거부. 결과 JSON은 ignored `tests/agent/results/iframe.json`에 기록한다. 실제 모델 호출과 사내 서비스 접속은 포함하지 않는다.
+검사 항목: inline/키보드 후보, 좌표 조건과 스크롤, isTrusted 거절 유지, 체크박스 기본 활성화, 새 탭 편입, frameRef의 텍스트·URL 범위, 본문 교체 후 대기, 오래된 요소 및 문서 이동 후 프레임 참조 거부. 결과 JSON은 ignored `tests/agent/results/iframe.json`에 기록한다. 실제 모델 호출과 배포 대상 서비스 접속은 포함하지 않는다.
 
 실제 패널 경계 추가 검증: Stop 후 늦은 attach 거부, 비동기 활성 탭 캡처 중 취소 뒤 미전송, HTTP 400 admission 거절 뒤 정확한 예약 해제를 포함해 요청 단위 전체 경로 12개를 검사한다. OpenCode fixture는 정상 응답 종료의 finish=stop을 실제 v1 필드로 제공한다.
 ## WSL interop 회귀
@@ -415,7 +415,7 @@ AB_TEST_BFCACHE는 Playwright의 기본 `--disable-back-forward-cache` 인수를
 
 기존 NativeEngineTests가 idle/busy/retry/잘못된 상태 응답, 취소 복구, Start=false, 변경 없는 재적용을 검사한다. 외부 프로필의 URL은 시험에서 도달 불가능한 값이며 호출하지 않아야 한다.
 
-`tests/install/ManagedRuntimeUpgradeTests.cs`를 installer C# 소스와 함께 별도 Main으로 컴파일하면 실제 Windows/WSL 업데이트를 시험할 수 있다. 인수는 이전 게시 패키지, 새 후보 패키지(예: 0.1.6 → 0.1.7), **새 개인 Windows fixture 폴더**, 미리 생성한 격리 Linux 작업 폴더다. 두 패키지의 버전은 달라야 하며 기대 버전은 각 manifest에서 읽는다. Linux 폴더에는 빈 `opencode.json`을 두며 XDG config/data/state/cache는 그 아래로 격리한다. 현재 시험 대상은 Ubuntu의 `/home/jihoon/.opencode/bin/opencode` 1.18.29다. 테스트는 합성 페어링을 자신의 데이터에만 기록하고 빈 세션만 생성하며 모델 요청/사용자 Chrome 접근을 하지 않는다. 완료 또는 실패 시 자신의 설치를 uninstall한다. 사용자 운영 폴더에 실행하지 않는다.
+`tests/install/ManagedRuntimeUpgradeTests.cs`를 installer C# 소스와 함께 별도 Main으로 컴파일하면 실제 Windows/WSL 업데이트를 시험할 수 있다. 인수는 이전 게시 패키지, 새 후보 패키지(예: 0.1.6 → 0.1.7), **새 개인 Windows fixture 폴더**, 미리 생성한 격리 Linux 작업 폴더다. 두 패키지의 버전은 달라야 하며 기대 버전은 각 manifest에서 읽는다. Linux 폴더에는 빈 `opencode.json`을 두며 XDG config/data/state/cache는 그 아래로 격리한다. 배포판·사용자·실행 파일의 선택 인수 3개를 추가해 환경을 명시할 수 있다. 검증된 OpenCode 1.18.29의 절대 경로를 사용한다. 테스트는 합성 페어링을 자신의 데이터에만 기록하고 빈 세션만 생성하며 모델 요청/사용자 Chrome 접근을 하지 않는다. 완료 또는 실패 시 자신의 설치를 uninstall한다. 사용자 운영 폴더에 실행하지 않는다.
 
 
 ### 실제 OpenCode와 headed Windows 사이드 패널
@@ -430,3 +430,20 @@ node tests/e2e/opencode-panel.windows.mjs --wsl
 설치된 Windows OpenCode 1.18.29의 기본 검증 경로는 `%LOCALAPPDATA%/AgentBrowser-dev/opencode/1.18.29/opencode.exe`이며 `AB_OPENCODE_EXE`로 바꿀 수 있다. WSL 검사는 Ubuntu의 `/home/jihoon/.opencode/bin/opencode`를 사용하고 `AB_WSL_OPENCODE`로 변경할 수 있다. `AB_BRIDGE_EXE`·`AB_EXTENSION_DIR`로 최종 패키지를 지정할 수 있다. 실제 `sidePanel.open`과 CDP/DOM 입력을 사용하며 물리 마우스 입력은 아니다.
 
 각 실행은 격리된 설정·프로필·포트·합성 페이지와 localhost provider를 사용한다. WSL provider는 WSL loopback에서 실행한다. 두 탭의 새 요청, ID 누락 오류 뒤 교정, attach/snapshot, 정상·오류 응답 뒤 lease/중단 버튼 정리를 확인하고 관리 runtime을 중지한다. 결과 JSON·패널 PNG는 개발 `tests/agent/results`에만 저장한다. Zen 검사는 `--model opencode/<무료 모델 ID>`를 별도로 지정한다. 카탈로그 갱신과 모든 비용 0·공식 live 목록 가용성 확인을 통과해야 실행하며, 외부 모델 성공 여부는 합성 검사와 별도로 보고한다.
+
+## v0.1.9 연속 작업과 실제 OpenCode 통합
+
+[상세 사례표](./review-2026-10-13.md)의 J01–J28은 52개 실행 사례다. 기존 전체 E2E에 기본 포함하며 새 탭 생성만이 아니라 기존 탭 이동·입력/저장·닫기·사용자 팝업 닫기·복귀·다음 요청을 연결한다.
+
+```sh
+pnpm --filter agent-browser-e2e exec playwright test journeys.spec.ts
+bash scripts/test-windows.sh --headed -- journeys.spec.ts
+```
+
+두 번째 명령은 WSL에서 Windows MSVC exe·고정 테스트 의존성을 전용 폴더에 복사하고 native Windows Node와 설치된 Chrome을 실행한다. Linux 결과와 Windows 결과를 구분하고 보고서의 실제 버전을 기록한다. 전체 결과에서 기본 bookmarks 허용 fixture 및 BFCache의 환경별 제외를 숨기지 않는다.
+
+실제 패널 통합은 준비된 native Windows 작업 폴더에서 `node tests/e2e/opencode-panel.windows.mjs` 및 `--wsl`로 실행한다. 실제 OpenCode 1.18.29·MCP에 합성 provider를 붙여 2개 기존 요청, 12개 연속 작업, provider 오류 뒤 정리를 검사한다. 합성 응답 검사와 `--model opencode/<검증한-무료-ID>`의 실제 모델 검사를 구분한다. 무료 카탈로그와 실제 허용은 별개이며 403·한도 실패 때 중단한다. 테스트를 위해 전역 OpenCode 설정을 수정하지 않는다.
+
+추가 Windows PowerShell 회귀는 `security-review.tests.ps1`, `diagnostics.tests.ps1`, `runtime-cleanup.tests.ps1` 및 `install.tests.ps1`에 있다. 정상 개인 폴더를 통과하는 양성 대조군을 둔 뒤 ACL·상태·실행 기록을 합성 변경해 거부를 확인한다. 임시 폴더 자체가 공유 쓰기인 개발 환경에서는 테스트 프로세스의 TEMP/TMP만 별도 개인 폴더로 지정한다. 기존 시스템 폴더 ACL을 바꾸지 않는다.
+
+Windows ignored WSL 단위 테스트는 `AGENT_BROWSER_TEST_EXE`에 동일 소스의 실제 Windows Bridge를 지정한다. Rust test harness 자체는 `--version` CLI가 없어 실제 Windows 실행 canary로 사용할 수 없다. 해당 환경 변수는 테스트 빌드의 canary에만 적용되며 제품은 자기 exe를 사용한다.
