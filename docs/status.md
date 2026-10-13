@@ -1,3 +1,13 @@
+# 사내 지정 경로의 PowerShell 설치 안내 — 2026-10-13 KST
+
+사용자가 `D:\Multimedia`는 사내 정책상 확장 등록에 필요한 유일한 경로이며 조직 관리 폴더라고 확인했다. v0.1.7 GUI의 상위 경로 소유자 검사 때문에 계속 거절되므로 기본 위치로 이동하라는 이전 안내는 해당 환경의 해결책이 아니다.
+
+사용자가 요청한 대안 중 **기존 배포 ZIP의 PowerShell 설치 경로**를 제공한다. `setup.ps1`은 GUI의 trusted-owner/상위 ACL 검사를 호출하지 않으며 상위 폴더 권한을 수정하지 않는다. 단, 기존 동작대로 설치 데이터 하위 폴더 DACL을 제한한다. README-install에 별도 압축 해제 위치, 정확한 지정 경로 설치 명령, Chrome 등록·토큰·Options 프로필 설정까지 추가했다. 제품 코드와 GUI 검사, 게시된 태그·자산은 변경하지 않았다.
+
+검증: GitHub의 v0.1.7 ZIP을 다시 다운로드하여 SHA-256 `d90c1a4a7a1a46d20e6cd09a2a2faccf09eee016a1cd8fd85f2c16ecf7336982`를 확인했고, 게시된 `setup.ps1`, `installer-common.ps1`, `show-pairing.ps1`, `start-bridge.ps1`이 검사한 저장소 소스와 바이트 단위로 일치했다. 명령 인수·기본 포트·자동 시작·토큰 출력 경로는 소스로 확인했다. 이번 후속에서 Windows 설치를 새로 실행하지 않았으며 사내 PC 설치 성공과 GUI 수정 완료를 주장하지 않는다. 기존 릴리스의 PowerShell CI 실행 결과와 이번 소스 검사를 구분한다.
+
+---
+
 # v0.1.7 Windows preview 게시 완료 — 2026-10-13 KST
 
 [v0.1.7 Release](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.7)를 **2026-10-13 03:27:58 UTC**에 게시했다. 사내 PC에서는 이 페이지의 `agent-browser-0.1.7-windows-x64.zip`과 `SHA256SUMS`를 받아 전체 압축을 풀고 `AgentBrowser-Setup.exe`를 실행한다. 설치·Chrome 추가·페어링·OpenCode 설정을 순서대로 진행하는 마법사다.

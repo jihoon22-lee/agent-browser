@@ -32,6 +32,28 @@ Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.7-windows-x64.zi
 
 실행이나 확장 로드가 회사 정책에 의해 차단되면 승인된 설치 방법을 확인하세요. 설치 관리자는 정책을 바꾸거나 우회하지 않습니다.
 
+### 사내 지정 폴더에서 GUI 소유자 오류가 나는 경우
+
+v0.1.7 ZIP에는 기존 PowerShell 설치기도 포함되어 있습니다. GUI는 상위 폴더의 소유자까지 검사하지만 PowerShell 설치기는 이 소유자 제한을 적용하지 않습니다. `D:\Multimedia`처럼 조직 관리 계정 소유의 지정 경로를 사용해야 하고 기존 스크립트 실행이 허용된 환경에서는 다음 절차를 사용합니다.
+
+1. 위에서 해시를 확인한 ZIP 전체를 `D:\Multimedia\AgentBrowser-package`에 풉니다. 이 폴더 바로 아래에 `setup.ps1`과 `package-manifest.json`이 있어야 합니다. 설치 대상 `AgentBrowser`와 압축 해제 폴더를 분리합니다.
+2. 일반 Windows PowerShell에서 실행합니다.
+
+```powershell
+powershell.exe -NoProfile -File "D:\Multimedia\AgentBrowser-package\setup.ps1" -InstallDir "D:\Multimedia\AgentBrowser"
+```
+
+3. 설치기가 Bridge 시작과 로그인 자동 실행을 설정합니다. Chrome의 `chrome://extensions`에서 개발자 모드를 켜고 **압축해제된 확장 프로그램을 로드합니다**로 `D:\Multimedia\AgentBrowser\extension`을 선택합니다.
+4. 다음 명령으로 토큰을 확인하고 확장 옵션의 페어링 토큰에 입력합니다. 새 설치의 Bridge 주소는 `ws://127.0.0.1:4317/extension`입니다. 기존 설치는 명령이 표시하는 주소를 사용합니다.
+
+```powershell
+powershell.exe -NoProfile -File "D:\Multimedia\AgentBrowser\show-pairing.ps1"
+```
+
+5. 확장 옵션에서 Windows 또는 WSL OpenCode 프로필을 설정합니다(3절). 이 경로에서는 설치 GUI를 다시 열어 연결 설정을 진행하지 않습니다. GUI의 소유자 검사는 여전히 적용됩니다.
+
+스크립트는 상위 `D:\Multimedia`의 소유자·ACL을 변경하지 않습니다. 제품의 `data` 하위 폴더에는 기존 스크립트와 동일한 비공개 ACL을 설정하므로 해당 작업 권한은 필요합니다. 실제 사내 PC의 정책 허용 여부는 별도 확인 대상입니다. PowerShell 실행 정책을 변경할 필요는 없으며, 정책이 실행을 차단하면 조직의 승인 절차를 따릅니다.
+
 ## 2. Chrome 확장 로드와 페어링
 
 1. 사용할 Windows Chrome 프로필에서 `chrome://extensions`를 엽니다.
