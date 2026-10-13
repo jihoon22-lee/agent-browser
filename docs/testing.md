@@ -415,7 +415,7 @@ AB_TEST_BFCACHE는 Playwright의 기본 `--disable-back-forward-cache` 인수를
 
 기존 NativeEngineTests가 idle/busy/retry/잘못된 상태 응답, 취소 복구, Start=false, 변경 없는 재적용을 검사한다. 외부 프로필의 URL은 시험에서 도달 불가능한 값이며 호출하지 않아야 한다.
 
-`tests/install/ManagedRuntimeUpgradeTests.cs`를 installer C# 소스와 함께 별도 Main으로 컴파일하면 실제 Windows/WSL 업데이트를 시험할 수 있다. 인수는 기존 0.1.5 패키지, 후보 0.1.6 패키지, **새 개인 Windows fixture 폴더**, 미리 생성한 격리 Linux 작업 폴더다. Linux 폴더에는 빈 `opencode.json`을 두며 XDG config/data/state/cache는 그 아래로 격리한다. 현재 시험 대상은 Ubuntu의 `/home/jihoon/.opencode/bin/opencode` 1.18.29다. 테스트는 합성 페어링을 자신의 데이터에만 기록하고 빈 세션만 생성하며 모델 요청/사용자 Chrome 접근을 하지 않는다. 완료 또는 실패 시 자신의 설치를 uninstall한다. 사용자 운영 폴더에 실행하지 않는다.
+`tests/install/ManagedRuntimeUpgradeTests.cs`를 installer C# 소스와 함께 별도 Main으로 컴파일하면 실제 Windows/WSL 업데이트를 시험할 수 있다. 인수는 이전 게시 패키지, 새 후보 패키지(예: 0.1.6 → 0.1.7), **새 개인 Windows fixture 폴더**, 미리 생성한 격리 Linux 작업 폴더다. 두 패키지의 버전은 달라야 하며 기대 버전은 각 manifest에서 읽는다. Linux 폴더에는 빈 `opencode.json`을 두며 XDG config/data/state/cache는 그 아래로 격리한다. 현재 시험 대상은 Ubuntu의 `/home/jihoon/.opencode/bin/opencode` 1.18.29다. 테스트는 합성 페어링을 자신의 데이터에만 기록하고 빈 세션만 생성하며 모델 요청/사용자 Chrome 접근을 하지 않는다. 완료 또는 실패 시 자신의 설치를 uninstall한다. 사용자 운영 폴더에 실행하지 않는다.
 
 
 ### 실제 OpenCode와 headed Windows 사이드 패널
