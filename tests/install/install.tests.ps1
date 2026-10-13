@@ -223,6 +223,9 @@ try {
             Assert ($upgraded.Running.pid -ne $firstPid) 'Upgrade did not replace its owned process'
             Assert (-not (Get-Process -Id $firstPid -ErrorAction SilentlyContinue)) 'Old owned process survived upgrade'
             $newPid=$upgraded.Running.pid
+            $noStart=& (Join-Path $package1 'setup.ps1') -InstallDir $liveInstall -StartupDir $liveStartup -Port $port -NoStart -Quiet
+            Assert ($null -eq $noStart.Running) 'NoStart update started a new Bridge'
+            Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'NoStart update retained the old Bridge process'
             $null=& (Join-Path $package2 'uninstall.ps1') -InstallDir $liveInstall -RemoveData -Quiet
             Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'Owned process survived uninstall'
         }

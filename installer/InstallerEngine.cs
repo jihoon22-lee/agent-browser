@@ -97,7 +97,7 @@ namespace AgentBrowser.Installer {
             catch(UnauthorizedAccessException error) {throw PathPermissionError(directory.FullName,error);}
         }
         static IOException PathPermissionError(string path,Exception error) {
-            return new IOException("설치 위치의 권한을 확인할 수 없습니다: "+path+"\r\n"+error.Message+"\r\n[기본 위치로 되돌리기]를 누르거나 현재 사용자 전용 폴더를 지정하세요.\r\n회사 지정 폴더를 사용해야 한다면 압축 해제한 ZIP의 README-install.md에서 PowerShell 설치 절차를 확인하세요.",error);
+            return new IOException("설치 위치의 권한을 확인할 수 없습니다: "+path+"\r\n"+error.Message+"\r\n[기본 위치로 되돌리기]를 누르거나 현재 사용자 전용 폴더를 지정하세요.\r\n설치 경로의 권한 오류는 PowerShell로 우회하지 마세요. README-install.md의 설치 위치 안내를 확인하세요.",error);
         }
         internal static void RequireDirectorySecurity(DirectorySecurity acl,bool installRoot,bool volumeRoot=false) {
             RequireTrustedOwner(acl);

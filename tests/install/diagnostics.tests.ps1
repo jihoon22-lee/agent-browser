@@ -15,3 +15,10 @@ if($result.checks[0].reason -ne 'WSL_OWNER_FILE_MISSING' -or $result.checks[0].e
 if($result.checks[0].profile -ne 1 -or $result.checks[1].profile -ne 1){throw 'Profile numbering was inconsistent'}
 if($result.checks[2].version -ne '1.18.29'){throw 'Diagnostic report lost the verified executable version'}
 Write-Output 'PASS safe diagnostic report retains reason codes without credentials, paths, names or raw errors'
+
+$fixture.checks += [pscustomobject]@{id='runtime';profileId=$private.ToUpperInvariant();status='error';reason=$private;exitCode=$private}
+$result=ConvertTo-SafeDiagnostic $fixture $private
+$text=$result|ConvertTo-Json -Depth 8
+if($text.Contains($private)){throw 'Diagnostic report allowed arbitrary version, reason or exit-code text'}
+if($result.checks[3].profile -eq $result.checks[0].profile){throw 'Case-distinct profile IDs were merged'}
+Write-Output 'PASS report fields are constrained and case-distinct profiles stay distinct'

@@ -40,6 +40,7 @@ foreach ($file in $manifest.Files) {
     $relative = $file.Path
     if ($relative -eq 'browser-bridge.exe') { $relative = $exeRelative }
     $target = Join-SafePath $root $relative
+    Assert-PrivateInstallPath $root ([IO.Path]::GetDirectoryName($target))
     if ((Test-Path -LiteralPath $target) -and -not $owned.Contains($relative)) { throw "An unowned file blocks installation: $target" }
     $copies.Add([pscustomobject]@{ Source=(Join-SafePath $PackageDir $file.Path); Target=$target; Relative=$relative; Sha256=$file.Sha256.ToLowerInvariant() })
     $owned[$relative] = $file.Sha256.ToLowerInvariant()
@@ -75,6 +76,7 @@ if ($OpenCodeKind -eq 'wsl') {
 }
 foreach ($relative in $fragments.Keys) {
     $target = Join-SafePath $root $relative
+    Assert-PrivateInstallPath $root ([IO.Path]::GetDirectoryName($target))
     if ((Test-Path -LiteralPath $target) -and -not $owned.Contains($relative)) { throw "An unowned generated fragment already exists: $target" }
     $owned[$relative] = Get-TextHash $fragments[$relative]
 }
@@ -105,6 +107,8 @@ try {
     $lockedState = Read-InstallState $root
     if (($old -and -not $lockedState) -or ($old -and $lockedState.UpdatedAt -ne $old.UpdatedAt) -or (-not $old -and $lockedState)) { throw 'Installation changed while setup was preparing; run setup again.' }
     Assert-OwnedFiles $root $old
+    $changesRuntime=$old -and ((Get-FullPath $old.CurrentExe) -ne (Get-FullPath $state.CurrentExe) -or [int]$old.Port -ne [int]$state.Port)
+    if($changesRuntime){Assert-NoManagedRuntimeForScriptUpdate $old}
     Set-PrivateDataDirectory $dataDir $installId
     $transaction = New-FileTransaction $root
     $null = Save-TransactionFile $transaction (Join-Path $dataDir '.installer-bridge-process.json')
@@ -113,6 +117,7 @@ try {
     }
     foreach ($relative in $fragments.Keys) {
         $target = Join-SafePath $root $relative
+        Assert-PrivateInstallPath $root ([IO.Path]::GetDirectoryName($target))
         if (-not (Test-Path -LiteralPath $target) -or (Get-FileSha256 $target) -ne $owned[$relative]) { Set-TransactionText $transaction $target $fragments[$relative] }
     }
     if ($old -and $old.Startup -and $old.Startup.Path -ne $startupPath -and (Test-Path -LiteralPath $old.Startup.Path)) { Remove-TransactionFile $transaction $old.Startup.Path }
@@ -130,8 +135,12 @@ try {
     }
     Set-TransactionText $transaction (Join-Path $root $script:AgentBrowserStateName) (ConvertTo-Json $state -Depth 40)
     $running = $null
+    if($changesRuntime) {
+        Assert-NoManagedRuntimeForScriptUpdate $old
+        $stoppedOld=Stop-OwnedBridge $old
+        Assert-NoManagedRuntimeForScriptUpdate $old
+    }
     if (-not $NoStart) {
-        if ($old -and ((Get-FullPath $old.CurrentExe) -ne (Get-FullPath $state.CurrentExe) -or [int]$old.Port -ne [int]$state.Port)) { $stoppedOld = Stop-OwnedBridge $old }
         $running = Start-OwnedBridge $state -Transaction $transaction
         $startedNew = -not $running.reused
     }
