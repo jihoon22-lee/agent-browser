@@ -478,14 +478,14 @@ mod tests {
             let home = tempfile::tempdir().unwrap();
             let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
             let (tx,mut rx) = tokio::sync::mpsc::unbounded_channel();
-            state.registry.register("fixture",tx);
+            let conn = state.registry.register("fixture",tx);
             let (abort,registration) = AbortHandle::new_pair();
             let mut pending = FuturesUnordered::new();
             pending.push(Abortable::new(call_tool(&state,"browser_tabs",json!({"action":"attach"})),registration));
             assert!(futures_util::poll!(pending.next()).is_pending());
             let Envelope::Req {id,method,..} = parse_envelope(&rx.try_recv().unwrap()).unwrap() else {panic!("expected browser request")};
             assert_eq!(method,"browser.tabs.get");
-            state.registry.handle_response(Envelope::ok(id,json!({"tabId":42})));
+            state.registry.handle_response(conn, Envelope::ok(id,json!({"tabId":42})));
             assert!(state.ops.current().is_none(),"An unpolled ready reply cannot execute attach in the background");
             if cancel_before_poll { abort.abort(); }
             let std::task::Poll::Ready(Some(result)) = futures_util::poll!(pending.next()) else {panic!("Attach must finish in this poll without suspending after creation")};
@@ -508,7 +508,7 @@ mod tests {
         let state = Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
         for client in ["A", "B"] {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-            state.registry.register(client, tx);
+            let conn = state.registry.register(client, tx);
             let state = state.clone();
             tokio::spawn(async move {
                 while let Some(text) = rx.recv().await {
@@ -518,7 +518,7 @@ mod tests {
                             "browser.tabs.get" => json!({"tabId": params["tabId"], "owner": client, "attachable":true}),
                             _ => json!({"owner": client, "tabId": params["tabId"]}),
                         };
-                        state.registry.handle_response(Envelope::ok(id, value));
+                        state.registry.handle_response(conn, Envelope::ok(id, value));
                     }
                 }
             });
@@ -564,7 +564,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        state.registry.register("A", tx);
+        let conn = state.registry.register("A", tx);
         let op = state.ops.attach(1, "A").unwrap();
         state.ops.add_tab(&op.id, 2).unwrap();
         let first = queue_operation_tool(&state, &op.id, "browser.scroll", serde_json::Map::new(), CommandClass::Write).unwrap();
@@ -574,8 +574,8 @@ mod tests {
         let Envelope::Req { id: second_id, params: second_params, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
         assert_eq!(first_params["tabId"], 1);
         assert_eq!(second_params["tabId"], 2);
-        state.registry.handle_response(Envelope::ok(second_id, json!({"tabId":2})));
-        state.registry.handle_response(Envelope::ok(first_id, json!({"tabId":1})));
+        state.registry.handle_response(conn, Envelope::ok(second_id, json!({"tabId":2})));
+        state.registry.handle_response(conn, Envelope::ok(first_id, json!({"tabId":1})));
         assert_eq!(first.wait(DEFAULT_TIMEOUT).await.unwrap()["tabId"], 1);
         assert_eq!(second.wait(DEFAULT_TIMEOUT).await.unwrap()["tabId"], 2);
     }
@@ -587,7 +587,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let state = Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        state.registry.register("A", tx);
+        let conn = state.registry.register("A", tx);
         let old = state.ops.attach(1, "A").unwrap();
         state.ops.add_tab(&old.id, 2).unwrap();
         let task = {
@@ -598,7 +598,7 @@ mod tests {
         let Envelope::Req { id, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
         state.ops.release(&old.id).unwrap();
         let replacement = state.ops.attach(2, "B").unwrap();
-        state.registry.handle_response(Envelope::err(id, RpcError::new(ErrorCode::TabNotFound, Retry::Never, "closed")));
+        state.registry.handle_response(conn, Envelope::err(id, RpcError::new(ErrorCode::TabNotFound, Retry::Never, "closed")));
         assert_eq!(task.await.unwrap().error.unwrap().code, ErrorCode::TabNotFound);
         assert_eq!(state.ops.check(&replacement.id).unwrap().tabs, vec![2]);
     }

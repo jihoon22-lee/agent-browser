@@ -84,12 +84,19 @@ impl Manager {
     }
     fn profile(&self, id: &str) -> Result<Profile, RpcError> { self.store.read()?.profiles.get(id).cloned().ok_or_else(|| invalid("Unknown runtime profile")) }
     fn operation_lock(&self, id: &str) -> Result<storage::FileLock,RpcError> {
+        self.try_operation_lock(id)?.ok_or_else(|| invalid("Another operation is already managing this profile; wait for it to finish"))
+    }
+    fn try_operation_lock(&self, id: &str) -> Result<Option<storage::FileLock>,RpcError> {
         if id.is_empty() || id.len() > 64 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)) { return Err(invalid("Invalid profile id")); }
         let directory = self.home.join("runtime"); std::fs::create_dir_all(&directory).map_err(|_| failure("Cannot create runtime directory"))?;
         let mut options = std::fs::OpenOptions::new(); options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
         let file = options.open(directory.join(format!("{id}.lock"))).map_err(|_| failure("Cannot open profile operation lock"))?;
-        file.try_lock().map_err(|_| invalid("Another operation is already managing this profile; wait for it to finish"))?; Ok(storage::FileLock(file))
+        match file.try_lock() {
+            Ok(()) => Ok(Some(storage::FileLock(file))),
+            Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+            Err(_) => Err(failure("Cannot lock profile operation")),
+        }
     }
     pub async fn delete(&self, id: &str) -> Result<Value, RpcError> {
         let lock = self.lock(id); let _guard = lock.lock().await;
@@ -299,8 +306,8 @@ impl Manager {
     pub async fn status(&self, id: &str) -> Result<Value, RpcError> {
         let profile = self.profile(id)?;
         let lock = self.lock(id);
-        let Ok(_guard) = lock.try_lock() else { return Ok(json!({"profileId":id,"state":"starting","directory":profile.directory,"owned":false})); };
-        let _operation = self.operation_lock(id)?;
+        let Ok(_guard) = lock.try_lock() else { return Ok(starting(id,&profile)); };
+        let Some(_operation) = self.try_operation_lock(id)? else { return Ok(starting(id,&profile)); };
         let profile = self.profile(id)?; // Re-read under the cross-process lock before persisting ownership.
         if profile.kind == Kind::External {
             let url = profile.external_url()?.to_string();
@@ -368,7 +375,9 @@ impl Manager {
             }
             if profile.kind != Kind::External { checks.push(installation_check(&profile).await); }
             let status = self.status(&id).await?;
-            checks.push(json!({"id":"opencode","profileId":id,"status":if status["state"] == "ready" {"ok"} else if status["state"] == "stopped" || status["state"] == "starting" {"warning"} else {"error"},"message":status["error"].as_str().unwrap_or(status["state"].as_str().unwrap_or("unknown")),"runtime":status}));
+            let mut check = json!({"id":"opencode","profileId":id,"status":if status["state"] == "ready" {"ok"} else if status["state"] == "stopped" || status["state"] == "starting" {"warning"} else {"error"},"message":status["error"].as_str().unwrap_or(status["state"].as_str().unwrap_or("unknown")),"runtime":status});
+            if let Some(reason) = check["runtime"]["reason"].as_str() { check["reason"] = json!(reason); }
+            checks.push(check);
             if status["state"] == "ready" || status["httpReady"] == true {
                 let mcp = self.diagnostic_api(&profile,"mcp").await;
                 checks.push(diagnostics::mcp_check(&id,profile.kind != Kind::External,mcp.as_ref()));
@@ -433,6 +442,7 @@ impl Manager {
     }
 }
 
+fn starting(id: &str, profile: &Profile) -> Value { json!({"profileId":id,"state":"starting","directory":profile.directory,"owned":false,"reason":"PROFILE_OPERATION_IN_PROGRESS"}) }
 fn info(profile: &Profile, record: &RuntimeRecord, state: &str, secrets: bool, home: &std::path::Path) -> Value {
     let mut value = json!({"profileId":profile.id,"state":state,"baseUrl":record.base_url,"directory":profile.directory,"version":record.version,"owned":true,"attachCommand":attach(&profile.id,home)});
     if secrets { value["username"] = json!(record.username); value["password"] = json!(record.password); } value
