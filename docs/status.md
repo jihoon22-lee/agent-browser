@@ -1,3 +1,16 @@
+# 리뷰 결함 4건 수정 검증 — 2026-10-14 KST
+
+`feat/m5-review-fixes` 브랜치에서 doctor 전체 실패, PowerShell JSONC 주석 삭제, 확장 취소 표식 누적·불필요 저장, Bridge 응답 연결 확인을 수정했다. 커밋 `2aca1d3`·`b715a18`·`d987def`·`f9a4a6b`. 배포·버전 변경은 하지 않았다.
+
+- **프로필 작업 경합 시 진단 가능:** `status`/`doctor`가 다른 작업의 프로필 파일 잠금 경합을 오류로 전파해 진단이 통째로 실패하던 문제를 수정했다. 수정 전 새 테스트는 `RpcError { code: InvalidParams, message: "Another operation is already managing this profile; wait for it to finish" }`로 실패했고, 수정 후 `status`가 `{"state":"starting","reason":"PROFILE_OPERATION_IN_PROGRESS"}`, doctor의 opencode 검사가 `warning`+이유를 반환한다. 동시 호출 거부 문구와 잠금 파일을 열 수 없는 비경합 오류의 실패는 유지했다. `diagnose.ps1` 허용 목록에 새 이유 코드를 추가했고 임의 문자열은 계속 `unknown`으로 차단한다.
+  - Linux `runtime_management` **12/12**, `cargo test --lib runtime` **35/35** 통과. Windows 교차 빌드 테스트 exe를 실제 Windows interop으로 실행해 새 테스트 **2/2** 통과(LockFileEx 경합이 Linux와 같이 잡힘). `diagnostics.tests.ps1` 실제 Windows PowerShell 5.1 **3 PASS**.
+- **PowerShell 제거 시 범위 안 주석 보존:** `Remove-JsonProperty`가 제거 범위를 재토큰화해 `//`·`/*` 주석을 부모 개체에 남긴다(C# `Jsonc.Remove` 이식). 수정 전 `Comment inside the removed entry was lost`로 실패했고, 수정 후 `jsonc.tests.ps1` **2 PASS**, `install.tests.ps1` **14/14**(프로세스 포함)가 실제 Windows PowerShell 5.1에서 통과했다. 개발 TEMP의 비신뢰 쓰기 ACL 때문에 테스트 프로세스의 TEMP/TMP만 전용 폴더로 지정했으며 시스템 ACL은 바꾸지 않았다.
+- **확장 취소 표식·불필요 저장:** 취소 표식을 요청과 같은 10분 TTL로 정리하고, 실제로 항목을 지운 경우에만 읽기 전용 트랜잭션이 세션을 저장한다. 수정 전 `expect(backing.writes).toBe(0)`가 4로, TTL 경과 후 `isCancelled`이 계속 `true`로 실패했고 수정 후 확장 **401/401**·tsc 통과. in-flight 요청과 `legacyGeneration`은 정리하지 않는다.
+- **Bridge 응답 연결 확인:** `handle_response`가 보낸 연결의 응답만 완료한다. 수정 전 `a different connection completed the command`로 실패했고 수정 후 registry 단위 **10/10** 포함 Linux Rust **166 통과 / 1 제외**를 확인했다. clippy lib 경고는 기존 **9개** 그대로다.
+- **미검증:** C# 설치 테스트의 공통 fixture 연결(건너뜀 — 해당 테스트는 별도 패키지 fixture와 전체 사례 실행이 필요해 이 PC에서 실행하지 않았다), `windows-runtime.mjs` 시나리오, 실제 Chrome E2E·실제 설치/업데이트 수명주기. 위 PowerShell·Rust 결과는 해당 테스트 범위만의 성공이다.
+
+---
+
 # v0.1.9 상세 검토·연속 작업 보강 배포 완료 — 2026-10-13 KST
 
 [v0.1.9 Windows preview](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.9)를 **2026-10-13 07:37:43 UTC / 16:37:43 KST**에 게시했다. [상세 검토와 사례표](./review-2026-10-13.md), [설치·업데이트 안내](../README-install.md), [완료 계획](./plans/2026-10-13-final-review.md)을 함께 갱신했다. 현재 문서와 새 ZIP에서 실제 배포 환경의 식별 경로·계정·구성 비율·정책 사례를 제거·일반화했다. 과거 태그·자산·Git 이력은 교체하지 않았다.
