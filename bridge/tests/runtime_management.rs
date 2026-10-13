@@ -38,6 +38,36 @@ async fn occupied_requested_port_never_adopts_or_authenticates_an_unowned_server
 }
 
 #[tokio::test]
+async fn contended_profile_operation_reports_starting_to_status_and_doctor() {
+    let home = tempfile::tempdir().unwrap();
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let manager = Manager::new(home.path().into(),port);
+    let profile: Profile = serde_json::from_value(json!({"id":"locked","name":"Locked","kind":"external","directory":"/fixture","baseUrl":"https://127.0.0.1:9/"})).unwrap();
+    manager.save(profile,false).unwrap();
+    let held = std::fs::OpenOptions::new().read(true).write(true).open(home.path().join("runtime").join("locked.lock")).unwrap();
+    held.try_lock().unwrap();
+    let status = manager.status("locked").await.unwrap();
+    assert_eq!(status["state"],"starting"); assert_eq!(status["reason"],"PROFILE_OPERATION_IN_PROGRESS"); assert_eq!(status["owned"],false);
+    let report = manager.doctor(None).await.unwrap();
+    let checks = report["checks"].as_array().unwrap();
+    assert!(checks.iter().any(|check| check["id"] == "bridge") && checks.iter().any(|check| check["id"] == "extension"));
+    let opencode = checks.iter().find(|check| check["id"] == "opencode" && check["profileId"] == "locked").unwrap();
+    assert_eq!(opencode["status"],"warning"); assert_eq!(opencode["reason"],"PROFILE_OPERATION_IN_PROGRESS");
+    held.unlock().unwrap();
+    assert_ne!(manager.status("locked").await.unwrap()["state"],"starting");
+}
+
+#[tokio::test]
+async fn status_still_fails_when_the_operation_lock_file_is_unavailable() {
+    let home = tempfile::tempdir().unwrap();
+    let manager = Manager::new(home.path().into(),0);
+    let profile: Profile = serde_json::from_value(json!({"id":"broken","name":"Broken","kind":"external","directory":"/fixture","baseUrl":"https://127.0.0.1:9/"})).unwrap();
+    manager.save(profile,false).unwrap();
+    let runtime = home.path().join("runtime"); std::fs::remove_dir_all(&runtime).unwrap(); std::fs::write(&runtime,b"occupied").unwrap();
+    assert!(manager.status("broken").await.is_err());
+}
+
+#[tokio::test]
 async fn doctor_does_not_claim_missing_bridge_is_healthy_or_start_processes() {
     let home = tempfile::tempdir().unwrap();
     let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
