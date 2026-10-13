@@ -1,3 +1,26 @@
+# v0.1.10 리뷰 수정 배포 게시 완료 — 2026-10-14 KST
+
+[v0.1.10 Windows preview](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.10)(prerelease)를 **2026-10-13 22:42:04 UTC / 2026-10-14 07:42:04 KST**에 게시했다. 내용은 아래 리뷰 결함 4건 수정과 버전 변경만 포함한다.
+
+- **태그:** 주석 태그 `v0.1.10` → `586d1336e74a8128249ab89b6fce7c933652c1f0`([PR #17](https://github.com/jihoon22-lee/agent-browser/pull/17) 머지 커밋). [PR #16 CI 38428368727](https://github.com/jihoon22-lee/agent-browser/actions/runs/38428368727), [PR #17 CI 38475738946](https://github.com/jihoon22-lee/agent-browser/actions/runs/38475738946), 배포 대상 [main CI 38477220912](https://github.com/jihoon22-lee/agent-browser/actions/runs/38477220912)가 Linux·Windows 모두 성공했다.
+- **배포 ZIP:** 3,685,655 bytes / 37 files. SHA256 **`f4404376e581e8dd3f4527d96bdbd4cb2479ae12c2e3f9f5615922e722d4793d`**(GitHub asset digest 일치), 별도 `SHA256SUMS` 103 bytes. 정확히 이 커밋의 main에서 `build-release-wsl.sh`로 빌드·패키징했다.
+- **게시본 다운로드:** 재다운로드 자산의 `sha256sum -c` 통과, 게시 전 검증본(`release/v0.1.10-main`)과 전체 바이트 일치. 아래 설치/업데이트/제거는 바이트가 같은 게시 전 검증본에서 실행한 결과이며, 다운로드본으로 설치를 다시 실행하지는 않았다.
+
+| 검증 영역 | 실제 실행 결과와 경계 |
+|---|---|
+| 패키지·내용물 | manifest `Version=0.1.10`, manifest 전체 파일 해시 일치, Bridge Windows x64 PE, 확장 MV3·`0.1.10`·키 확인, `browser-bridge.exe --version`이 실제 Windows interop에서 `0.1.10`. `package.tests.ps1` **5개 그룹** 통과 |
+| 설치·제거·권한 | 실제 Windows PowerShell 5.1에서 `install.tests.ps1` **14/14 + 프로세스 검사**, `runtime-cleanup.tests.ps1` **4 PASS**, `security-review.tests.ps1` **1 PASS**. 격리 InstallDir/StartupDir/포트만 사용 |
+| 업데이트 | 게시된 v0.1.9(SHA256 검증) 격리 설치 → 새 패키지 `setup.ps1` 업데이트 → 인증 Bridge doctor `0.1.10` 응답, 실행 프로세스가 새 `0.1.10` exe로 교체(소유 표식·PID 확인), InstallId·포트·페어링 토큰·확장 ID·데이터·사용자 주석 보존, 제거 시 소유 파일·프로세스·MCP 등록 정리. **3 PASS** |
+| 진단·JSONC | 실제 Windows PowerShell 5.1에서 `diagnostics.tests.ps1` **3 PASS**(새 `PROFILE_OPERATION_IN_PROGRESS` 허용), `jsonc.tests.ps1` **2 PASS** |
+| 수정 검증 | Linux Rust **166 통과 / 1 제외**, 확장 **401/401**, tsc 통과, clippy 기존 경고 9개 유지. Windows 교차 빌드 잠금 경합 테스트 exe를 실제 Windows interop으로 **2/2** 통과 |
+| 미검증 | 실제 Chrome E2E·실제 페어링 흐름, 실제 모델 추론, `AgentBrowser-Setup.exe` GUI 경로, WSL 프로필 runtime, C# 설치 테스트 공통 fixture 연결 |
+
+**남은 관찰:** docs-only 커밋 `4cc2913`의 이전 [main CI 38368507839](https://github.com/jihoon22-lee/agent-browser/actions/runs/38368507839)는 Windows 작업에서 `config_concurrent.first_initialization_is_consistent_across_processes`가 실패했다 — 자식 프로세스의 config 초기화 잠금이 2초 넘게 유지돼 오래된 잠금 거부가 걸린 타이밍 flake로 보이며, 같은 테스트는 이후 성공 실행들에서 통과했다. 추가 조사는 하지 않았다.
+
+운영 설치·사용자 Chrome 프로필·전역 OpenCode 설정은 수정하지 않았다. 검증 PowerShell은 기본 Windows TEMP의 외부 쓰기 ACL 때문에 전용 임시 폴더만 사용했고 작업 후 모두 제거했다.
+
+---
+
 # 리뷰 결함 4건 수정 검증 — 2026-10-14 KST
 
 `feat/m5-review-fixes` 브랜치에서 doctor 전체 실패, PowerShell JSONC 주석 삭제, 확장 취소 표식 누적·불필요 저장, Bridge 응답 연결 확인을 수정했다. 커밋 `2aca1d3`·`b715a18`·`d987def`·`f9a4a6b`. 배포·버전 변경은 하지 않았다.
