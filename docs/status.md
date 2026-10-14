@@ -1,4 +1,6 @@
-# v0.1.11 설치 호환성 복구 — 배포 준비 (2026-10-14)
+# v0.1.11 설치 호환성 복구 — 게시 완료 (2026-10-14)
+
+[v0.1.11](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.11)을 **2026-10-14 00:48:41 UTC / 09:48:41 KST**에 게시했다. 태그는 main `956d6ad8a65ad025e3535af081f4f7e37e4957e3`이며 ZIP은 **3,685,338 bytes / 37 files**, SHA256 **`08c30b1e5d46dcb81195654435e41c5b3100bada6c33b2cfb267a218f3556760`**다.
 
 사용자 요청으로 GUI·PowerShell의 설치 루트/상위 폴더 소유자 SID 및 자체 ACL 허용 목록을 제거했다. Windows의 실제 파일 작업 권한을 사용하며 기존 설치 폴더·부모 ACL을 바꾸지 않는다. 새 설치 루트는 상위 정책을 상속한다. 요구사항과 AGENTS.md에 이 제한의 재도입 금지, 명시적인 PowerShell 실행 명령, 실제 GUI 표시 검증을 기록했다.
 
@@ -7,7 +9,9 @@
 - 실제 Windows 설치 엔진 **62/62**, 마법사 흐름 **15/15**, PowerShell 설치 수명주기 **14/14**, 패키징 **5개 그룹** 통과. 별도 합성 관리 ACL 경로 설치/재설치/제거 **2개 그룹**, 경로·설치 기록 회귀 **1개 그룹** 통과.
 - 게시된 v0.1.8 패키지에서 후보 v0.1.11로 같은 관리 ACL 경로를 업데이트하고 새 Bridge 실행·인증 doctor·재설치·진단·제거를 확인했다. 실제 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File` 호출이며 설치 ID·페어링·사용자 데이터·부모/설치 폴더 ACL을 보존했다. 첫 수동 시험 드라이버는 반환 객체의 Dispose 호출을 잘못 사용해 실패했고 드라이버만 수정해 새 fixture에서 통과했다.
 - 실제 패키지의 GUI 프로세스에서도 UI Automation/소유 HWND 버튼 이벤트로 설치·재설치·제거를 완료했다. 처음 만든 수동 UI 드라이버가 TextPattern인 상태 표시를 ValuePattern으로만 읽어 실패해 두 패턴을 지원하도록 드라이버만 수정했다. 올바른 드라이버 실행이 3개 흐름 모두 통과했으며 위치/미리보기/완료 이미지의 한글 표시를 확인했다. 물리 마우스 입력 시험은 아니다.
-- [PR #19](https://github.com/jihoon22-lee/agent-browser/pull/19)의 [CI 38491160759](https://github.com/jihoon22-lee/agent-browser/actions/runs/38491160759)는 Linux·Windows 모두 성공했다. source `e14821d`. main의 최종 ZIP/게시본 검증·배포는 진행 중이다. 실제 배포 PC에는 접근하지 않았으며 해당 PC의 성공으로 보고하지 않는다.
+- [PR #19](https://github.com/jihoon22-lee/agent-browser/pull/19)의 [CI 38491160759](https://github.com/jihoon22-lee/agent-browser/actions/runs/38491160759)는 Linux·Windows 모두 성공했다. source `e14821d`. 최종 main ZIP으로 실제 GUI 신규 설치/재설치/제거 **3개 흐름**과 v0.1.8 스크립트 업데이트/실행/재설치/진단/제거를 다시 통과했다. 최종 GUI exe 바이트는 초기 후보와 달라 해당 ZIP 실행 파일로 GUI를 재검증했다.
+- 게시본을 재다운로드해 검증한 최종 ZIP과 바이트가 같음을 확인했다. GitHub asset digest, SHA256SUMS와 내부 manifest 전체 해시가 일치하며 제목과 본문의 `다운로드와 실행 → 달라진 점 → 검증과 제한` 형식도 게시 후 확인했다. 다운로드본으로 설치를 다시 실행한 결과로 세지 않는다.
+- [태그 대상 main CI 38492068216](https://github.com/jihoon22-lee/agent-browser/actions/runs/38492068216)는 게시 시점에 대기 중이었고 게시 확인 시 실행 중이다. 사용자 요청에 따라 성공한 PR CI와 최종 ZIP의 실제 Windows 검증을 근거로 바로 게시했으며 main CI 성공으로 보고하지 않는다. 실제 배포 PC에는 접근하지 않았으며 해당 PC의 성공으로 보고하지 않는다.
 
 ---
 
