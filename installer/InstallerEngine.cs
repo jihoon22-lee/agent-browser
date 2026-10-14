@@ -73,49 +73,7 @@ namespace AgentBrowser.Installer {
             string full=Full(path);if(full==Path.GetPathRoot(full).TrimEnd('\\')) throw new IOException("A drive root cannot be an installation folder.");
             foreach(var item in new [] {Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),Environment.GetFolderPath(Environment.SpecialFolder.Windows)}) if(Same(full,Full(item))) throw new IOException("Choose a dedicated subfolder.");
             if(full.StartsWith(@"\\",StringComparison.Ordinal)) throw new IOException("Bridge installation must be on a Windows local disk. WSL settings can use a WSL path.");
-            RequireLocalInstallDrive(new DriveInfo(Path.GetPathRoot(full)).DriveType);NativeIO.PlainPath(full);RequirePrivateInstallRoot(full);return full;
-        }
-        static readonly HashSet<string> TrustedOwners=new HashSet<string>{WindowsIdentity.GetCurrent().User.Value,"S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"};
-        static void RequireTrustedOwner(DirectorySecurity acl) {
-            var owner=acl.GetOwner(typeof(SecurityIdentifier));
-            if(owner==null||!TrustedOwners.Contains(owner.Value))throw new IOException("현재 사용자 또는 Windows 시스템 계정이 소유한 폴더가 아닙니다.");
-        }
-        static void RequirePrivateInstallRoot(string root) {
-            for(var directory=new DirectoryInfo(root);directory!=null;directory=directory.Parent)
-                if(directory.Exists)CheckDirectorySecurity(directory,Same(directory.FullName,root));
-        }
-        static void RequirePrivateDestination(string root,string path) {
-            for(var directory=new DirectoryInfo(Path.GetDirectoryName(path));directory!=null;directory=directory.Parent) {
-                if(directory.Exists)CheckDirectorySecurity(directory,true);
-                if(Same(directory.FullName,root))return;
-            }
-            throw new IOException("A package destination is outside its installation folder.");
-        }
-        static void CheckDirectorySecurity(DirectoryInfo directory,bool installRoot) {
-            try {RequireDirectorySecurity(directory.GetAccessControl(AccessControlSections.Access|AccessControlSections.Owner),installRoot,directory.Parent==null);}
-            catch(IOException error) {throw PathPermissionError(directory.FullName,error);}
-            catch(UnauthorizedAccessException error) {throw PathPermissionError(directory.FullName,error);}
-        }
-        static IOException PathPermissionError(string path,Exception error) {
-            return new IOException("설치 위치의 권한을 확인할 수 없습니다: "+path+"\r\n"+error.Message+"\r\n[기본 위치로 되돌리기]를 누르거나 현재 사용자 전용 폴더를 지정하세요.\r\n설치 경로의 권한 오류는 PowerShell로 우회하지 마세요. README-install.md의 설치 위치 안내를 확인하세요.",error);
-        }
-        internal static void RequireDirectorySecurity(DirectorySecurity acl,bool installRoot,bool volumeRoot=false) {
-            RequireTrustedOwner(acl);
-            var writes=FileSystemRights.Delete|FileSystemRights.DeleteSubdirectoriesAndFiles|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership;
-            // A volume root cannot itself be replaced via DELETE. Its child-delete,
-            // ACL-changing and ownership rights still protect the installation below it.
-            if(volumeRoot&&!installRoot)writes&=~FileSystemRights.Delete;
-            if(installRoot)writes|=FileSystemRights.WriteData|FileSystemRights.AppendData|FileSystemRights.WriteExtendedAttributes|FileSystemRights.WriteAttributes;
-            foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,true,typeof(SecurityIdentifier))) {
-                if(rule.AccessControlType!=AccessControlType.Allow||(!installRoot&&(rule.PropagationFlags&PropagationFlags.InheritOnly)!=0))continue;
-                // AppContainer package/capability rights intersect with user/group rights;
-                // they cannot independently grant access to another Windows account.
-                // https://learn.microsoft.com/windows/win32/secauthz/implementing-an-appcontainer
-                string sid=rule.IdentityReference.Value;if(sid.StartsWith("S-1-15-2-",StringComparison.Ordinal)||sid.StartsWith("S-1-15-3-",StringComparison.Ordinal))continue;
-                bool trusted=TrustedOwners.Contains(rule.IdentityReference.Value)||rule.IdentityReference.Value=="S-1-3-0";
-                uint rights=unchecked((uint)rule.FileSystemRights);
-                if(!trusted&&((rule.FileSystemRights&writes)!=0||(rights&0x10000000)!=0||(installRoot&&(rights&0x40000000)!=0)))throw new IOException("다른 사용자에게 이 폴더의 파일 쓰기 또는 폴더 교체 권한이 있습니다.");
-            }
+            RequireLocalInstallDrive(new DriveInfo(Path.GetPathRoot(full)).DriveType);NativeIO.PlainPath(full);return full;
         }
         public static T Read<T>(string path) {NativeIO.PlainPath(path);return NativeIO.Json.Deserialize<T>(File.ReadAllText(path,NativeIO.Utf8));}
         public static InstallState State(string root) {
@@ -220,7 +178,6 @@ namespace AgentBrowser.Installer {
             foreach(var file in manifest.Files) {
                 string relative=file.Path;if(relative=="browser-bridge.exe"||relative=="AgentBrowser-Setup.exe") relative="app/"+tag+"/"+relative;
                 string dest=NativeIO.SafePath(root,relative);
-                RequirePrivateDestination(root,dest);
                 if(File.Exists(dest)&&!owned.ContainsKey(relative)) throw new IOException("An unowned file blocks installation: "+dest);
                 Add(p,dest,CapturePackageFile(package,file));owned[relative]=file.Sha256.ToLowerInvariant();
             }
@@ -265,7 +222,6 @@ namespace AgentBrowser.Installer {
             var acl=PrivateAcl(Directory.GetAccessControl(path,AccessControlSections.Access|AccessControlSections.Owner));Directory.SetAccessControl(path,acl);
         }
         internal static DirectorySecurity PrivateAcl(DirectorySecurity acl) {
-            RequireTrustedOwner(acl);
             acl.SetAccessRuleProtection(true,false);
             foreach(FileSystemAccessRule rule in acl.GetAccessRules(true,false,typeof(SecurityIdentifier))) acl.RemoveAccessRuleAll(rule);
             foreach(var sid in new [] {WindowsIdentity.GetCurrent().User,new SecurityIdentifier("S-1-5-18"),new SecurityIdentifier("S-1-5-32-544")}) acl.AddAccessRule(new FileSystemAccessRule(sid,FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
@@ -279,13 +235,12 @@ namespace AgentBrowser.Installer {
             } finally {System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);if(File.Exists(path)) File.Delete(path);}
         }
         public static string Apply(InstallPlan p,CancellationToken cancel,Action<string> progress) {
-            string root=Root(p.Options.InstallDir),lockPath=Path.Combine(root,".agent-browser-install.lock");cancel.ThrowIfCancellationRequested();bool existingRoot=Directory.Exists(root);Directory.CreateDirectory(root);if(!existingRoot){RequireTrustedOwner(Directory.GetAccessControl(root,AccessControlSections.Owner));PrivateDirectory(root);}RequirePrivateInstallRoot(root);
+            string root=Root(p.Options.InstallDir),lockPath=Path.Combine(root,".agent-browser-install.lock");cancel.ThrowIfCancellationRequested();Directory.CreateDirectory(root);
             bool restartOld=false,newStarted=false;var stoppedProfiles=new List<string>();FileTransaction transaction=null;bool complete=false;
             using(var fileLock=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)) {
                 try {
                     if(HashOrMissing(Path.Combine(root,StateName))!=p.StateHash) throw new IOException("Installation changed after preview. Preview it again.");
                     Owned(p.Old);
-                    if(p.Next!=null)foreach(var file in p.Next.OwnedFiles)RequirePrivateDestination(root,NativeIO.SafePath(root,file.Path));
                     if(p.Old!=null) {var ownerRecord=Read<Dictionary<string,string>>(Path.Combine(p.Old.DataDir,".agent-browser-data-owner.json"));if(ownerRecord["Product"]!=Product||ownerRecord["InstallId"]!=p.Old.InstallId)throw new IOException("Existing data ownership changed. No process or data was changed.");}
                     foreach(var change in p.Changes) if(HashOrMissing(change.Path)!=change.Expected) throw new IOException("A file changed after preview: "+change.Path);
                     cancel.ThrowIfCancellationRequested();transaction=new FileTransaction(root);

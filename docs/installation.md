@@ -4,6 +4,15 @@ Windows 기존 설정 파일은 해시 검사부터 교체까지 쓰기·이름 
 
 사용자 설치 절차는 배포에 포함되는 [README-install.md](../README-install.md)를 따른다. 설치 기본값은 현재 사용자 `%LOCALAPPDATA%\AgentBrowser`, 확장 고정 경로는 그 아래 `extension`이다.
 
+## 설치 경로 호환성
+
+GUI와 PowerShell은 조직이 관리하는 사용자 지정 로컬 경로를 지원한다. 설치 루트·부모·드라이브의 소유자 SID 또는 ACL 허용 목록으로 설치와 유지보수를 차단하지 않는다. Windows의 실제 파일 작업 권한을 사용하고 기존 디렉터리의 소유자·ACL을 변경하지 않는다. 새 설치 루트는 상위 정책을 상속하며 제품 데이터 폴더만 별도로 보호한다.
+
+```powershell
+$agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser' # 업데이트는 기존 설치 경로
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir $agentBrowserInstall
+```
+
 ## 설치 파일과 소유권
 
 - `app/<version>-<exe sha256 앞 12자>/browser-bridge.exe`: 업데이트 시 실행 중인 이전 exe를 덮어쓰지 않는다. 기존 관리 OpenCode의 MCP 경로를 유지하도록 이전 버전도 소유 파일로 남긴다.

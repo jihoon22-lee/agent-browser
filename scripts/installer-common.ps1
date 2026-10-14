@@ -22,29 +22,6 @@ function Assert-PlainPath([string]$Path) {
         $current = $parent
     }
 }
-# Match the GUI trust boundary for roots, ancestors and existing destinations.
-function Assert-DirectorySecurity([string]$Path,[bool]$InstallRoot,[bool]$VolumeRoot=$false) {
-    $trusted=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
-    $acl=[IO.Directory]::GetAccessControl($Path,([Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner))
-    if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $trusted){throw 'Installation folder ownership could not be verified. Choose a private local folder.'}
-    $writes=[Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
-    if($VolumeRoot -and -not $InstallRoot){$writes=$writes -band (-bnot [Security.AccessControl.FileSystemRights]::Delete)}
-    if($InstallRoot){$writes=$writes -bor [Security.AccessControl.FileSystemRights]'WriteData,AppendData,WriteExtendedAttributes,WriteAttributes'}
-    foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])) {
-        if($rule.AccessControlType -ne 'Allow' -or (-not $InstallRoot -and ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly))){continue}
-        $sid=$rule.IdentityReference.Value
-        if($sid -in $trusted -or $sid -eq 'S-1-3-0' -or $sid.StartsWith('S-1-15-2-') -or $sid.StartsWith('S-1-15-3-')){continue}
-        $rights=[int64]$rule.FileSystemRights
-        if(($rights -band $writes) -or ($rights -band 0x10000000) -or ($InstallRoot -and ($rights -band 0x40000000))){throw 'Another account can write or replace the installation folder. Choose a private local folder.'}
-    }
-}
-function Assert-PrivateInstallPath([string]$Root,[string]$Destination=$Root) {
-    $directory=[IO.DirectoryInfo]::new($Destination)
-    while($directory) {
-        if($directory.Exists){Assert-DirectorySecurity $directory.FullName ($directory.FullName.Length -ge $Root.Length) ($null -eq $directory.Parent)}
-        $directory=$directory.Parent
-    }
-}
 function Assert-InstallRoot([string]$Path) {
     if(-not [IO.Path]::IsPathRooted($Path)){throw 'Choose an absolute dedicated installation directory.'}
     $full = Get-FullPath $Path
@@ -54,7 +31,6 @@ function Assert-InstallRoot([string]$Path) {
     }
     if($full.StartsWith('\\') -or ([IO.DriveInfo]::new([IO.Path]::GetPathRoot($full))).DriveType -notin @('Fixed','Removable','Ram')){throw 'Bridge installation requires a Windows local disk.'}
     Assert-PlainPath $full
-    Assert-PrivateInstallPath $full
     return $full
 }
 function Join-SafePath([string]$Root, [string]$Relative) {
@@ -296,7 +272,6 @@ function Assert-OwnedFiles([string]$Root, $State) {
     if (-not $State) { return }
     foreach ($file in $State.OwnedFiles) {
         $path = Join-SafePath $Root $file.Path
-        Assert-PrivateInstallPath $Root ([IO.Path]::GetDirectoryName($path))
         if ((Test-Path -LiteralPath $path) -and ((-not (Test-Path -LiteralPath $path -PathType Leaf)) -or (Get-FileSha256 $path) -ne $file.Sha256)) { throw "An installed file was modified and will not be overwritten or deleted: $path" }
     }
 }
@@ -371,16 +346,11 @@ function Set-PrivateDirectoryAccess([string]$Path) {
     # fresh descriptor may request SeSecurityPrivilege on repeated installation.
     [IO.Directory]::SetAccessControl($Path, $acl)
 }
-function New-PrivateInstallDirectory([string]$Path) {
-    if(-not (Test-Path -LiteralPath $Path)) {
-        $null=New-Item -ItemType Directory -Path $Path -Force
-        Assert-PlainPath $Path
-        $trusted=@([Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
-        $owner=[IO.Directory]::GetAccessControl($Path,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier]).Value
-        if($owner -notin $trusted){throw 'The new installation directory changed ownership; no permissions were changed.'}
-        Set-PrivateDirectoryAccess $Path
-    }
-    Assert-PrivateInstallPath $Path
+function New-InstallDirectory([string]$Path) {
+    Assert-PlainPath $Path
+    # Windows controls access to the user-selected installation location.
+    # Preserve organization-managed owners and inherited directory permissions.
+    $null=New-Item -ItemType Directory -Path $Path -Force
 }
 function Set-PrivateDataDirectory([string]$Path, [string]$InstallId) {
     Assert-PlainPath $Path

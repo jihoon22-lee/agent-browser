@@ -9,7 +9,7 @@ Windows x64용 Chrome 확장과 Browser Bridge를 설치합니다. 관리자 권
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 같은 버전의 ZIP과 `SHA256SUMS`를 각각 받습니다. **압축을 풀거나 실행하기 전에** ZIP의 SHA256을 별도로 받은 체크섬의 해당 ZIP 행 또는 GitHub 자산의 SHA256 digest와 비교합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.10-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.11-windows-x64.zip
 ```
 
 다르면 공식 릴리스에서 다시 받습니다. 현재 exe에는 Authenticode 서명이 없습니다. ZIP 안의 `package-manifest.json`은 파일 누락·변경 확인용이며 다운로드 출처를 증명하지 않습니다.
@@ -21,7 +21,7 @@ ZIP 전체를 **설치 대상과 다른 임시 폴더**에 풀고 `AgentBrowser-
 3. 로그인 자동 시작 여부를 확인하고 **다음 → 설치**를 누릅니다. 기본값은 자동 시작입니다.
 4. **Chrome 확장 추가 → Chrome 연결 → OpenCode 설정 → 설정 완료**를 순서대로 진행합니다.
 
-설치 폴더와 상위 폴더의 소유자·교체 권한, 기존 파일 해시를 검사합니다. 다른 일반 사용자가 내용을 바꾸거나 경로를 교체할 수 있으면 중단합니다. 네트워크 경로와 reparse point는 지원하지 않습니다. 기존 폴더의 소유자·권한을 자동으로 바꾸지 않습니다. 새로 만드는 설치 폴더와 제품 데이터에는 현재 사용자·SYSTEM·Administrators만 접근하도록 설정합니다. 경로가 거부되면 **기본 위치로 되돌리기** 또는 허용된 개인 전용 로컬 폴더를 사용합니다. GUI와 PowerShell 모두 같은 경로 신뢰 기준을 적용합니다.
+조직이 관리하는 전용 로컬 폴더도 사용할 수 있습니다. GUI와 PowerShell 모두 설치 폴더·상위 폴더의 소유자나 ACL을 별도로 심사해 차단하지 않으며, Windows가 허용한 권한으로 설치합니다. 기존 폴더·부모의 권한과 소유자는 바꾸지 않고 새 설치 폴더는 해당 위치의 정책을 상속합니다. 페어링 등 제품 데이터 폴더는 별도로 보호합니다. 기존 파일의 사용자 수정 사항을 보존하며 네트워크 경로와 reparse point는 지원하지 않습니다.
 
 포트·로그인 자동 시작·일반 CLI MCP 등록은 설치 위치 화면의 **고급 설정**에 있습니다. 확장 관리 서버만 사용한다면 기본값으로 진행해도 됩니다. 기존의 다른 설치가 만든 Startup 바로가기는 덮어쓰지 않습니다. 자동 시작을 해제하면 설치 폴더의 `start-bridge.cmd` 또는 마법사의 **기존 설치의 연결 설정**으로 직접 시작할 수 있습니다.
 
@@ -89,17 +89,17 @@ GUI는 Bridge exe 경로나 포트가 바뀌면 유휴 관리 서버를 중지�
 
 ## 5. PowerShell 설치·유지보수
 
-스크립트는 PowerShell 5.1 실행이 허용된 환경을 위한 대안입니다. GUI의 권한 검사를 피하는 경로가 아닙니다. 여러 CLI 설정을 등록했거나 관리 서버의 자동 전환이 필요하면 GUI를 사용합니다.
+스크립트는 Windows PowerShell 5.1로 실행합니다. GUI와 동일한 사용자 지정 로컬 설치 경로를 지원합니다. 여러 CLI 설정을 등록했거나 관리 서버의 자동 전환이 필요하면 GUI를 사용합니다.
 
-검증한 ZIP을 푼 폴더에서 Windows PowerShell을 열고 실행합니다. 다음 예시는 기본 사용자 설치 위치를 사용합니다.
+검증한 ZIP을 푼 폴더에서 Windows PowerShell을 열고 실행합니다. 다음 예시는 기본 사용자 설치 위치를 사용합니다. 기존 설치를 업데이트할 때는 `$agentBrowserInstall`에 기존 경로를 그대로 지정합니다.
 
 ```powershell
 $agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser'
-.\setup.ps1 -InstallDir $agentBrowserInstall
-& (Join-Path $agentBrowserInstall 'show-pairing.ps1')
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir $agentBrowserInstall
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $agentBrowserInstall 'show-pairing.ps1')
 ```
 
-표시된 주소·토큰으로 2절의 Chrome 연결을 진행합니다. 토큰을 출력하므로 터미널 전체를 공유하지 않습니다. 실행 정책 때문에 막히면 GUI 또는 승인된 실행 방법을 사용합니다. 배포된 `.cmd`와 스크립트용 Startup 실행기는 해당 PowerShell 프로세스에만 실행 정책 옵션을 전달하며 영구 정책이나 그룹 정책을 변경하지 않습니다.
+표시된 주소·토큰으로 2절의 Chrome 연결을 진행합니다. 토큰을 출력하므로 터미널 전체를 공유하지 않습니다. 위 명령은 해당 PowerShell 프로세스에만 실행 정책 옵션을 전달합니다. 배포된 `.cmd`와 스크립트용 Startup 실행기는 해당 PowerShell 프로세스에만 실행 정책 옵션을 전달하며 영구 정책이나 그룹 정책을 변경하지 않습니다.
 
 | 옵션 | 동작 |
 |---|---|
@@ -114,13 +114,13 @@ $agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser'
 **스크립트 업데이트 전에는** 작업을 마치고 옵션에서 모든 관리 프로필의 **서버 중지**를 완료합니다. 새 Bridge 경로나 포트로 바뀌는데 관리 런타임 기록이 남아 있으면 파일을 바꾸기 전에 거부합니다. 외부 서버는 그대로 둡니다. 새 ZIP 폴더에서 같은 `-InstallDir`로 `setup.ps1`을 다시 실행하고 확장을 새로고침합니다.
 
 ```powershell
-.\setup.ps1 -InstallDir $agentBrowserInstall -NoStartup
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir $agentBrowserInstall -NoStartup
 ```
 
 스크립트 제거는 작업을 마친 뒤 실행합니다. 기본은 데이터 보존입니다.
 
 ```powershell
-& (Join-Path $agentBrowserInstall 'uninstall.ps1') -InstallDir $agentBrowserInstall
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $agentBrowserInstall 'uninstall.ps1') -InstallDir $agentBrowserInstall
 ```
 
 `-RemoveData`는 해당 설치가 소유한 페어링·프로필 데이터까지 지우는 명시적 선택입니다. 복구용 데이터를 보관할 필요가 있는지 먼저 확인합니다. 기존 OpenCode의 인증·세션·다른 프로그램 데이터는 삭제하지 않습니다.

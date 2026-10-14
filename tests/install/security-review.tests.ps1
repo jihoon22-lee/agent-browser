@@ -19,8 +19,10 @@ try {
     $sid=New-Object Security.Principal.SecurityIdentifier('S-1-1-0')
     $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow')))
     [IO.Directory]::SetAccessControl($install,$acl)
-    Reject 'shared install directory was accepted' {Assert-InstallRoot $install}
-    Reject 'replaceable ancestor was accepted' {Assert-InstallRoot (Join-Path $install 'nested')}
+    $before=[IO.Directory]::GetAccessControl($install).GetSecurityDescriptorSddlForm('Access,Owner,Group')
+    $null=Assert-InstallRoot $install
+    $null=Assert-InstallRoot (Join-Path $install 'nested')
+    if([IO.Directory]::GetAccessControl($install).GetSecurityDescriptorSddlForm('Access,Owner,Group') -ne $before){throw 'Path validation changed the existing folder ACL'}
     [IO.Directory]::SetAccessControl($install,$original)
     $state=@{Product=$script:AgentBrowserProduct;SchemaVersion=1;InstallDir=$install;InstallId=('a'*32);DataDir=$root;OwnedFiles=@();CurrentExe=(Join-Path $install 'bridge.exe')}
     Write-Utf8Atomic (Join-Path $install $script:AgentBrowserStateName) ($state|ConvertTo-Json)
@@ -29,5 +31,5 @@ try {
     Write-Utf8Atomic (Join-Path $install $script:AgentBrowserStateName) ($state|ConvertTo-Json)
     Reject 'malformed installation identity was accepted' {Read-InstallState $install}
     if($failures.Count){throw ($failures -join '; ')}
-    Write-Output 'PASS script rejects writable roots, replaceable ancestors and untrusted state paths/identity'
+    Write-Output 'PASS script accepts Windows-authorized paths without changing ACLs and rejects invalid installation records'
 } finally {Remove-Item -LiteralPath $root -Recurse -Force}

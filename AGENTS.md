@@ -25,6 +25,15 @@ Windows용 Browser Bridge(`browser-bridge.exe`) 두 가지다.
 
 ## 구현과 검증
 
+### 설치 호환성 — 사용자 확정 요구사항
+
+- GUI와 PowerShell 모두 사용자가 지정한 Windows 로컬 설치 경로를 지원한다. 조직이 관리하는 폴더도 정상 지원 대상이다.
+- 설치 폴더·상위 폴더·드라이브 루트의 소유자 SID 허용 목록, 자체 ACL/다른 계정 쓰기 권한 검사를 설치·업데이트·시작·진단·제거의 차단 조건으로 추가하지 않는다. 접근 가능 여부는 Windows의 실제 파일 작업 결과에 따른다. 보안 리뷰나 테스트 통과를 이유로 이 제한을 다시 도입하지 않는다.
+- 기존 설치 폴더나 상위 폴더의 소유자·ACL을 제품이 바꾸지 않는다. 새 설치 폴더도 해당 위치의 Windows 정책을 상속한다. 별도 우회 옵션·관리자 실행·기본 경로 강요로 호환성 요구를 대신하지 않는다.
+- 페어링 인증, 제품 데이터 보호, 잘못된 경로로의 덮어쓰기·삭제 방지, 사용자 수정 파일·설정 보존은 유지한다. 조직의 폴더 소유권 정책을 제품이 대체하는 기능은 범위 밖이다.
+- 사용자 안내의 스크립트 실행은 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 ...` 형식을 사용한다. 설치·업데이트·페어링·제거 모두 bare `.\*.ps1`만 안내하지 않는다. 영구 실행 정책이나 조직 그룹 정책을 변경하지 않는다.
+- GUI는 실제 Windows에서 설치 화면과 고급 설정의 한글 표시·잘림·배율을 눈으로 확인한다. 버튼 이벤트 테스트를 화면 검증으로 대신하지 않는다. 관리 경로의 설치·재설치·시작·제거도 회귀 검증한다.
+
 - Extension: Manifest V3 + TypeScript + React + Vite, 패키지 매니저 pnpm 9.
 - Bridge: Rust(`rust-toolchain.toml` 고정). Windows exe는 WSL에서
   `cargo xwin build --target x86_64-pc-windows-msvc`로 만들고, `/mnt/c/...`에 복사해 interop으로
