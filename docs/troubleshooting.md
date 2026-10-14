@@ -25,11 +25,16 @@
 
 문제를 확인할 때는 **Chrome 확장 → Bridge → OpenCode 실행 환경 → 브라우저 MCP → 모델** 순서로 구분합니다. 패널 상단의 **연결됨**은 Bridge 연결 상태입니다. 이것만으로 OpenCode나 모델이 준비됐다는 뜻은 아닙니다.
 
-## 설치 위치에서 소유자·권한 오류가 남
+## 이전 설치 관리자의 소유자·권한 오류
 
-설치 마법사에서 **기본 위치로 되돌리기**를 누르면 현재 사용자의 `%LOCALAPPDATA%\AgentBrowser`를 선택합니다. 새 설치는 위치 선택 후 **다음 → 설치**로 진행하며 Bridge를 먼저 시작할 필요가 없습니다.
+v0.1.11은 `Installation folder ownership could not be verified`와 자체 폴더 ACL 차단을 제거했습니다. 새 ZIP을 기존 설치와 다른 폴더에 풀고 기존 설치 경로를 지정해 업데이트합니다. GUI와 PowerShell 모두 조직이 관리하는 로컬 폴더를 지원하며 상위 폴더의 소유자·권한을 변경하지 않습니다.
 
-권한 오류에는 문제가 된 설치 폴더 또는 상위 폴더의 경로를 표시합니다. 다른 사용자가 소유하거나 파일·폴더를 교체할 수 있는 경로는 사용할 수 없습니다. GUI와 PowerShell 모두 같은 신뢰 기준을 적용하며 기존 폴더의 소유자·권한을 자동 변경하지 않습니다. 사용할 경로가 거부되면 허용된 개인 전용 로컬 폴더를 선택합니다. 드라이브 문자만으로 허용·거부를 결정하지 않습니다.
+```powershell
+$agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser' # 기존 설치 경로로 지정
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir $agentBrowserInstall
+```
+
+Windows 자체가 파일 쓰기를 거부하면 해당 작업의 오류가 표시됩니다. 설치 관리자가 조직 정책을 바꾸거나 관리자 권한을 요구하지 않습니다. 로그인 자동 실행을 사용하지 않았던 설치는 기존처럼 `-NoStartup`을 함께 지정합니다.
 
 ## 1. 우선 확인할 것
 

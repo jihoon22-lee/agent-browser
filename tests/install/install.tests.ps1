@@ -56,7 +56,7 @@ try {
     }
     $package1 = New-TestPackage 'package 1' '0.1.0'
     $package2 = New-TestPackage 'package 2' '0.2.0'
-    Case 'new installation root does not inherit other-account write access' {
+    Case 'new installation preserves managed directory inheritance' {
         $parent=Join-Path $testRoot 'inherited-write-parent'
         $null=New-Item -ItemType Directory $parent
         $acl=[IO.Directory]::GetAccessControl($parent)
@@ -65,7 +65,7 @@ try {
         [IO.Directory]::SetAccessControl($parent,$acl)
         $privateInstall=Join-Path $parent 'private-install';$activeInstalls.Add($privateInstall)
         $null=& (Join-Path $package1 'setup.ps1') -InstallDir $privateInstall -NoStartup -NoStart -Quiet
-        Assert ([IO.Directory]::GetAccessControl($privateInstall).AreAccessRulesProtected) 'New installation inherited untrusted write access'
+        Assert (-not [IO.Directory]::GetAccessControl($privateInstall).AreAccessRulesProtected) 'New installation discarded managed directory inheritance'
         $null=Assert-InstallRoot $privateInstall
         $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $privateInstall -RemoveData -Quiet
     }

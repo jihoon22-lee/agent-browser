@@ -40,7 +40,6 @@ foreach ($file in $manifest.Files) {
     $relative = $file.Path
     if ($relative -eq 'browser-bridge.exe') { $relative = $exeRelative }
     $target = Join-SafePath $root $relative
-    Assert-PrivateInstallPath $root ([IO.Path]::GetDirectoryName($target))
     if ((Test-Path -LiteralPath $target) -and -not $owned.Contains($relative)) { throw "An unowned file blocks installation: $target" }
     $copies.Add([pscustomobject]@{ Source=(Join-SafePath $PackageDir $file.Path); Target=$target; Relative=$relative; Sha256=$file.Sha256.ToLowerInvariant() })
     $owned[$relative] = $file.Sha256.ToLowerInvariant()
@@ -76,7 +75,6 @@ if ($OpenCodeKind -eq 'wsl') {
 }
 foreach ($relative in $fragments.Keys) {
     $target = Join-SafePath $root $relative
-    Assert-PrivateInstallPath $root ([IO.Path]::GetDirectoryName($target))
     if ((Test-Path -LiteralPath $target) -and -not $owned.Contains($relative)) { throw "An unowned generated fragment already exists: $target" }
     $owned[$relative] = Get-TextHash $fragments[$relative]
 }
@@ -97,7 +95,7 @@ if ($OpenCodeConfig) {
 }
 $state.OwnedFiles = @($owned.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Path=$_.Key; Sha256=$_.Value } })
 
-New-PrivateInstallDirectory $root
+New-InstallDirectory $root
 $lockPath = Join-Path $root '.agent-browser-install.lock'
 $lock = $null; $transaction = $null; $committed = $false; $rollbackOk = $true; $stoppedOld = $false; $startedNew = $false
 try {
@@ -117,7 +115,6 @@ try {
     }
     foreach ($relative in $fragments.Keys) {
         $target = Join-SafePath $root $relative
-        Assert-PrivateInstallPath $root ([IO.Path]::GetDirectoryName($target))
         if (-not (Test-Path -LiteralPath $target) -or (Get-FileSha256 $target) -ne $owned[$relative]) { Set-TransactionText $transaction $target $fragments[$relative] }
     }
     if ($old -and $old.Startup -and $old.Startup.Path -ne $startupPath -and (Test-Path -LiteralPath $old.Startup.Path)) { Remove-TransactionFile $transaction $old.Startup.Path }
@@ -148,7 +145,7 @@ try {
     if (-not $Quiet) {
         Write-Host ('Installed AgentBrowser ' + $state.Version + ' in ' + $root)
         Write-Host ('Chrome: load the unpacked extension from ' + (Join-Path $root 'extension'))
-        Write-Host 'For pairing, run show-pairing.ps1 in the installation directory and paste its token into extension Options.'
+        Write-Host ('Pairing: powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $root 'show-pairing.ps1') + '"')
         Write-Host ('Bridge URL: ws://127.0.0.1:' + $state.Port + '/extension')
         Write-Host 'In Options, create a Windows or WSL profile for your existing OpenCode v1 installation and working directory.'
         Write-Host 'Existing model/provider/auth/session settings are preserved. No OpenCode installation or model request was performed.'

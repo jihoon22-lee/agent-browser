@@ -29,7 +29,8 @@ namespace AgentBrowser.Installer {
         static void StyleButton(Button button,bool primary=false){button.FlatStyle=FlatStyle.Flat;button.FlatAppearance.BorderColor=Border;button.FlatAppearance.BorderSize=primary?0:1;button.BackColor=primary?Accent:Color.White;button.ForeColor=primary?Color.White:Ink;button.FlatAppearance.MouseOverBackColor=primary?Color.FromArgb(0,88,165):Color.FromArgb(243,245,248);button.UseVisualStyleBackColor=false;}
         static void Position(Control parent,Control c,string name,int x,int y,int width,int height=28) {c.Name=name;c.AccessibleName=name;c.SetBounds(x,y,width,height);parent.Controls.Add(c);var button=c as Button;if(button!=null)StyleButton(button);}
         public SetupForm(string[] arguments,Func<DiscoveryResult> installedDiscovery=null) {
-            args=arguments;Text="AgentBrowser 설치";Name="AgentBrowserSetup";ClientSize=new Size(720,564);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;Font=new Font("맑은 고딕",10F);ForeColor=Ink;BackColor=Color.White;AutoScaleMode=AutoScaleMode.Dpi;
+            SuspendLayout();
+            args=arguments;Text="AgentBrowser 설치";Name="AgentBrowserSetup";ClientSize=new Size(720,600);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;Font=new Font("Malgun Gothic",10F);ForeColor=Ink;BackColor=Color.White;AutoScaleMode=AutoScaleMode.Font;AutoScaleDimensions=new SizeF(7F,17F);
             heading.Font=new Font(Font.FontFamily,18F,FontStyle.Bold);Position(this,heading,"PageTitle",32,24,656,36);
             steps.ForeColor=Muted;Position(this,steps,"SetupSteps",32,68,656,30);
             var line=new Panel{BackColor=Border};line.SetBounds(0,108,720,1);Controls.Add(line);
@@ -97,6 +98,24 @@ namespace AgentBrowser.Installer {
             installs.Enabled=false;
             var scan=installedDiscovery??new Func<DiscoveryResult>(Discovery.InstalledPaths);
             Shown+=async delegate{if(!Has(args,"--no-discover"))await DiscoverInstallations(scan);};
+            // Keep navigation visible on small displays; only the page content scrolls.
+            var header=new Panel{Dock=DockStyle.Top,Height=110,BackColor=Color.White};
+            header.Controls.Add(heading);header.Controls.Add(steps);header.Controls.Add(line);
+            var bottom=new Panel{Dock=DockStyle.Bottom,Height=124,BackColor=Color.White};
+            status.Location=new Point(32,8);status.Height=52;bottom.Controls.Add(status);
+            footer.Dock=DockStyle.Bottom;bottom.Controls.Add(footer);
+            var navigation=new FlowLayoutPanel{Dock=DockStyle.Fill,FlowDirection=FlowDirection.RightToLeft,WrapContents=false,Padding=new Padding(12,9,12,9)};
+            foreach(var button in new[]{cancel,prepare,apply,back}){button.Margin=new Padding(6,0,6,0);navigation.Controls.Add(button);}
+            footer.Controls.Add(navigation);footerLine.Dock=DockStyle.Top;footerLine.BringToFront();
+            status.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;heading.Anchor=steps.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;
+            FontChanged+=delegate{heading.Font=new Font(Font.FontFamily,Font.Size*1.8F,FontStyle.Bold);complete.Font=new Font(Font.FontFamily,Font.Size*1.6F,FontStyle.Bold);check.Font=new Font("Segoe UI Symbol",Font.Size*3.2F);};
+            var body=new Panel{Name="PageViewport",Dock=DockStyle.Fill,AutoScroll=true,AutoScrollMinSize=new Size(720,348)};
+            foreach(var panel in panels){panel.Location=new Point(32,20);body.Controls.Add(panel);}
+            Controls.Add(body);Controls.Add(bottom);Controls.Add(header);
+            FormBorderStyle=FormBorderStyle.Sizable;MaximizeBox=true;
+            MinimumSize=new Size(520,420);
+            ResumeLayout(true);
+            Shown+=delegate{var area=Screen.FromControl(this).WorkingArea;if(Height>area.Height||Width>area.Width){Size=new Size(Math.Min(Width,area.Width),Math.Min(Height,area.Height));Location=area.Location;}};
         }
         void SetPage(int value){
             revision++;page=value;welcome.Visible=page==0;input.Visible=page==1;review.Visible=page==2||page==3;connection.Visible=page==4;pairing.Visible=page==5;runtime.Visible=page==6;done.Visible=page==7;
@@ -122,9 +141,14 @@ namespace AgentBrowser.Installer {
         }
         bool ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");profiles.Enabled=true;SetPage(4);status.Clear();return true;}catch(Exception error){status.Text=error.Message;return false;}}
         void ShowAdvanced(){
-            using(var dialog=new Form{Text="AgentBrowser 고급 설정",ClientSize=new Size(800,404),Font=Font,BackColor=Color.White,FormBorderStyle=FormBorderStyle.FixedDialog,MaximizeBox=false,MinimizeBox=false,StartPosition=FormStartPosition.CenterParent}){
-                advanced.Parent=dialog;advanced.Location=new Point(20,20);advanced.Visible=true;
-                var close=new Button{Text="확인"};Position(dialog,close,"CloseAdvanced",680,358,100,32);StyleButton(close,true);close.Click+=delegate{dialog.Close();};dialog.AcceptButton=close;
+            // This panel has already scaled with the main form. Do not scale it again
+            // when it moves into a dialog, or text and fields overlap at large fonts.
+            int margin=(int)Math.Ceiling(20*Font.Size/10F),buttonHeight=(int)Math.Ceiling(32*Font.Size/10F);
+            using(var dialog=new Form{Text="AgentBrowser 고급 설정",Font=Font,AutoScaleMode=AutoScaleMode.None,AutoScroll=true,BackColor=Color.White,FormBorderStyle=FormBorderStyle.Sizable,MaximizeBox=true,MinimizeBox=false,StartPosition=FormStartPosition.CenterParent}){
+                advanced.Parent=dialog;advanced.Location=new Point(margin,margin);advanced.Visible=true;
+                dialog.ClientSize=new Size(advanced.Width+2*margin,advanced.Height+3*margin+buttonHeight);
+                var close=new Button{Text="확인"};Position(dialog,close,"CloseAdvanced",Math.Max(margin,advanced.Right-5*margin),advanced.Bottom+margin,5*margin,buttonHeight);StyleButton(close,true);close.Click+=delegate{dialog.Close();};dialog.AcceptButton=close;
+                dialog.Shown+=delegate{var area=Screen.FromControl(dialog).WorkingArea;if(dialog.Height>area.Height||dialog.Width>area.Width){dialog.Size=new Size(Math.Min(dialog.Width,area.Width),Math.Min(dialog.Height,area.Height));dialog.Location=area.Location;}};
                 try{dialog.ShowDialog(this);}finally{advanced.Visible=false;advanced.Parent=input;}
             }
         }
@@ -206,11 +230,12 @@ namespace AgentBrowser.Installer {
             using(var child=Process.Start(new ProcessStartInfo(copy,String.Join(" ",forwarded.Select(NativeIO.Quote))){UseShellExecute=false})) {if(child==null)throw new IOException("Could not open installed maintenance.");}
             return true;
         }
+        [System.Runtime.InteropServices.DllImport("user32.dll")]static extern bool SetProcessDPIAware();
         [STAThread] public static int Main(string[] args) {
             try {
                 if(args.Length==2&&args[0]=="--start") {var state=InstallerEngine.State(InstallerEngine.Root(args[1]));if(state==null)throw new IOException("설치 상태를 찾지 못했습니다.");BridgeControl.Start(state);return 0;}
                 if(RelaunchInstalled(args))return 0;
-                Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new SetupForm(args));return 0;
+                SetProcessDPIAware();Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new SetupForm(args));return 0;
             } catch(Exception error) {MessageBox.Show(error.Message,"AgentBrowser",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
         }
     }
