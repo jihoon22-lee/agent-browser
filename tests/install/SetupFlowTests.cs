@@ -15,6 +15,7 @@ namespace AgentBrowser.Installer {
   static void Case(string name,Action test){try{test();passed++;Console.WriteLine("PASS "+name);}catch(Exception error){failed++;Console.WriteLine("FAIL "+name+": "+error.GetBaseException().Message);}}
   static T Field<T>(Form form,string name) where T:Control {return (T)form.Controls.Find(name,true).Single();}
   static void Invoke(Form form,string method){SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());var result=typeof(SetupForm).GetMethod(method,BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null) as Task;if(result==null)return;var end=DateTime.UtcNow.AddSeconds(30);while(!result.IsCompleted&&DateTime.UtcNow<end){Application.DoEvents();Thread.Sleep(10);}Assert(result.IsCompleted,"UI operation timed out");result.GetAwaiter().GetResult();}
+  static string FreePort(){var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();string port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port.ToString();listener.Stop();return port;}
   static void Uninstall(string root){if(InstallerEngine.State(root)!=null)InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=root}),CancellationToken.None,s=>{});}
   [STAThread] public static int Main(string[] args){
    string fixture=args[0],package=args[1];InstallerEngine.PrivateDirectory(fixture);
@@ -25,6 +26,27 @@ namespace AgentBrowser.Installer {
     Assert(Friendly.Message(new IOException("Package checksum mismatch: browser-bridge.exe")).Contains("다시 받아"),"checksum");
     Assert(Friendly.Message(new IOException("Pair the Chrome extension first")).Contains("Chrome 연결"),"pairing");
     Assert(Friendly.Message(new IOException("이미 한국어인 안내"))=="이미 한국어인 안내","Korean text must stay as is");
+   });
+   Case("pairing helpers identify the fixed extension and a connected browser",()=>{
+    string manifest=Path.Combine(package,"extension","manifest.json");
+    Assert(Pairing.ExtensionId(manifest)=="icgmjjcpnaenpfjfoggnaodeaidbnihl","extension id");
+    var connected=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"pairedExtensionId\":\"icgmjjcpnaenpfjfoggnaodeaidbnihl\",\"extensionSeen\":null,\"browsers\":[{\"clientId\":\"cli-1\",\"connected\":true,\"selected\":true}]}");
+    Assert(Pairing.Connected(connected,"icgmjjcpnaenpfjfoggnaodeaidbnihl"),"connected browser");
+    var seen=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"pairedExtensionId\":null,\"extensionSeen\":\"icgmjjcpnaenpfjfoggnaodeaidbnihl\",\"browsers\":[]}");
+    Assert(!Pairing.Connected(seen,"icgmjjcpnaenpfjfoggnaodeaidbnihl")&&Pairing.Seen(seen,"icgmjjcpnaenpfjfoggnaodeaidbnihl"),"seen but unpaired");
+   });
+   Case("the pairing page shows a one-time code with a manual token fallback",()=>{
+    string root=Path.Combine(fixture,"pairing-page");
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-browser-launch","--no-startup","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
+     Assert(Field<Button>(form,"OpenExtensions").Visible,"no way to open the Chrome extensions page");
+     Invoke(form,"PreparePairing");
+     Assert(Field<Button>(form,"ConnectChrome").Visible&&Field<Button>(form,"CopyPairingToken").Visible,"pairing page lacks code or manual connection");
+     Invoke(form,"OpenPairingCode");
+     var code=Field<Label>(form,"PairingCode").Text;
+     Assert(System.Text.RegularExpressions.Regex.IsMatch(code,@"^\d{3} \d{3}$"),"pairing code not shown: "+code);
+     form.Close();
+    }}finally{Uninstall(root);}
    });
    Case("new folder guides installation before maintenance",()=>{using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"new")})){form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Application.DoEvents();Assert(!form.Controls.Find("StartInstalledBridge",true).Any(c=>c.Visible),"Bridge start is exposed before installation");Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is exposed before installation");Assert(!Field<Button>(form,"ManagedProfiles").Enabled,"profiles are enabled before installation");Assert(Field<Button>(form,"Preview").Text.Contains("다음"),"primary action has no next-step label");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"advanced package path is exposed by default");Assert(Field<Panel>(form,"WelcomePanel").Visible,"welcome page is missing");Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"SettingsPanel").Visible,"Next did not open location page");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"location page exposes advanced fields");Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"WelcomePanel").Visible,"Back did not return to welcome");form.Close();}});
    Case("changing installed folder clears stale maintenance state",()=>{string root=Path.Combine(fixture,"existing");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,s=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Assert(Field<Button>(form,"ManageConnection").Enabled,"installed Bridge action disabled");Field<TextBox>(form,"InstallFolder").Text=Path.Combine(fixture,"different");Assert(!Field<Button>(form,"ManageConnection").Enabled,"folder edit retained old installation controls");Invoke(form,"LoadState");Assert(Field<ComboBox>(form,"Operation").SelectedIndex==0,"new folder retained Update mode");}}finally{Uninstall(root);}});
