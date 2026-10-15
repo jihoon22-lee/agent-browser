@@ -196,7 +196,12 @@ impl Manager {
         let exe = std::env::current_exe().map_err(|_| failure("Cannot resolve the Bridge executable"))?.to_string_lossy().into_owned();
         let exe = if profile.kind == Kind::Wsl { process::windows_to_wsl(&exe).ok_or_else(|| invalid("The Bridge executable must be on a Windows drive for WSL profiles"))? } else { exe };
         let mut mcp_env = json!({"AGENT_BROWSER_HOME":self.home.to_string_lossy(), "AGENT_BROWSER_PORT":self.port.to_string()});
-        if profile.kind == Kind::Wsl { mcp_env["WSLENV"] = json!("AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w"); }
+        // The proxy names this launch so the server can bind a guarded panel request.
+        let runtime_id = env.get("AGENT_BROWSER_RUNTIME_ID").cloned();
+        if let Some(id) = &runtime_id { mcp_env["AGENT_BROWSER_RUNTIME_ID"] = json!(id); }
+        if profile.kind == Kind::Wsl {
+            mcp_env["WSLENV"] = json!(if runtime_id.is_some() { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w:AGENT_BROWSER_RUNTIME_ID/w" } else { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w" });
+        }
         mcp.insert("browser".into(), json!({"type":"local","command":[exe,"mcp"],"environment":mcp_env,"enabled":true}));
         env.insert("OPENCODE_CONFIG_CONTENT".into(), overlay.to_string()); Ok(())
     }
@@ -782,6 +787,19 @@ mod tests {
         let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
         assert_eq!(value["model"],"fixture/model"); assert_eq!(value["provider"]["fixture"]["options"]["secret"],"private"); assert_eq!(value["plugin"],json!(["fixture"])); assert_eq!(value["mcp"]["existing"]["enabled"],false);
         assert_eq!(value["mcp"]["browser"]["environment"]["AGENT_BROWSER_PORT"],"54321");
+    }
+    #[test]
+    fn overlay_hands_the_runtime_id_to_the_browser_mcp() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),54321);
+        let kinds: &[(&str,bool)] = if cfg!(windows) { &[("windows",false),("wsl",true)] } else { &[("windows",false)] };
+        for (kind,wsl) in kinds {
+            let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":kind,"distribution":"Ubuntu","directory":"/fixture","executable":"/fixture/opencode"})).unwrap();
+            let mut env = BTreeMap::from([("AGENT_BROWSER_RUNTIME_ID".to_string(),"rid-1".to_string())]);
+            manager.overlay(&profile,&mut env).unwrap();
+            let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+            assert_eq!(value["mcp"]["browser"]["environment"]["AGENT_BROWSER_RUNTIME_ID"],"rid-1");
+            assert_eq!(value["mcp"]["browser"]["environment"]["WSLENV"].as_str().is_some_and(|v| v.split(':').any(|e| e=="AGENT_BROWSER_RUNTIME_ID/w")),*wsl);
+        }
     }
 }
 

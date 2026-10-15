@@ -159,7 +159,15 @@ fn summarize(name: &str, args: &Value) -> String {
     parts.join(" ")
 }
 
+/// Who is calling: a managed runtime's proxy names its launch id and OpenCode directory.
+#[derive(Clone, Debug, Default)]
+pub struct Caller { pub runtime_id: Option<String>, pub cwd: Option<String> }
+
 pub async fn call_tool(state: &ServerState, name: &str, args: Value) -> ToolOutcome {
+    call_tool_as(state, &Caller::default(), name, args).await
+}
+
+pub async fn call_tool_as(state: &ServerState, _caller: &Caller, name: &str, args: Value) -> ToolOutcome {
     let outcome = run(state, name, &args).await;
     state.timeline.push(TimelineEntry {
         at_ms: now_ms(),

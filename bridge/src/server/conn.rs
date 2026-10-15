@@ -126,6 +126,10 @@ struct Hello {
     client_id: String,
     #[serde(default)]
     repair: bool,
+    #[serde(default)]
+    runtime_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 type Ws = WebSocketStream<TcpStream>;
@@ -206,8 +210,9 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
             state.broadcast_status();
         }
         Role::Mcp => {
+            let caller = router::Caller { runtime_id: hello.runtime_id.clone(), cwd: hello.cwd.clone() };
             if send_hello_ok(&mut ws, hello_id, &connection_id, false, &hello.client_id).await {
-                serve_mcp(&mut ws, &state).await;
+                serve_mcp(&mut ws, &state, &caller).await;
             }
         }
     }
@@ -410,7 +415,7 @@ fn not_available(id: String) -> Envelope {
     Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
 }
 
-async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
+async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
     use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered};
     let mut pending = FuturesUnordered::new();
     let mut running = std::collections::HashMap::<String, AbortHandle>::new();
@@ -468,8 +473,9 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
                 let attach = name == "browser_tabs" && (arguments["action"] == "attach" || (arguments["action"] == "new" && arguments.get("operationId").is_none()));
                 let (abort, registration) = AbortHandle::new_pair();
                 running.insert(id.clone(), abort);
+                let caller = caller.clone();
                 pending.push(async move {
-                    let result = Abortable::new(router::call_tool(state, &name, arguments), registration).await;
+                    let result = Abortable::new(router::call_tool_as(state, &caller, &name, arguments), registration).await;
                     (id, attach, result)
                 });
             }
