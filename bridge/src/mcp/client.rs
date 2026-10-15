@@ -42,6 +42,14 @@ pub async fn probe_authenticated(home: &Path, port: u16) -> bool {
     client.open().await.is_ok()
 }
 
+/// One authenticated request to a running serve for local tools such as the installer. Never starts serve.
+pub async fn admin_request(home: &Path, port: u16, method: &str, params: Value) -> anyhow::Result<Value> {
+    let cfg = config::load_or_init(home)?;
+    let client = ServeClient { port, exe: Path::new("").into(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
+    let mut ws = client.open().await.map_err(|error| anyhow::anyhow!("No authenticated Bridge at 127.0.0.1:{port}: {error}"))?;
+    auth_exchange(&mut ws, &Envelope::req(method, params)).await.map_err(|error| anyhow::anyhow!(error))
+}
+
 async fn auth_exchange(ws: &mut Ws, request: &Envelope) -> Result<Value, String> {
     tokio::time::timeout(Duration::from_secs(5), async {
         ws.send(Message::text(request.to_text())).await.map_err(|_| "authentication send failed".to_string())?;

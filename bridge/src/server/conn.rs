@@ -43,10 +43,13 @@ impl Role {
     fn allows(self, method: &str) -> bool {
         match self {
             Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "request.begin" | "request.end" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
-            Role::Mcp => matches!(method, "tool.call" | "tool.cancel"),
+            Role::Mcp => matches!(method, "tool.call" | "tool.cancel" | "status.get" | "pairing.open"),
         }
     }
 }
+
+/// A short window the installer opens so a freshly loaded extension can receive the existing token.
+pub struct PairingWindow { pub extension_id: String, pub until: std::time::Instant }
 
 pub struct ServerState {
     pub runtime: crate::runtime::Manager,
@@ -57,6 +60,9 @@ pub struct ServerState {
     pub timeline: Timeline,
     // Protect selection across attach's asynchronous tab lookup and gate registration.
     pub selection: tokio::sync::Mutex<()>,
+    pub pairing: StdMutex<Option<PairingWindow>>,
+    /// The extension that last asked for pairing, so the installer can show it was loaded.
+    pub pair_seen: StdMutex<Option<(String, std::time::Instant)>>,
 }
 
 impl ServerState {
@@ -74,6 +80,8 @@ impl ServerState {
             ops: OperationGate::default(),
             timeline: Timeline::default(),
             selection: tokio::sync::Mutex::new(()),
+            pairing: StdMutex::new(None),
+            pair_seen: StdMutex::new(None),
         }
     }
 
@@ -203,6 +211,36 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
     }
 }
 
+async fn handle_pair_request(ws: &mut Ws, role: Role, extension_id: Option<&str>, id: &str, state: &ServerState) {
+    let Some(extension_id) = extension_id.filter(|_| role == Role::Extension) else {
+        send_err_and_close(ws, id, ErrorCode::AuthRequired, "pair.request is only for the extension").await;
+        return;
+    };
+    *state.pair_seen.lock().unwrap() = Some((extension_id.to_string(), std::time::Instant::now()));
+    let granted = {
+        let mut window = state.pairing.lock().unwrap();
+        let open = window.as_ref().is_some_and(|w| w.until > std::time::Instant::now() && w.extension_id == extension_id);
+        if open { *window = None; }
+        open
+    };
+    if !granted {
+        send_err_and_close(ws, id, ErrorCode::AuthRequired, "No pairing window is open. Press [Chrome에 연결] in AgentBrowser setup, or enter the token in Options.").await;
+        return;
+    }
+    let token = state.cfg.lock().await.token.clone();
+    let _ = send(ws, &Envelope::ok(id, json!({ "token": token }))).await;
+    let _ = ws.close(None).await;
+}
+
+fn open_pairing(state: &ServerState, params: &Value) -> Result<Value, RpcError> {
+    let extension_id = params["extensionId"].as_str().filter(|id| id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b)))
+        .ok_or_else(|| RpcError::new(ErrorCode::InvalidParams, Retry::Never, "extensionId must be a 32-character Chrome extension id"))?;
+    let seconds = params["seconds"].as_u64().unwrap_or(120);
+    if !(10..=300).contains(&seconds) { return Err(RpcError::new(ErrorCode::InvalidParams, Retry::Never, "seconds must be 10-300")); }
+    *state.pairing.lock().unwrap() = Some(PairingWindow { extension_id: extension_id.into(), until: std::time::Instant::now() + Duration::from_secs(seconds) });
+    Ok(json!({ "open": true, "seconds": seconds }))
+}
+
 /// Mutual HMAC handshake: server proof first, then client proof. Pair only after both.
 async fn authenticate(
     ws: &mut Ws,
@@ -219,6 +257,10 @@ async fn authenticate(
     };
     let (id, params) = match parse_envelope(&first) {
         Ok(Envelope::Req { id, method, params, .. }) if method == "auth.hello" => (id, params),
+        Ok(Envelope::Req { id, method, .. }) if method == "pair.request" => {
+            handle_pair_request(ws, role, extension_id.as_deref(), &id, state).await;
+            return None;
+        }
         Ok(other) => {
             let id = other.id().unwrap_or_default().to_string();
             send_err_and_close(ws, &id, ErrorCode::AuthRequired, "auth.hello must be the first message").await;
@@ -382,6 +424,20 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
                         }
                     }
                     if !send(ws, &Envelope::ok(id, json!({"cancelled":true}))).await { break; }
+                    continue;
+                }
+                if method == "status.get" {
+                    let paired = state.cfg.lock().await.paired_extension_id.clone();
+                    let seen = state.pair_seen.lock().unwrap().as_ref()
+                        .filter(|(_, at)| at.elapsed() < Duration::from_secs(15)).map(|(id, _)| id.clone());
+                    let reply = Envelope::ok(id, json!({"pairedExtensionId": paired, "extensionSeen": seen,
+                        "browsers": state.registry.snapshot(), "serverVersion": env!("CARGO_PKG_VERSION")}));
+                    if !send(ws, &reply).await { break; }
+                    continue;
+                }
+                if method == "pairing.open" {
+                    let reply = match open_pairing(state, &params) { Ok(value) => Envelope::ok(id, value), Err(error) => Envelope::err(id, error) };
+                    if !send(ws, &reply).await { break; }
                     continue;
                 }
                 if !Role::Mcp.allows(&method) {
