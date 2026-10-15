@@ -1,3 +1,24 @@
+# 브라우저 작업 신뢰성 개선(계획 1) — 2026-10-15 KST, 미배포
+
+[계획](./plans/2026-10-15-browser-reliability.md)과 [리뷰](./review-2026-10-15.md)에 따라 `feat/m6-browser-reliability`에서 14개 과제를 구현했다. 버전 변경·배포는 하지 않았다.
+
+- **실사용 근거:** 이 개발 PC의 OpenCode 기록(10-11~12, 75회)에서 스냅샷 21회 중 5회가 OpenCode 출력 한도를 넘어 모델에게 전달되지 않았다. 잘리지 않은 최대 출력은 39,571B, 잘린 최소 출력은 54,119B였다. 이동 전 snapshot 요구와 requestId 누락 실패도 확인했다. 이동을 일으킨 링크 클릭은 코드상 `EXECUTION_UNKNOWN`으로 보고됐고 기존 E2E가 이를 허용하고 있었다.
+- **변경:**
+  - 출력 UTF-8 바이트 예산과 최종 40,000B 상한(실행된 동작은 결과 유지).
+  - 아이콘 이름, 포인터 영역·누락 ARIA 역할, 상태, 반복 버튼의 행 맥락, 36진 짧은 ref.
+  - 여러 지점 클릭 판정과 자기 label 허용, 즉시 스크롤.
+  - fill 텍스트 계열 제한과 리치 에디터 insertText.
+  - 이동 전 snapshot 요구 제거, 이동 클릭의 `navigated:true` 성공 보고.
+  - 페이지를 바꾼 결과·attach·switch·new와 미실행 STALE 쓰기에 로드 완료 후 snapshot 첨부, attach·new·실패한 switch에 열린 탭 목록.
+  - 생성 직후 취소된 operation 정리.
+  - reconcile 일시 error 유지, 끝난 requestId 안내, `/doc` 확인 캐시.
+  - 도구 설명 5,987자 → 4,685자.
+- **Linux:** Rust **175 통과 / 1 제외**, 확장 **421/421**, tsc 통과, Node **25/25**. Linux Chromium E2E 전체 **146 통과 / 3 제외**(새 R01~R06 포함). 처음 실행에서 N06·R21 두 개가 이전 계약("다음 쓰기는 별도 snapshot 전 STALE")으로 실패했고, 결과에 붙은 snapshot을 검사하도록 바꾼 뒤 해당 두 파일 35/35가 통과했다.
+- **실제 Windows:** `cargo xwin` 교차 빌드 테스트 exe의 lib **78 통과 / 7 제외**, tool_router **24/24**. Windows Chrome 154.0.8037.99 headless E2E(reliability·journeys·scenarios·board-navigation·new-tabs) **102 통과 / 1 제외**(B07 BFCache, 기존과 같이 조건부). 실제 OpenCode 1.18.29 + 사이드패널 + Bridge + MCP 통합 검사가 Windows 프로필과 WSL 프로필 모두 **13개 항목 통과**(합성 provider 125회, 모델 추론 아님). 격리 개발 폴더·프로필만 사용했다.
+- **미검증:** 실제 모델의 도구 선택 품질, 사용자의 배포 PC, 실제 업무 사이트, CSS smooth-scroll 외의 실제 사이트 클릭 차단 사례, `mcp_stdio` 테스트의 Windows 실행(빌드 시점 Linux 실행 파일 경로를 써 제외).
+
+---
+
 # v0.1.11 설치 호환성 복구 — 게시 완료 (2026-10-14)
 
 [v0.1.11](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.1.11)을 **2026-10-14 00:48:41 UTC / 09:48:41 KST**에 게시했다. 태그는 main `956d6ad8a65ad025e3535af081f4f7e37e4957e3`이며 ZIP은 **3,685,338 bytes / 37 files**, SHA256 **`08c30b1e5d46dcb81195654435e41c5b3100bada6c33b2cfb267a218f3556760`**다.
