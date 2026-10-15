@@ -215,3 +215,34 @@ it('review R6 preserves textarea refs across fill but rejects a recycled authore
   await expect(runAction('fill',{ref,text:'wrong record'})).rejects.toMatchObject({code:'STALE_ELEMENT'});
   expect(el.value).toBe('Second record');
 });
+
+it("clicks a visually hidden checkbox through its own styled label", async () => {
+  document.body.innerHTML = `<label id="l"><input type="checkbox" id="c"><span>약관 동의</span></label>`;
+  const input = document.getElementById("c") as HTMLInputElement, label = document.getElementById("l")!;
+  const ref = refOf("약관 동의");
+  vi.spyOn(document.documentElement, "getClientRects").mockReturnValue([{ width: 800, height: 600 }] as unknown as DOMRectList);
+  vi.spyOn(input, "getClientRects").mockReturnValue([{ left: 10, top: 10, right: 20, bottom: 20, width: 10, height: 10 }] as unknown as DOMRectList);
+  input.scrollIntoView = vi.fn();
+  (document as any).elementFromPoint = vi.fn(() => label.querySelector("span"));
+  try {
+    await runAction("click", { ref, generation: 10 });
+    expect(input.checked).toBe(true);
+    expect(input.scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "center", behavior: "instant" });
+  } finally { delete (document as any).elementFromPoint; vi.restoreAllMocks(); }
+});
+
+it("uses another visible point when the center of a control is covered", async () => {
+  document.body.innerHTML = `<button id="b">결제</button><div id="badge">1</div>`;
+  const button = document.getElementById("b")!, badge = document.getElementById("badge")!;
+  const ref = refOf("결제");
+  vi.spyOn(document.documentElement, "getClientRects").mockReturnValue([{ width: 800, height: 600 }] as unknown as DOMRectList);
+  vi.spyOn(button, "getClientRects").mockReturnValue([{ left: 0, top: 0, right: 100, bottom: 40, width: 100, height: 40 }] as unknown as DOMRectList);
+  button.scrollIntoView = vi.fn();
+  (document as any).elementFromPoint = vi.fn((x: number) => (x === 50 ? badge : button));
+  let clicked: number[] = [];
+  button.addEventListener("click", e => { clicked = [e.clientX, e.clientY]; });
+  try {
+    await runAction("click", { ref, generation: 10 });
+    expect(clicked).toEqual([25, 20]);
+  } finally { delete (document as any).elementFromPoint; vi.restoreAllMocks(); }
+});

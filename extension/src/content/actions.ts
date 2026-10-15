@@ -20,13 +20,18 @@ function clickPoint(el:Element) {
     clientY:(Math.max(0,r.top)+Math.min(innerHeight,r.top+r.height))/2};
 }
 
-function assertInteractable(el: Element) {
-  if (!isRendered(el, { checkLayout: hasLayout() }) || el.matches(":disabled") || el.closest("[inert]")) {
-    throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
+type Point = { clientX: number; clientY: number };
+/** Several points per visible fragment: a badge or sticky bar over the center must not block the click. */
+function candidatePoints(el: Element): Point[] {
+  const rects = [...el.getClientRects()].filter(r => r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight);
+  const points: Point[] = [];
+  for (const r of rects.length ? rects : [el.getBoundingClientRect()]) {
+    const left = Math.max(0, r.left), right = Math.min(innerWidth, r.left + r.width), top = Math.max(0, r.top), bottom = Math.min(innerHeight, r.top + r.height);
+    for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.5], [0.75, 0.5], [0.5, 0.25], [0.5, 0.75]] as const) points.push({ clientX: left + (right - left) * fx, clientY: top + (bottom - top) * fy });
   }
-  if (!hasLayout()) return;
-  (el as HTMLElement).scrollIntoView({ block: "center", inline: "center" });
-  const {clientX:x,clientY:y}=clickPoint(el);
+  return points;
+}
+function topAt({ clientX: x, clientY: y }: Point): Element | null {
   let top = document.elementFromPoint(x, y);
   // Document hit testing retargets shadow children to their host. Descend each
   // open root so an overlay inside that same root still blocks the click.
@@ -37,12 +42,32 @@ function assertInteractable(el: Element) {
     if (!inner || inner === top) break;
     top = inner;
   }
+  return top;
+}
+function reaches(top: Element | null, el: Element): boolean {
   let hit: Element | null = top;
   while (hit && hit !== el) hit = hit.parentElement ?? ((hit.getRootNode() as ShadowRoot).host ?? null);
-  if (top && !hit) {
+  if (hit) return true;
+  // A visually hidden native control is commonly covered by its own styled label.
+  const label = top?.closest("label");
+  return !!label && "labels" in el && [...((el as HTMLInputElement).labels ?? [])].includes(label);
+}
+
+function assertInteractable(el: Element): Point | undefined {
+  if (!isRendered(el, { checkLayout: hasLayout() }) || el.matches(":disabled") || el.closest("[inert]")) {
+    throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
+  }
+  if (!hasLayout()) return undefined;
+  // "instant" defeats CSS scroll-behavior:smooth, which would leave hit testing at the old position.
+  (el as HTMLElement).scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  const points = candidatePoints(el);
+  for (const point of points) if (reaches(topAt(point), el)) return point;
+  const top = points[0] ? topAt(points[0]) : null;
+  if (top) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el)} is covered by another element.`, "never",
       { coveredBy: { tag: top.tagName.toLowerCase(), name: accessibleName(top) } });
   }
+  return points[0];
 }
 
 function observeChanges(ms: number, signal: AbortSignal): Promise<{ urlChanged: boolean; domChanged: boolean }> {
@@ -111,9 +136,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     }
     case "click": {
       const el = resolveRef(String(p.ref));
-      assertInteractable(el);
+      const point = assertInteractable(el) ?? clickPoint(el);
       const changes = observeChanges(500, signal);
-      const point=clickPoint(el);
       const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
@@ -122,8 +146,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         const down=type.endsWith('down');
         el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:down?1:0,pointerId:1,pointerType:'mouse',isPrimary:true,pressure:down?0.5:0}));
       }
+      let finalPoint: Point;
       try {
-        assertInteractable(el);
+        finalPoint = assertInteractable(el) ?? clickPoint(el);
         // Pointer handlers can recycle a row or change href synchronously.
         resolveRef(String(p.ref));
       } catch (error) {
@@ -133,7 +158,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
-      el.dispatchEvent(new MouseEvent('click',{...base,...clickPoint(el),buttons:0}));
+      el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
       return { executed: true, verified: await changes };
     }
     case "fill": {
