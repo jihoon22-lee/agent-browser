@@ -28,6 +28,10 @@ pnpm --filter agent-browser-e2e exec playwright install chromium
   Linux Bridge와 Playwright는 **테스트 의존성**이며 Windows 제품 배포물이나 사용자의 브라우저 제어 하네스가 아니다.
 - Windows/에이전트: 실제 Windows exe·Chrome·WSL interop·OpenCode Zen 검증은 별도 결과로 기록한다.
 
+## 설치 마법사 C# 회귀 (개발 PC)
+
+`bash scripts/test-installer-windows.sh SetupFlowTests`는 현재 checkout을 `release/dev-<커밋>-<시각>`에 새로 패키징하고(게시된 `release/*.zip`은 건드리지 않음), CI와 같은 소스 구성으로 Windows .NET Framework `csc`에서 컴파일해 실행한다. 이미 만든 ZIP은 `AB_PACKAGE_ZIP=<zip>`으로 다시 쓴다. `%LOCALAPPDATA%\AgentBrowser-dev\installer-tests`만 사용하며 운영 설치·Chrome 프로필은 읽거나 바꾸지 않는다. `SetupDisplayTests`, `ManagedPathTests`도 같은 방식이다.
+
 ## Windows PowerShell 5.1 배포 진입점 회귀
 
 `tests/install/package.tests.ps1`은 실제 `build-release.ps1` ZIP을 만들고 한글·공백 경로에 추출한다. Windows 시스템의 `WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File`을 자식 프로세스로 실행해 `PackageDir` 생략/명시 모두 검사한다. 별도 InstallDir·StartupDir·빈 포트를 사용하며 인증된 Bridge health, 재설치 InstallId/PID 유지, 설치된 `uninstall.ps1`의 InstallDir 생략/명시와 소유 프로세스·데이터·Startup 제거를 확인한다.
