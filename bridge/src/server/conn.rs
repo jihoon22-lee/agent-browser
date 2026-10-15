@@ -470,19 +470,18 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
                 }
                 let name = params["name"].as_str().unwrap_or_default().to_string();
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                let attach = name == "browser_tabs" && (arguments["action"] == "attach" || (arguments["action"] == "new" && arguments.get("operationId").is_none()));
                 let (abort, registration) = AbortHandle::new_pair();
                 running.insert(id.clone(), abort);
                 let caller = caller.clone();
                 pending.push(async move {
                     let result = Abortable::new(router::call_tool_as(state, &caller, &name, arguments), registration).await;
-                    (id, attach, result)
+                    (id, result)
                 });
             }
-            Some((id, attach, result)) = pending.next(), if !pending.is_empty() => {
+            Some((id, result)) = pending.next(), if !pending.is_empty() => {
                 running.remove(&id);
                 let Ok(outcome) = result else { continue }; // Dropping the router sends request-scoped browser.cancel.
-                let created = attach && outcome.ok;
+                let created = outcome.created_operation;
                 if created { attached = outcome.operation_id.clone().map(|op| (id.clone(), op)); }
                 let reply = Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"));
                 if !send(ws, &reply).await {

@@ -28,11 +28,14 @@ pub struct ToolOutcome {
     pub data: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<RpcError>,
+    /// This call created an operation, by explicit or implicit attach/new.
+    #[serde(skip)]
+    pub created_operation: bool,
 }
 
 impl ToolOutcome {
     fn success(tool: &str, operation_id: Option<&str>, delivered: bool, executed: Executed, verified: Value, data: Value) -> Self {
-        Self { ok: true, tool: tool.into(), operation_id: operation_id.map(str::to_string), delivered, executed, verified, data, error: None }
+        Self { ok: true, tool: tool.into(), operation_id: operation_id.map(str::to_string), delivered, executed, verified, data, error: None, created_operation: false }
     }
 
     fn failure(tool: &str, operation_id: Option<&str>, delivered: bool, error: RpcError) -> Self {
@@ -52,6 +55,7 @@ impl ToolOutcome {
             verified: Value::Null,
             data: Value::Null,
             error: Some(error),
+            created_operation: false,
         }
     }
 
@@ -167,8 +171,8 @@ pub async fn call_tool(state: &ServerState, name: &str, args: Value) -> ToolOutc
     call_tool_as(state, &Caller::default(), name, args).await
 }
 
-pub async fn call_tool_as(state: &ServerState, _caller: &Caller, name: &str, args: Value) -> ToolOutcome {
-    let outcome = run(state, name, &args).await;
+pub async fn call_tool_as(state: &ServerState, caller: &Caller, name: &str, args: Value) -> ToolOutcome {
+    let outcome = run(state, caller, name, &args).await;
     state.timeline.push(TimelineEntry {
         at_ms: now_ms(),
         operation_id: outcome.operation_id.clone(),
@@ -183,7 +187,37 @@ pub async fn call_tool_as(state: &ServerState, _caller: &Caller, name: &str, arg
     outcome
 }
 
-async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
+/// Tools that act inside an operation; in a bound panel request their operationId may be omitted.
+pub const OPERATION_TOOLS: [&str; 10] = ["browser_snapshot","browser_navigate","browser_click","browser_fill","browser_select",
+    "browser_press","browser_scroll","browser_wait","browser_extract","browser_screenshot"];
+
+/// Fills ids a model omitted when the caller is bound to the open panel request.
+/// Returns the arguments to run with and whether an implicit attach created the operation.
+async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> Result<(Value, bool), ToolOutcome> {
+    let action = args["action"].as_str();
+    let tabs = name == "browser_tabs";
+    let wants_request = tabs && matches!(action, Some("attach" | "new")) && args.get("requestId").is_none() && args.get("operationId").is_none();
+    let page_tool = OPERATION_TOOLS.contains(&name);
+    let wants_operation = args.get("operationId").is_none() && (page_tool || (tabs && matches!(action, Some("switch" | "close" | "release"))));
+    if !wants_request && !wants_operation { return Ok((args.clone(), false)); }
+    let Some(bound) = super::binding::resolve(state, caller).await else { return Ok((args.clone(), false)); };
+    let mut args = if args.is_object() { args.clone() } else { json!({}) };
+    if wants_request { args["requestId"] = json!(bound.id); return Ok((args, false)); }
+    let (operation, created) = match bound.operation {
+        Some(operation) => (operation, false),
+        None if page_tool => {
+            let attached = Box::pin(run(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}))).await;
+            match attached.operation_id.clone() { Some(id) if attached.ok => (id, true), _ => return Err(attached) }
+        }
+        None => return Ok((args, false)),
+    };
+    args["operationId"] = json!(operation);
+    Ok((args, created))
+}
+
+async fn run(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> ToolOutcome {
+    let (bound_args, implicit) = match bind_arguments(state, caller, name, args).await { Ok(bound) => bound, Err(failed) => return failed };
+    let args = &bound_args;
     let Some(def) = tools::all().into_iter().find(|t| t.name == name) else {
         return ToolOutcome::rejected(name, None, invalid(format!("unknown tool `{name}`")));
     };
@@ -191,13 +225,15 @@ async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
     let args = if args.is_null() { &empty } else { args };
     let operation_id = args["operationId"].as_str();
     // A missing operationId is the most actionable mistake: say "attach first" instead of a schema error.
-    let needs_operation = def.schema["required"].as_array().is_some_and(|r| r.iter().any(|k| k == "operationId"));
+    let needs_operation = OPERATION_TOOLS.contains(&name);
     if needs_operation && operation_id.is_none() {
         return operation_required(name);
     }
     if let Err(e) = validate(&def.schema, args).and_then(|_| validate_action(name, args)) {
         return ToolOutcome::rejected(name, operation_id, e);
     }
+    // An implicitly created operation is released if this call is cancelled while it runs.
+    let mut implicit_guard = CreatedOperation { state, id: if implicit { operation_id.map(str::to_string) } else { None } };
     let mut outcome = if name == "browser_bookmarks" {
         // This read belongs to the selected browser profile, not a page operation.
         let properties = def.schema["properties"].as_object().unwrap();
@@ -216,6 +252,8 @@ async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
     add_follow_up_snapshot(state, name, args, &mut outcome).await;
     if name == "browser_tabs" { add_open_tabs(state, args, &mut outcome).await; }
     created.id = None;
+    implicit_guard.id = None;
+    outcome.created_operation = implicit || (creates && outcome.ok);
     outcome
 }
 
@@ -551,6 +589,15 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn an_unbound_caller_still_needs_an_operation_id() {
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let outcome = call_tool_as(&state, &Caller { runtime_id: Some("rid".into()), cwd: Some("/w".into()) }, "browser_snapshot", json!({})).await;
+        assert_eq!(outcome.error.as_ref().map(|e| e.code), Some(ErrorCode::OperationRequired));
+        assert!(!outcome.created_operation);
+    }
 
     #[tokio::test]
     async fn cancelled_standalone_new_drops_its_reservation() {
