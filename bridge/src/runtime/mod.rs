@@ -39,15 +39,18 @@ pub struct PortReservation { pub port: u16, pub controller: Identity }
 struct ReservedPort<'a> { store: &'a Store, profile: String, port: u16 }
 impl Drop for ReservedPort<'_> { fn drop(&mut self) { let _ = self.store.update(|config| { config.reservations.remove(&self.profile); Ok(()) }); } }
 
+type DocCache = std::sync::Mutex<std::collections::HashSet<String>>;
+
 pub struct Manager {
     home: PathBuf,
     port: u16,
     store: Store,
     locks: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    verified_docs: DocCache,
 }
 
 impl Manager {
-    pub fn new(home: PathBuf, port: u16) -> Self { Self { store: Store::new(home.clone()), home, port, locks: Default::default() } }
+    pub fn new(home: PathBuf, port: u16) -> Self { Self { store: Store::new(home.clone()), home, port, locks: Default::default(), verified_docs: Default::default() } }
     fn lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> { self.locks.lock().unwrap().entry(id.into()).or_default().clone() }
     fn reserve_port(&self, profile: &str, requested: Option<u16>) -> Result<ReservedPort<'_>,RpcError> {
         let controller = process::identity(std::process::id()).ok_or_else(|| failure("Cannot verify the Bridge process identity"))?;
@@ -121,14 +124,14 @@ impl Manager {
     async fn ensure_inner(&self, profile: &Profile, origin: &str) -> Result<Value, RpcError> {
         if profile.kind == Kind::External {
             let url = profile.external_url()?.to_string();
-            let version = health(&url, profile.username.as_deref(), profile.password.as_deref(), false).await?;
+            let version = health(&url, profile.username.as_deref(), profile.password.as_deref(), false, &self.verified_docs).await?;
             return Ok(json!({"profileId":profile.id,"state":"ready","baseUrl":url.trim_end_matches('/'),"directory":profile.directory,"username":profile.username,"password":profile.password,"version":version,"owned":false,"attachCommand":attach(&profile.id,&self.home)}));
         }
         if let Some(mut record) = self.store.read()?.runtimes.get(&profile.id).cloned() {
             let inspection = self.inspect(profile,&mut record).await?;
             if inspection.listener {
                 if !self.overlay_current(&record) { return Err(failure("The managed runtime needs its browser MCP configuration refreshed (Bridge endpoint or owned WSL keeper). Stop this profile in Options, then start it again. The existing runtime was left running.")); }
-                let version = health(&record.base_url, Some(&record.username), Some(&record.password), true).await?;
+                let version = health(&record.base_url, Some(&record.username), Some(&record.password), true, &self.verified_docs).await?;
                 browser_mcp(profile,&record).await?;
                 record.version = Some(version); self.persist(&record)?;
                 return Ok(info(profile, &record, "ready", true,&self.home));
@@ -169,7 +172,7 @@ impl Manager {
                 Ok(value) => value,
                 Err(error) => { self.terminate(profile,&record).await; return Err(error); }
             };
-            if inspection.listener && let Ok(version) = health(&record.base_url,Some(&record.username),Some(&record.password),true).await {
+            if inspection.listener && let Ok(version) = health(&record.base_url,Some(&record.username),Some(&record.password),true,&self.verified_docs).await {
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if let Ok(Ok(())) = tokio::time::timeout(remaining,browser_mcp(profile,&record)).await {
                     record.version = Some(version); self.persist(&record)?;
@@ -311,7 +314,7 @@ impl Manager {
         let profile = self.profile(id)?; // Re-read under the cross-process lock before persisting ownership.
         if profile.kind == Kind::External {
             let url = profile.external_url()?.to_string();
-            return Ok(match health(&url, profile.username.as_deref(), profile.password.as_deref(), false).await {
+            return Ok(match health(&url, profile.username.as_deref(), profile.password.as_deref(), false, &self.verified_docs).await {
                 Ok(version) => json!({"profileId":id,"state":"ready","baseUrl":url.trim_end_matches('/'),"directory":profile.directory,"version":version,"owned":false}),
                 Err(error) => json!({"profileId":id,"state":"error","directory":profile.directory,"owned":false,"error":error.message}),
             });
@@ -325,7 +328,7 @@ impl Manager {
             }
             if inspection.listener {
                 if !self.overlay_current(&record) { let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Bridge MCP configuration changed. Stop this profile in Options, then start it again; its existing runtime was left running."); return Ok(value); }
-                if let Ok(version) = health(&record.base_url,Some(&record.username),Some(&record.password),true).await {
+                if let Ok(version) = health(&record.base_url,Some(&record.username),Some(&record.password),true,&self.verified_docs).await {
                     record.version = Some(version);
                     if browser_mcp(&profile,&record).await.is_ok() { return Ok(info(&profile,&record,"ready",false,&self.home)); }
                     let mut value=info(&profile,&record,"error",false,&self.home);
@@ -650,7 +653,7 @@ async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &st
         Ok(Ok(status)) => status.code(),
     }
 }
-async fn health(base: &str, username: Option<&str>, password: Option<&str>, managed: bool) -> Result<String,RpcError> {
+async fn health(base: &str, username: Option<&str>, password: Option<&str>, managed: bool, verified: &DocCache) -> Result<String,RpcError> {
     let client = http_client(base)?;
     let endpoint = |path: &str| format!("{}/{}",base.trim_end_matches('/'),path);
     if managed {
@@ -663,8 +666,12 @@ async fn health(base: &str, username: Option<&str>, password: Option<&str>, mana
     let value = limited_json(response,64 * 1024).await?;
     let version = value["version"].as_str().filter(|version| version.starts_with("1.")).ok_or_else(|| failure("Only OpenCode v1 is supported"))?;
     if value["healthy"] != true { return Err(failure("OpenCode reported unhealthy")); }
+    // The ~825 KB API document only changes with the server version; status polls run every 15 s.
+    let key = format!("{}#{version}", base.trim_end_matches('/'));
+    if verified.lock().unwrap().contains(&key) { return Ok(version.into()); }
     let doc = limited_json(request("doc").send().await.map_err(|_| failure("OpenCode v1 API discovery failed"))?,4 * 1024 * 1024).await?;
     if !["/session","/provider","/event","/mcp"].iter().all(|path| doc["paths"].get(*path).is_some()) { return Err(failure("The server does not expose the required OpenCode v1 APIs")); }
+    verified.lock().unwrap().insert(key);
     Ok(version.into())
 }
 async fn browser_mcp(profile: &Profile, record: &RuntimeRecord) -> Result<(),RpcError> {
@@ -697,6 +704,31 @@ async fn limited_json(mut response: reqwest::Response, limit: usize) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn health_verifies_the_api_document_once_per_server_version() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let docs = Arc::new(AtomicUsize::new(0));
+        let counter = docs.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 4096];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                let body = if request.starts_with("GET /doc") { counter.fetch_add(1, Ordering::SeqCst); r#"{"paths":{"/session":{},"/provider":{},"/event":{},"/mcp":{}}}"# } else { r#"{"healthy":true,"version":"1.18.29"}"# };
+                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let cache = DocCache::default();
+        assert_eq!(health(&base, None, None, false, &cache).await.unwrap(), "1.18.29");
+        assert_eq!(health(&base, None, None, false, &cache).await.unwrap(), "1.18.29");
+        assert_eq!(docs.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn installer_create_only_does_not_replace_an_existing_profile() {
         let home=tempfile::tempdir().unwrap();

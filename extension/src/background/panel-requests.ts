@@ -21,24 +21,31 @@ export function panelRequests(call:Call) {
     const tracked=lookup.finally(()=>{if(probes.get(profileId)===tracked)probes.delete(profileId);});
     probes.set(profileId,tracked);return tracked;
   };
-  const client=async (lease:RequestLease,shared=true)=>{
+  type Discovery={kind:'gone'}|{kind:'error'}|{kind:'ready';api:OpenCodeV1Client};
+  const discover=async(lease:RequestLease,shared=true):Promise<Discovery>=>{
     // Concurrent completion/prepare reads must not contend for the Bridge's
     // runtime lock and mistake the other read for a starting runtime.
     const runtime=await runtimeStatus(lease.profileId,shared);
-    if(runtime===null||runtime?.state==='stopped'||runtime?.state==='error')return null;
+    if(runtime===null||runtime?.state==='stopped')return {kind:'gone'};
+    if(runtime?.state==='error')return {kind:'error'};
     if(runtime?.state!=='ready')throw Error('실행 환경의 상태를 아직 확인하지 못했습니다. 잠시 후 다시 시도하세요.');
-    return new OpenCodeV1Client({...runtime,directory:lease.directory});
+    return {kind:'ready',api:new OpenCodeV1Client({...runtime,directory:lease.directory})};
   };
+  const client=async(lease:RequestLease,shared=true)=>{const found=await discover(lease,shared);return found.kind==='ready'?found.api:null;};
   async function end(lease:RequestLease,clientId:string,abort=false) {
     try { await call('request.end',{requestId:lease.requestId,clientId,...(abort?{abort:true}:{})}); }
     catch(error) { if((error as any)?.code!=='OPERATION_INVALID')throw error; }
     await chrome.storage.local.remove(KEY);
   }
-  async function completion(saved:RequestLease):Promise<{abort:boolean}|null> {
-    const api=await client(saved);
-    // An unavailable profile must not hold all other profiles hostage. Closing
+  async function completion(saved:RequestLease,unattended=false):Promise<{abort:boolean}|null> {
+    const found=await discover(saved);
+    // A removed or stopped profile must not hold all other profiles hostage. Closing
     // the Bridge gate is still mandatory before forgetting its durable lease.
-    if(!api)return {abort:true};
+    if(found.kind==='gone')return {abort:true};
+    // A live runtime can fail one readiness probe while its session is still working.
+    // Only a user-initiated new request may clear it; background polling retains it.
+    if(found.kind==='error')return unattended?null:{abort:true};
+    const api=found.api;
     const [messages,statuses]=await Promise.all([api.get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`).catch(error=>{
       if(error instanceof OpenCodeApiError&&error.status===404)return null;
       throw error;
@@ -59,7 +66,7 @@ export function panelRequests(call:Call) {
     const generation=state(saved.profileId).generation;check(saved.profileId,generation);
     if(scope&&(saved.profileId!==scope.profileId||saved.directory!==scope.directory||saved.sessionId!==scope.sessionId))return false;
     // Network probes must never hold the mutation queue needed by Stop.
-    const result=await completion(saved);
+    const result=await completion(saved,true);
     if(!result)return false;
     return serial(async()=>{
       check(saved.profileId,generation);
