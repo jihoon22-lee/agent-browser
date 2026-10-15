@@ -149,36 +149,56 @@ export class BridgeConnection {
     }
   }
 
-  /** Without a token, ask the Bridge for one. It answers only while the installer has opened a
-   * short pairing window, and only to this extension's fixed ID; otherwise retry quietly. */
+  /** Without a token, announce this extension so the installer can show it was loaded. The Bridge
+   * never grants a token to such a request; a reply that carries one anyway is ignored. */
   private requestPairing(url: string, clientId: string, lifecycle: number) {
     if (this.pairingSocket) return;
     const ws = new this.deps.WebSocketImpl(url);
     this.pairingSocket = ws;
     let settled = false;
-    const finish = (paired: boolean) => {
+    const finish = () => {
       if (settled) return;
       settled = true; this.pairingSocket = undefined; this.cancelTimer(deadline);
-      if (lifecycle !== this.lifecycle || this.stopped) return;
-      this.schedule(paired ? 0 : PAIRING_POLL_MS);
+      if (lifecycle === this.lifecycle && !this.stopped) this.schedule(PAIRING_POLL_MS);
     };
-    const deadline = this.later(() => { ws.close(); finish(false); }, RESPONSE_TIMEOUT_MS);
+    const deadline = this.later(() => { ws.close(); finish(); }, RESPONSE_TIMEOUT_MS);
     ws.onopen = () => { try { ws.send(JSON.stringify(makeReq("pair.request", { clientId }))); } catch { ws.close(); } };
-    ws.onmessage = (event) => {
-      let env: Envelope | undefined;
-      try { env = parseEnvelope(String(event.data)); } catch { env = undefined; }
-      const token = env?.type === "res" && env.ok ? (env.result as { token?: unknown } | undefined)?.token : undefined;
-      // Detach onclose first: a synchronous close event must not turn a granted token into a retry.
-      ws.onclose = null; ws.close();
-      if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) { finish(false); return; }
-      void (async () => {
-        await this.deps.storage.set("repairPending", true);
-        await this.deps.storage.set("pairingToken", token);
-        finish(true);
-      })();
-    };
+    ws.onmessage = () => { ws.onclose = null; ws.close(); finish(); };
     ws.onerror = () => ws.close();
-    ws.onclose = () => finish(false);
+    ws.onclose = () => finish();
+  }
+
+  /** Exchange the code shown by AgentBrowser setup for the existing token. Only the user can see the
+   * code, so a forged Origin from another local account cannot obtain the token. */
+  async pairWithCode(code: string): Promise<void> {
+    if (!/^\d{6}$/.test(code)) throw new ProtocolError("INVALID_PARAMS", "페어링 코드는 설치 마법사에 표시된 6자리 숫자입니다.");
+    const lifecycle = this.lifecycle;
+    const url = ((await this.deps.storage.get("bridgeUrl")) as string | undefined) ?? DEFAULT_BRIDGE_URL;
+    let clientId = (await this.deps.storage.get("clientId")) as string | undefined;
+    if (!clientId) { clientId = `cli-${crypto.randomUUID()}`; await this.deps.storage.set("clientId", clientId); }
+    const token = await new Promise<string>((resolve, reject) => {
+      const ws = new this.deps.WebSocketImpl(url);
+      const deadline = this.later(() => { ws.onclose = null; ws.close(); reject(new ProtocolError("TIMEOUT", "Bridge가 페어링 요청에 응답하지 않았습니다.")); }, RESPONSE_TIMEOUT_MS);
+      ws.onopen = () => { try { ws.send(JSON.stringify(makeReq("pair.request", { clientId, code }))); } catch { ws.close(); } };
+      ws.onmessage = (event) => {
+        this.cancelTimer(deadline); ws.onclose = null; ws.close();
+        let env: Envelope;
+        try { env = parseEnvelope(String(event.data)); } catch { reject(new ProtocolError("INTERNAL", "Bridge의 페어링 응답을 읽지 못했습니다.")); return; }
+        const granted = env.type === "res" && env.ok ? (env.result as { token?: unknown } | undefined)?.token : undefined;
+        if (typeof granted === "string" && /^[a-f0-9]{64}$/.test(granted)) { resolve(granted); return; }
+        const error = env.type === "res" ? env.error : undefined;
+        reject(new ProtocolError(error?.code ?? "AUTH_FAILED", error?.message ?? "Bridge가 페어링을 거부했습니다."));
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => { this.cancelTimer(deadline); reject(new ProtocolError("BROWSER_DISCONNECTED", "Bridge에 연결할 수 없습니다. 설치 마법사에서 Bridge를 시작하세요.")); };
+    });
+    // A stop or settings change while waiting means the user moved on: never store a late token.
+    if (lifecycle !== this.lifecycle) throw new ProtocolError("CANCELLED", "페어링이 중단되었습니다. 다시 시도하세요.");
+    await this.deps.storage.set("repairPending", true);
+    await this.deps.storage.set("pairingToken", token);
+    if (lifecycle !== this.lifecycle) return;
+    this.stopped = false; this.halted = false;
+    this.schedule(0);
   }
 
   private async reloadIfOutdated(serverVersion: unknown) {

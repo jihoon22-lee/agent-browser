@@ -50,21 +50,56 @@ describe("BridgeConnection", () => {
     expect(FakeWs.last.url).not.toContain("tok");
   });
 
-  it("asks the Bridge for a token without one and stores it from an open pairing window", async () => {
+  it("announces itself without a token but never accepts an uninvited token", async () => {
     const { conn, store, statuses } = setup({ clientId: "cli-1" });
     conn.start();
     await vi.runOnlyPendingTimersAsync();
     expect(statuses.at(-1)?.state).toBe("unpaired");
-    const pairing = FakeWs.last; pairing.open();
-    const request = parseEnvelope(pairing.sent[0]!);
+    const ping = FakeWs.last; ping.open();
+    const request = parseEnvelope(ping.sent[0]!);
     expect(request.type === "req" && request.method).toBe("pair.request");
-    pairing.reply(makeOk((request as any).id, { token: "a".repeat(64) }));
+    expect((request as any).params).not.toHaveProperty("code");
+    ping.reply(makeOk((request as any).id, { token: "a".repeat(64) }));
     await vi.advanceTimersByTimeAsync(0);
-    expect(store.pairingToken).toBe("a".repeat(64));
+    expect(store.pairingToken).toBeUndefined();
+  });
+
+  it("pairs with the code the installer shows and then authenticates", async () => {
+    const { conn, store } = setup({ clientId: "cli-1" });
+    const pairing = conn.pairWithCode("123456");
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    const request = parseEnvelope(ws.sent[0]!);
+    expect((request as any).params).toEqual({ clientId: "cli-1", code: "123456" });
+    ws.reply(makeOk((request as any).id, { token: "b".repeat(64) }));
+    await pairing;
+    expect(store.pairingToken).toBe("b".repeat(64));
     expect(store.repairPending).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
     FakeWs.last.open();
-    const hello = parseEnvelope(FakeWs.last.sent[0]!);
-    expect(hello.type === "req" && hello.method).toBe("auth.hello");
+    expect(parseEnvelope(FakeWs.last.sent[0]!)).toMatchObject({ method: "auth.hello" });
+  });
+
+  it("reports a wrong pairing code without storing anything", async () => {
+    const { conn, store } = setup({ clientId: "cli-1" });
+    const pairing = conn.pairWithCode("000000");
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    ws.reply(makeErr((parseEnvelope(ws.sent[0]!) as any).id, { code: "AUTH_FAILED", message: "The pairing code is incorrect.", retry: "never" }));
+    await expect(pairing).rejects.toThrow("pairing code is incorrect");
+    expect(store.pairingToken).toBeUndefined();
+  });
+
+  it("does not store a token that arrives after the connection was stopped", async () => {
+    const { conn, store } = setup({ clientId: "cli-1" });
+    const pairing = conn.pairWithCode("123456").catch(error => error);
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    const id = (parseEnvelope(ws.sent[0]!) as any).id;
+    conn.stop();
+    ws.reply(makeOk(id, { token: "c".repeat(64) }));
+    await pairing;
+    expect(store.pairingToken).toBeUndefined();
   });
 
   it("keeps asking every few seconds while no pairing window is open", async () => {

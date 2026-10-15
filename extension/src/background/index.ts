@@ -50,6 +50,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:error instanceof Error?error.message:String(error)}}));
     return true;
   }
+  if (msg?.kind === "pair-with-code" && typeof msg.code === "string") {
+    conn.pairWithCode(msg.code).then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: error instanceof ProtocolError ? error.toRpc() : { code: "INTERNAL", message: String(error), retry: "never" } }));
+    return true;
+  }
   if (msg?.kind === "reconnect") { conn.stop(); conn.start(); sendResponse({ ok: true }); return; }
   if (msg?.kind === "profiles-changed") { sendResponse({ ok: true }); return; }
   if (msg?.kind === "get-conn-status") { sendResponse(lastStatus); return; }

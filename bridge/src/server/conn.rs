@@ -48,8 +48,10 @@ impl Role {
     }
 }
 
-/// A short window the installer opens so a freshly loaded extension can receive the existing token.
-pub struct PairingWindow { pub extension_id: String, pub until: std::time::Instant }
+/// A short window the installer opens so the extension can receive the existing token. The user
+/// types the code the installer shows: Origin can be forged by any local account, the code cannot.
+pub struct PairingWindow { pub extension_id: String, pub until: std::time::Instant, pub code: String, pub failures: u32 }
+const PAIRING_MAX_FAILURES: u32 = 5;
 
 pub struct ServerState {
     pub runtime: crate::runtime::Manager,
@@ -211,21 +213,31 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
     }
 }
 
-async fn handle_pair_request(ws: &mut Ws, role: Role, extension_id: Option<&str>, id: &str, state: &ServerState) {
+async fn handle_pair_request(ws: &mut Ws, role: Role, extension_id: Option<&str>, id: &str, params: &Value, state: &ServerState) {
     let Some(extension_id) = extension_id.filter(|_| role == Role::Extension) else {
         send_err_and_close(ws, id, ErrorCode::AuthRequired, "pair.request is only for the extension").await;
         return;
     };
     *state.pair_seen.lock().unwrap() = Some((extension_id.to_string(), std::time::Instant::now()));
-    let granted = {
-        let mut window = state.pairing.lock().unwrap();
-        let open = window.as_ref().is_some_and(|w| w.until > std::time::Instant::now() && w.extension_id == extension_id);
-        if open { *window = None; }
-        open
-    };
-    if !granted {
-        send_err_and_close(ws, id, ErrorCode::AuthRequired, "No pairing window is open. Press [Chrome에 연결] in AgentBrowser setup, or enter the token in Options.").await;
+    // A request without a code only announces that the extension is loaded; it never receives the token.
+    let Some(code) = params["code"].as_str() else {
+        send_err_and_close(ws, id, ErrorCode::AuthRequired, "Enter the pairing code shown by AgentBrowser setup.").await;
         return;
+    };
+    let granted = {
+        let mut guard = state.pairing.lock().unwrap();
+        match guard.as_mut() {
+            Some(window) if window.until > std::time::Instant::now() && window.extension_id == extension_id => {
+                if window.code == code { *guard = None; Some(true) }
+                else { window.failures += 1; if window.failures >= PAIRING_MAX_FAILURES { *guard = None; } Some(false) }
+            }
+            _ => None,
+        }
+    };
+    match granted {
+        Some(true) => {}
+        Some(false) => { send_err_and_close(ws, id, ErrorCode::AuthFailed, "The pairing code is incorrect. Check the code shown by AgentBrowser setup.").await; return; }
+        None => { send_err_and_close(ws, id, ErrorCode::AuthRequired, "No pairing window is open. Press [Chrome에 연결] in AgentBrowser setup again.").await; return; }
     }
     let token = state.cfg.lock().await.token.clone();
     let _ = send(ws, &Envelope::ok(id, json!({ "token": token }))).await;
@@ -237,8 +249,11 @@ fn open_pairing(state: &ServerState, params: &Value) -> Result<Value, RpcError> 
         .ok_or_else(|| RpcError::new(ErrorCode::InvalidParams, Retry::Never, "extensionId must be a 32-character Chrome extension id"))?;
     let seconds = params["seconds"].as_u64().unwrap_or(120);
     if !(10..=300).contains(&seconds) { return Err(RpcError::new(ErrorCode::InvalidParams, Retry::Never, "seconds must be 10-300")); }
-    *state.pairing.lock().unwrap() = Some(PairingWindow { extension_id: extension_id.into(), until: std::time::Instant::now() + Duration::from_secs(seconds) });
-    Ok(json!({ "open": true, "seconds": seconds }))
+    // Six digits from the OS CSPRNG; at most PAIRING_MAX_FAILURES guesses per window.
+    let random = u32::from_le_bytes(uuid::Uuid::new_v4().as_bytes()[..4].try_into().expect("four bytes"));
+    let code = format!("{:06}", random % 1_000_000);
+    *state.pairing.lock().unwrap() = Some(PairingWindow { extension_id: extension_id.into(), until: std::time::Instant::now() + Duration::from_secs(seconds), code: code.clone(), failures: 0 });
+    Ok(json!({ "open": true, "seconds": seconds, "code": code }))
 }
 
 /// Mutual HMAC handshake: server proof first, then client proof. Pair only after both.
@@ -257,8 +272,8 @@ async fn authenticate(
     };
     let (id, params) = match parse_envelope(&first) {
         Ok(Envelope::Req { id, method, params, .. }) if method == "auth.hello" => (id, params),
-        Ok(Envelope::Req { id, method, .. }) if method == "pair.request" => {
-            handle_pair_request(ws, role, extension_id.as_deref(), &id, state).await;
+        Ok(Envelope::Req { id, method, params, .. }) if method == "pair.request" => {
+            handle_pair_request(ws, role, extension_id.as_deref(), &id, &params, state).await;
             return None;
         }
         Ok(other) => {

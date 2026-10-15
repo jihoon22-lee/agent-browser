@@ -11,6 +11,7 @@ export function App() {
   const { theme, chooseTheme } = useTheme();
   const [url, setUrl] = useState(DEFAULT_BRIDGE_URL), [token, setToken] = useState("");
   const [status, setStatus] = useState<ConnStatus>({ state: "disconnected" });
+  const [pairCode, setPairCode] = useState("");
   const [profiles, setProfiles] = useState<Data[]>([]), [defaultId, setDefaultId] = useState("");
   const [form, setForm] = useState<ProfileForm>(blank), [editing, setEditing] = useState(false), [makeDefault, setMakeDefault] = useState(true);
   const [notice, setNotice] = useState(""), [error, setError] = useState(""), [busy, setBusy] = useState(false), [doctor, setDoctor] = useState<Data>();
@@ -28,7 +29,9 @@ export function App() {
   const connected = status.state === "connected";
   return <main className="options"><header className="options-header"><div><h1>AgentBrowser 설정</h1><p>Chrome과 기존 OpenCode 실행 환경을 연결합니다.</p></div><label>테마<select aria-label="테마" value={theme} onChange={event => chooseTheme(event.target.value)}>{(["system", ...THEMES] as const).map(name => <option key={name} value={name}>{themeNames[name]}</option>)}</select></label></header>
     {error && <p role="alert" className="error">{error}</p>}{notice && <p role="status" className="notice">{notice}</p>}
-    <section><h2>Bridge 페어링</h2><p>설치 마법사의 [Chrome에 연결]을 누르면 자동으로 연결됩니다. 직접 연결하려면 설치 폴더의 페어링 안내에 표시된 토큰을 입력하세요.</p>
+    <section><h2>Bridge 페어링</h2><p>설치 마법사의 [Chrome에 연결]에 표시된 6자리 코드를 입력하세요. 코드가 없으면 아래에 설치 폴더의 페어링 토큰을 직접 입력할 수 있습니다.</p>
+      <label>페어링 코드<input value={pairCode} onChange={event => setPairCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder="6자리 숫자" /></label>
+      <button disabled={busy || pairCode.length !== 6} onClick={() => void run(async () => { const response = await chrome.runtime.sendMessage({ kind: "pair-with-code", code: pairCode }); if (!response?.ok) throw new Error(response?.error?.message ?? "페어링하지 못했습니다."); setPairCode(""); setNotice("Bridge와 연결했습니다."); })}>코드로 연결</button>
       <label>Bridge 주소<input value={url} onChange={event => setUrl(event.target.value)} autoComplete="off" /></label>
       <label>페어링 토큰<input type="password" value={token} onChange={event => setToken(event.target.value)} autoComplete="off" placeholder="기존 토큰을 유지하려면 비워두세요" /></label>
       <button disabled={busy} onClick={() => void run(async () => { const next = validatePairing(url, token); await chrome.storage.local.set(next); setToken(""); await chrome.runtime.sendMessage({ kind: "reconnect" }); setNotice("저장했습니다. 연결 상태를 확인하세요."); })}>저장 후 연결</button>
