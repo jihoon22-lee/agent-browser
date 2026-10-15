@@ -41,6 +41,9 @@ impl Drop for ReservedPort<'_> { fn drop(&mut self) { let _ = self.store.update(
 
 type DocCache = std::sync::Mutex<std::collections::HashSet<String>>;
 
+/// Busy sessions of a managed runtime directory, for guarded panel request binding.
+pub struct RuntimeSessions { pub profile_id: String, pub wsl: bool, pub busy: Vec<String> }
+
 pub struct Manager {
     home: PathBuf,
     port: u16,
@@ -310,6 +313,24 @@ impl Manager {
             }
         }
         Ok(json!({"stoppedProfiles":stopped,"skippedExternal":skipped,"errors":errors}))
+    }
+    /// Busy sessions of one OpenCode directory on the runtime launched as `instance`.
+    /// A proxy from an earlier launch finds no record and gets an error.
+    pub async fn busy_sessions(&self, instance: &str, directory: &str) -> Result<RuntimeSessions, RpcError> {
+        let config = self.store.read()?;
+        let record = config.runtimes.values().find(|record| record.instance == instance).cloned()
+            .ok_or_else(|| invalid("This MCP proxy does not belong to the current runtime launch"))?;
+        let wsl = config.profiles.get(&record.profile_id).is_some_and(|profile| profile.kind == Kind::Wsl);
+        let mut url = reqwest::Url::parse(&format!("{}/session/status", record.base_url.trim_end_matches('/'))).map_err(|_| failure("Invalid managed runtime URL"))?;
+        url.query_pairs_mut().append_pair("directory", directory);
+        let response = http_client(&record.base_url)?.get(url).basic_auth(&record.username, Some(&record.password)).send().await
+            .map_err(|_| failure("Cannot read the runtime's session status"))?;
+        if !response.status().is_success() { return Err(failure("The runtime refused the session status request")); }
+        let statuses = limited_json(response, 1 << 20).await?;
+        let busy = statuses.as_object().map(|map| map.iter()
+            .filter(|(_, status)| matches!(status["type"].as_str(), Some("busy" | "retry")))
+            .map(|(id, _)| id.clone()).collect()).unwrap_or_default();
+        Ok(RuntimeSessions { profile_id: record.profile_id, wsl, busy })
     }
     pub async fn status(&self, id: &str) -> Result<Value, RpcError> {
         let profile = self.profile(id)?;
@@ -709,6 +730,37 @@ async fn limited_json(mut response: reqwest::Response, limit: usize) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn busy_sessions_reads_only_the_current_launch_and_directory() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 4096];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                log.lock().unwrap().push(request.lines().next().unwrap_or_default().to_string());
+                let authorized = request.to_ascii_lowercase().contains("authorization: basic");
+                let body = r#"{"ses_a":{"type":"busy"},"ses_b":{"type":"idle"},"ses_c":{"type":"retry","attempt":1,"message":"x","next":1}}"#;
+                let response = if authorized { format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body) } else { "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into() };
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"windows","directory":"C:\\w","executable":"C:\\o\\opencode.exe"})).unwrap();
+        manager.store.update(|config| { config.profiles.insert("p".into(), profile); Ok(()) }).unwrap();
+        manager.persist(&RuntimeRecord{profile_id:"p".into(),instance:"rid-now".into(),base_url:base,username:"opencode".into(),password:"private".into(),launcher:process::identity(std::process::id()).unwrap(),server:None,wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None}).unwrap();
+        let found = manager.busy_sessions("rid-now","C:\\w").await.unwrap();
+        assert_eq!((found.profile_id.as_str(),found.wsl),("p",false));
+        let mut busy = found.busy; busy.sort(); assert_eq!(busy,vec!["ses_a","ses_c"]);
+        assert!(seen.lock().unwrap()[0].starts_with("GET /session/status?directory=C%3A%5Cw "),"{:?}",seen.lock().unwrap());
+        assert!(manager.busy_sessions("rid-old","C:\\w").await.is_err(),"a previous launch's proxy must not bind");
+    }
+
     #[tokio::test]
     async fn health_verifies_the_api_document_once_per_server_version() {
         use std::sync::atomic::{AtomicUsize, Ordering};
