@@ -15,6 +15,8 @@
   - 도구 설명 5,987자 → 4,685자.
 - **Linux:** Rust **175 통과 / 1 제외**, 확장 **421/421**, tsc 통과, Node **25/25**. Linux Chromium E2E 전체 **145 통과 / 3 제외**(첫 실행 143 + 수정 후 2)(새 R01~R06 포함). 처음 실행에서 N06·R21 두 개가 이전 계약("다음 쓰기는 별도 snapshot 전 STALE")으로 실패했고, 결과에 붙은 snapshot을 검사하도록 바꾼 뒤 해당 두 파일 35/35가 통과했다.
 - **실제 Windows:** `cargo xwin` 교차 빌드 테스트 exe의 lib **78 통과 / 7 제외**, tool_router **24/24**. Windows Chrome 154.0.8037.99 headless E2E(reliability·journeys·scenarios·board-navigation·new-tabs) **102 통과 / 1 제외**(B07 BFCache, 기존과 같이 조건부). 실제 OpenCode 1.18.29 + 사이드패널 + Bridge + MCP 통합 검사가 Windows 프로필과 WSL 프로필 모두 **13개 항목 통과**(합성 provider 125회, 모델 추론 아님). 격리 개발 폴더·프로필만 사용했다.
+- **최종 검토 후 수정:** 하위 iframe이 사라진 것만으로 클릭을 이동 성공으로 보던 판정을 최상위 문서 교체·pendingUrl로 좁혔다. 결과 스냅샷이 느린 하위 리소스 때문에 최대 6초 기다리던 것을 문서 commit 뒤 1.5초로 줄였다. 두 회귀 테스트를 먼저 실패시키고 고친 뒤 확장 **423/423**, Linux E2E(reliability·board-navigation·new-tabs) **24 통과 / 1 제외**, Windows Chrome E2E(같은 셋 + journeys) **76 통과 / 1 제외**.
+- **남은 개선(계획 3):** 바쁜 실제 사이트에서는 거의 모든 클릭에 스냅샷이 붙을 수 있어 후속 스냅샷의 요소 수 상한이 필요하다. 자체 버튼을 품은 포인터 영역이 요소 칸을 차지한다. 500ms 뒤 JS로 이동하는 페이지는 결과 스냅샷이 없다.
 - **미검증:** 실제 모델의 도구 선택 품질, 사용자의 배포 PC, 실제 업무 사이트, CSS smooth-scroll 외의 실제 사이트 클릭 차단 사례, `mcp_stdio` 테스트의 Windows 실행(빌드 시점 Linux 실행 파일 경로를 써 제외).
 
 ---
