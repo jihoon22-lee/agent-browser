@@ -314,6 +314,16 @@ impl Manager {
         }
         Ok(json!({"stoppedProfiles":stopped,"skippedExternal":skipped,"errors":errors}))
     }
+    /// Integration tests: store a profile and a runtime record owned by this test process.
+    #[doc(hidden)]
+    pub fn record_runtime_for_tests(&self, profile: Value, instance: &str, base_url: &str) {
+        let profile: Profile = serde_json::from_value(profile).expect("test profile");
+        let identity = process::identity(std::process::id()).expect("test process identity");
+        let record = RuntimeRecord{profile_id:profile.id.clone(),instance:instance.into(),base_url:base_url.into(),username:"opencode".into(),password:"test".into(),launcher:identity,server:None,wsl_owner_file:None,version:None,bridge_port:Some(self.port),bridge_executable:None,wsl_keeper:None};
+        self.store.update(|config| { config.profiles.insert(profile.id.clone(), profile); Ok(()) }).expect("store test profile");
+        self.persist(&record).expect("store test runtime");
+    }
+
     /// Busy sessions of one OpenCode directory on the runtime launched as `instance`.
     /// A proxy from an earlier launch finds no record and gets an error.
     pub async fn busy_sessions(&self, instance: &str, directory: &str) -> Result<RuntimeSessions, RpcError> {
