@@ -30,6 +30,17 @@ export function roleOf(el: Element): string {
 
 const clean = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
 
+/** Icon controls often carry their only name on a nested image, SVG title or labelled icon. */
+function nestedLabel(el: Element): string {
+  for (const node of el.querySelectorAll("img[alt], svg title, [aria-label]")) {
+    const value = node instanceof HTMLImageElement ? node.alt
+      : node.tagName.toLowerCase() === "title" ? node.textContent : node.getAttribute("aria-label");
+    const text = clean(value);
+    if (text) return text;
+  }
+  return "";
+}
+
 export function accessibleName(el: Element, excludeEditableValue = false): string {
   const aria = clean(el.getAttribute("aria-label"));
   if (aria) return aria;
@@ -50,6 +61,8 @@ export function accessibleName(el: Element, excludeEditableValue = false): strin
   const editable = el instanceof HTMLInputElement || (el as HTMLElement).isContentEditable;
   const text = excludeEditableValue && editable ? '' : clean((el as HTMLElement).innerText ?? el.textContent);
   if (text) return text;
+  const nested = nestedLabel(el);
+  if (nested) return nested;
   const title = clean(el.getAttribute("title"));
   if (title) return title;
   // An input's value is what the user typed, not its name (and may be a password). Only
