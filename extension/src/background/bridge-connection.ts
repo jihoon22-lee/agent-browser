@@ -194,6 +194,8 @@ export class BridgeConnection {
     });
     // A stop or settings change while waiting means the user moved on: never store a late token.
     if (lifecycle !== this.lifecycle) throw new ProtocolError("CANCELLED", "페어링이 중단되었습니다. 다시 시도하세요.");
+    // Already connected with this very token: rescheduling would only clear the live heartbeat.
+    if (this.ws && token === await this.deps.storage.get("pairingToken")) return;
     await this.deps.storage.set("repairPending", true);
     await this.deps.storage.set("pairingToken", token);
     if (lifecycle !== this.lifecycle) return;

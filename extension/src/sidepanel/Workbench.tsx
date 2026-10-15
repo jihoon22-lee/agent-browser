@@ -45,7 +45,9 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   const [files, setFiles] = useState<string[]>([]), [palette, setPalette] = useState(""), [shell, setShell] = useState("");
   const draftCache = useRef(new Map<string, { draft: string; attachments: Data[] }>()), previousDraft = useRef({ key: "", draft: "", attachments: [] as Data[] });
   const messageViewport = useRef<HTMLDivElement>(null), followMessages = useRef(true);
-  const autoSend = useRef(false);
+  // Id of the session created for the first message; only that session may auto-send it.
+  const autoSend = useRef<string | undefined>(undefined), creating = useRef(false);
+  const [autoTick, setAutoTick] = useState(0);
   const composer = useRef<HTMLTextAreaElement>(null);
   const selectedControls = useRef({ key: "", dirty: false });
   const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef(false);
@@ -79,10 +81,11 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
   useEffect(() => {
-    if (!autoSend.current || !wb.sessionId || !draft.trim()) return;
-    autoSend.current = false;
-    void send();
-  }, [wb.sessionId, draft]);
+    const target = autoSend.current;
+    if (!target || !wb.sessionId || creating.current) return;
+    autoSend.current = undefined;
+    if (wb.sessionId === target && (draft.trim() || attachments.length)) void send();
+  }, [wb.sessionId, draft, attachments, autoTick]);
   useEffect(() => { if (view === "chat" && drawer === null && followMessages.current && messageViewport.current) messageViewport.current.scrollTop = messageViewport.current.scrollHeight; }, [messages, wb.state.questions, wb.state.permissions, view, drawer]);
   useEffect(() => { followMessages.current = true; setRenaming(null); }, [wb.sessionId]);
   useEffect(() => {
@@ -163,10 +166,12 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     }
     if (!wb.sessionId) {
       // The first message creates its session; the typed draft moves with it and the effect below sends it there.
-      autoSend.current = true;
+      if (creating.current) return;
+      creating.current = true; setSending(true);
       let created: Data | undefined;
-      await perform(async () => { created = await createSession({ draft, attachments }); });
-      if (!created) autoSend.current = false;
+      try { await perform(async () => { created = await createSession({ draft, attachments }); }); }
+      finally { creating.current = false; if (current()) setSending(false); }
+      if (created && typeof created.id === "string") { autoSend.current = created.id; setAutoTick(tick => tick + 1); }
       return;
     }
     sendLock.current = true; setSending(true); wb.setError("");

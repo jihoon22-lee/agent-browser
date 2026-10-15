@@ -18,7 +18,7 @@ namespace AgentBrowser.Installer {
         readonly ComboBox runtimeKind=new ComboBox(),runtimeDistribution=new ComboBox(),runtimeCandidates=new ComboBox();
         readonly TextBox runtimeExecutable=new TextBox(),runtimeDirectory=new TextBox();
         readonly Button startDistribution=new Button(),browseRuntimeDirectory=new Button(),saveRuntime=new Button();
-        readonly Label runtimeResult=new Label();readonly ListBox savedProfiles=new ListBox();
+        readonly TextBox runtimeResult=new TextBox();CancellationTokenSource pairingWait;string savedRuntimeId;readonly ListBox savedProfiles=new ListBox();
         bool runtimeDiscovered;
         readonly ListBox doneChecks=new ListBox();readonly Label complete=new Label();
         readonly ListBox registrations=new ListBox();
@@ -98,7 +98,7 @@ namespace AgentBrowser.Installer {
             LabelAt(runtime,"작업 폴더",0,184);Position(runtime,runtimeDirectory,"RuntimeDirectory",150,180,390);
             browseRuntimeDirectory.Text="폴더 선택";Position(runtime,browseRuntimeDirectory,"BrowseRuntimeDirectory",548,178,108,32);browseRuntimeDirectory.Click+=delegate{if(runtimeKind.SelectedIndex==1){status.Text="WSL 작업 폴더는 /home/<사용자>/project 같은 Linux 경로로 입력하세요.";return;}using(var dialog=new FolderBrowserDialog{Description="OpenCode 작업 폴더",SelectedPath=runtimeDirectory.Text})if(dialog.ShowDialog(this)==DialogResult.OK)runtimeDirectory.Text=dialog.SelectedPath;};
             saveRuntime.Text="저장하고 연결 확인";Position(runtime,saveRuntime,"SaveRuntime",0,222,220,36);StyleButton(saveRuntime,true);saveRuntime.Click+=async delegate{await SaveRuntime();};
-            runtimeResult.ForeColor=Muted;Position(runtime,runtimeResult,"RuntimeResult",230,222,426,52);
+            runtimeResult.Multiline=true;runtimeResult.ReadOnly=true;runtimeResult.ScrollBars=ScrollBars.Vertical;runtimeResult.BorderStyle=BorderStyle.None;runtimeResult.BackColor=Color.White;runtimeResult.ForeColor=Muted;runtimeResult.TabStop=false;Position(runtime,runtimeResult,"RuntimeResult",230,222,426,52);
             LabelAt(runtime,"저장된 실행 환경 (Chrome 설정에도 같은 목록이 보입니다)",0,280,656,24).ForeColor=Muted;
             Position(runtime,savedProfiles,"SavedProfiles",0,304,656,64);
             var check=LabelAt(done,"✓",0,30,56,60);check.Font=new Font("Segoe UI Symbol",32F);check.ForeColor=Color.FromArgb(24,128,74);
@@ -108,11 +108,11 @@ namespace AgentBrowser.Installer {
             status.Multiline=true;status.ReadOnly=true;status.BorderStyle=BorderStyle.None;status.BackColor=Color.White;status.ForeColor=Muted;status.ScrollBars=ScrollBars.None;status.TextChanged+=delegate{status.ScrollBars=status.Lines.Length>2?ScrollBars.Vertical:ScrollBars.None;};status.TabStop=false;Position(this,status,"Status",32,450,656,44);
             var footer=new Panel{BackColor=Color.FromArgb(246,247,249)};footer.SetBounds(0,508,720,56);Controls.Add(footer);
             var footerLine=new Panel{BackColor=Border};footerLine.SetBounds(0,0,720,1);footer.Controls.Add(footerLine);
-            back.Text="< 뒤로";Position(footer,back,"Back",384,520-508,96,32);back.Click+=delegate{status.Clear();if(page<3)plan=null;SetPage(page==2?1:page==5?4:page==6?5:0);};
+            back.Text="< 뒤로";Position(footer,back,"Back",384,520-508,96,32);back.Click+=delegate{status.Clear();if(page<3)plan=null;SetPage(page==2?1:page==5?4:page==6?5:page==7?6:0);};
             prepare.Text="다음 >";Position(footer,prepare,"Preview",488,12,96,32);StyleButton(prepare,true);prepare.Click+=async delegate{if(page==0){SetPage(1);status.Clear();}else if(page==1)await Prepare();else if(page==4)await PreparePairing();else if(page==5){SetPage(6);status.Clear();await EnterRuntimePage();}else if(page==6){SetPage(7);status.Clear();await RunDoneChecks();}};
             apply.Text="설치";Position(footer,apply,"Apply",488,12,96,32);StyleButton(apply,true);apply.Click+=async delegate{await Apply();};
             cancel.Text="취소";Position(footer,cancel,"Cancel",600,12,96,32);cancel.Click+=delegate{if(working&&cancellation!=null){cancellation.Cancel();status.Text="취소 중입니다. 변경 사항을 복구할 때까지 기다려 주세요.";}else Close();};
-            FormClosing+=delegate(object sender,FormClosingEventArgs e){if(working){e.Cancel=true;if(cancellation!=null)cancellation.Cancel();status.Text="작업이 끝날 때까지 기다려 주세요.";}};
+            FormClosing+=delegate(object sender,FormClosingEventArgs e){if(pairingWait!=null)pairingWait.Cancel();if(working){e.Cancel=true;if(cancellation!=null)cancellation.Cancel();status.Text="작업이 끝날 때까지 기다려 주세요.";}};
             operation.SelectedIndexChanged+=delegate{package.Enabled=operation.SelectedIndex!=2;register.Enabled=operation.SelectedIndex!=2;startup.Enabled=operation.SelectedIndex!=2;advancedToggle.Enabled=operation.SelectedIndex!=2;manage.Enabled=operation.SelectedIndex!=2&&InstalledHere();};
             folder.TextChanged+=delegate{revision++;manage.Enabled=false;};folder.Leave+=delegate{LoadState();};
             foreach(Control field in new Control[]{config,kind,distribution,operation})field.TextChanged+=delegate{revision++;};
@@ -146,7 +146,7 @@ namespace AgentBrowser.Installer {
             heading.Text=new[]{"AgentBrowser 설치","설치 위치 선택","설치 준비 완료","설치 중","Chrome 확장 추가","Chrome 연결","OpenCode 설정","설정 완료"}[page];
             steps.Text=new[]{"설치 마법사에 오신 것을 환영합니다.","프로그램을 설치할 폴더를 선택하세요.","아래 내용을 확인한 뒤 [설치]를 누르세요.","잠시 기다려 주세요.","Chrome에서 한 번만 진행하면 됩니다.","추가한 확장 프로그램과 연결합니다.","기존 OpenCode의 실행 환경을 선택합니다.","AgentBrowser를 사용할 준비가 되었습니다."}[page];
             if(operation.SelectedIndex==2&&page>=2){heading.Text=page==7?"제거 완료":"AgentBrowser 제거";steps.Text=page==7?"페어링과 프로필 데이터는 보존했습니다.":"제거할 설치 위치를 확인하세요.";}
-            back.Visible=page==1||page==2||page==5||page==6;prepare.Visible=page==0||page==1||page==4||page==5||page==6;apply.Visible=page==2;apply.Text=operation.SelectedIndex==2?"제거":operation.SelectedIndex==1?"업데이트":"설치";
+            back.Visible=page==1||page==2||page==5||page==6||page==7;if(page!=5&&pairingWait!=null)pairingWait.Cancel();prepare.Visible=page==0||page==1||page==4||page==5||page==6;apply.Visible=page==2;apply.Text=operation.SelectedIndex==2?"제거":operation.SelectedIndex==1?"업데이트":"설치";
             if(page==2)steps.Text="아래 내용을 확인한 뒤 ["+apply.Text+"]를 누르세요.";
             detect.Enabled=page==4;
             cancel.Text=page==7?"마침":page>=4?"닫기":"취소";StyleButton(cancel,page==7);AcceptButton=(page==0||page==1||page==4||page==5||page==6)?prepare:page==2?apply:page==7?cancel:null;
@@ -185,18 +185,28 @@ namespace AgentBrowser.Installer {
             if(chrome!=null&&!Has(args,"--no-browser-launch"))try{Process.Start(new ProcessStartInfo(chrome,"chrome-extension://"+id+"/src/options/index.html"){UseShellExecute=false});}catch(Exception){/* The user can open Options manually. */}
         }
         async Task ConnectChrome(){
-            if(working)return;working=true;connectChrome.Enabled=false;
+            // Waiting for Chrome is not an installer operation: it never takes `working`,
+            // so the wizard stays usable and leaving this page or closing stops it.
+            if(pairingWait!=null)pairingWait.Cancel();
+            var wait=new CancellationTokenSource();pairingWait=wait;bool connected=false;
             try{
-                await OpenPairingCode();
                 var state=Installed();string id=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));
-                for(int i=0;i<180&&!IsDisposed;i++){
-                    var current=await Task.Run(()=>Pairing.Status(state));
-                    if(Pairing.Connected(current,id)){pairingState.Text="✓ Chrome과 연결되었습니다.";pairingCode.Text="";SetPage(6);status.Clear();await EnterRuntimePage();return;}
-                    await Task.Delay(1000);
+                await Task.Run(()=>BridgeControl.Start(state));
+                if(Pairing.Connected(await Task.Run(()=>Pairing.Status(state)),id))connected=true;
+                else{
+                    await OpenPairingCode();
+                    for(int i=0;i<180&&!wait.IsCancellationRequested;i++){
+                        var current=await Task.Run(()=>Pairing.Status(state));
+                        if(wait.IsCancellationRequested)break;
+                        if(Pairing.Connected(current,id)){connected=true;break;}
+                        try{await Task.Delay(1000,wait.Token);}catch(TaskCanceledException){break;}
+                    }
                 }
-                pairingState.Text="연결을 확인하지 못했습니다. 코드를 정확히 입력했는지 확인하고 [Chrome에 연결]을 다시 누르거나, 아래 토큰을 직접 입력하세요.";
-            }catch(Exception error){pairingState.Text=Friendly.Message(error);}
-            finally{working=false;if(!IsDisposed)connectChrome.Enabled=true;}
+                if(connected){pairingState.Text="✓ Chrome과 연결되었습니다.";pairingCode.Text="";}
+                else if(!wait.IsCancellationRequested)pairingState.Text="연결을 확인하지 못했습니다. 코드를 정확히 입력했는지 확인하고 [Chrome에 연결]을 다시 누르거나, 아래 토큰을 직접 입력하세요.";
+            }catch(Exception error){if(!wait.IsCancellationRequested&&!IsDisposed)pairingState.Text=Friendly.Message(error);}
+            finally{if(pairingWait==wait)pairingWait=null;}
+            if(connected&&!wait.IsCancellationRequested&&page==5&&!IsDisposed){SetPage(6);status.Clear();await EnterRuntimePage();}
         }
         async Task RunDoneChecks(){
             complete.Text="설정이 끝났습니다.";doneChecks.Items.Clear();doneChecks.Items.Add("연결 상태를 확인하고 있습니다…");
@@ -247,9 +257,10 @@ namespace AgentBrowser.Installer {
                 var state=Installed();var chosen=runtimeCandidates.SelectedItem as OpenCodeCandidate;
                 var candidate=new OpenCodeCandidate{Kind=runtimeKind.SelectedIndex==1?"wsl":"windows",Distribution=runtimeDistribution.Text.Trim(),Executable=runtimeExecutable.Text.Trim(),
                     User=chosen!=null&&chosen.Kind=="wsl"&&chosen.Executable==runtimeExecutable.Text.Trim()?chosen.User:null};
-                string id="managed-"+Guid.NewGuid().ToString("N").Substring(0,8),name=candidate.Kind=="wsl"?"OpenCode ("+candidate.Distribution+")":"OpenCode (Windows)",directory=runtimeDirectory.Text.Trim();
-                var profile=await Task.Run(()=>ManagedProfile.Prepare(state,candidate,id,name,directory));
-                await Task.Run(()=>ManagedProfile.Save(state,profile,makeDefault:true));
+                bool replace=savedRuntimeId!=null;
+                string id=savedRuntimeId??"managed-"+Guid.NewGuid().ToString("N").Substring(0,8),name=candidate.Kind=="wsl"?"OpenCode ("+candidate.Distribution+")":"OpenCode (Windows)",directory=runtimeDirectory.Text.Trim();
+                var profile=await Task.Run(()=>ManagedProfile.Prepare(state,candidate,id,name,directory,replace));
+                await Task.Run(()=>ManagedProfile.Save(state,profile,makeDefault:true,replace:replace));savedRuntimeId=id;
                 await RefreshSavedProfiles();
                 if(Has(args,"--no-runtime-start")){runtimeResult.Text="✓ 저장했습니다. (시작 확인 생략)";return;}
                 runtimeResult.Text="저장했습니다. OpenCode를 시작해 브라우저 연결을 확인하고 있습니다… (최대 1분)";
@@ -333,7 +344,7 @@ namespace AgentBrowser.Installer {
                         int warningIndex=result.IndexOf("경고:",StringComparison.Ordinal);if(warningIndex>=0)status.Text+="\r\n"+result.Substring(warningIndex);
                         return;
                     }
-                }else{manage.Enabled=false;SetPage(7);done.Visible=false;review.Visible=true;preview.Visible=true;preview.Text=result;}
+                }else{manage.Enabled=false;SetPage(7);back.Visible=false;done.Visible=false;review.Visible=true;preview.Visible=true;preview.Text=result;}
                 status.Text=plan.Next==null?"제거 완료.":"설치 완료.";
                 int warning=result.IndexOf("경고:",StringComparison.Ordinal);if(warning>=0)status.Text=result.Substring(warning);
             }catch(OperationCanceledException){SetPage(2);status.Text="취소됐습니다. 변경 사항을 복구했습니다.";}

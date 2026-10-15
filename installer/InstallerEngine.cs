@@ -323,6 +323,8 @@ namespace AgentBrowser.Installer {
             string exe=InstallerEngine.Full(state.CurrentExe);var owners=state.OwnedFiles.Where(f=>InstallerEngine.Same(NativeIO.SafePath(state.InstallDir,f.Path),exe)).ToArray();
             if(owners.Length!=1||!File.Exists(exe)||!InstallerEngine.Same(NativeIO.FileHash(exe),owners[0].Sha256))throw new IOException("The current Bridge executable is not an exact owned file.");
         }
+        /// Like Invoke, but returns stdout as well when the Bridge exits with an error.
+        public static CommandResult Run(InstallState state,string[] args,int timeout) {ValidateLaunch(state);return NativeIO.Run(state.CurrentExe,args,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},timeout);}
         public static string Invoke(InstallState state,string[] args,int timeout=20000) {ValidateLaunch(state);return NativeIO.RunChecked(state.CurrentExe,args,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},timeout);}
         static Dictionary<string,object> Marker(InstallState state) {string path=Path.Combine(state.DataDir,".installer-bridge-process.json");return File.Exists(path)?InstallerEngine.Read<Dictionary<string,object>>(path):null;}
         static ManagementObject Verify(InstallState state,Dictionary<string,object> marker) {

@@ -64,7 +64,11 @@ namespace AgentBrowser.Installer {
      Assert(profiles.Count==1&&(string)profiles[0]["executable"]==cmd,"the Bridge does not report the saved profile");
      Assert((string)listed["defaultProfileId"]==(string)profiles[0]["id"],"the saved profile is not the default");
      Assert(Field<ListBox>(form,"SavedProfiles").Items.Count==1,"the page does not show what the Bridge saved");
-     Assert(Field<Label>(form,"RuntimeResult").Text.Contains("저장했습니다"),Field<Label>(form,"RuntimeResult").Text);
+     Assert(Field<TextBox>(form,"RuntimeResult").Text.Contains("저장했습니다"),Field<TextBox>(form,"RuntimeResult").Text);
+     Assert(Field<TextBox>(form,"RuntimeResult").ScrollBars==ScrollBars.Vertical&&Field<TextBox>(form,"RuntimeResult").ReadOnly,"long runtime results must stay readable");
+     Field<TextBox>(form,"RuntimeExecutable").Text=cmd;Invoke(form,"SaveRuntime");
+     listed=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"}));
+     Assert(((System.Collections.IEnumerable)listed["profiles"]).OfType<object>().Count()==1,"saving again on the page created a duplicate profile");
      form.Close();
     }}finally{Uninstall(root);}
    });
@@ -76,6 +80,28 @@ namespace AgentBrowser.Installer {
     Assert(lines.Any(l=>l.Contains("실행 환경")&&l.Contains("처음 보낼 때")),"stopped runtime explained");
     var none=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"pairedExtensionId\":null,\"browsers\":[]}");
     Assert(DoneChecks.Lines(none,NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"checks\":[]}"),"icgmjjcpnaenpfjfoggnaodeaidbnihl").Any(l=>l.StartsWith("✗")&&l.Contains("Chrome")&&l.Contains("연결")),"missing chrome connection");
+   });
+   Case("waiting for Chrome does not lock the wizard and starting unpaired explains the pairing step",()=>{
+    string root=Path.Combine(fixture,"pair-wait"),fake=Path.Combine(fixture,"fake-opencode-2");Directory.CreateDirectory(fake);
+    string cmd=Path.Combine(fake,"opencode.cmd");File.WriteAllText(cmd,"@echo off\r\necho 1.18.29\r\n");
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-startup","--no-browser-launch","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
+     Invoke(form,"PreparePairing");
+     var waiting=(Task)typeof(SetupForm).GetMethod("ConnectChrome",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);
+     var end=DateTime.UtcNow.AddSeconds(30);while(Field<Label>(form,"PairingCode").Text==""&&DateTime.UtcNow<end){Application.DoEvents();Thread.Sleep(10);}
+     Assert(Field<Label>(form,"PairingCode").Text!="","pairing code did not appear");
+     Field<Button>(form,"Preview").PerformClick();Application.DoEvents();
+     end=DateTime.UtcNow.AddSeconds(5);while(!waiting.IsCompleted&&DateTime.UtcNow<end){Application.DoEvents();Thread.Sleep(10);}
+     Assert(waiting.IsCompleted,"leaving the pairing page did not stop waiting for Chrome");
+     Assert(Field<Panel>(form,"RuntimePanel").Visible,"the wizard did not stay on the runtime page");
+     Field<ComboBox>(form,"RuntimeKind").SelectedIndex=0;Field<TextBox>(form,"RuntimeExecutable").Text=cmd;Field<TextBox>(form,"RuntimeDirectory").Text=fixture;
+     Invoke(form,"SaveRuntime");
+     Assert(Field<TextBox>(form,"RuntimeResult").Text.Contains("Chrome 연결 단계"),"unpaired start must point at the pairing step: "+Field<TextBox>(form,"RuntimeResult").Text);
+     Field<Button>(form,"Preview").PerformClick();Application.DoEvents();
+     Assert(Field<Panel>(form,"DonePanel").Visible&&Field<Button>(form,"Back").Visible,"the final page offers [뒤로] but hides it");
+     Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"RuntimePanel").Visible,"Back from the final page must return to the runtime page");
+     form.Close();
+    }}finally{Uninstall(root);}
    });
    Case("new folder guides installation before maintenance",()=>{using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"new")})){form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Application.DoEvents();Assert(!form.Controls.Find("StartInstalledBridge",true).Any(c=>c.Visible),"Bridge start is exposed before installation");Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is exposed before installation");Assert(!Field<Button>(form,"ManageConnection").Enabled,"maintenance is enabled before installation");Assert(Field<Button>(form,"Preview").Text.Contains("다음"),"primary action has no next-step label");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"advanced package path is exposed by default");Assert(Field<Panel>(form,"WelcomePanel").Visible,"welcome page is missing");Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"SettingsPanel").Visible,"Next did not open location page");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"location page exposes advanced fields");Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"WelcomePanel").Visible,"Back did not return to welcome");form.Close();}});
    Case("changing installed folder clears stale maintenance state",()=>{string root=Path.Combine(fixture,"existing");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,s=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Assert(Field<Button>(form,"ManageConnection").Enabled,"installed Bridge action disabled");Field<TextBox>(form,"InstallFolder").Text=Path.Combine(fixture,"different");Assert(!Field<Button>(form,"ManageConnection").Enabled,"folder edit retained old installation controls");Invoke(form,"LoadState");Assert(Field<ComboBox>(form,"Operation").SelectedIndex==0,"new folder retained Update mode");}}finally{Uninstall(root);}});

@@ -80,6 +80,27 @@ describe("BridgeConnection", () => {
     expect(parseEnvelope(FakeWs.last.sent[0]!)).toMatchObject({ method: "auth.hello" });
   });
 
+  it("keeps a live connection intact when the same token is paired again", async () => {
+    const token = "d".repeat(64);
+    const { conn, store } = setup({ clientId: "cli-1", pairingToken: token });
+    conn.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const live = FakeWs.last; live.open();
+    await finishAuthentication(live, { authVersion: 1, selected: true }, token);
+    await vi.advanceTimersByTimeAsync(0);
+    const timers = vi.getTimerCount();
+    const pairing = conn.pairWithCode("123456");
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    ws.reply(makeOk((parseEnvelope(ws.sent[0]!) as any).id, { token }));
+    await pairing;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.repairPending).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(timers); // The heartbeat of the live connection is still armed.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(live.sent.map(parseEnvelope).some(env => env.type === "req" && env.method === "heartbeat")).toBe(true);
+  });
+
   it("reports a wrong pairing code without storing anything", async () => {
     const { conn, store } = setup({ clientId: "cli-1" });
     const pairing = conn.pairWithCode("000000");
@@ -191,15 +212,15 @@ function nodeProof(side: string, params: Record<string, unknown>, serverNonce: s
   ])).digest("hex");
 }
 
-async function finishAuthentication(ws: FakeWs, ack: Record<string, unknown> = { authVersion: 1, selected: true }) {
+async function finishAuthentication(ws: FakeWs, ack: Record<string, unknown> = { authVersion: 1, selected: true }, token = "tok") {
   const hello = parseEnvelope(ws.sent[0]!);
   if (hello.type !== "req") throw new Error("Expected hello request");
   const serverNonce = "22".repeat(32);
-  ws.reply(makeOk(hello.id, { authVersion: 1, serverNonce, serverProof: nodeProof("server", hello.params, serverNonce) }));
+  ws.reply(makeOk(hello.id, { authVersion: 1, serverNonce, serverProof: nodeProof("server", hello.params, serverNonce, token) }));
   await vi.waitFor(() => expect(ws.sent.map(parseEnvelope).some((req) => req.type === "req" && req.method === "auth.prove")).toBe(true));
   const prove = ws.sent.map(parseEnvelope).find((req) => req.type === "req" && req.method === "auth.prove");
   if (prove?.type !== "req") throw new Error("Expected client proof");
-  expect(prove.params).toEqual({ authVersion: 1, proof: nodeProof("client", hello.params, serverNonce) });
+  expect(prove.params).toEqual({ authVersion: 1, proof: nodeProof("client", hello.params, serverNonce, token) });
   ws.reply(makeOk(prove.id, ack));
 }
 
