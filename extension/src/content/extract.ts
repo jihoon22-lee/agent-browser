@@ -1,5 +1,12 @@
 import { ProtocolError } from "../protocol/errors";
-import { pageText, sliceText } from "./snapshot";
+import { pageText, sliceText, utf8Bytes } from "./snapshot";
+
+export const EXTRACT_BYTES = 28_000;
+function boundedSlice(full: string, offset: number, maxChars: number) {
+  let slice = sliceText(full, offset, maxChars);
+  while (utf8Bytes(JSON.stringify(slice)) > EXTRACT_BYTES && slice.returnedChars > 1) slice = sliceText(full, offset, Math.floor(slice.returnedChars * 0.8));
+  return slice;
+}
 import { resolveRef } from "./refs";
 
 const cellText = (c: Element) => (c.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -59,7 +66,7 @@ function tablePage(table: HTMLTableElement, maxChars: number, offset: number) {
   const header = full.header?.slice(0, columns) ?? null;
   const rows: string[][] = [];
   const payload = (candidate: string[][]) => ({ header, rows: candidate, markdown: markdownTable(header, candidate, columns) });
-  const fits = (candidate: string[][]) => JSON.stringify(payload(candidate)).length <= maxChars;
+  const fits = (candidate: string[][]) => { const text = JSON.stringify(payload(candidate)); return text.length <= maxChars && utf8Bytes(text) <= EXTRACT_BYTES; };
   const shorten = (candidate: string[][]) => {
     const groups = [...(header ? [header] : []), ...candidate];
     let longest: { row: string[]; index: number; length: number } | undefined;
@@ -88,11 +95,11 @@ function tablePage(table: HTMLTableElement, maxChars: number, offset: number) {
 export async function extract(p: Record<string, unknown>): Promise<Record<string, unknown>> {
   const maxChars = Math.max(200, Math.min(50000, Number(p.maxChars ?? 8000))), offset = Math.max(0, Math.floor(Number(p.offset ?? 0)));
   switch (p.kind) {
-    case "text": return { executed: false, verified: {}, text: sliceText(pageText(document), offset, maxChars) };
+    case "text": return { executed: false, verified: {}, text: boundedSlice(pageText(document), offset, maxChars) };
     case "selection": {
       const s = getSelection()?.toString() ?? "";
       if (!s) throw new ProtocolError("ELEMENT_NOT_FOUND", "No text is selected in the page.");
-      return { executed: false, verified: {}, text: sliceText(s, offset, maxChars) };
+      return { executed: false, verified: {}, text: boundedSlice(s, offset, maxChars) };
     }
     case "table": {
       const el = p.ref ? resolveRef(String(p.ref)) : document.querySelector("table");

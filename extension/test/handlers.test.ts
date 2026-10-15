@@ -238,7 +238,7 @@ it('a new operation requires its own snapshot for old refs and ref-less writes',
 });
 it('snapshot frame pagination bounds aggregate output and exposes all remaining frames',async()=>{
  const w=world();w.frames.set(1,Array.from({length:6},(_,frameId)=>({frameId,documentId:`d${frameId}`,url:`https://example.test/${frameId}`})));
- const original=w.api.sendToFrame;w.api.sendToFrame=async(t,f,m:any)=>{const r=await original(t,f,m);if(m.method==='snapshot')r.result.text={content:'x'.repeat(30000)};return r;};
+ const original=w.api.sendToFrame;w.api.sendToFrame=async(t,f,m:any)=>{const r=await original(t,f,m);if(m.method==='snapshot')r.result.text={content:'x'.repeat(20000)};return r;};
  const h=createHandlers(w.api,memorySessionStore());const one:any=await h(request('browser.snapshot',{elementOffset:150}));
  expect(JSON.stringify(one).length).toBeLessThan(65536);
  expect(one.framesNextOffset).toBeGreaterThan(0);
@@ -542,4 +542,15 @@ it.each(['refGone','frameRef'])('review R5 injection loss still observes the top
   Object.assign(w.tabs.get(1)!,{url:'https://example.test/arrived'});
   for(const listener of w.updates)listener(1,{url:'https://example.test/arrived'},w.tabs.get(1)!);
   expect(await work).toMatchObject({verified:{met:'urlIncludes'}});expect(w.updates.size).toBe(0);
+});
+it('bounds a multi-frame Korean snapshot by UTF-8 bytes', async () => {
+    const w = world();
+    w.frames.set(1, [0, 1, 2, 3].map(frameId => ({ frameId, documentId: `doc-${frameId}`, url: 'https://example.test/1' })));
+    w.api.sendToFrame = async (_tabId, frame, msg: any) => msg.method === 'snapshot'
+        ? { ok: true, result: { frameId: frame.frameId, elements: [], text: { content: '가'.repeat(5000) } } }
+        : { ok: true, result: {} };
+    const h = createHandlers(w.api, memorySessionStore());
+    const result: any = await h(request('browser.snapshot'));
+    expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThanOrEqual(30_000);
+    expect(result.framesNextOffset).toBe(1);
 });

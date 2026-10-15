@@ -37,6 +37,10 @@ export function pageText(doc: Document): string {
 }
 
 export const MAX_SNAPSHOT_CHARS = 32768;
+/** OpenCode drops a one-line tool result above its output limit, so budgets are UTF-8 bytes, not characters. */
+export const MAX_SNAPSHOT_BYTES = 24_000;
+const encoder = new TextEncoder();
+export const utf8Bytes = (value: string) => encoder.encode(value).length;
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number }): FrameSnapshot {
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
@@ -51,7 +55,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   const fullText = pageText(document);
   const text = sliceText(fullText, o.offset, Math.min(o.maxChars, 20000));
   // JSON escaping can make a character several times larger on the wire.
-  while (JSON.stringify(text).length > MAX_SNAPSHOT_CHARS / 2) {
+  while (JSON.stringify(text).length > MAX_SNAPSHOT_CHARS / 2 || utf8Bytes(JSON.stringify(text)) > MAX_SNAPSHOT_BYTES / 2) {
     Object.assign(text, sliceText(fullText, o.offset, Math.max(1, Math.floor(text.returnedChars * .8))));
     limits.add("snapshot-size-limited");
   }
@@ -60,6 +64,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     elements, elementsTruncated: false, elementsTotal: 0, elementsOffset: offset, elementsNextOffset: null, limits: [],
   };
   let budgetFull = false;
+  let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
     if ((!isInteractive(el) && el.tagName !== "TABLE") || !isRendered(el, { checkLayout: o.checkLayout })) return;
@@ -82,9 +87,13 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     if (el instanceof HTMLAnchorElement) e.href = clip(el.href, 2048);
     // Reserve space for refs, pagination numbers and limit flags before admitting
     // another item. The cursor stays on that item when the aggregate budget fills.
-    if (JSON.stringify(result).length + JSON.stringify(e).length > MAX_SNAPSHOT_CHARS - 1024) {
+    // Reserve room for the ref (~16 chars) and the separator before admitting another item.
+    const encoded = JSON.stringify(e);
+    const itemBytes = utf8Bytes(encoded) + 24;
+    if (usedChars + encoded.length + 24 > MAX_SNAPSHOT_CHARS - 1024 || usedBytes + itemBytes > MAX_SNAPSHOT_BYTES - 1024) {
       budgetFull = true; limits.add("snapshot-size-limited"); return;
     }
+    usedChars += encoded.length + 24; usedBytes += itemBytes;
     e.ref = table.add(el);
     elements.push(e);
   });

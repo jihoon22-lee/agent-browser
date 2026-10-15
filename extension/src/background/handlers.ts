@@ -8,6 +8,8 @@ import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
 const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
+const SNAPSHOT_RESPONSE_BYTES = 28_000;
+const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
 const asError = (e: unknown) => e instanceof ProtocolError ? e : new ProtocolError('INTERNAL', String(e));
 const unpack = (outcome: Outcome): unknown => { if (outcome.ok)
@@ -176,15 +178,15 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     await frames.inject(tabId,f);
                     const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
                     const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotId}f${f.frameId}`};
-                    const length=JSON.stringify(withDocument).length;
-                    if(length>60_000)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
-                    if(used+length>60_000){framesNextOffset=index;break;}
+                    const length=jsonBytes(withDocument);
+                    if(length>SNAPSHOT_RESPONSE_BYTES)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
+                    if(used+length>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
                     results.push(withDocument);bindings.push(f);used+=length;
                 }catch(e){
                     if(signal.aborted||asError(e).code==='CANCELLED')throw e;
                     const error:FrameError={frameId:f.frameId,url:f.url.slice(0,2048),code:'FRAME_UNAVAILABLE',message:asError(e).message.slice(0,500)};
-                    const errorSize=JSON.stringify(error).length;
-                    if(used+errorSize>60_000){framesNextOffset=index;break;}
+                    const errorSize=jsonBytes(error);
+                    if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
                     errors.push(error);used+=errorSize;
                 }
             }
