@@ -1,4 +1,5 @@
 pub mod conn;
+pub mod binding;
 pub mod operation;
 pub mod registry;
 pub mod router;
