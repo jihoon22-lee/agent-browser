@@ -97,7 +97,9 @@ impl Profile {
     }
 
     pub fn preserve_secrets(&mut self, old: &Profile) {
-        if self.password.is_none() { self.password = old.password.clone(); }
+        // A password belongs to one server: never carry it to another kind, origin or user.
+        let same_server = self.kind == old.kind && self.base_url == old.base_url && self.username == old.username;
+        if self.password.is_none() && same_server { self.password = old.password.clone(); }
         if self.env.is_none() { self.env = old.env.clone(); }
     }
 }
@@ -118,6 +120,17 @@ mod tests {
         edited.preserve_secrets(&old);
         assert_eq!(edited.password, old.password);
         assert_eq!(edited.env, old.env);
+    }
+
+    #[test]
+    fn a_password_is_never_carried_to_a_different_server() {
+        let old: Profile = serde_json::from_value(json!({"id":"ext","name":"Ext","kind":"external","directory":"/w","baseUrl":"https://a.example/","password":"secret-for-a"})).unwrap();
+        let mut moved: Profile = serde_json::from_value(json!({"id":"ext","name":"Ext","kind":"external","directory":"/w","baseUrl":"https://b.example/"})).unwrap();
+        moved.preserve_secrets(&old);
+        assert_eq!(moved.password, None);
+        let mut renamed: Profile = serde_json::from_value(json!({"id":"ext","name":"Renamed","kind":"external","directory":"/w","baseUrl":"https://a.example/"})).unwrap();
+        renamed.preserve_secrets(&old);
+        assert_eq!(renamed.password.as_deref(), Some("secret-for-a"));
     }
 
     #[test]
