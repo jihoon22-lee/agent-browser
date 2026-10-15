@@ -1,7 +1,7 @@
 import { accessibleName, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep } from "./dom";
 import { newTable } from "./refs";
 
-export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean };
+export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean; state?: string[]; context?: string };
 export type TextSlice = { content: string; totalChars: number; offset: number; returnedChars: number; truncated: boolean; nextOffset: number | null };
 export type FrameSnapshot = { frameId: number; url: string; title: string; text: TextSlice; elements: SnapElement[]; elementsTruncated: boolean; elementsTotal: number; elementsOffset: number; elementsNextOffset: number | null; limits: string[] };
 
@@ -41,6 +41,21 @@ export const MAX_SNAPSHOT_CHARS = 32768;
 export const MAX_SNAPSHOT_BYTES = 24_000;
 const encoder = new TextEncoder();
 export const utf8Bytes = (value: string) => encoder.encode(value).length;
+
+const RANGE_ROLES = new Set(["slider", "spinbutton", "progressbar", "scrollbar", "meter"]);
+export function stateOf(el: Element): string[] {
+  const states: string[] = [], aria = (name: string) => el.getAttribute(name);
+  if (aria("aria-expanded") === "true") states.push("expanded"); else if (aria("aria-expanded") === "false") states.push("collapsed");
+  if (aria("aria-selected") === "true") states.push("selected");
+  if (aria("aria-pressed") === "true") states.push("pressed");
+  if (aria("aria-checked") === "mixed") states.push("mixed");
+  const current = aria("aria-current"); if (current && current !== "false") states.push("current");
+  if ((el as HTMLInputElement).required || aria("aria-required") === "true") states.push("required");
+  if ((el as HTMLInputElement).readOnly || aria("aria-readonly") === "true") states.push("readonly");
+  if (aria("aria-invalid") === "true") states.push("invalid");
+  if (el.ownerDocument.activeElement === el) states.push("focused");
+  return states;
+}
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number }): FrameSnapshot {
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
@@ -84,6 +99,14 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
       e.options = [...el.options].slice(0, 20).map(op => clip(op.text, 128));
       while (JSON.stringify(e.options).length > 2048) { e.options.pop(); limits.add("element-fields-truncated"); }
     }
+    const ariaChecked = el.getAttribute("aria-checked");
+    if (!(el instanceof HTMLInputElement) && (ariaChecked === "true" || ariaChecked === "false")) e.checked = ariaChecked === "true";
+    if (!(el instanceof HTMLInputElement) && RANGE_ROLES.has(roleOf(el))) {
+      const value = el.getAttribute("aria-valuetext") ?? el.getAttribute("aria-valuenow");
+      if (value) e.value = clip(value, 80);
+    }
+    const state = stateOf(el);
+    if (state.length) e.state = state;
     if (el.matches(":disabled")) e.disabled = true;
     if (el instanceof HTMLAnchorElement) e.href = clip(el.href, 2048);
     // Reserve space for refs, pagination numbers and limit flags before admitting
