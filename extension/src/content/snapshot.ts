@@ -1,4 +1,4 @@
-import { accessibleName, isInteractive, isRendered, roleOf, walkDeep } from "./dom";
+import { accessibleName, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep } from "./dom";
 import { newTable } from "./refs";
 
 export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean };
@@ -67,10 +67,11 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
-    if ((!isInteractive(el) && el.tagName !== "TABLE") || !isRendered(el, { checkLayout: o.checkLayout })) return;
+    const pointer = !isInteractive(el) && el.tagName !== "TABLE" && isPointerTarget(el);
+    if ((!isInteractive(el) && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;
-    const e: SnapElement = { ref: "", role: clip(roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
+    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
     if (inShadow) e.inShadow = true;
     if (el instanceof HTMLInputElement) {
       if (el.type === "checkbox" || el.type === "radio") e.checked = el.checked;

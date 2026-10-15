@@ -1,6 +1,17 @@
-const INTERACTIVE = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=option],[role=switch],[contenteditable=''],[contenteditable=true]";
+const INTERACTIVE = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=combobox],[role=textbox],[role=searchbox],[role=spinbutton],[role=slider],[role=treeitem],[contenteditable=''],[contenteditable=true],[contenteditable=plaintext-only]";
 export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick], [onmousedown], [onpointerdown]') ||
   (el.hasAttribute('tabindex') && (el as HTMLElement).tabIndex>=0);
+
+/** Frameworks attach click handlers at the root, so a pointer cursor is often the only DOM
+ * signal. Count only the outermost pointer region outside an existing control. */
+export function isPointerTarget(el: Element): boolean {
+  const doc = el.ownerDocument;
+  if (!(el instanceof HTMLElement) || el === doc.body || el === doc.documentElement) return false;
+  if (getComputedStyle(el).cursor !== "pointer") return false;
+  const parent = el.parentElement;
+  if (parent && getComputedStyle(parent).cursor === "pointer") return false;
+  return !parent?.closest(INTERACTIVE);
+}
 
 export function isRendered(el: Element, opts: { checkLayout: boolean }): boolean {
   for (let n: Element | null = el; n; n = n.parentElement ?? ((n.getRootNode() as ShadowRoot).host ?? null)) {
