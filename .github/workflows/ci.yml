@@ -79,7 +79,8 @@ jobs:
         run: |
           node --test tests/fixtures/server.test.mjs tests/fixtures/opencode.test.mjs \
             tests/agent/runner.test.mjs tests/agent/runner-process.test.mjs \
-            tests/e2e/interop-check.test.mjs tests/e2e/runtime.test.ts
+            tests/e2e/interop-check.test.mjs tests/e2e/runtime.test.ts \
+            tests/install/wsl-probe.test.mjs
       - name: Install locked Playwright Chromium and system libraries
         run: pnpm --filter agent-browser-e2e exec playwright install --with-deps chromium
       - name: Linux Chromium extension E2E with synthetic APIs

@@ -17,6 +17,8 @@ const conn = new BridgeConnection({
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
   onStatus: (s) => { lastStatus = s; void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  extensionVersion: chrome.runtime.getManifest().version,
+  reload: () => chrome.runtime.reload(),
   onEvent: (event, data) => { void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {}); },
 });
 
@@ -46,6 +48,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if(['request-prepare','request-cancel','request-finish','request-discard'].includes(msg?.kind)) {
     const work=msg.kind==='request-prepare'?requests.prepare(msg.lease,msg.target,msg.previousOperationId):msg.kind==='request-discard'?requests.discard(msg.requestId):msg.kind==='request-finish'?requests.finish(msg.scope):requests.cancel(msg.scope);
     work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:error instanceof Error?error.message:String(error)}}));
+    return true;
+  }
+  if (msg?.kind === "pair-with-code" && typeof msg.code === "string") {
+    conn.pairWithCode(msg.code).then(() => sendResponse({ ok: true }), (error) => sendResponse({ ok: false, error: error instanceof ProtocolError ? error.toRpc() : { code: "INTERNAL", message: String(error), retry: "never" } }));
     return true;
   }
   if (msg?.kind === "reconnect") { conn.stop(); conn.start(); sendResponse({ ok: true }); return; }

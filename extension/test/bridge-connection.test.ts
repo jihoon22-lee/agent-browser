@@ -1,5 +1,5 @@
 import { createHmac, webcrypto } from "node:crypto";
-import { BridgeConnection, type ConnStatus, type ConnDeps } from "../src/background/bridge-connection";
+import { BridgeConnection, compareVersions, type ConnStatus, type ConnDeps } from "../src/background/bridge-connection";
 import { makeOk, makeErr, parseEnvelope } from "../src/protocol/envelope";
 
 class FakeWs {
@@ -50,11 +50,89 @@ describe("BridgeConnection", () => {
     expect(FakeWs.last.url).not.toContain("tok");
   });
 
-  it("reports unpaired without a token and does not connect", async () => {
-    const { conn, statuses } = setup({});
+  it("announces itself without a token but never accepts an uninvited token", async () => {
+    const { conn, store, statuses } = setup({ clientId: "cli-1" });
     conn.start();
     await vi.runOnlyPendingTimersAsync();
     expect(statuses.at(-1)?.state).toBe("unpaired");
+    const ping = FakeWs.last; ping.open();
+    const request = parseEnvelope(ping.sent[0]!);
+    expect(request.type === "req" && request.method).toBe("pair.request");
+    expect((request as any).params).not.toHaveProperty("code");
+    ping.reply(makeOk((request as any).id, { token: "a".repeat(64) }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.pairingToken).toBeUndefined();
+  });
+
+  it("pairs with the code the installer shows and then authenticates", async () => {
+    const { conn, store } = setup({ clientId: "cli-1" });
+    const pairing = conn.pairWithCode("123456");
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    const request = parseEnvelope(ws.sent[0]!);
+    expect((request as any).params).toEqual({ clientId: "cli-1", code: "123456" });
+    ws.reply(makeOk((request as any).id, { token: "b".repeat(64) }));
+    await pairing;
+    expect(store.pairingToken).toBe("b".repeat(64));
+    expect(store.repairPending).toBe(true);
+    await vi.advanceTimersByTimeAsync(0);
+    FakeWs.last.open();
+    expect(parseEnvelope(FakeWs.last.sent[0]!)).toMatchObject({ method: "auth.hello" });
+  });
+
+  it("keeps a live connection intact when the same token is paired again", async () => {
+    const token = "d".repeat(64);
+    const { conn, store } = setup({ clientId: "cli-1", pairingToken: token });
+    conn.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const live = FakeWs.last; live.open();
+    await finishAuthentication(live, { authVersion: 1, selected: true }, token);
+    await vi.advanceTimersByTimeAsync(0);
+    const timers = vi.getTimerCount();
+    const pairing = conn.pairWithCode("123456");
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    ws.reply(makeOk((parseEnvelope(ws.sent[0]!) as any).id, { token }));
+    await pairing;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.repairPending).toBeUndefined();
+    expect(vi.getTimerCount()).toBe(timers); // The heartbeat of the live connection is still armed.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(live.sent.map(parseEnvelope).some(env => env.type === "req" && env.method === "heartbeat")).toBe(true);
+  });
+
+  it("reports a wrong pairing code without storing anything", async () => {
+    const { conn, store } = setup({ clientId: "cli-1" });
+    const pairing = conn.pairWithCode("000000");
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    ws.reply(makeErr((parseEnvelope(ws.sent[0]!) as any).id, { code: "AUTH_FAILED", message: "The pairing code is incorrect.", retry: "never" }));
+    await expect(pairing).rejects.toThrow("pairing code is incorrect");
+    expect(store.pairingToken).toBeUndefined();
+  });
+
+  it("does not store a token that arrives after the connection was stopped", async () => {
+    const { conn, store } = setup({ clientId: "cli-1" });
+    const pairing = conn.pairWithCode("123456").catch(error => error);
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    const id = (parseEnvelope(ws.sent[0]!) as any).id;
+    conn.stop();
+    ws.reply(makeOk(id, { token: "c".repeat(64) }));
+    await pairing;
+    expect(store.pairingToken).toBeUndefined();
+  });
+
+  it("keeps asking every few seconds while no pairing window is open", async () => {
+    const { conn } = setup({ clientId: "cli-1" });
+    conn.start();
+    await vi.runOnlyPendingTimersAsync();
+    const first = FakeWs.last; first.open();
+    first.reply(makeErr((parseEnvelope(first.sent[0]!) as any).id, { code: "AUTH_REQUIRED", message: "closed", retry: "never" }));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(FakeWs.last).not.toBe(first);
+    FakeWs.last.open();
+    expect(parseEnvelope(FakeWs.last.sent[0]!)).toMatchObject({ method: "pair.request" });
   });
 
   it("does not retry after AUTH_FAILED", async () => {
@@ -134,16 +212,26 @@ function nodeProof(side: string, params: Record<string, unknown>, serverNonce: s
   ])).digest("hex");
 }
 
-async function finishAuthentication(ws: FakeWs) {
+async function finishAuthentication(ws: FakeWs, ack: Record<string, unknown> = { authVersion: 1, selected: true }, token = "tok") {
   const hello = parseEnvelope(ws.sent[0]!);
   if (hello.type !== "req") throw new Error("Expected hello request");
   const serverNonce = "22".repeat(32);
-  ws.reply(makeOk(hello.id, { authVersion: 1, serverNonce, serverProof: nodeProof("server", hello.params, serverNonce) }));
+  ws.reply(makeOk(hello.id, { authVersion: 1, serverNonce, serverProof: nodeProof("server", hello.params, serverNonce, token) }));
   await vi.waitFor(() => expect(ws.sent.map(parseEnvelope).some((req) => req.type === "req" && req.method === "auth.prove")).toBe(true));
   const prove = ws.sent.map(parseEnvelope).find((req) => req.type === "req" && req.method === "auth.prove");
   if (prove?.type !== "req") throw new Error("Expected client proof");
-  expect(prove.params).toEqual({ authVersion: 1, proof: nodeProof("client", hello.params, serverNonce) });
-  ws.reply(makeOk(prove.id, { authVersion: 1, selected: true }));
+  expect(prove.params).toEqual({ authVersion: 1, proof: nodeProof("client", hello.params, serverNonce, token) });
+  ws.reply(makeOk(prove.id, ack));
+}
+
+async function authenticatedWith(conn: BridgeConnection, ack: Record<string, unknown>) {
+  conn.start();
+  await vi.advanceTimersByTimeAsync(0);
+  const ws = FakeWs.last;
+  ws.open();
+  await finishAuthentication(ws, ack);
+  await vi.advanceTimersByTimeAsync(0);
+  return ws;
 }
 
 async function authenticated(conn: BridgeConnection) {
@@ -157,6 +245,31 @@ async function authenticated(conn: BridgeConnection) {
 
 describe("BridgeConnection lifecycle", () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("reloads at most once per newer Bridge version", async () => {
+    const reload = vi.fn();
+    const { conn, store } = setup({ pairingToken: "tok", clientId: "cli-1" }, { extensionVersion: "0.1.11", reload });
+    await authenticatedWith(conn, { authVersion: 1, serverVersion: "0.1.12" });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(store.reloadedForBridge).toBe("0.1.12");
+    conn.stop();
+    await authenticatedWith(conn, { authVersion: 1, serverVersion: "0.1.12" });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("never reloads for an equal or older Bridge", async () => {
+    const reload = vi.fn();
+    const { conn } = setup({ pairingToken: "tok", clientId: "cli-1" }, { extensionVersion: "0.1.11", reload });
+    await authenticatedWith(conn, { authVersion: 1, serverVersion: "0.1.11" });
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("compares release versions numerically", () => {
+    expect(compareVersions("0.1.12", "0.1.11")).toBeGreaterThan(0);
+    expect(compareVersions("0.1.10", "0.1.9")).toBeGreaterThan(0);
+    expect(compareVersions("0.1.11", "0.1.11")).toBe(0);
+    expect(compareVersions("0.2.0-beta", "0.2.0")).toBe(0);
+  });
 
   it.each(["close", "stop"] as const)("rejects pending panel requests on %s and notifies once", async (action) => {
     const { conn, onDisconnect } = setup();

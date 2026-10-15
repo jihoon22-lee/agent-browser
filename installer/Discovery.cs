@@ -111,12 +111,22 @@ namespace AgentBrowser.Installer {
                 // a user path into shell syntax, and disables delayed expansion.
                 version=NativeIO.CmdVersion(candidate.Executable);
             } else version=NativeIO.RunChecked(candidate.Executable,new [] {"--version"});
-            if(!System.Text.RegularExpressions.Regex.IsMatch(version,@"^1\.[0-9A-Za-z.+-]+$")) throw new IOException("OpenCode v1 실행파일인지 확인하지 못했습니다.");
+            if(!System.Text.RegularExpressions.Regex.IsMatch(version,@"^1\.[0-9A-Za-z.+-]+$")) throw new IOException("OpenCode v1 실행파일인지 확인하지 못했습니다. nvm·npm으로 설치한 OpenCode라면 로그인 셸 없이 실행할 수 없을 수 있습니다. ~/.opencode/bin/opencode 같은 독립 실행 파일 경로를 사용하세요.");
             candidate.Version=version;return version;
         }
+        // Runs in the selected distribution without a login shell, so also check common user-level
+        // install locations and ask a login shell, where nvm/bun usually extend PATH.
+        internal const string WslProbe=@"set -eu
+printf 'USER\t%s\n' ""$(id -un)""
+printf 'HOME\t%s\n' ""$HOME""
+p=$(command -v opencode || true); [ -z ""$p"" ] || printf 'EXE\t%s\n' ""$p""
+for p in ""$HOME/.opencode/bin/opencode"" ""$HOME/.local/bin/opencode"" ""$HOME/.bun/bin/opencode"" ""$HOME/.npm-global/bin/opencode"" /usr/local/bin/opencode ""$HOME""/.nvm/versions/node/*/bin/opencode; do [ ! -x ""$p"" ] || printf 'EXE\t%s\n' ""$p""; done
+if command -v bash >/dev/null 2>&1; then p=$(bash -lc 'command -v opencode' 2>/dev/null || true); [ -z ""$p"" ] || printf 'EXE\t%s\n' ""$p""; fi
+c=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
+for p in ""$c/opencode.json"" ""$c/opencode.jsonc""; do [ ! -f ""$p"" ] || printf 'CFG\t%s\n' ""$p""; done
+";
         public static List<OpenCodeCandidate> FindWsl(string distribution,string user) {
-            const string probe="set -eu\nprintf 'USER\\t%s\\n' \"$(id -un)\"\nprintf 'HOME\\t%s\\n' \"$HOME\"\np=$(command -v opencode || true); [ -z \"$p\" ] || printf 'EXE\\t%s\\n' \"$p\"\nfor p in \"$HOME/.opencode/bin/opencode\" \"$HOME/.local/bin/opencode\"; do [ ! -x \"$p\" ] || printf 'EXE\\t%s\\n' \"$p\"; done\nc=${XDG_CONFIG_HOME:-$HOME/.config}/opencode\nfor p in \"$c/opencode.json\" \"$c/opencode.jsonc\"; do [ ! -f \"$p\" ] || printf 'CFG\\t%s\\n' \"$p\"; done\n";
-            var args=new List<string>{"--distribution",distribution};if(!String.IsNullOrEmpty(user)) args.AddRange(new [] {"--user",user});args.AddRange(new [] {"--exec","/bin/sh","-c",probe});
+            var args=new List<string>{"--distribution",distribution};if(!String.IsNullOrEmpty(user)) args.AddRange(new [] {"--user",user});args.AddRange(new [] {"--exec","/bin/sh","-c",WslProbe.Replace("\r\n","\n")});
             var text=NativeIO.RunChecked(NativeIO.WslExe,args);
             var executables=new HashSet<string>();var configs=new List<string>();string actualUser=null,home=null;
             foreach(var line in text.Split('\n')) {var parts=line.TrimEnd('\r').Split(new [] {'\t'},2);if(parts.Length!=2) continue;switch(parts[0]) {case "USER":actualUser=parts[1];break;case "HOME":home=parts[1];break;case "EXE":executables.Add(parts[1]);break;case "CFG":configs.Add(parts[1]);break;}}

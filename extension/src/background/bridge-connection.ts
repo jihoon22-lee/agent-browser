@@ -18,6 +18,10 @@ export interface ConnDeps {
   onEvent?: (event: string, data: unknown) => void;
   /** Cancel browser work immediately when the current transport is lost or stopped. */
   onDisconnect?: () => void;
+  /** This extension's manifest version and a reload hook: an unpacked extension loads from the
+   * install folder, so reloading once after an update runs the new files. */
+  extensionVersion?: string;
+  reload?: () => void;
 }
 
 type Pending = { complete: (env: Res) => void; fail: (error: ProtocolError) => void };
@@ -27,6 +31,7 @@ const HEARTBEAT_MS = 20_000;
 const RESPONSE_TIMEOUT_MS = 10_000;
 const MANAGEMENT_TIMEOUT_MS: Record<string, number> = { "runtime.status": 60_000, "runtime.ensure": 120_000, "doctor.run": 120_000, "runtime.stop": 30_000, "profile.save": 30_000, "profile.delete": 30_000 };
 const MAX_BACKOFF_MS = 30_000;
+const PAIRING_POLL_MS = 3_000;
 
 export class BridgeConnection {
   private ws?: WebSocket;
@@ -38,6 +43,7 @@ export class BridgeConnection {
   private halted = false; // auth failures wait for user action
   private connecting = false;
   private lifecycle = 0;
+  private pairingSocket?: WebSocket;
 
   constructor(private deps: ConnDeps) {}
 
@@ -55,6 +61,7 @@ export class BridgeConnection {
     this.lifecycle += 1;
     this.connecting = false;
     this.clearTimers();
+    this.pairingSocket?.close(); this.pairingSocket = undefined;
     const ws = this.ws;
     if (ws) this.closeSocket(ws);
     this.setStatus({ state: "disconnected" });
@@ -82,13 +89,13 @@ export class BridgeConnection {
     try {
       const token = (await this.deps.storage.get("pairingToken")) as string | undefined;
       if (!valid()) return;
-      if (!token) { this.setStatus({ state: "unpaired" }); return; }
       const url = ((await this.deps.storage.get("bridgeUrl")) as string | undefined) ?? DEFAULT_BRIDGE_URL;
       if (!valid()) return;
       let clientId = (await this.deps.storage.get("clientId")) as string | undefined;
       if (!valid()) return;
       if (!clientId) { clientId = `cli-${crypto.randomUUID()}`; await this.deps.storage.set("clientId", clientId); }
       if (!valid()) return;
+      if (!token) { this.setStatus({ state: "unpaired" }); this.requestPairing(url, clientId, lifecycle); return; }
       const repair = Boolean(await this.deps.storage.get("repairPending"));
       if (!valid()) return;
       this.setStatus({ state: "connecting" });
@@ -120,6 +127,7 @@ export class BridgeConnection {
                   if (repair) void this.deps.storage.set("repairPending", false);
                   this.setStatus({ state: "connected" });
                   this.startHeartbeat(ws);
+                  void this.reloadIfOutdated((ack.result as { serverVersion?: unknown } | undefined)?.serverVersion);
                 },
               });
               this.send(ws, prove);
@@ -139,6 +147,68 @@ export class BridgeConnection {
     } finally {
       if (lifecycle === this.lifecycle) this.connecting = false;
     }
+  }
+
+  /** Without a token, announce this extension so the installer can show it was loaded. The Bridge
+   * never grants a token to such a request; a reply that carries one anyway is ignored. */
+  private requestPairing(url: string, clientId: string, lifecycle: number) {
+    if (this.pairingSocket) return;
+    const ws = new this.deps.WebSocketImpl(url);
+    this.pairingSocket = ws;
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true; this.pairingSocket = undefined; this.cancelTimer(deadline);
+      if (lifecycle === this.lifecycle && !this.stopped) this.schedule(PAIRING_POLL_MS);
+    };
+    const deadline = this.later(() => { ws.close(); finish(); }, RESPONSE_TIMEOUT_MS);
+    ws.onopen = () => { try { ws.send(JSON.stringify(makeReq("pair.request", { clientId }))); } catch { ws.close(); } };
+    ws.onmessage = () => { ws.onclose = null; ws.close(); finish(); };
+    ws.onerror = () => ws.close();
+    ws.onclose = () => finish();
+  }
+
+  /** Exchange the code shown by AgentBrowser setup for the existing token. Only the user can see the
+   * code, so a forged Origin from another local account cannot obtain the token. */
+  async pairWithCode(code: string): Promise<void> {
+    if (!/^\d{6}$/.test(code)) throw new ProtocolError("INVALID_PARAMS", "페어링 코드는 설치 마법사에 표시된 6자리 숫자입니다.");
+    const lifecycle = this.lifecycle;
+    const url = ((await this.deps.storage.get("bridgeUrl")) as string | undefined) ?? DEFAULT_BRIDGE_URL;
+    let clientId = (await this.deps.storage.get("clientId")) as string | undefined;
+    if (!clientId) { clientId = `cli-${crypto.randomUUID()}`; await this.deps.storage.set("clientId", clientId); }
+    const token = await new Promise<string>((resolve, reject) => {
+      const ws = new this.deps.WebSocketImpl(url);
+      const deadline = this.later(() => { ws.onclose = null; ws.close(); reject(new ProtocolError("TIMEOUT", "Bridge가 페어링 요청에 응답하지 않았습니다.")); }, RESPONSE_TIMEOUT_MS);
+      ws.onopen = () => { try { ws.send(JSON.stringify(makeReq("pair.request", { clientId, code }))); } catch { ws.close(); } };
+      ws.onmessage = (event) => {
+        this.cancelTimer(deadline); ws.onclose = null; ws.close();
+        let env: Envelope;
+        try { env = parseEnvelope(String(event.data)); } catch { reject(new ProtocolError("INTERNAL", "Bridge의 페어링 응답을 읽지 못했습니다.")); return; }
+        const granted = env.type === "res" && env.ok ? (env.result as { token?: unknown } | undefined)?.token : undefined;
+        if (typeof granted === "string" && /^[a-f0-9]{64}$/.test(granted)) { resolve(granted); return; }
+        const error = env.type === "res" ? env.error : undefined;
+        reject(new ProtocolError(error?.code ?? "AUTH_FAILED", error?.message ?? "Bridge가 페어링을 거부했습니다."));
+      };
+      ws.onerror = () => ws.close();
+      ws.onclose = () => { this.cancelTimer(deadline); reject(new ProtocolError("BROWSER_DISCONNECTED", "Bridge에 연결할 수 없습니다. 설치 마법사에서 Bridge를 시작하세요.")); };
+    });
+    // A stop or settings change while waiting means the user moved on: never store a late token.
+    if (lifecycle !== this.lifecycle) throw new ProtocolError("CANCELLED", "페어링이 중단되었습니다. 다시 시도하세요.");
+    // Already connected with this very token: rescheduling would only clear the live heartbeat.
+    if (this.ws && token === await this.deps.storage.get("pairingToken")) return;
+    await this.deps.storage.set("repairPending", true);
+    await this.deps.storage.set("pairingToken", token);
+    if (lifecycle !== this.lifecycle) return;
+    this.stopped = false; this.halted = false;
+    this.schedule(0);
+  }
+
+  private async reloadIfOutdated(serverVersion: unknown) {
+    const own = this.deps.extensionVersion, reload = this.deps.reload;
+    if (typeof serverVersion !== "string" || !own || !reload || compareVersions(serverVersion, own) <= 0) return;
+    if ((await this.deps.storage.get("reloadedForBridge")) === serverVersion) return;
+    await this.deps.storage.set("reloadedForBridge", serverVersion);
+    reload();
   }
 
   private authRejected(ws: WebSocket, response: Res) {
@@ -256,4 +326,11 @@ export class BridgeConnection {
       this.send(ws, req);
     });
   }
+}
+
+export function compareVersions(a: string, b: string): number {
+  const parse = (value: string) => value.split(/[-+]/)[0]!.split(".").slice(0, 3).map(part => Number.parseInt(part, 10) || 0);
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
 }

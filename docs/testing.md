@@ -8,7 +8,7 @@ Linux 테스트 통과, Windows용 빌드 성공, 실제 Windows 프로세스 �
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-extension test
-node --test tests/fixtures/*.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.test.ts tests/e2e/interop-check.test.mjs
+node --test tests/fixtures/*.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.test.ts tests/e2e/interop-check.test.mjs tests/install/wsl-probe.test.mjs
 pnpm --filter agent-browser-extension build
 cargo build --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-e2e exec playwright test
@@ -27,6 +27,10 @@ pnpm --filter agent-browser-e2e exec playwright install chromium
 - E2E: 실제 Linux Bridge + 실제 확장 + Playwright Chromium + 직접 작성한 fixture 사이트.
   Linux Bridge와 Playwright는 **테스트 의존성**이며 Windows 제품 배포물이나 사용자의 브라우저 제어 하네스가 아니다.
 - Windows/에이전트: 실제 Windows exe·Chrome·WSL interop·OpenCode Zen 검증은 별도 결과로 기록한다.
+
+## 설치 마법사 C# 회귀 (개발 PC)
+
+`bash scripts/test-installer-windows.sh SetupFlowTests`는 현재 checkout을 `release/dev-<커밋>-<시각>`에 새로 패키징하고(게시된 `release/*.zip`은 건드리지 않음), CI와 같은 소스 구성으로 Windows .NET Framework `csc`에서 컴파일해 실행한다. 이미 만든 ZIP은 `AB_PACKAGE_ZIP=<zip>`으로 다시 쓴다. `%LOCALAPPDATA%\AgentBrowser-dev\installer-tests`만 사용하며 운영 설치·Chrome 프로필은 읽거나 바꾸지 않는다. `SetupDisplayTests`, `ManagedPathTests`도 같은 방식이다.
 
 ## Windows PowerShell 5.1 배포 진입점 회귀
 

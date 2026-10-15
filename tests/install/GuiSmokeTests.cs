@@ -17,6 +17,7 @@ using System.Security.Cryptography;
 internal static class GuiSmokeTests {
     [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr h,System.Text.StringBuilder text,int max);
     [DllImport("user32.dll")]static extern IntPtr SendMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
     [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
     [DllImport("user32.dll")]static extern IntPtr GetParent(IntPtr h);
@@ -34,7 +35,7 @@ internal static class GuiSmokeTests {
     static AutomationElement Find(string name){var e=window.FindFirst(TreeScope.Descendants,new PropertyCondition(AutomationElement.NameProperty,name));if(e==null)throw new Exception("Control missing: "+name);return e;}
     static void Click(string name){
         Console.WriteLine("CLICK requested "+name+" gui="+process.Id+" hwnd="+process.MainWindowHandle);
-        if(useUia){var control=Find(name);var handle=new IntPtr(control.Current.NativeWindowHandle);uint pid;GetWindowThreadProcessId(handle,out pid);if(pid!=process.Id)throw new Exception("Action target is not the owned GUI");if(!PostMessage(handle,0xf5,IntPtr.Zero,IntPtr.Zero))throw new Exception("Cannot post owned GUI action");if(doubleApply&&(name=="Apply"||name=="SaveProfile"))PostMessage(handle,0xf5,IntPtr.Zero,IntPtr.Zero);Thread.Sleep(150);return;}
+        if(useUia){var control=Find(name);var handle=new IntPtr(control.Current.NativeWindowHandle);uint pid;GetWindowThreadProcessId(handle,out pid);if(pid!=process.Id)throw new Exception("Action target is not the owned GUI");if(!PostMessage(handle,0xf5,IntPtr.Zero,IntPtr.Zero))throw new Exception("Cannot post owned GUI action");if(doubleApply&&(name=="Apply"||name=="SaveRuntime"))PostMessage(handle,0xf5,IntPtr.Zero,IntPtr.Zero);Thread.Sleep(150);return;}
         var element=Find(name);ShowWindow(process.MainWindowHandle,9);SetForegroundWindow(process.MainWindowHandle);Thread.Sleep(100);
         if(GetForegroundWindow()!=process.MainWindowHandle) {uint pid;uint foregroundThread=GetWindowThreadProcessId(GetForegroundWindow(),out pid),thread=GetCurrentThreadId();bool attached=AttachThreadInput(thread,foregroundThread,true);try{SetForegroundWindow(process.MainWindowHandle);}finally{if(attached)AttachThreadInput(thread,foregroundThread,false);}Thread.Sleep(100);}
         var rect=element.Current.BoundingRectangle;
@@ -43,11 +44,11 @@ internal static class GuiSmokeTests {
         GetWindowThreadProcessId(WindowFromPoint(new Point(x,y)),out targetPid);
         if(targetPid!=process.Id) {SetWindowPos(process.MainWindowHandle,new IntPtr(-1),0,0,0,0,0x43);Thread.Sleep(100);GetWindowThreadProcessId(WindowFromPoint(new Point(x,y)),out targetPid);}
         try {if(targetPid!=process.Id)throw new Exception("The visible click target is not the owned GUI; no mouse input was sent. Target PID="+targetPid);
-            SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);if(doubleApply&&(name=="Apply"||name=="SaveProfile")){Thread.Sleep(15);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);}Thread.Sleep(150);
+            SetCursorPos(x,y);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);if(doubleApply&&(name=="Apply"||name=="SaveRuntime")){Thread.Sleep(15);mouse_event(2,0,0,0,UIntPtr.Zero);mouse_event(4,0,0,0,UIntPtr.Zero);}Thread.Sleep(150);
         } finally {SetWindowPos(process.MainWindowHandle,new IntPtr(-2),0,0,0,0,0x13);}
     }
     static void Set(string name,string value){((ValuePattern)Find(name).GetCurrentPattern(ValuePattern.Pattern)).SetValue(value);}
-    static string Get(string name){var element=Find(name);object pattern;if(element.TryGetCurrentPattern(ValuePattern.Pattern,out pattern))return ((ValuePattern)pattern).Current.Value;if(element.TryGetCurrentPattern(TextPattern.Pattern,out pattern))return ((TextPattern)pattern).DocumentRange.GetText(-1);throw new Exception("Readable control pattern missing: "+name);}
+    static string Get(string name){var element=Find(name);object pattern;if(element.TryGetCurrentPattern(ValuePattern.Pattern,out pattern))return ((ValuePattern)pattern).Current.Value;if(element.TryGetCurrentPattern(TextPattern.Pattern,out pattern))return ((TextPattern)pattern).DocumentRange.GetText(-1);var handle=new IntPtr(element.Current.NativeWindowHandle);if(handle!=IntPtr.Zero){var text=new System.Text.StringBuilder(4096);GetWindowText(handle,text,text.Capacity);return text.ToString();}throw new Exception("Readable control pattern missing: "+name);}
     static void Wait(Func<bool> predicate,string message,int ms=40000){var timer=Stopwatch.StartNew();string last="";while(timer.ElapsedMilliseconds<ms){try{if(predicate())return;}catch(ElementNotAvailableException error){last=error.Message;}catch(Exception error){if(!error.Message.StartsWith("Control missing:"))throw;last=error.Message;}Thread.Sleep(150);}throw new Exception(message+" "+last);}
     static void Launch(string exe,string arguments){
         process=Process.Start(new ProcessStartInfo(exe,arguments){UseShellExecute=false});
@@ -96,23 +97,18 @@ internal static class GuiSmokeTests {
             Click("Apply");Wait(()=>Get("Status").StartsWith("설치 완료"),"GUI install failed");Screenshot(Path.Combine(root,"install-complete.png"));Close();
             Console.WriteLine("PASS actual GUI install and WSL missing-mcp registration");
             if(args.Contains("--profiles")) {
-                // A freshly installed GUI should save a new managed profile via
-                // the real Bridge CLI, without starting OpenCode or a model.
-                Launch(exe,common);Click("ManageConnection");PairingStep();Click("Preview");var parent=window;Click("ManagedProfiles");
-                Wait(()=>{var title=new PropertyCondition(AutomationElement.NameProperty,"AgentBrowser 관리 OpenCode 프로필");var dialog=parent.FindFirst(TreeScope.Descendants,title)??AutomationElement.RootElement.FindFirst(TreeScope.Children,new AndCondition(new PropertyCondition(AutomationElement.ProcessIdProperty,process.Id),title));if(dialog==null)return false;window=dialog;return true;},"profile dialog missing");
-                Set("ProfileId","gui-profile-test");Set("ProfileName","GUI isolated profile");Choose("ProfileKind",1);Set("ProfileDistribution","Ubuntu");Set("ProfileExecutable","/home/jihoon/.opencode/bin/opencode");Set("ProfileDirectory",Path.GetDirectoryName(settings.Substring(settings.IndexOf("\\tmp\\",StringComparison.Ordinal))).Replace('\\','/'));
-                if(args.Contains("--async-profile")) {
-                    Click("ValidateProfile");Set("ProfileName","Changed during validation");Wait(()=>Find("ValidateProfile").Current.IsEnabled,"profile validation did not finish");
-                    if(Find("SaveProfile").Current.IsEnabled)throw new Exception("REGRESSION: stale profile validation enabled Save after inputs changed");
-                    Console.WriteLine("PASS actual GUI stale profile validation discarded");
-                }
-                Click("ValidateProfile");Wait(()=>Find("SaveProfile").Current.IsEnabled&&Find("ValidateProfile").Current.IsEnabled&&Get("ProfilePreview").Contains("추가할 프로필"),"profile validation failed");Click("SaveProfile");Wait(()=>Get("ProfilePreview").Contains("프로필을 저장했습니다"),"profile save failed");Screenshot(Path.Combine(root,"managed-profile-saved.png"));
-                if(args.Contains("--async-profile")) {
-                    Click("ValidateProfile");Wait(()=>Find("ValidateProfile").Current.IsEnabled,"duplicate profile validation did not finish");if(Find("SaveProfile").Current.IsEnabled||!Get("ProfilePreview").Contains("같은 ID"))throw new Exception("duplicate profile was accepted");
-                    Set("ProfileId","cancelled-validation");Click("ValidateProfile");Click("CloseProfile");window=parent;Thread.Sleep(2000);if(process.HasExited||!Find("ManagedProfiles").Current.IsEnabled)throw new Exception("closing pending validation damaged main GUI");Console.WriteLine("PASS actual GUI duplicate profile rejected and pending validation close is safe");
-                }else{Click("CloseProfile");window=parent;}
+                // A freshly installed GUI saves a managed profile on the runtime page
+                // itself via the real Bridge CLI, without starting OpenCode or a model.
+                string executable="/home/jihoon/.opencode/bin/opencode";
+                Launch(exe,common+" --no-runtime-start");Click("ManageConnection");PairingStep();Click("Preview");
+                Choose("RuntimeKind",1);Set("RuntimeDistribution","Ubuntu");Set("RuntimeExecutable",executable);Set("RuntimeDirectory",Path.GetDirectoryName(settings.Substring(settings.IndexOf("\\tmp\\",StringComparison.Ordinal))).Replace('\\','/'));
+                Click("SaveRuntime");if(args.Contains("--async-profile"))Click("SaveRuntime");
+                Wait(()=>Get("RuntimeResult").Contains("저장했습니다")&&Find("SaveRuntime").Current.IsEnabled,"profile save failed",60000);Screenshot(Path.Combine(root,"managed-profile-saved.png"));
                 Close();
-                if(!File.ReadAllText(Path.Combine(install,"data","runtime.json")).Contains("gui-profile-test"))throw new Exception("saved profile missing");
+                var listed=new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(Path.Combine(install,"data","runtime.json")));
+                int saved=((System.Collections.Generic.Dictionary<string,object>)listed["profiles"]).Values.OfType<System.Collections.Generic.Dictionary<string,object>>().Count(p=>(string)p["executable"]==executable);
+                if(saved!=1)throw new Exception("expected exactly one saved profile, found "+saved);
+                if(args.Contains("--async-profile"))Console.WriteLine("PASS actual GUI double save creates one profile");
                 Console.WriteLine("PASS actual GUI managed WSL profile validation/save without runtime/model start");
                 Launch(exe,common);Click("ManageConnection");string pidBefore=File.ReadAllText(Path.Combine(install,"data","serve.pid"));PairingStep();
                 if(File.ReadAllText(Path.Combine(install,"data","serve.pid"))!=pidBefore)throw new Exception("pairing preparation replaced the running owned Bridge");

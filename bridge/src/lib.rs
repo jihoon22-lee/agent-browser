@@ -83,12 +83,31 @@ pub fn run_mcp() -> anyhow::Result<()> {
         Ok(())
     })
 }
-pub fn run_pair() -> anyhow::Result<()> {
+fn bridge_port(cfg: &config::Config) -> u16 {
+    std::env::var("AGENT_BROWSER_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(cfg.port)
+}
+
+pub fn run_pair(open: bool, extension_id: Option<String>, seconds: u64) -> anyhow::Result<()> {
     let home = config::home_dir()?;
     let cfg = config::load_or_init(&home)?;
+    if open {
+        let extension_id = extension_id.ok_or_else(|| anyhow::anyhow!("--extension-id is required with --open"))?;
+        let result = tokio::runtime::Runtime::new()?.block_on(mcp::client::admin_request(&home, bridge_port(&cfg), "pairing.open",
+            serde_json::json!({ "extensionId": extension_id, "seconds": seconds })))?;
+        println!("{}", serde_json::to_string(&result)?);
+        return Ok(());
+    }
     // The token is printed only on explicit request so the user can paste it into the extension options page.
     println!("{}", cfg.token);
     eprintln!("config: {}", home.join("config.json").display());
+    Ok(())
+}
+
+pub fn run_status() -> anyhow::Result<()> {
+    let home = config::home_dir()?;
+    let cfg = config::load_or_init(&home)?;
+    let result = tokio::runtime::Runtime::new()?.block_on(mcp::client::admin_request(&home, bridge_port(&cfg), "status.get", serde_json::json!({})))?;
+    println!("{}", serde_json::to_string(&result)?);
     Ok(())
 }
 

@@ -19,8 +19,10 @@ enum Command {
     },
     /// Run the MCP stdio server that OpenCode launches.
     Mcp,
-    /// Print the pairing token for the Chrome extension.
-    Pair,
+    /// Print the pairing token, or open a short pairing window for the fixed extension id.
+    Pair { #[arg(long)] open: bool, #[arg(long)] extension_id: Option<String>, #[arg(long, default_value_t = 120)] seconds: u64 },
+    /// Print the running Bridge's pairing and browser connection state as JSON. Never starts it.
+    Status { #[arg(long)] json: bool },
     /// Start or authenticate the detached resident Bridge.
     Start { #[arg(long)] port: Option<u16> },
     /// Inspect configuration and runtime health without starting OpenCode.
@@ -60,7 +62,8 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Serve { port } => agent_browser_bridge::run_serve(port),
         Command::Mcp => agent_browser_bridge::run_mcp(),
-        Command::Pair => agent_browser_bridge::run_pair(),
+        Command::Pair { open, extension_id, seconds } => agent_browser_bridge::run_pair(open, extension_id, seconds),
+        Command::Status { .. } => agent_browser_bridge::run_status(),
         Command::Start { port } => agent_browser_bridge::run_start(port),
         command => {
             let home = agent_browser_bridge::config::home_dir()?;

@@ -20,3 +20,9 @@ export function profilePayload(form: ProfileForm): Record<string, unknown> {
   if (form.envText?.trim()) { const env = JSON.parse(form.envText); if (!env || Array.isArray(env) || typeof env !== "object" || Object.values(env).some(value => typeof value !== "string")) throw new Error("환경변수는 문자열 값의 JSON 객체로 입력하세요."); profile.env = env; }
   return profile;
 }
+
+/** The Bridge keeps a saved password only for the same server; say so when an edit dropped it. */
+export function passwordDropped(original: { kind: string; baseUrl?: string; hasPassword?: boolean } | undefined, payload: Record<string, unknown>): boolean {
+  return !!original?.hasPassword && original.kind === "external" && payload.kind === "external"
+    && original.baseUrl !== payload.baseUrl && typeof payload.password !== "string";
+}
