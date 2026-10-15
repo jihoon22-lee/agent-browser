@@ -46,7 +46,7 @@ it('pins submission target and serializes concurrent session requests',async()=>
   const manager=panelRequests(call);
   const results=await Promise.allSettled([manager.prepare(lease('one'),{tabId:11,windowId:1}),manager.prepare(lease('two'),{tabId:22,windowId:2})]);
   expect(results.map(r=>r.status)).toEqual(['fulfilled','rejected']);
-  expect(call.mock.calls.filter(c=>c[0]==='request.begin')).toEqual([['request.begin',{requestId:'one',clientId:'browser',tabId:11}]]);
+  expect(call.mock.calls.filter(c=>c[0]==='request.begin')).toEqual([['request.begin',{requestId:'one',clientId:'browser',tabId:11,profileId:'native',sessionId:'session-one',directory:'/fixture'}]]);
   expect(storage.panelBrowserRequest.requestId).toBe('one');
 });
 it('after a worker restart, releases only a completed matching response and captures the new tab',async()=>{
@@ -54,9 +54,9 @@ it('after a worker restart, releases only a completed matching response and capt
   api.get.mockImplementation(async(path:string)=>path==='/session/status'?{}:[{info:{role:'assistant',sessionID:'session-one',parentID:'msg-one',time:{completed:1},finish:'stop'}}]);
   await panelRequests(call).prepare(lease('two'),{tabId:22,windowId:2});
   expect(call.mock.calls.filter(c=>c[0].startsWith('request.'))).toEqual([
-    ['request.begin',{requestId:'one',clientId:'browser',tabId:11}],
+    ['request.begin',{requestId:'one',clientId:'browser',tabId:11,profileId:'native',sessionId:'session-one',directory:'/fixture'}],
     ['request.end',{requestId:'one',clientId:'browser'}],
-    ['request.begin',{requestId:'two',clientId:'browser',tabId:22}],
+    ['request.begin',{requestId:'two',clientId:'browser',tabId:22,profileId:'native',sessionId:'session-two',directory:'/fixture'}],
   ]);
 });
 it.each(['busy','retry'])('does not end a %s session even if an earlier assistant step completed',async type=>{
@@ -81,7 +81,7 @@ it('discards only an unsent request with the exact token without aborting a sess
 });
 it('keeps no ambiguous active default and never substitutes another tab',async()=>{
   await panelRequests(call).prepare(lease('one'),null);
-  expect(call).toHaveBeenCalledWith('request.begin',{requestId:'one',clientId:'browser',tabId:null});
+  expect(call).toHaveBeenCalledWith('request.begin',{requestId:'one',clientId:'browser',tabId:null,profileId:'native',sessionId:'session-one',directory:'/fixture'});
 });
 it('keeps the lease when begin acknowledgement is lost, so Stop can recover it',async()=>{
   call.mockRejectedValueOnce(new Error('connection lost'));

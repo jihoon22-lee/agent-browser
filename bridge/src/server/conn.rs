@@ -571,8 +571,13 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             let Some(client)=params["clientId"].as_str().filter(|s|!s.is_empty() && (method=="request.end" || Some(*s)==state.registry.selected_client().as_deref())) else {
                 return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
             };
+            let scope=match (params["profileId"].as_str(),params["sessionId"].as_str(),params["directory"].as_str()) {
+                (Some(p),Some(s),Some(d)) if !p.is_empty() && p.len()<=128 && !s.is_empty() && s.len()<=128 && !d.is_empty() && d.len()<=4096 =>
+                    Some(super::operation::RequestScope{profile:p.into(),session:s.into(),directory:d.into()}),
+                _=>None,
+            };
             let result=if method=="request.begin" {
-                state.ops.begin_request(request,client,params["tabId"].as_i64().filter(|n|*n>0)).map(|_|None)
+                state.ops.begin_scoped_request(request,client,params["tabId"].as_i64().filter(|n|*n>0),scope).map(|_|None)
             } else if params["abort"] == true { state.ops.cancel_request(request,client) }
             else { state.ops.end_request(request,client) };
             match result {
