@@ -1,6 +1,6 @@
 [
   {
-    "description": "requestId is per panel request, not per tab. First attach/new needs it; reuse operationId thereafter. Switch accepts listed HTTP(S) tabs. Close needs a snapshot; about:blank tabs cannot be closed. Close returns to the last visited surviving tab.",
+    "description": "list/windows read tabs. attach (no tabId = request's tab) or new (url) starts work with the Browser context requestId; then reuse the returned operationId. Results include a snapshot and openTabs. switch/close/release take operationId; about:blank tabs cannot be closed.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -17,23 +17,21 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "requestId": {
-          "description": "Current Browser context requestId for first attach/new, even before a tab exists.",
+          "description": "From Browser context; first attach/new",
           "type": "string"
         },
         "tabId": {
-          "description": "Attach target (omit for request default), or explicit switch target",
           "type": "integer"
         },
         "url": {
-          "description": "For new: HTTP(S) URL or about:blank (default)",
+          "description": "new: http(s) URL or about:blank",
           "type": "string"
         },
         "windowId": {
-          "description": "Filter list or choose window for new; IDs from windows",
           "minimum": 1,
           "type": "integer"
         }
@@ -46,12 +44,11 @@
     "name": "browser_tabs"
   },
   {
-    "description": "Read bookmarks only: list root folders or folderId children, or search titles/URLs. Requires the user's optional bookmarks permission in settings. Does not visit URLs or modify bookmarks.",
+    "description": "Read-only bookmarks: list a folder (folderId) or search. Needs the optional bookmarks permission.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "action": {
-          "default": "list",
           "enum": [
             "list",
             "search"
@@ -79,33 +76,29 @@
     "name": "browser_bookmarks"
   },
   {
-    "description": "Read DOM text/elements/tables with refs. Snapshot after attach, navigation, switch or rerender before writing; identify by name/href, never old index. Continue via offset/elementOffset/frameOffset cursors.",
+    "description": "Re-read page text and elements with refs (DOM-based); actions already return one. Continue with offset/elementOffset/frameOffset.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "elementOffset": {
-          "default": 0,
           "minimum": 0,
           "type": "integer"
         },
         "frameOffset": {
-          "default": 0,
           "minimum": 0,
           "type": "integer"
         },
         "maxChars": {
-          "default": 4000,
           "maximum": 20000,
           "minimum": 200,
           "type": "integer"
         },
         "offset": {
-          "default": 0,
           "minimum": 0,
           "type": "integer"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         }
       },
@@ -117,12 +110,11 @@
     "name": "browser_snapshot"
   },
   {
-    "description": "Navigate the operation tab to HTTP(S), back, forward or reload and wait for completion. For delayed content, browser_wait then snapshot before clicking.",
+    "description": "goto a URL, or back/forward/reload. Waits for load and returns a snapshot.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "action": {
-          "default": "goto",
           "enum": [
             "goto",
             "back",
@@ -132,7 +124,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "url": {
@@ -147,20 +139,19 @@
     "name": "browser_navigate"
   },
   {
-    "description": "Click an element by ref. Returns whether the URL or page content changed.",
+    "description": "Click a ref; returns a snapshot if the page changed. newTab opens an http(s) link in a new operation tab.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "newTab": {
-          "description": "Open an HTTP(S) anchor in a new operation tab without clicking the source",
           "type": "boolean"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Latest snapshot ref, e.g. s3f0e12",
+          "description": "Snapshot ref",
           "type": "string"
         }
       },
@@ -173,16 +164,16 @@
     "name": "browser_click"
   },
   {
-    "description": "Replace the value of a text input or textarea by ref. Returns the value read back from the page.",
+    "description": "Replace the text of an input, textarea or editable area.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Latest snapshot ref, e.g. s3f0e12",
+          "description": "Snapshot ref",
           "type": "string"
         },
         "text": {
@@ -199,7 +190,7 @@
     "name": "browser_fill"
   },
   {
-    "description": "Choose an option in a select (by option value or visible label) or set a checkbox/radio checked state, by ref.",
+    "description": "Choose a select option by value or label, or set checked on a checkbox/radio.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -207,14 +198,14 @@
           "type": "boolean"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "option": {
           "type": "string"
         },
         "ref": {
-          "description": "Latest snapshot ref, e.g. s3f0e12",
+          "description": "Snapshot ref",
           "type": "string"
         }
       },
@@ -227,7 +218,7 @@
     "name": "browser_select"
   },
   {
-    "description": "Press a key on the focused element or on ref. Enter in a form field submits the form.",
+    "description": "Press a key on ref or the focused element (Enter in a field submits); returns a snapshot.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -244,11 +235,11 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Latest snapshot ref, e.g. s3f0e12",
+          "description": "Snapshot ref",
           "type": "string"
         }
       },
@@ -261,7 +252,7 @@
     "name": "browser_press"
   },
   {
-    "description": "Scroll the page or a scrollable element (ref).",
+    "description": "Scroll the page or a ref container.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -275,11 +266,11 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Latest snapshot ref, e.g. s3f0e12",
+          "description": "Snapshot ref",
           "type": "string"
         }
       },
@@ -292,16 +283,15 @@
     "name": "browser_scroll"
   },
   {
-    "description": "Wait for any text/textGone/refGone/urlIncludes match or TIMEOUT. URL always uses the tab. Content scope: frameRef, else refGone frame, else top. Snapshot after navigation.",
+    "description": "Wait until any of text, textGone, refGone or urlIncludes holds, or timeout.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "frameRef": {
-          "description": "Document-bound frameRef returned on a browser_snapshot frame.",
           "type": "string"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "refGone": {
@@ -314,7 +304,6 @@
           "type": "string"
         },
         "timeoutMs": {
-          "default": 5000,
           "maximum": 30000,
           "minimum": 100,
           "type": "integer"
@@ -331,7 +320,7 @@
     "name": "browser_wait"
   },
   {
-    "description": "Extract text, selection, or a table by snapshot ref (first table by default). maxChars bounds output. offset is a character index for text/selection, a data-row index for tables; follow nextOffset.",
+    "description": "Extract text, selection or a table (ref, else the first table); continue with nextOffset.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -344,22 +333,20 @@
           "type": "string"
         },
         "maxChars": {
-          "default": 8000,
           "maximum": 50000,
           "minimum": 200,
           "type": "integer"
         },
         "offset": {
-          "default": 0,
           "minimum": 0,
           "type": "integer"
         },
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
-          "description": "Latest snapshot ref, e.g. s3f0e12",
+          "description": "Snapshot ref",
           "type": "string"
         }
       },
@@ -372,12 +359,12 @@
     "name": "browser_extract"
   },
   {
-    "description": "Visible PNG of the operation tab; requires that tab active in its window or returns NEEDS_TAB_ACTIVATION.",
+    "description": "PNG of the operation tab; that tab must be active.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "From browser_tabs attach/new",
+          "description": "From attach/new",
           "type": "string"
         }
       },
