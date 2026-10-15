@@ -22,12 +22,18 @@ type Running = {
 };
 export function createHandlers(api: ChromeApi, store: SessionStore) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
-    /** A link click may still be committing the next document; read the page it produced. */
+    /** A link click may still be committing the next document; read the page it produced. Wait for
+     * the commit, then give subresources only a short grace: slow ads must not delay a readable DOM. */
     async function settled(tabId: number, ms: number, signal: AbortSignal) {
         const deadline = Date.now() + Math.min(ms, 6000);
+        let committedAt: number | undefined;
         while (Date.now() < deadline) {
             const tab = await getTab(api, tabId);
             if (tab.status === 'complete' && !tab.pendingUrl) return;
+            if (!tab.pendingUrl && (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).some(f => f.frameId === 0)) {
+                committedAt ??= Date.now();
+                if (Date.now() - committedAt >= 1500) return;
+            } else committedAt = undefined;
             await interruptible(new Promise(r => setTimeout(r, 100)), signal);
         }
     }
@@ -39,7 +45,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             const tab = await api.tabsGet(tabId).catch(() => undefined);
             if (!tab) return false;
             const live = (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).find(f => f.frameId === frame.frameId);
-            if (tab.pendingUrl || !live || live.documentId !== frame.documentId) return true;
+            // A subframe can vanish for unrelated reasons (rerender, closed ad slot); only a replaced
+            // document, a missing top frame mid-commit, or a pending tab URL is evidence of navigation.
+            if (tab.pendingUrl || (live ? live.documentId !== frame.documentId : frame.frameId === 0)) return true;
             await new Promise(r => setTimeout(r, 100));
         }
         return false;

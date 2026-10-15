@@ -593,3 +593,26 @@ it('settles a loading tab before a follow-up snapshot reads it', async () => {
     const result: any = await h(request('browser.snapshot', { settleMs: 3000 }));
     expect(result.url).toBe('https://example.test/next');
 });
+
+it('keeps an unknown outcome when only a subframe disappeared after a click', async () => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://ads.test/slot' });
+    const h = createHandlers(w.api, memorySessionStore());
+    const snap: any = await h(request('browser.snapshot'));
+    const ref = snap.frames.find((f: any) => f.frameId === 7).elements[0].ref;
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'click') { w.frames.set(1, [w.frames.get(1)![0]!]); throw Error('The message port closed before a response was received.'); }
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.click', { ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+});
+
+it('reads a committed page without waiting for slow subresources to finish loading', async () => {
+    const w = world(), tab = w.tabs.get(1)!;
+    tab.status = 'loading';
+    const h = createHandlers(w.api, memorySessionStore());
+    const started = Date.now();
+    const result: any = await h(request('browser.snapshot', { settleMs: 6000 }));
+    expect(Date.now() - started).toBeLessThan(2500);
+    expect(result.loading).toBe(true);
+});
