@@ -554,3 +554,33 @@ it('bounds a multi-frame Korean snapshot by UTF-8 bytes', async () => {
     expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThanOrEqual(30_000);
     expect(result.framesNextOffset).toBe(1);
 });
+
+it('navigates a web page without requiring a snapshot first', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    await expect(h(request('browser.navigate', { action: 'goto', url: 'https://example.test/next' }))).resolves.toMatchObject({ executed: true, verified: { url: 'https://example.test/next' } });
+});
+
+it('reports a click that navigated the document as executed, not unknown', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'click') {
+            w.frames.set(1, [{ frameId: 0, documentId: 'doc-after', url: 'https://example.test/next' }]);
+            throw Error('The message port closed before a response was received.');
+        }
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.click', { ref }))).resolves.toMatchObject({ executed: true, verified: { navigated: true, urlChanged: true } });
+});
+
+it('keeps an unknown outcome when the document did not change', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'click') throw Error('The message port closed before a response was received.');
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.click', { ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+});

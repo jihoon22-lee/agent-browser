@@ -22,6 +22,19 @@ type Running = {
 };
 export function createHandlers(api: ChromeApi, store: SessionStore) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
+    /** Hard navigation destroys the document before it can reply. A replaced document right after
+     * a dispatched click or key press is that navigation, not an unknown outcome. */
+    async function navigatedAway(tabId: number, frame: FrameInfo) {
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline) {
+            const tab = await api.tabsGet(tabId).catch(() => undefined);
+            if (!tab) return false;
+            const live = (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).find(f => f.frameId === frame.frameId);
+            if (tab.pendingUrl || !live || live.documentId !== frame.documentId) return true;
+            await new Promise(r => setTimeout(r, 100));
+        }
+        return false;
+    }
     async function check(req: Req, signal: AbortSignal) {
         aborted(signal);
         if (await store.isCancelled(req.id, req.params))
@@ -51,6 +64,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             tabs?.dispose();
             if (e instanceof ProtocolError)
                 throw e;
+            if (tracksTabs && await navigatedAway(tabId, frame))
+                return { executed: true, verified: { navigated: true, urlChanged: true } };
             if (WRITE.has(run.req.method))
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'The document stopped replying after the command was sent. Take a snapshot before retrying.', 'unsafe');
             throw new ProtocolError('STALE_ELEMENT', 'The frame stopped replying. Take a fresh snapshot.');
@@ -220,7 +235,6 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             const act = actions[String(action)];
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
-            if (isWeb(tab.url)) await requireSnapshot(p,tabId,document?.documentId);
             const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true, action==='back'||action==='forward');
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
