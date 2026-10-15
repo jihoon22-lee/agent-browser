@@ -17,6 +17,7 @@ using System.Security.Cryptography;
 internal static class GuiSmokeTests {
     [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll",CharSet=CharSet.Unicode)]static extern int GetWindowText(IntPtr h,System.Text.StringBuilder text,int max);
     [DllImport("user32.dll")]static extern IntPtr SendMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
     [DllImport("user32.dll")]static extern bool PostMessage(IntPtr h,uint message,IntPtr w,IntPtr l);
     [DllImport("user32.dll")]static extern IntPtr GetParent(IntPtr h);
@@ -47,7 +48,7 @@ internal static class GuiSmokeTests {
         } finally {SetWindowPos(process.MainWindowHandle,new IntPtr(-2),0,0,0,0,0x13);}
     }
     static void Set(string name,string value){((ValuePattern)Find(name).GetCurrentPattern(ValuePattern.Pattern)).SetValue(value);}
-    static string Get(string name){var element=Find(name);object pattern;if(element.TryGetCurrentPattern(ValuePattern.Pattern,out pattern))return ((ValuePattern)pattern).Current.Value;if(element.TryGetCurrentPattern(TextPattern.Pattern,out pattern))return ((TextPattern)pattern).DocumentRange.GetText(-1);throw new Exception("Readable control pattern missing: "+name);}
+    static string Get(string name){var element=Find(name);object pattern;if(element.TryGetCurrentPattern(ValuePattern.Pattern,out pattern))return ((ValuePattern)pattern).Current.Value;if(element.TryGetCurrentPattern(TextPattern.Pattern,out pattern))return ((TextPattern)pattern).DocumentRange.GetText(-1);var handle=new IntPtr(element.Current.NativeWindowHandle);if(handle!=IntPtr.Zero){var text=new System.Text.StringBuilder(4096);GetWindowText(handle,text,text.Capacity);return text.ToString();}throw new Exception("Readable control pattern missing: "+name);}
     static void Wait(Func<bool> predicate,string message,int ms=40000){var timer=Stopwatch.StartNew();string last="";while(timer.ElapsedMilliseconds<ms){try{if(predicate())return;}catch(ElementNotAvailableException error){last=error.Message;}catch(Exception error){if(!error.Message.StartsWith("Control missing:"))throw;last=error.Message;}Thread.Sleep(150);}throw new Exception(message+" "+last);}
     static void Launch(string exe,string arguments){
         process=Process.Start(new ProcessStartInfo(exe,arguments){UseShellExecute=false});
