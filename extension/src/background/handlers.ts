@@ -22,6 +22,15 @@ type Running = {
 };
 export function createHandlers(api: ChromeApi, store: SessionStore) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
+    /** A link click may still be committing the next document; read the page it produced. */
+    async function settled(tabId: number, ms: number, signal: AbortSignal) {
+        const deadline = Date.now() + Math.min(ms, 6000);
+        while (Date.now() < deadline) {
+            const tab = await getTab(api, tabId);
+            if (tab.status === 'complete' && !tab.pendingUrl) return;
+            await interruptible(new Promise(r => setTimeout(r, 100)), signal);
+        }
+    }
     /** Hard navigation destroys the document before it can reply. A replaced document right after
      * a dispatched click or key press is that navigation, not an unknown outcome. */
     async function navigatedAway(tabId: number, frame: FrameInfo) {
@@ -343,6 +352,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     throw new ProtocolError('EXECUTION_UNKNOWN', 'This request was interrupted before. Check the page before retrying.', 'unsafe');
                 claimed = true;
             }
+            if (req.method === 'browser.snapshot' && typeof req.params.settleMs === 'number')
+                await settled(Number(req.params.tabId), req.params.settleMs, controller.signal);
             const result = await interruptible(dispatch(run), controller.signal);
             if (claimed)
                 await store.saveResult(req.id, { ok: true, result });

@@ -584,3 +584,12 @@ it('keeps an unknown outcome when the document did not change', async () => {
     };
     await expect(h(request('browser.click', { ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN' });
 });
+
+it('settles a loading tab before a follow-up snapshot reads it', async () => {
+    const w = world(), tab = w.tabs.get(1)!;
+    tab.status = 'loading';
+    setTimeout(() => { tab.status = 'complete'; tab.url = 'https://example.test/next'; w.frames.set(1, [{ frameId: 0, documentId: 'doc-next', url: 'https://example.test/next' }]); }, 300);
+    const h = createHandlers(w.api, memorySessionStore());
+    const result: any = await h(request('browser.snapshot', { settleMs: 3000 }));
+    expect(result.url).toBe('https://example.test/next');
+});

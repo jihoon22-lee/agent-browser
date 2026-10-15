@@ -163,7 +163,7 @@ async fn r01_cancelled_mutex_waiter_never_reaches_browser_and_connection_survive
     let (home,serve,cfg) = common::start_test_serve().await;
     let (browser,mut seen) = cancellation_browser(serve.port,&cfg.token,false).await;
     let mut m = spawn_mcp(home.path(),serve.port).await; m.init().await;
-    let op = attach_fixture(&mut m).await; seen.recv().await.unwrap();
+    let op = attach_fixture(&mut m).await; for expected in ["browser.tabs.get","browser.snapshot"] { assert_eq!(seen.recv().await.unwrap().0, expected); }
     send_tool(&mut m,3,"browser_wait",json!({"operationId":op,"text":"ready"})).await;
     assert_eq!(seen.recv().await.unwrap().0,"browser.wait");
     send_tool(&mut m,4,"browser_click",json!({"operationId":op,"ref":"s1f0e1"})).await;
@@ -180,7 +180,7 @@ async fn r01_cancel_running_request_reaches_downstream_without_aborting_operatio
     let (home,serve,cfg) = common::start_test_serve().await;
     let (browser,mut seen) = cancellation_browser(serve.port,&cfg.token,false).await;
     let mut m = spawn_mcp(home.path(),serve.port).await; m.init().await;
-    let op = attach_fixture(&mut m).await; seen.recv().await.unwrap();
+    let op = attach_fixture(&mut m).await; for expected in ["browser.tabs.get","browser.snapshot"] { assert_eq!(seen.recv().await.unwrap().0, expected); }
     send_tool(&mut m,3,"browser_wait",json!({"operationId":op,"text":"ready"})).await;
     seen.recv().await.unwrap(); cancel_tool(&mut m,3).await;
     send_tool(&mut m,4,"browser_snapshot",json!({"operationId":op})).await;
