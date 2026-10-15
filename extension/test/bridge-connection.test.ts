@@ -50,11 +50,33 @@ describe("BridgeConnection", () => {
     expect(FakeWs.last.url).not.toContain("tok");
   });
 
-  it("reports unpaired without a token and does not connect", async () => {
-    const { conn, statuses } = setup({});
+  it("asks the Bridge for a token without one and stores it from an open pairing window", async () => {
+    const { conn, store, statuses } = setup({ clientId: "cli-1" });
     conn.start();
     await vi.runOnlyPendingTimersAsync();
     expect(statuses.at(-1)?.state).toBe("unpaired");
+    const pairing = FakeWs.last; pairing.open();
+    const request = parseEnvelope(pairing.sent[0]!);
+    expect(request.type === "req" && request.method).toBe("pair.request");
+    pairing.reply(makeOk((request as any).id, { token: "a".repeat(64) }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.pairingToken).toBe("a".repeat(64));
+    expect(store.repairPending).toBe(true);
+    FakeWs.last.open();
+    const hello = parseEnvelope(FakeWs.last.sent[0]!);
+    expect(hello.type === "req" && hello.method).toBe("auth.hello");
+  });
+
+  it("keeps asking every few seconds while no pairing window is open", async () => {
+    const { conn } = setup({ clientId: "cli-1" });
+    conn.start();
+    await vi.runOnlyPendingTimersAsync();
+    const first = FakeWs.last; first.open();
+    first.reply(makeErr((parseEnvelope(first.sent[0]!) as any).id, { code: "AUTH_REQUIRED", message: "closed", retry: "never" }));
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(FakeWs.last).not.toBe(first);
+    FakeWs.last.open();
+    expect(parseEnvelope(FakeWs.last.sent[0]!)).toMatchObject({ method: "pair.request" });
   });
 
   it("does not retry after AUTH_FAILED", async () => {

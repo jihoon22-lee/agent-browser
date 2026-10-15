@@ -27,6 +27,7 @@ const HEARTBEAT_MS = 20_000;
 const RESPONSE_TIMEOUT_MS = 10_000;
 const MANAGEMENT_TIMEOUT_MS: Record<string, number> = { "runtime.status": 60_000, "runtime.ensure": 120_000, "doctor.run": 120_000, "runtime.stop": 30_000, "profile.save": 30_000, "profile.delete": 30_000 };
 const MAX_BACKOFF_MS = 30_000;
+const PAIRING_POLL_MS = 3_000;
 
 export class BridgeConnection {
   private ws?: WebSocket;
@@ -38,6 +39,7 @@ export class BridgeConnection {
   private halted = false; // auth failures wait for user action
   private connecting = false;
   private lifecycle = 0;
+  private pairingSocket?: WebSocket;
 
   constructor(private deps: ConnDeps) {}
 
@@ -55,6 +57,7 @@ export class BridgeConnection {
     this.lifecycle += 1;
     this.connecting = false;
     this.clearTimers();
+    this.pairingSocket?.close(); this.pairingSocket = undefined;
     const ws = this.ws;
     if (ws) this.closeSocket(ws);
     this.setStatus({ state: "disconnected" });
@@ -82,13 +85,13 @@ export class BridgeConnection {
     try {
       const token = (await this.deps.storage.get("pairingToken")) as string | undefined;
       if (!valid()) return;
-      if (!token) { this.setStatus({ state: "unpaired" }); return; }
       const url = ((await this.deps.storage.get("bridgeUrl")) as string | undefined) ?? DEFAULT_BRIDGE_URL;
       if (!valid()) return;
       let clientId = (await this.deps.storage.get("clientId")) as string | undefined;
       if (!valid()) return;
       if (!clientId) { clientId = `cli-${crypto.randomUUID()}`; await this.deps.storage.set("clientId", clientId); }
       if (!valid()) return;
+      if (!token) { this.setStatus({ state: "unpaired" }); this.requestPairing(url, clientId, lifecycle); return; }
       const repair = Boolean(await this.deps.storage.get("repairPending"));
       if (!valid()) return;
       this.setStatus({ state: "connecting" });
@@ -139,6 +142,38 @@ export class BridgeConnection {
     } finally {
       if (lifecycle === this.lifecycle) this.connecting = false;
     }
+  }
+
+  /** Without a token, ask the Bridge for one. It answers only while the installer has opened a
+   * short pairing window, and only to this extension's fixed ID; otherwise retry quietly. */
+  private requestPairing(url: string, clientId: string, lifecycle: number) {
+    if (this.pairingSocket) return;
+    const ws = new this.deps.WebSocketImpl(url);
+    this.pairingSocket = ws;
+    let settled = false;
+    const finish = (paired: boolean) => {
+      if (settled) return;
+      settled = true; this.pairingSocket = undefined; this.cancelTimer(deadline);
+      if (lifecycle !== this.lifecycle || this.stopped) return;
+      this.schedule(paired ? 0 : PAIRING_POLL_MS);
+    };
+    const deadline = this.later(() => { ws.close(); finish(false); }, RESPONSE_TIMEOUT_MS);
+    ws.onopen = () => { try { ws.send(JSON.stringify(makeReq("pair.request", { clientId }))); } catch { ws.close(); } };
+    ws.onmessage = (event) => {
+      let env: Envelope | undefined;
+      try { env = parseEnvelope(String(event.data)); } catch { env = undefined; }
+      const token = env?.type === "res" && env.ok ? (env.result as { token?: unknown } | undefined)?.token : undefined;
+      // Detach onclose first: a synchronous close event must not turn a granted token into a retry.
+      ws.onclose = null; ws.close();
+      if (typeof token !== "string" || !/^[a-f0-9]{64}$/.test(token)) { finish(false); return; }
+      void (async () => {
+        await this.deps.storage.set("repairPending", true);
+        await this.deps.storage.set("pairingToken", token);
+        finish(true);
+      })();
+    };
+    ws.onerror = () => ws.close();
+    ws.onclose = () => finish(false);
   }
 
   private authRejected(ws: WebSocket, response: Res) {

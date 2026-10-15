@@ -28,7 +28,7 @@ export function App() {
   const connected = status.state === "connected";
   return <main className="options"><header className="options-header"><div><h1>AgentBrowser 설정</h1><p>Chrome과 기존 OpenCode 실행 환경을 연결합니다.</p></div><label>테마<select aria-label="테마" value={theme} onChange={event => chooseTheme(event.target.value)}>{(["system", ...THEMES] as const).map(name => <option key={name} value={name}>{themeNames[name]}</option>)}</select></label></header>
     {error && <p role="alert" className="error">{error}</p>}{notice && <p role="status" className="notice">{notice}</p>}
-    <section><h2>Bridge 페어링</h2><p>설치 폴더의 페어링 안내 또는 <code>browser-bridge.exe pair</code>에 표시된 토큰을 사용하세요.</p>
+    <section><h2>Bridge 페어링</h2><p>설치 마법사의 [Chrome에 연결]을 누르면 자동으로 연결됩니다. 직접 연결하려면 설치 폴더의 페어링 안내에 표시된 토큰을 입력하세요.</p>
       <label>Bridge 주소<input value={url} onChange={event => setUrl(event.target.value)} autoComplete="off" /></label>
       <label>페어링 토큰<input type="password" value={token} onChange={event => setToken(event.target.value)} autoComplete="off" placeholder="기존 토큰을 유지하려면 비워두세요" /></label>
       <button disabled={busy} onClick={() => void run(async () => { const next = validatePairing(url, token); await chrome.storage.local.set(next); setToken(""); await chrome.runtime.sendMessage({ kind: "reconnect" }); setNotice("저장했습니다. 연결 상태를 확인하세요."); })}>저장 후 연결</button>
