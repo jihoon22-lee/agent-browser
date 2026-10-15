@@ -48,21 +48,41 @@ namespace AgentBrowser.Installer {
      form.Close();
     }}finally{Uninstall(root);}
    });
-   Case("new folder guides installation before maintenance",()=>{using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"new")})){form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Application.DoEvents();Assert(!form.Controls.Find("StartInstalledBridge",true).Any(c=>c.Visible),"Bridge start is exposed before installation");Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is exposed before installation");Assert(!Field<Button>(form,"ManagedProfiles").Enabled,"profiles are enabled before installation");Assert(Field<Button>(form,"Preview").Text.Contains("다음"),"primary action has no next-step label");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"advanced package path is exposed by default");Assert(Field<Panel>(form,"WelcomePanel").Visible,"welcome page is missing");Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"SettingsPanel").Visible,"Next did not open location page");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"location page exposes advanced fields");Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"WelcomePanel").Visible,"Back did not return to welcome");form.Close();}});
+   Case("saved runtime appears in the Bridge profile list and on the page",()=>{
+    string root=Path.Combine(fixture,"inline-runtime"),fake=Path.Combine(fixture,"fake-opencode");Directory.CreateDirectory(fake);
+    string cmd=Path.Combine(fake,"opencode.cmd");File.WriteAllText(cmd,"@echo off\r\necho 1.18.29\r\n");
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-startup","--no-runtime-start","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
+     Invoke(form,"PreparePairing");Field<Button>(form,"Preview").PerformClick();
+     Assert(Field<Panel>(form,"RuntimePanel").Visible,"runtime page missing");
+     Assert(!form.Controls.Find("ManagedProfiles",true).Any(),"the separate profile dialog must be gone");
+     Field<ComboBox>(form,"RuntimeKind").SelectedIndex=0;Field<TextBox>(form,"RuntimeExecutable").Text=cmd;Field<TextBox>(form,"RuntimeDirectory").Text=fixture;
+     Invoke(form,"SaveRuntime");
+     var state=InstallerEngine.State(root);
+     var listed=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"}));
+     var profiles=((System.Collections.IEnumerable)listed["profiles"]).OfType<System.Collections.Generic.Dictionary<string,object>>().ToList();
+     Assert(profiles.Count==1&&(string)profiles[0]["executable"]==cmd,"the Bridge does not report the saved profile");
+     Assert((string)listed["defaultProfileId"]==(string)profiles[0]["id"],"the saved profile is not the default");
+     Assert(Field<ListBox>(form,"SavedProfiles").Items.Count==1,"the page does not show what the Bridge saved");
+     Assert(Field<Label>(form,"RuntimeResult").Text.Contains("저장했습니다"),Field<Label>(form,"RuntimeResult").Text);
+     form.Close();
+    }}finally{Uninstall(root);}
+   });
+   Case("new folder guides installation before maintenance",()=>{using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"new")})){form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Application.DoEvents();Assert(!form.Controls.Find("StartInstalledBridge",true).Any(c=>c.Visible),"Bridge start is exposed before installation");Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is exposed before installation");Assert(!Field<Button>(form,"ManageConnection").Enabled,"maintenance is enabled before installation");Assert(Field<Button>(form,"Preview").Text.Contains("다음"),"primary action has no next-step label");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"advanced package path is exposed by default");Assert(Field<Panel>(form,"WelcomePanel").Visible,"welcome page is missing");Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"SettingsPanel").Visible,"Next did not open location page");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"location page exposes advanced fields");Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"WelcomePanel").Visible,"Back did not return to welcome");form.Close();}});
    Case("changing installed folder clears stale maintenance state",()=>{string root=Path.Combine(fixture,"existing");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,s=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Assert(Field<Button>(form,"ManageConnection").Enabled,"installed Bridge action disabled");Field<TextBox>(form,"InstallFolder").Text=Path.Combine(fixture,"different");Assert(!Field<Button>(form,"ManageConnection").Enabled,"folder edit retained old installation controls");Invoke(form,"LoadState");Assert(Field<ComboBox>(form,"Operation").SelectedIndex==0,"new folder retained Update mode");}}finally{Uninstall(root);}});
    Case("Chrome pairing and runtime setup occupy separate sequential pages",()=>{
     string root=Path.Combine(fixture,"complete");var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();string port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port.ToString();listener.Stop();
     try{using(var form=new SetupForm(new[]{"--no-discover","--no-start","--no-startup","--install-dir",root,"--package-dir",package,"--port",port})){
      form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
      Assert(InstallerEngine.State(root)!=null,"installation did not finish");Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Chrome step is missing");
-     Assert(!Field<Button>(form,"ManagedProfiles").Visible,"runtime setup is shown on the Chrome step");
+     Assert(!Field<Button>(form,"SaveRuntime").Visible,"runtime setup is shown on the Chrome step");
      Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is shown on the Chrome step");
      Assert(Field<TextBox>(form,"ExtensionFolder").Text==Path.Combine(root,"extension"),"extension folder is missing");
      Invoke(form,"PreparePairing");Assert(Field<Panel>(form,"PairingPanel").Visible&&!Field<Panel>(form,"ConnectionPanel").Visible,"pairing is not its own step");
-     Assert(Field<TextBox>(form,"PairingToken").UseSystemPasswordChar,"pairing token is not masked");Assert(!Field<Button>(form,"ManagedProfiles").Visible,"runtime setup is shown on the pairing step");
+     Assert(Field<TextBox>(form,"PairingToken").UseSystemPasswordChar,"pairing token is not masked");Assert(!Field<Button>(form,"SaveRuntime").Visible,"runtime setup is shown on the pairing step");
      Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Back did not return to Chrome step");Invoke(form,"PreparePairing");
-     Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"RuntimePanel").Visible&&Field<Button>(form,"ManagedProfiles").Visible&&!Field<Panel>(form,"PairingPanel").Visible,"runtime setup is not its own step");
-     Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"DonePanel").Visible&&!Field<Button>(form,"ManagedProfiles").Visible&&Field<Button>(form,"Cancel").Text=="마침","completion still contains setup actions");form.Close();
+     Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"RuntimePanel").Visible&&Field<Button>(form,"SaveRuntime").Visible&&!Field<Panel>(form,"PairingPanel").Visible,"runtime setup is not its own step");
+     Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"DonePanel").Visible&&!Field<Button>(form,"SaveRuntime").Visible&&Field<Button>(form,"Cancel").Text=="마침","completion still contains setup actions");form.Close();
     }}finally{Uninstall(root);}
    });
    Case("uninstall preview names each registered settings file",()=>{
