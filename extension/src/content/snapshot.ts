@@ -57,11 +57,25 @@ export function stateOf(el: Element): string[] {
   return states;
 }
 
+/** The largest ancestor that holds this control but none of its look-alikes: the row or card,
+ * whatever markup the site uses. */
+function contextOf(el: Element, lookAlikes: Element[]): string {
+  let best: Element | null = null;
+  for (let parent = el.parentElement; parent && parent !== el.ownerDocument.body; parent = parent.parentElement) {
+    const ancestor = parent;
+    if (lookAlikes.some(other => other !== el && ancestor.contains(other))) break;
+    best = ancestor;
+  }
+  if (!best) return "";
+  return ((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number }): FrameSnapshot {
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
   const offset = Math.max(0, Math.floor(o.elementOffset ?? 0));
   const table = newTable(o.snapshotId, o.frameId);
   const elements: SnapElement[] = [];
+  const nodes: Element[] = [];
   const limits = new Set<string>();
   const clip = (value: string, size: number) => {
     if (value.length > size) { limits.add("element-fields-truncated"); return value.slice(0, size); }
@@ -119,8 +133,21 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     }
     usedChars += encoded.length + 24; usedBytes += itemBytes;
     e.ref = table.add(el);
-    elements.push(e);
+    elements.push(e); nodes.push(el);
   });
+  // Repeated controls ("취소" per row) are indistinguishable without their row or card.
+  const key = (e: SnapElement) => `${e.role}\u0000${e.name}`;
+  const groups = new Map<string, Element[]>();
+  elements.forEach((e, i) => groups.set(key(e), [...(groups.get(key(e)) ?? []), nodes[i]!]));
+  elements.forEach((e, i) => {
+    const group = groups.get(key(e))!;
+    if (group.length < 2) return;
+    const context = contextOf(nodes[i]!, group);
+    if (context && context !== e.name) e.context = clip(context, 80);
+  });
+  while (elements.length && utf8Bytes(JSON.stringify(result)) > MAX_SNAPSHOT_BYTES - 512) {
+    elements.pop(); nodes.pop(); limits.add("snapshot-size-limited");
+  }
   const next = offset + elements.length;
   result.elementsTruncated = next < result.elementsTotal;
   result.elementsNextOffset = result.elementsTruncated ? next : null;
