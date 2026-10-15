@@ -385,15 +385,18 @@ async fn profile_switch_during_attach_returns_busy_without_blocking_browser_repl
         call(&mut ext, "browser.use", json!({"clientId":"cli-2"}))).await.expect("must not block the reply loop");
     assert_eq!(err_code(&switched), Some(agent_browser_bridge::rpc::ErrorCode::BrowserBusy));
     send_raw(&mut ext, &Envelope::ok(request_id, json!({"tabId":42,"url":"http://127.0.0.1/x"})).to_text()).await;
-    // attach now returns its first snapshot; answer that follow-up read too.
-    loop {
-        if let Envelope::Req { id, method, params, .. } = recv(&mut ext).await {
-            assert_eq!(method, "browser.snapshot");
-            send_raw(&mut ext, &Envelope::ok(id, default_reply(&method, &params).unwrap()).to_text()).await;
-            break;
+    // attach now returns its first snapshot and open tabs; answer those follow-up reads too.
+    let mut attaching = attaching;
+    let attached = loop {
+        tokio::select! {
+            done = &mut attaching => break done.unwrap(),
+            env = recv(&mut ext) => if let Envelope::Req { id, method, .. } = env {
+                assert!(matches!(method.as_str(), "browser.snapshot" | "browser.tabs.list"), "{method}");
+                send_raw(&mut ext, &Envelope::ok(id, json!({"snapshotId": 1, "frames": [], "tabs": [], "tabId": 42})).to_text()).await;
+            },
         }
-    }
-    assert_eq!(attaching.await.unwrap()["ok"], true);
+    };
+    assert_eq!(attached["ok"], true);
 }
 
 #[tokio::test]
@@ -502,4 +505,29 @@ async fn click_that_opens_a_tab_returns_the_new_tab_snapshot() {
     let clicked = tool(&mut mcp, "browser_click", json!({"operationId": op, "ref": "opener"})).await;
     assert_eq!(clicked["data"]["currentTab"], 77);
     assert_eq!(clicked["data"]["snapshot"]["tabId"], 77);
+}
+
+fn tabs_reply(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+    match method {
+        "browser.tabs.list" => Ok(json!({"tabs":[
+            {"tabId":42,"windowId":1,"title":"현재","url":"http://127.0.0.1/x","active":true,"attachable":true},
+            {"tabId":43,"windowId":1,"title":"메일","url":"http://127.0.0.1/mail","active":false,"attachable":true}]})),
+        "browser.tabs.get" if p["tabId"] == 999 => Err(("TAB_NOT_FOUND", "No such fixture tab")),
+        "browser.tabs.get" => Ok(json!({"tabId": p["tabId"].as_i64().unwrap_or(42), "windowId": 1, "url": "http://127.0.0.1/x", "title": "x", "active": true, "attachable": true})),
+        _ => snapshot_reply(method, p),
+    }
+}
+
+#[tokio::test]
+async fn attach_lists_open_tabs_and_a_failed_switch_offers_them_again() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let _ext = fake_extension(serve.port, cfg.token.clone(), tabs_reply).await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let attached = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await;
+    assert_eq!(attached["data"]["openTabs"][1]["tabId"], 43);
+    assert_eq!(attached["data"]["openTabs"][1]["title"], "메일");
+    let op = attached["operationId"].as_str().unwrap().to_string();
+    let missed = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":999})).await;
+    assert_eq!(missed["error"]["code"], "TAB_NOT_FOUND");
+    assert_eq!(missed["data"]["openTabs"].as_array().unwrap().len(), 2);
 }

@@ -206,6 +206,7 @@ async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
     let creates = name == "browser_tabs" && (args["action"] == "attach" || (args["action"] == "new" && args.get("operationId").is_none()));
     let mut created = CreatedOperation { state, id: if creates && outcome.ok { outcome.operation_id.clone() } else { None } };
     add_follow_up_snapshot(state, name, args, &mut outcome).await;
+    if name == "browser_tabs" { add_open_tabs(state, args, &mut outcome).await; }
     created.id = None;
     outcome
 }
@@ -300,6 +301,32 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             ToolOutcome::failure(name, Some(op_id), delivered, e)
         }
     }
+}
+
+async fn open_tabs(state: &ServerState, client: &str, window: Option<i64>) -> Value {
+    let params = match window { Some(id) => json!({ "windowId": id }), None => json!({}) };
+    let Ok(queued) = state.registry.queue_command_for(client, "browser.tabs.list", params, CommandClass::Read) else { return Value::Null };
+    let Ok(listed) = queued.wait(FOLLOW_UP_TIMEOUT).await else { return Value::Null };
+    let tabs: Vec<Value> = listed["tabs"].as_array().into_iter().flatten().take(20).map(|tab| json!({
+        "tabId": tab["tabId"], "active": tab["active"], "attachable": tab["attachable"],
+        "title": tab["title"].as_str().unwrap_or("").chars().take(60).collect::<String>(),
+        "url": tab["url"].as_str().unwrap_or("").chars().take(100).collect::<String>(),
+    })).collect();
+    json!(tabs)
+}
+
+/// Tab choices travel with the results that need them, so the model never guesses a tabId.
+async fn add_open_tabs(state: &ServerState, args: &Value, outcome: &mut ToolOutcome) {
+    let action = args["action"].as_str().unwrap_or_default();
+    let failed_switch = action == "switch" && outcome.error.as_ref().is_some_and(|error| matches!(error.code, ErrorCode::TabNotFound | ErrorCode::UnsupportedPage));
+    if !((outcome.ok && matches!(action, "attach" | "new")) || failed_switch) { return; }
+    let client = outcome.operation_id.as_deref().and_then(|op| state.ops.check_active(op).ok()).map(|op| op.client_id).or_else(|| state.registry.selected_client());
+    let Some(client) = client else { return };
+    let window = if failed_switch { None } else { outcome.data["tab"]["windowId"].as_i64() };
+    let tabs = open_tabs(state, &client, window).await;
+    if tabs.is_null() { return; }
+    if !outcome.data.is_object() { outcome.data = json!({}); }
+    outcome.data["openTabs"] = tabs;
 }
 
 /// Page-changing tools return the page they produced, so the model needs no extra snapshot call.
