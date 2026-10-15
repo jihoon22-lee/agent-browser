@@ -12,8 +12,8 @@ async function setup() {
 }
 async function click(operationId: string, target: string) {
   const result=await world.mcp.call('browser_click',{operationId,ref:target});
-  // Hard navigation can destroy the reply. Inspect the page, never replay click.
-  if (!result.ok) expect(result.error?.code).toBe('EXECUTION_UNKNOWN');
+  // Hard navigation is reported as executed with navigated:true; never replay a click.
+  expect(result.ok, JSON.stringify(result)).toBe(true);
   return result;
 }
 test.beforeAll(async ({}, info) => {

@@ -447,3 +447,15 @@ bash scripts/test-windows.sh --headed -- journeys.spec.ts
 추가 Windows PowerShell 회귀는 `security-review.tests.ps1`, `diagnostics.tests.ps1`, `runtime-cleanup.tests.ps1` 및 `install.tests.ps1`에 있다. 정상 개인 폴더를 통과하는 양성 대조군을 둔 뒤 ACL·상태·실행 기록을 합성 변경해 거부를 확인한다. 임시 폴더 자체가 공유 쓰기인 개발 환경에서는 테스트 프로세스의 TEMP/TMP만 별도 개인 폴더로 지정한다. 기존 시스템 폴더 ACL을 바꾸지 않는다.
 
 Windows ignored WSL 단위 테스트는 `AGENT_BROWSER_TEST_EXE`에 동일 소스의 실제 Windows Bridge를 지정한다. Rust test harness 자체는 `--version` CLI가 없어 실제 Windows 실행 canary로 사용할 수 없다. 해당 환경 변수는 테스트 빌드의 canary에만 적용되며 제품은 자기 exe를 사용한다.
+
+## 브라우저 작업 신뢰성 회귀 (2026-10-15)
+
+`tests/e2e/reliability.spec.ts`는 합성 페이지 `tests/fixtures/site/shop.html`로 실제 Chromium + 확장 + Bridge를 거친다. 실제 사이트나 사용자 데이터는 쓰지 않는다.
+- R01: attach 결과의 snapshot이 40,000B 이하이고 아이콘 링크·SVG 버튼 이름, 포인터 카드(clickable), 반복 버튼의 행 맥락, 탭 선택·펼침 상태, 열린 탭 목록, 12자 이하 ref를 담는다.
+- R02: 앞 결과의 ref만으로 행 버튼 → 필터 → 카드 클릭이 별도 snapshot 없이 이어진다.
+- R03: `scroll-behavior:smooth` 페이지에서 스타일 label 아래 숨긴 체크박스를 클릭한다.
+- R04: snapshot 없이 goto하고 결과에 도착 페이지 snapshot이 있다.
+- R05: 5,000행 포인터 목록에서 snapshot이 3초 안에 끝나고 40,000B 이하다.
+- R06: 이동을 일으킨 링크 클릭 결과가 도착 페이지를 읽는다.
+
+Linux: `pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts`. Windows: `bash scripts/test-windows.sh reliability.spec.ts`.

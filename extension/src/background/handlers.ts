@@ -2,12 +2,14 @@ import { ProtocolError, type Req, type RpcError } from '../protocol/envelope';
 import type { SessionStore, Outcome } from './dedupe';
 import type { ChromeApi, FrameInfo } from './chrome-api';
 import { frameRouter, type FrameError } from './frames';
-import { RefTable } from '../content/refs';
+import { RefTable, snapshotToken } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
 const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
+const SNAPSHOT_RESPONSE_BYTES = 28_000;
+const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
 const asError = (e: unknown) => e instanceof ProtocolError ? e : new ProtocolError('INTERNAL', String(e));
 const unpack = (outcome: Outcome): unknown => { if (outcome.ok)
@@ -20,6 +22,36 @@ type Running = {
 };
 export function createHandlers(api: ChromeApi, store: SessionStore) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
+    /** A link click may still be committing the next document; read the page it produced. Wait for
+     * the commit, then give subresources only a short grace: slow ads must not delay a readable DOM. */
+    async function settled(tabId: number, ms: number, signal: AbortSignal) {
+        const deadline = Date.now() + Math.min(ms, 6000);
+        let committedAt: number | undefined;
+        while (Date.now() < deadline) {
+            const tab = await getTab(api, tabId);
+            if (tab.status === 'complete' && !tab.pendingUrl) return;
+            if (!tab.pendingUrl && (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).some(f => f.frameId === 0)) {
+                committedAt ??= Date.now();
+                if (Date.now() - committedAt >= 1500) return;
+            } else committedAt = undefined;
+            await interruptible(new Promise(r => setTimeout(r, 100)), signal);
+        }
+    }
+    /** Hard navigation destroys the document before it can reply. A replaced document right after
+     * a dispatched click or key press is that navigation, not an unknown outcome. */
+    async function navigatedAway(tabId: number, frame: FrameInfo) {
+        const deadline = Date.now() + 1000;
+        while (Date.now() < deadline) {
+            const tab = await api.tabsGet(tabId).catch(() => undefined);
+            if (!tab) return false;
+            const live = (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).find(f => f.frameId === frame.frameId);
+            // A subframe can vanish for unrelated reasons (rerender, closed ad slot); only a replaced
+            // document, a missing top frame mid-commit, or a pending tab URL is evidence of navigation.
+            if (tab.pendingUrl || (live ? live.documentId !== frame.documentId : frame.frameId === 0)) return true;
+            await new Promise(r => setTimeout(r, 100));
+        }
+        return false;
+    }
     async function check(req: Req, signal: AbortSignal) {
         aborted(signal);
         if (await store.isCancelled(req.id, req.params))
@@ -49,6 +81,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             tabs?.dispose();
             if (e instanceof ProtocolError)
                 throw e;
+            if (tracksTabs && await navigatedAway(tabId, frame))
+                return { executed: true, verified: { navigated: true, urlChanged: true } };
             if (WRITE.has(run.req.method))
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'The document stopped replying after the command was sent. Take a snapshot before retrying.', 'unsafe');
             throw new ProtocolError('STALE_ELEMENT', 'The frame stopped replying. Take a fresh snapshot.');
@@ -175,16 +209,16 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 try {
                     await frames.inject(tabId,f);
                     const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
-                    const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotId}f${f.frameId}`};
-                    const length=JSON.stringify(withDocument).length;
-                    if(length>60_000)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
-                    if(used+length>60_000){framesNextOffset=index;break;}
+                    const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotToken(snapshotId)}f${f.frameId}`};
+                    const length=jsonBytes(withDocument);
+                    if(length>SNAPSHOT_RESPONSE_BYTES)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
+                    if(used+length>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
                     results.push(withDocument);bindings.push(f);used+=length;
                 }catch(e){
                     if(signal.aborted||asError(e).code==='CANCELLED')throw e;
                     const error:FrameError={frameId:f.frameId,url:f.url.slice(0,2048),code:'FRAME_UNAVAILABLE',message:asError(e).message.slice(0,500)};
-                    const errorSize=JSON.stringify(error).length;
-                    if(used+errorSize>60_000){framesNextOffset=index;break;}
+                    const errorSize=jsonBytes(error);
+                    if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
                     errors.push(error);used+=errorSize;
                 }
             }
@@ -218,7 +252,6 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             const act = actions[String(action)];
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
-            if (isWeb(tab.url)) await requireSnapshot(p,tabId,document?.documentId);
             const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true, action==='back'||action==='forward');
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
@@ -327,6 +360,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     throw new ProtocolError('EXECUTION_UNKNOWN', 'This request was interrupted before. Check the page before retrying.', 'unsafe');
                 claimed = true;
             }
+            if (req.method === 'browser.snapshot' && typeof req.params.settleMs === 'number')
+                await settled(Number(req.params.tabId), req.params.settleMs, controller.signal);
             const result = await interruptible(dispatch(run), controller.signal);
             if (claimed)
                 await store.saveResult(req.id, { ok: true, result });

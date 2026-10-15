@@ -219,3 +219,11 @@ it('closes a reservation if profile management starts while request.begin is in 
   expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
   expect(storage.panelBrowserRequest).toBeUndefined();
 });
+it('background reconcile retains a busy request when one status probe reports error', async () => {
+  storage.panelBrowserRequest = lease('one');
+  api.get.mockImplementation(async (path: string) => path === '/session/status' ? { 'session-one': { type: 'busy' } } : []);
+  call.mockImplementation(async (method: string) => method === 'runtime.status' ? { state: 'error', error: 'readiness probe failed' } : {});
+  expect(await panelRequests(call).reconcile()).toBe(false);
+  expect(call.mock.calls.some(([method]) => method === 'request.end')).toBe(false);
+  expect(storage.panelBrowserRequest).toEqual(lease('one'));
+});

@@ -8,6 +8,8 @@ use std::time::Duration;
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 const NAVIGATE_TIMEOUT: Duration = Duration::from_secs(35);
+/// Each read attached to a result. With the longest tool wait it must stay inside the MCP client's REPLY_WAIT.
+const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -188,7 +190,7 @@ async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
     if let Err(e) = validate(&def.schema, args).and_then(|_| validate_action(name, args)) {
         return ToolOutcome::rejected(name, operation_id, e);
     }
-    if name == "browser_bookmarks" {
+    let mut outcome = if name == "browser_bookmarks" {
         // This read belongs to the selected browser profile, not a page operation.
         let properties = def.schema["properties"].as_object().unwrap();
         let params = args.as_object().unwrap().iter().filter(|(key,_)|properties.contains_key(*key)).map(|(k,v)|(k.clone(),v.clone())).collect();
@@ -200,7 +202,13 @@ async fn run(state: &ServerState, name: &str, args: &Value) -> ToolOutcome {
         run_tabs(state, args).await
     } else {
         run_operation_tool(state, name, args, &def.schema).await
-    }
+    };
+    let creates = name == "browser_tabs" && (args["action"] == "attach" || (args["action"] == "new" && args.get("operationId").is_none()));
+    let mut created = CreatedOperation { state, id: if creates && outcome.ok { outcome.operation_id.clone() } else { None } };
+    add_follow_up_snapshot(state, name, args, &mut outcome).await;
+    if name == "browser_tabs" { add_open_tabs(state, args, &mut outcome).await; }
+    created.id = None;
+    outcome
 }
 
 fn operation_required(name: &str) -> ToolOutcome {
@@ -291,6 +299,85 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             }
             let delivered = e.code != ErrorCode::BrowserDisconnected;
             ToolOutcome::failure(name, Some(op_id), delivered, e)
+        }
+    }
+}
+
+async fn open_tabs(state: &ServerState, client: &str, window: Option<i64>) -> Value {
+    let params = match window { Some(id) => json!({ "windowId": id }), None => json!({}) };
+    let Ok(queued) = state.registry.queue_command_for(client, "browser.tabs.list", params, CommandClass::Read) else { return Value::Null };
+    let Ok(listed) = queued.wait(FOLLOW_UP_TIMEOUT).await else { return Value::Null };
+    let tabs: Vec<Value> = listed["tabs"].as_array().into_iter().flatten().take(20).map(|tab| json!({
+        "tabId": tab["tabId"], "active": tab["active"], "attachable": tab["attachable"],
+        "title": tab["title"].as_str().unwrap_or("").chars().take(60).collect::<String>(),
+        "url": tab["url"].as_str().unwrap_or("").chars().take(100).collect::<String>(),
+    })).collect();
+    json!(tabs)
+}
+
+/// Tab choices travel with the results that need them, so the model never guesses a tabId.
+async fn add_open_tabs(state: &ServerState, args: &Value, outcome: &mut ToolOutcome) {
+    let action = args["action"].as_str().unwrap_or_default();
+    let failed_switch = action == "switch" && outcome.error.as_ref().is_some_and(|error| matches!(error.code, ErrorCode::TabNotFound | ErrorCode::UnsupportedPage));
+    if !((outcome.ok && matches!(action, "attach" | "new")) || failed_switch) { return; }
+    let client = outcome.operation_id.as_deref().and_then(|op| state.ops.check_active(op).ok()).map(|op| op.client_id).or_else(|| state.registry.selected_client());
+    let Some(client) = client else { return };
+    let window = if failed_switch { None } else { outcome.data["tab"]["windowId"].as_i64() };
+    let tabs = open_tabs(state, &client, window).await;
+    if tabs.is_null() { return; }
+    if !outcome.data.is_object() { outcome.data = json!({}); }
+    outcome.data["openTabs"] = tabs;
+}
+
+/// Page-changing tools return the page they produced, so the model needs no extra snapshot call.
+/// Unchanged pages keep their refs, so an unchanged click returns none and saves context.
+fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
+    match name {
+        "browser_click" => outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
+        "browser_press" | "browser_navigate" => true,
+        "browser_tabs" => match args["action"].as_str() {
+            Some("attach" | "switch") => true,
+            Some("new") => args["url"].as_str().is_some_and(|url| url != "about:blank"),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+async fn follow_up_snapshot(state: &ServerState, op_id: &str) -> Result<Value, RpcError> {
+    // A smaller text budget: the elements are what the next action needs. settleMs lets a
+    // link click finish committing the next document before it is read.
+    let params = json!({ "maxChars": 1500, "settleMs": 6000 }).as_object().cloned().expect("object");
+    let queued = queue_operation_tool(state, op_id, "browser.snapshot", params, CommandClass::Read)?;
+    let origin = queued.origin.clone();
+    let result = queued.wait(FOLLOW_UP_TIMEOUT).await;
+    let outcome = finish(state, "browser_snapshot", op_id, CommandClass::Read, &origin, result);
+    match outcome.error { Some(error) => Err(error), None => Ok(outcome.data) }
+}
+
+async fn add_follow_up_snapshot(state: &ServerState, name: &str, args: &Value, outcome: &mut ToolOutcome) {
+    let stale_write = !outcome.ok && tools::class_of(name, args) == CommandClass::Write && outcome.executed == Executed::No
+        && outcome.error.as_ref().is_some_and(|error| error.code == ErrorCode::StaleElement);
+    if !(outcome.ok && wants_snapshot(name, args, outcome)) && !stale_write { return; }
+    let Some(op_id) = outcome.operation_id.clone() else { return };
+    if !outcome.data.is_object() {
+        outcome.data = if outcome.data.is_null() { json!({}) } else { json!({ "result": outcome.data.take() }) };
+    }
+    match follow_up_snapshot(state, &op_id).await {
+        Ok(snapshot) => outcome.data["snapshot"] = snapshot,
+        Err(error) => outcome.data["snapshotError"] = json!({ "code": error.code, "message": error.message }),
+    }
+}
+
+/// A call cancelled while its follow-up reads are pending must not strand the operation it
+/// created: the MCP client never learned its operationId and could not release it.
+struct CreatedOperation<'a> { state: &'a ServerState, id: Option<String> }
+impl Drop for CreatedOperation<'_> {
+    fn drop(&mut self) {
+        let Some(id) = self.id.take() else { return };
+        if let Some(op) = self.state.ops.abort(Some(&id)) {
+            self.state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation }));
+            self.state.broadcast_status();
         }
     }
 }
@@ -471,33 +558,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn review_attach_creation_and_outcome_complete_in_the_same_poll() {
+    async fn cancelling_attach_while_its_snapshot_is_pending_releases_the_new_operation() {
         use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered, StreamExt};
         use crate::rpc::{Envelope, parse_envelope};
-        for cancel_before_poll in [true, false] {
-            let home = tempfile::tempdir().unwrap();
-            let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
-            let (tx,mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let conn = state.registry.register("fixture",tx);
-            let (abort,registration) = AbortHandle::new_pair();
-            let mut pending = FuturesUnordered::new();
-            pending.push(Abortable::new(call_tool(&state,"browser_tabs",json!({"action":"attach"})),registration));
-            assert!(futures_util::poll!(pending.next()).is_pending());
-            let Envelope::Req {id,method,..} = parse_envelope(&rx.try_recv().unwrap()).unwrap() else {panic!("expected browser request")};
-            assert_eq!(method,"browser.tabs.get");
-            state.registry.handle_response(conn, Envelope::ok(id,json!({"tabId":42})));
-            assert!(state.ops.current().is_none(),"An unpolled ready reply cannot execute attach in the background");
-            if cancel_before_poll { abort.abort(); }
-            let std::task::Poll::Ready(Some(result)) = futures_util::poll!(pending.next()) else {panic!("Attach must finish in this poll without suspending after creation")};
-            if cancel_before_poll {
-                assert!(result.is_err()); assert!(state.ops.current().is_none());
-            } else {
-                let outcome = result.unwrap(); assert!(outcome.ok);
-                assert_eq!(Some(state.ops.current().unwrap().id),outcome.operation_id);
-                state.ops.abort(outcome.operation_id.as_deref());
-            }
-            assert!(state.ops.attach(43,"replacement").is_ok());
-        }
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("fixture", tx);
+        let (abort, registration) = AbortHandle::new_pair();
+        let mut pending = FuturesUnordered::new();
+        pending.push(Abortable::new(call_tool(&state, "browser_tabs", json!({"action":"attach"})), registration));
+        assert!(futures_util::poll!(pending.next()).is_pending());
+        let Envelope::Req { id, .. } = parse_envelope(&rx.try_recv().unwrap()).unwrap() else { panic!("expected tabs.get") };
+        state.registry.handle_response(conn, Envelope::ok(id, json!({"tabId":42})));
+        assert!(futures_util::poll!(pending.next()).is_pending(), "attach now waits for its snapshot");
+        let Envelope::Req { method, .. } = parse_envelope(&rx.try_recv().unwrap()).unwrap() else { panic!("expected snapshot") };
+        assert_eq!(method, "browser.snapshot");
+        assert!(state.ops.current().is_some());
+        abort.abort();
+        assert!(matches!(futures_util::poll!(pending.next()), std::task::Poll::Ready(Some(Err(_)))));
+        assert!(state.ops.current().is_none(), "the cancelled attach must not strand its operation");
+        assert!(state.ops.attach(43, "replacement").is_ok());
+    }
+
+    #[test]
+    fn follow_up_reads_fit_inside_the_mcp_reply_window() {
+        // A new tab (NAVIGATE_TIMEOUT) plus its snapshot and tab list must answer before the MCP client gives up.
+        assert!(NAVIGATE_TIMEOUT + FOLLOW_UP_TIMEOUT * 2 < crate::mcp::client::REPLY_WAIT);
     }
 
     #[tokio::test]

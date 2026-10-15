@@ -17,11 +17,11 @@
 | 작업 탭 전환 | 같은 Chrome에서 조회·검증한 HTTP(S) tabId로 명시 switch | 기존 탭과 새 탭을 오가며 사용자 전경 포커스는 바꾸지 않음 |
 | 탭 닫기 | close로 현재 명시 선택한 웹 탭. 기존 탭도 선택 후 닫기 가능 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
 | 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
-| back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰 | 일반 페이지 쓰기는 snapshot 필요. 빈/제한 페이지에서 HTTP(S) goto는 DOM 읽기 없이 가능 |
-| snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM | 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
+| back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰. 결과에 도착 페이지 snapshot 포함 | 이동 전 snapshot 불필요. 링크 클릭으로 인한 이동은 navigated:true로 성공 보고 |
+| snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM. 포인터 커서 영역(clickable), 상태(state), 반복 버튼의 행 맥락(context), 아이콘 이름. 페이지를 바꾼 동작의 결과에 자동 포함 | UTF-8 바이트 예산 안에서 잘리며 cursor로 이어 읽음. 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
 | scroll | 문서 또는 ref 컨테이너의 up/down/top/bottom | 수직 기준. 좌표·수평·드래그는 미지원 |
 | wait | 텍스트 나타남/사라짐, refGone, URL 부분문자열과 timeout | 범용 network-idle/사이트 readiness 판정 없음. 조건을 단계별로 확인 |
-| input | text input/textarea/contenteditable 값 교체와 input/change 이벤트 | 파일 입력은 경로를 입력받지 않고 명확히 거부. 모든 프레임워크/IME를 보장하지 않음 |
+| input | text 계열 input/textarea 값 교체, contenteditable은 insertText(실패 시 내용 교체)와 input/change 이벤트 | 버튼·체크박스 등 텍스트가 아닌 input과 파일 입력은 거부. 모든 프레임워크/IME를 보장하지 않음 |
 | select | option value/label, checkbox/radio 원하는 상태 | 다중 선택 배열 API는 없음. disabled option과 불가능한 radio 해제는 거부 |
 | keyboard | Enter/Tab/Escape/Space/Backspace/ArrowUp/ArrowDown의 DOM 이벤트 및 구현된 기본 동작 | trusted OS 입력·Ctrl/L·브라우저 단축키·키 조합·IME 미지원 |
 | screenshot | 작업 탭이 활성일 때 visible PNG | 필요하면 사용자가 작업 탭을 활성화. 전체 페이지/백그라운드 캡처와 OS UI 미지원 |

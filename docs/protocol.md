@@ -155,7 +155,7 @@ background는 활성 worker에서 15초 주기, suspended worker에서는 1분 a
 
 ### 프레임 대기
 
-`browser_snapshot`의 각 프레임은 `frameRef`(예: `s12f7`)를 반환한다. `browser_wait {operationId, frameRef, text}`는 그 snapshot에 결합된 tab/operation/document에서 조건을 검사한다. DOM 본문만 교체되면 유지되지만 프레임 제거·문서 이동·다른 작업/탭의 참조는 `STALE_ELEMENT`다. `refGone`과 함께 지정하면 같은 snapshot 프레임이어야 한다.
+`browser_snapshot`의 각 프레임은 `frameRef`(예: `s4h2kxf7`, 스냅샷 ID는 36진수)를 반환한다. `browser_wait {operationId, frameRef, text}`는 그 snapshot에 결합된 tab/operation/document에서 조건을 검사한다. DOM 본문만 교체되면 유지되지만 프레임 제거·문서 이동·다른 작업/탭의 참조는 `STALE_ELEMENT`다. `refGone`과 함께 지정하면 같은 snapshot 프레임이어야 한다.
 
 조건은 OR이며 URL 조건은 frameRef/refGone 유무와 관계없이 탭의 최상위 URL을 관찰한다. 텍스트·refGone은 명시적 frameRef, 없으면 refGone의 프레임, 둘 다 없으면 최상위 문서를 사용한다. content 문서가 사라져도 URL 관찰은 timeout까지 유지한다. iframe의 문서 간 이동 후에는 새 snapshot을 요청한다. 다른 프레임의 같은 텍스트로 성공을 대신하지 않는다.
 
@@ -194,3 +194,20 @@ background는 활성 worker에서 15초 주기, suspended worker에서는 1분 a
 패널 요청의 requestId는 메시지 전송 전에 생성되어 OpenCode system 문맥에 전달된다. 첫 attach/new는 그 ID로 예약을 확인하며 탭마다 새 ID를 만들지 않는다. 동일 요청에 활성 operation이 있으면 중복 bootstrap은 BROWSER_BUSY와 기존 operationId를 반환한다. 이후 도구는 operationId로 계속한다. 누락·불일치 ID를 임의 보정하거나 다른 요청의 예약을 가져오지 않는다.
 
 switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTTP(S) 대상임을 확인하고 방문 목록에 추가한다. 같은 작업이 이미 생성·채택한 준비 중 빈 탭은 재선택할 수 있다. 외부 빈 탭이나 Chrome 내부 페이지를 일반 쓰기 대상으로 편입하지 않는다. switch는 DOM 관찰을 대신하지 않으며 요소 참조는 대상 문서·operation·snapshot 경계를 그대로 유지한다.
+
+## 결과에 붙는 스냅샷·탭 목록과 출력 예산 (2026-10-15)
+
+- **ref 형식:** `s<36진 snapshotId>f<frameId>e<index>`, frameRef는 `s<36진>f<frameId>`다. snapshotId는 2026-01-01 이후 0.1초 단위로 단조 증가한다. 이전 10진 ref는 바인딩이 없으므로 STALE_ELEMENT로 거부된다.
+- **결과에 붙는 스냅샷(`data.snapshot`):** 다음 경우 Bridge가 같은 operation으로 `browser.snapshot`(`maxChars:1500`, `settleMs:6000`)을 추가로 실행해 결과에 붙인다. 실패하면 `data.snapshotError{code,message}`가 붙는다.
+  - `browser_click`이 성공하고 `verified.urlChanged`·`verified.domChanged` 중 하나가 true이거나 작업 탭이 새 탭으로 옮겨 갔을 때
+  - `browser_press`·`browser_navigate` 성공, `browser_tabs` attach·switch 성공, URL을 준 new 성공
+  - 미실행(`executed:"no"`)인 쓰기 도구의 `STALE_ELEMENT` 실패. 복귀한 탭의 관찰 요구(needsObservation)도 이 스냅샷으로 해소된다.
+  - fill·select·scroll과 변화 없는 click에는 붙이지 않는다. 직전 ref가 그대로 유효하다.
+- **`settleMs`(내부 매개변수):** 확장은 snapshot 전에 탭이 `status:'complete'`이고 `pendingUrl`이 없을 때까지 최대 6초 기다린다. 링크 클릭 결과가 이전 문서가 아니라 도착한 문서를 읽게 한다. 도구 스키마에는 노출하지 않는다.
+- **열린 탭 목록(`data.openTabs`):** attach·new 성공 시 작업 탭 창의 탭, switch가 TAB_NOT_FOUND·UNSUPPORTED_PAGE로 실패하면 모든 창의 탭을 최대 20개(`tabId, active, attachable, title≤60자, url≤100자`) 붙인다.
+- **이동:** goto·back·forward·reload는 snapshot 없이 실행한다. 복귀 탭의 needsObservation 제한은 Bridge가 계속 적용한다.
+- **이동을 일으킨 클릭:** click·press의 content 응답이 끊긴 뒤 1초 안에 그 frame의 문서가 바뀌었거나 탭에 pendingUrl이 있으면 `{executed:true, verified:{navigated:true, urlChanged:true}}`로 보고한다. 문서가 그대로면 기존처럼 unsafe EXECUTION_UNKNOWN이다.
+- **생성 직후 취소:** attach·standalone new가 operation을 만든 뒤 결과의 후속 읽기 중 취소되면 Bridge가 그 operation을 CANCELLED로 정리하고 확장에 browser.cancel을 보낸다.
+- **출력 예산(UTF-8 바이트):** content frame당 24,000B, background snapshot frame 묶음 28,000B, extract 28,000B, MCP 최종 텍스트 40,000B. OpenCode는 한 줄 도구 결과가 한도(관찰상 약 50KB)를 넘으면 통째로 파일로 돌리므로, 최종 텍스트가 40,000B를 넘으면 먼저 `data.snapshot`만 빼고 `snapshotError.tooLarge`를 붙인다. 그래도 넘으면 읽기는 `ok:false`·`details.tooLarge`로 더 작은 `maxChars`를 안내하고, 실행된 동작은 `ok`·`executed`를 유지한 채 "반복하지 말고 다시 읽으라"는 `data.note`로 바꾼다.
+- **스냅샷 요소:** `role:"clickable"`은 의미 있는 태그·역할 없이 포인터 커서만 있는 최외곽 영역이다. `state`에는 expanded/collapsed/selected/pressed/mixed/current/required/readonly/invalid/focused가 들어간다. ARIA checkbox·switch는 `checked`, 범위 위젯은 `value`다. 같은 role·name이 여러 개면 같은 이름의 다른 요소를 포함하지 않는 가장 큰 조상의 텍스트를 `context`(≤80자)로 붙인다. 이름은 자식 `img alt`·SVG `title`·자식 `aria-label`도 쓴다. DOM 기반이며 Accessibility Tree와 같지 않다.
+- **끝난 requestId:** 진행 중인 패널 요청이 없는데 requestId를 주면 "이미 끝난 요청"이라는 OPERATION_INVALID다(대기 안내가 아니다).

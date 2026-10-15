@@ -277,12 +277,13 @@ test('R25 saving the same correct pairing token repairs a halted connection',asy
   if(!listed.ok){expect(listed.error?.code).toBe('BROWSER_DISCONNECTED');await world.ok('browser_tabs',{action:'list'});}
 });
 
-test('R21 resuming requires a new operation snapshot before writes',async()=>{
+test('R21 resuming rejects refs from the stopped operation and uses the new attach snapshot',async()=>{
  const {page,operationId,snap}=await setup('search.html');const old=ref(snap,'검색어');
- await world.admin('operation.abort',{operationId});const next=await world.attach(page);
+ await world.admin('operation.abort',{operationId});
+ const attached=await world.mcp.call('browser_tabs',{action:'attach',tabId:await world.tabId(page)});const next=attached.operationId!;
+ expect(attached.data.snapshot.frames.length).toBeGreaterThan(0);
  expect((await world.mcp.call('browser_fill',{operationId:next,ref:old,text:'must not type'})).error?.code).toBe('STALE_ELEMENT');
- expect((await world.mcp.call('browser_press',{operationId:next,key:'Enter'})).error?.code).toBe('STALE_ELEMENT');
- const fresh=await snapshot(next);await world.ok('browser_fill',{operationId:next,ref:ref(fresh,'검색어'),text:'fresh'});
+ const fresh=attached.data.snapshot;await world.ok('browser_fill',{operationId:next,ref:ref(fresh,'검색어'),text:'fresh'});
  await expect(page.locator('#q')).toHaveValue('fresh');expect((await world.log()).events).toEqual([]);
 });
 test('R22 native keyboard defaults change actual controls and radio deselection is explicit',async()=>{

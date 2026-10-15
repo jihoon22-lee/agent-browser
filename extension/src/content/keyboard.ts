@@ -3,7 +3,7 @@ import { accessibleName, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 
 const KEYS = new Set(["Enter", "Tab", "Escape", "Space", "Backspace", "ArrowUp", "ArrowDown"]);
-const INPUT_TEXT = new Set(["text", "search", "email", "url", "tel", "password", "number", "date", "time", "datetime-local", "month", "week"]);
+export const INPUT_TEXT = new Set(["text", "search", "email", "url", "tel", "password", "number", "date", "time", "datetime-local", "month", "week"]);
 function activeElement(): Element | null {
   let active = document.activeElement;
   while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;

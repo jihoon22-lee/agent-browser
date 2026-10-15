@@ -1,7 +1,7 @@
-import { accessibleName, isInteractive, isRendered, roleOf, walkDeep } from "./dom";
+import { accessibleName, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep } from "./dom";
 import { newTable } from "./refs";
 
-export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean };
+export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean; state?: string[]; context?: string };
 export type TextSlice = { content: string; totalChars: number; offset: number; returnedChars: number; truncated: boolean; nextOffset: number | null };
 export type FrameSnapshot = { frameId: number; url: string; title: string; text: TextSlice; elements: SnapElement[]; elementsTruncated: boolean; elementsTotal: number; elementsOffset: number; elementsNextOffset: number | null; limits: string[] };
 
@@ -37,12 +37,45 @@ export function pageText(doc: Document): string {
 }
 
 export const MAX_SNAPSHOT_CHARS = 32768;
+/** OpenCode drops a one-line tool result above its output limit, so budgets are UTF-8 bytes, not characters. */
+export const MAX_SNAPSHOT_BYTES = 24_000;
+const encoder = new TextEncoder();
+export const utf8Bytes = (value: string) => encoder.encode(value).length;
+
+const RANGE_ROLES = new Set(["slider", "spinbutton", "progressbar", "scrollbar", "meter"]);
+export function stateOf(el: Element): string[] {
+  const states: string[] = [], aria = (name: string) => el.getAttribute(name);
+  if (aria("aria-expanded") === "true") states.push("expanded"); else if (aria("aria-expanded") === "false") states.push("collapsed");
+  if (aria("aria-selected") === "true") states.push("selected");
+  if (aria("aria-pressed") === "true") states.push("pressed");
+  if (aria("aria-checked") === "mixed") states.push("mixed");
+  const current = aria("aria-current"); if (current && current !== "false") states.push("current");
+  if ((el as HTMLInputElement).required || aria("aria-required") === "true") states.push("required");
+  if ((el as HTMLInputElement).readOnly || aria("aria-readonly") === "true") states.push("readonly");
+  if (aria("aria-invalid") === "true") states.push("invalid");
+  if (el.ownerDocument.activeElement === el) states.push("focused");
+  return states;
+}
+
+/** The largest ancestor that holds this control but none of its look-alikes: the row or card,
+ * whatever markup the site uses. */
+function contextOf(el: Element, lookAlikes: Element[]): string {
+  let best: Element | null = null;
+  for (let parent = el.parentElement; parent && parent !== el.ownerDocument.body; parent = parent.parentElement) {
+    const ancestor = parent;
+    if (lookAlikes.some(other => other !== el && ancestor.contains(other))) break;
+    best = ancestor;
+  }
+  if (!best) return "";
+  return ((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+}
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number }): FrameSnapshot {
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
   const offset = Math.max(0, Math.floor(o.elementOffset ?? 0));
   const table = newTable(o.snapshotId, o.frameId);
   const elements: SnapElement[] = [];
+  const nodes: Element[] = [];
   const limits = new Set<string>();
   const clip = (value: string, size: number) => {
     if (value.length > size) { limits.add("element-fields-truncated"); return value.slice(0, size); }
@@ -51,7 +84,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   const fullText = pageText(document);
   const text = sliceText(fullText, o.offset, Math.min(o.maxChars, 20000));
   // JSON escaping can make a character several times larger on the wire.
-  while (JSON.stringify(text).length > MAX_SNAPSHOT_CHARS / 2) {
+  while (JSON.stringify(text).length > MAX_SNAPSHOT_CHARS / 2 || utf8Bytes(JSON.stringify(text)) > MAX_SNAPSHOT_BYTES / 2) {
     Object.assign(text, sliceText(fullText, o.offset, Math.max(1, Math.floor(text.returnedChars * .8))));
     limits.add("snapshot-size-limited");
   }
@@ -60,12 +93,14 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     elements, elementsTruncated: false, elementsTotal: 0, elementsOffset: offset, elementsNextOffset: null, limits: [],
   };
   let budgetFull = false;
+  let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
-    if ((!isInteractive(el) && el.tagName !== "TABLE") || !isRendered(el, { checkLayout: o.checkLayout })) return;
+    const pointer = !isInteractive(el) && el.tagName !== "TABLE" && isPointerTarget(el);
+    if ((!isInteractive(el) && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;
-    const e: SnapElement = { ref: "", role: clip(roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
+    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
     if (inShadow) e.inShadow = true;
     if (el instanceof HTMLInputElement) {
       if (el.type === "checkbox" || el.type === "radio") e.checked = el.checked;
@@ -78,16 +113,41 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
       e.options = [...el.options].slice(0, 20).map(op => clip(op.text, 128));
       while (JSON.stringify(e.options).length > 2048) { e.options.pop(); limits.add("element-fields-truncated"); }
     }
+    const ariaChecked = el.getAttribute("aria-checked");
+    if (!(el instanceof HTMLInputElement) && (ariaChecked === "true" || ariaChecked === "false")) e.checked = ariaChecked === "true";
+    if (!(el instanceof HTMLInputElement) && RANGE_ROLES.has(roleOf(el))) {
+      const value = el.getAttribute("aria-valuetext") ?? el.getAttribute("aria-valuenow");
+      if (value) e.value = clip(value, 80);
+    }
+    const state = stateOf(el);
+    if (state.length) e.state = state;
     if (el.matches(":disabled")) e.disabled = true;
     if (el instanceof HTMLAnchorElement) e.href = clip(el.href, 2048);
     // Reserve space for refs, pagination numbers and limit flags before admitting
     // another item. The cursor stays on that item when the aggregate budget fills.
-    if (JSON.stringify(result).length + JSON.stringify(e).length > MAX_SNAPSHOT_CHARS - 1024) {
+    // Reserve room for the ref (~16 chars) and the separator before admitting another item.
+    const encoded = JSON.stringify(e);
+    const itemBytes = utf8Bytes(encoded) + 24;
+    if (usedChars + encoded.length + 24 > MAX_SNAPSHOT_CHARS - 1024 || usedBytes + itemBytes > MAX_SNAPSHOT_BYTES - 1024) {
       budgetFull = true; limits.add("snapshot-size-limited"); return;
     }
+    usedChars += encoded.length + 24; usedBytes += itemBytes;
     e.ref = table.add(el);
-    elements.push(e);
+    elements.push(e); nodes.push(el);
   });
+  // Repeated controls ("취소" per row) are indistinguishable without their row or card.
+  const key = (e: SnapElement) => `${e.role}\u0000${e.name}`;
+  const groups = new Map<string, Element[]>();
+  elements.forEach((e, i) => groups.set(key(e), [...(groups.get(key(e)) ?? []), nodes[i]!]));
+  elements.forEach((e, i) => {
+    const group = groups.get(key(e))!;
+    if (group.length < 2) return;
+    const context = contextOf(nodes[i]!, group);
+    if (context && context !== e.name) e.context = clip(context, 80);
+  });
+  while (elements.length && utf8Bytes(JSON.stringify(result)) > MAX_SNAPSHOT_BYTES - 512) {
+    elements.pop(); nodes.pop(); limits.add("snapshot-size-limited");
+  }
   const next = offset + elements.length;
   result.elementsTruncated = next < result.elementsTotal;
   result.elementsNextOffset = result.elementsTruncated ? next : null;

@@ -23,6 +23,7 @@ it.each([
 it('keeps explicit user targets ahead of the captured default in request instructions',()=>{
   const text=requestInstructions('request-a',{tabId:31,windowId:7});
   expect(text).toContain('request-a');expect(text).toContain('explicit');expect(text).toContain('31');
+  expect(text.length).toBeLessThan(800);
 });
 it('only finishes on the submitted message response, not an old idle state or unrelated session',()=>{
   const lease={requestId:'r',messageId:'m',sessionId:'s'};

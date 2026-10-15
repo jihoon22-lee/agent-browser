@@ -3,62 +3,62 @@ use serde_json::{json, Value};
 
 pub struct ToolDef { pub name: &'static str, pub description: &'static str, pub schema: Value }
 
-fn op() -> Value { json!({"type":"string","description":"From browser_tabs attach/new"}) }
-fn r#ref() -> Value { json!({"type":"string","description":"Latest snapshot ref, e.g. s3f0e12"}) }
+fn op() -> Value { json!({"type":"string","description":"From attach/new"}) }
+fn r#ref() -> Value { json!({"type":"string","description":"Snapshot ref"}) }
 
 pub fn all() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
-            "requestId is per panel request, not per tab. First attach/new needs it; reuse operationId thereafter. Switch accepts listed HTTP(S) tabs. Close needs a snapshot; about:blank tabs cannot be closed. Close returns to the last visited surviving tab.",
+            "list/windows read tabs. attach (no tabId = request's tab) or new (url) starts work with the Browser context requestId; then reuse the returned operationId. Results include a snapshot and openTabs. switch/close/release take operationId; about:blank tabs cannot be closed.",
             schema: json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["list","windows","attach","new","switch","close","release"]},
-                "tabId":{"type":"integer","description":"Attach target (omit for request default), or explicit switch target"},
-                "requestId":{"type":"string","description":"Current Browser context requestId for first attach/new, even before a tab exists."},
-                "url":{"type":"string","description":"For new: HTTP(S) URL or about:blank (default)"},
-                "windowId":{"type":"integer","minimum":1,"description":"Filter list or choose window for new; IDs from windows"},
+                "tabId":{"type":"integer"},
+                "requestId":{"type":"string","description":"From Browser context; first attach/new"},
+                "url":{"type":"string","description":"new: http(s) URL or about:blank"},
+                "windowId":{"type":"integer","minimum":1},
                 "operationId": op()},
                 "required":["action"],"additionalProperties":false}) },
-        ToolDef { name: "browser_bookmarks", description: "Read bookmarks only: list root folders or folderId children, or search titles/URLs. Requires the user's optional bookmarks permission in settings. Does not visit URLs or modify bookmarks.",
+        ToolDef { name: "browser_bookmarks", description: "Read-only bookmarks: list a folder (folderId) or search. Needs the optional bookmarks permission.",
             schema: json!({"type":"object","properties":{
-                "action":{"type":"string","enum":["list","search"],"default":"list"},
+                "action":{"type":"string","enum":["list","search"]},
                 "folderId":{"type":"string"},"query":{"type":"string"},
                 "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},
                 "additionalProperties":false}) },
         ToolDef { name: "browser_snapshot", description:
-            "Read DOM text/elements/tables with refs. Snapshot after attach, navigation, switch or rerender before writing; identify by name/href, never old index. Continue via offset/elementOffset/frameOffset cursors.",
+            "Re-read page text and elements with refs (DOM-based); actions already return one. Continue with offset/elementOffset/frameOffset.",
             schema: json!({"type":"object","properties":{"operationId":op(),
-                "maxChars":{"type":"integer","minimum":200,"maximum":20000,"default":4000},
-                "offset":{"type":"integer","minimum":0,"default":0},
-                "elementOffset":{"type":"integer","minimum":0,"default":0},
-                "frameOffset":{"type":"integer","minimum":0,"default":0}},
+                "maxChars":{"type":"integer","minimum":200,"maximum":20000},
+                "offset":{"type":"integer","minimum":0},
+                "elementOffset":{"type":"integer","minimum":0},
+                "frameOffset":{"type":"integer","minimum":0}},
                 "required":["operationId"],"additionalProperties":false}) },
-        ToolDef { name: "browser_navigate", description: "Navigate the operation tab to HTTP(S), back, forward or reload and wait for completion. For delayed content, browser_wait then snapshot before clicking.",
+        ToolDef { name: "browser_navigate", description: "goto a URL, or back/forward/reload. Waits for load and returns a snapshot.",
             schema: json!({"type":"object","properties":{"operationId":op(),
-                "action":{"type":"string","enum":["goto","back","forward","reload"],"default":"goto"},
+                "action":{"type":"string","enum":["goto","back","forward","reload"]},
                 "url":{"type":"string"}},"required":["operationId"],"additionalProperties":false}) },
-        ToolDef { name: "browser_click", description: "Click an element by ref. Returns whether the URL or page content changed.",
-            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean","description":"Open an HTTP(S) anchor in a new operation tab without clicking the source"}},"required":["operationId","ref"],"additionalProperties":false}) },
-        ToolDef { name: "browser_fill", description: "Replace the value of a text input or textarea by ref. Returns the value read back from the page.",
+        ToolDef { name: "browser_click", description: "Click a ref; returns a snapshot if the page changed. newTab opens an http(s) link in a new operation tab.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean"}},"required":["operationId","ref"],"additionalProperties":false}) },
+        ToolDef { name: "browser_fill", description: "Replace the text of an input, textarea or editable area.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"text":{"type":"string"}},"required":["operationId","ref","text"],"additionalProperties":false}) },
-        ToolDef { name: "browser_select", description: "Choose an option in a select (by option value or visible label) or set a checkbox/radio checked state, by ref.",
+        ToolDef { name: "browser_select", description: "Choose a select option by value or label, or set checked on a checkbox/radio.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"option":{"type":"string"},"checked":{"type":"boolean"}},"required":["operationId","ref"],"additionalProperties":false}) },
-        ToolDef { name: "browser_press", description: "Press a key on the focused element or on ref. Enter in a form field submits the form.",
+        ToolDef { name: "browser_press", description: "Press a key on ref or the focused element (Enter in a field submits); returns a snapshot.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "key":{"type":"string","enum":["Enter","Tab","Escape","Space","Backspace","ArrowUp","ArrowDown"]}},
                 "required":["operationId","key"],"additionalProperties":false}) },
-        ToolDef { name: "browser_scroll", description: "Scroll the page or a scrollable element (ref).",
+        ToolDef { name: "browser_scroll", description: "Scroll the page or a ref container.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["operationId","direction"],"additionalProperties":false}) },
-        ToolDef { name: "browser_wait", description: "Wait for any text/textGone/refGone/urlIncludes match or TIMEOUT. URL always uses the tab. Content scope: frameRef, else refGone frame, else top. Snapshot after navigation.",
+        ToolDef { name: "browser_wait", description: "Wait until any of text, textGone, refGone or urlIncludes holds, or timeout.",
             schema: json!({"type":"object","properties":{"operationId":op(),"text":{"type":"string"},"textGone":{"type":"string"},
-                "refGone":{"type":"string"},"urlIncludes":{"type":"string"},"frameRef":{"type":"string","description":"Document-bound frameRef returned on a browser_snapshot frame."},
-                "timeoutMs":{"type":"integer","minimum":100,"maximum":30000,"default":5000}},
+                "refGone":{"type":"string"},"urlIncludes":{"type":"string"},"frameRef":{"type":"string"},
+                "timeoutMs":{"type":"integer","minimum":100,"maximum":30000}},
                 "required":["operationId"],"additionalProperties":false}) },
-        ToolDef { name: "browser_extract", description: "Extract text, selection, or a table by snapshot ref (first table by default). maxChars bounds output. offset is a character index for text/selection, a data-row index for tables; follow nextOffset.",
+        ToolDef { name: "browser_extract", description: "Extract text, selection or a table (ref, else the first table); continue with nextOffset.",
             schema: json!({"type":"object","properties":{"operationId":op(),"kind":{"type":"string","enum":["text","selection","table"]},
-                "ref":r#ref(),"maxChars":{"type":"integer","minimum":200,"maximum":50000,"default":8000},"offset":{"type":"integer","minimum":0,"default":0}},
+                "ref":r#ref(),"maxChars":{"type":"integer","minimum":200,"maximum":50000},"offset":{"type":"integer","minimum":0}},
                 "required":["operationId","kind"],"additionalProperties":false}) },
-        ToolDef { name: "browser_screenshot", description: "Visible PNG of the operation tab; requires that tab active in its window or returns NEEDS_TAB_ACTIVATION.",
+        ToolDef { name: "browser_screenshot", description: "PNG of the operation tab; that tab must be active.",
             schema: json!({"type":"object","properties":{"operationId":op()},"required":["operationId"],"additionalProperties":false}) },
     ]
 }
@@ -91,7 +91,15 @@ mod tests {
     #[test]
     fn total_schema_size_stays_small_for_free_models() {
         let size: usize = super::all().iter().map(|t| t.description.len() + t.schema.to_string().len()).sum();
-        assert!(size < 6000, "tool definitions grew to {size} chars");
+        assert!(size < 4800, "tool definitions grew to {size} chars");
+    }
+
+    #[test]
+    fn descriptions_say_results_already_include_a_snapshot() {
+        let tools = super::all();
+        for name in ["browser_tabs", "browser_navigate", "browser_click", "browser_press"] {
+            assert!(tools.iter().find(|t| t.name == name).unwrap().description.contains("snapshot"), "{name}");
+        }
     }
 }
 

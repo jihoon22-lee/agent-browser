@@ -60,9 +60,10 @@ test('N05 another opener during the agent click does not enter the operation',as
   expect((await world.admin('status.get')).operation.tabs).not.toContain(userId);
 });
 
-test('N06 keyboard link activation also adopts its new tab and requires a fresh snapshot',async()=>{
-  const {operationId,ref} = await setup();const popup=nextChild();await world.ok('browser_press',{operationId,ref:ref('새 탭 링크'),key:'Enter'});const child=await popup;await child.waitForLoadState();
-  expect((await world.mcp.call('browser_press',{operationId,key:'Enter'})).error?.code).toBe('STALE_ELEMENT');
+test('N06 keyboard link activation adopts its new tab and returns that tab\'s snapshot',async()=>{
+  const {operationId,ref} = await setup();const popup=nextChild();const pressed=await world.ok('browser_press',{operationId,ref:ref('새 탭 링크'),key:'Enter'});const child=await popup;await child.waitForLoadState();
+  // The press result carries the adopted tab's snapshot, so the observation rule is already met.
+  expect(pressed.data.snapshot.tabId).toBe(await world.tabId(child));
   expect((await world.ok('browser_snapshot',{operationId})).data.tabId).toBe(await world.tabId(child));
 });
 

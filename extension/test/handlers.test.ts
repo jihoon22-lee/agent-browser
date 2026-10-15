@@ -24,7 +24,7 @@ function world() {
         captureVisibleTab: async () => 'data:image/png;base64,AQID',
         listFrames: async (id) => frames.get(id) ?? [],
         inject: async (_id, frame) => frame,
-        sendToFrame: async (tabId, frame, msg: any) => { sent.push({ tabId, frame, msg }); return { ok: true, result: msg.method === 'snapshot' ? { frameId: frame.frameId, elements: [{ ref: `s${msg.params.snapshotId}f${frame.frameId}e1`, name: 'Button' }], text: { content: 'fixture' } } : { executed: true, verified: { clicked: true } } }; },
+        sendToFrame: async (tabId, frame, msg: any) => { sent.push({ tabId, frame, msg }); return { ok: true, result: msg.method === 'snapshot' ? { frameId: frame.frameId, elements: [{ ref: `s${msg.params.snapshotId.toString(36)}f${frame.frameId}e1`, name: 'Button' }], text: { content: 'fixture' } } : { executed: true, verified: { clicked: true } } }; },
         onTabUpdated: fn => { updates.add(fn); return () => { updates.delete(fn); }; },
         onTabActivated: fn => { activations.add(fn); return () => { activations.delete(fn); }; },
         onTabRemoved: () => () => {}, onCreatedNavigationTarget: () => () => {},
@@ -39,7 +39,7 @@ it('waits in the snapshot-bound child document, rejects navigation and conflicti
     const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://other.test/mail'});
     const h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
     const frameRef=snap.frames[1].frameRef;
-    expect(frameRef).toBe(`s${snap.snapshotId}f7`);
+    expect(frameRef).toBe(`s${snap.snapshotId.toString(36)}f7`);
     await expect(h(request('browser.wait',{frameRef:'',text:'body'}))).rejects.toMatchObject({code:'INVALID_PARAMS'});
     await h(request('browser.wait',{frameRef,text:'body',urlIncludes:'/mail'}));
     expect(w.sent.at(-1)?.frame.documentId).toBe('child');
@@ -238,7 +238,7 @@ it('a new operation requires its own snapshot for old refs and ref-less writes',
 });
 it('snapshot frame pagination bounds aggregate output and exposes all remaining frames',async()=>{
  const w=world();w.frames.set(1,Array.from({length:6},(_,frameId)=>({frameId,documentId:`d${frameId}`,url:`https://example.test/${frameId}`})));
- const original=w.api.sendToFrame;w.api.sendToFrame=async(t,f,m:any)=>{const r=await original(t,f,m);if(m.method==='snapshot')r.result.text={content:'x'.repeat(30000)};return r;};
+ const original=w.api.sendToFrame;w.api.sendToFrame=async(t,f,m:any)=>{const r=await original(t,f,m);if(m.method==='snapshot')r.result.text={content:'x'.repeat(20000)};return r;};
  const h=createHandlers(w.api,memorySessionStore());const one:any=await h(request('browser.snapshot',{elementOffset:150}));
  expect(JSON.stringify(one).length).toBeLessThan(65536);
  expect(one.framesNextOffset).toBeGreaterThan(0);
@@ -542,4 +542,77 @@ it.each(['refGone','frameRef'])('review R5 injection loss still observes the top
   Object.assign(w.tabs.get(1)!,{url:'https://example.test/arrived'});
   for(const listener of w.updates)listener(1,{url:'https://example.test/arrived'},w.tabs.get(1)!);
   expect(await work).toMatchObject({verified:{met:'urlIncludes'}});expect(w.updates.size).toBe(0);
+});
+it('bounds a multi-frame Korean snapshot by UTF-8 bytes', async () => {
+    const w = world();
+    w.frames.set(1, [0, 1, 2, 3].map(frameId => ({ frameId, documentId: `doc-${frameId}`, url: 'https://example.test/1' })));
+    w.api.sendToFrame = async (_tabId, frame, msg: any) => msg.method === 'snapshot'
+        ? { ok: true, result: { frameId: frame.frameId, elements: [], text: { content: '가'.repeat(5000) } } }
+        : { ok: true, result: {} };
+    const h = createHandlers(w.api, memorySessionStore());
+    const result: any = await h(request('browser.snapshot'));
+    expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThanOrEqual(30_000);
+    expect(result.framesNextOffset).toBe(1);
+});
+
+it('navigates a web page without requiring a snapshot first', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    await expect(h(request('browser.navigate', { action: 'goto', url: 'https://example.test/next' }))).resolves.toMatchObject({ executed: true, verified: { url: 'https://example.test/next' } });
+});
+
+it('reports a click that navigated the document as executed, not unknown', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'click') {
+            w.frames.set(1, [{ frameId: 0, documentId: 'doc-after', url: 'https://example.test/next' }]);
+            throw Error('The message port closed before a response was received.');
+        }
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.click', { ref }))).resolves.toMatchObject({ executed: true, verified: { navigated: true, urlChanged: true } });
+});
+
+it('keeps an unknown outcome when the document did not change', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'click') throw Error('The message port closed before a response was received.');
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.click', { ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+});
+
+it('settles a loading tab before a follow-up snapshot reads it', async () => {
+    const w = world(), tab = w.tabs.get(1)!;
+    tab.status = 'loading';
+    setTimeout(() => { tab.status = 'complete'; tab.url = 'https://example.test/next'; w.frames.set(1, [{ frameId: 0, documentId: 'doc-next', url: 'https://example.test/next' }]); }, 300);
+    const h = createHandlers(w.api, memorySessionStore());
+    const result: any = await h(request('browser.snapshot', { settleMs: 3000 }));
+    expect(result.url).toBe('https://example.test/next');
+});
+
+it('keeps an unknown outcome when only a subframe disappeared after a click', async () => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://ads.test/slot' });
+    const h = createHandlers(w.api, memorySessionStore());
+    const snap: any = await h(request('browser.snapshot'));
+    const ref = snap.frames.find((f: any) => f.frameId === 7).elements[0].ref;
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'click') { w.frames.set(1, [w.frames.get(1)![0]!]); throw Error('The message port closed before a response was received.'); }
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.click', { ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+});
+
+it('reads a committed page without waiting for slow subresources to finish loading', async () => {
+    const w = world(), tab = w.tabs.get(1)!;
+    tab.status = 'loading';
+    const h = createHandlers(w.api, memorySessionStore());
+    const started = Date.now();
+    const result: any = await h(request('browser.snapshot', { settleMs: 6000 }));
+    expect(Date.now() - started).toBeLessThan(2500);
+    expect(result.loading).toBe(true);
 });

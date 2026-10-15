@@ -75,6 +75,8 @@ impl OperationGate {
             (Some(r),Some(id)) if r.id==id && r.client==client=>Ok(()),
             (Some(r),None) if r.client==client=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Safe,
                 "Missing requestId. No browser action ran. Copy requestId from the Browser context for the latest user request into browser_tabs attach/new arguments and retry. Do not reuse an earlier requestId or operationId; if that context is unavailable, stop and ask for a new panel request.")),
+            (None,Some(_))=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,
+                "This requestId belongs to a request that already ended. Do not reuse it; a new panel request provides a new requestId. Outside the panel, omit requestId.")),
             _=>Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"A panel request owns the browser. Wait for completion or stop it in the panel; scoped calls must use that requestId.")),
         }
     }
@@ -334,6 +336,16 @@ impl OperationGate {
 mod tests {
     use super::*;
     use crate::rpc::ErrorCode;
+
+    #[test]
+    fn a_finished_request_id_is_explained_instead_of_reported_as_busy() {
+        let g = OperationGate::default();
+        g.begin_request("turn-a", "browser", Some(12)).unwrap();
+        g.end_request("turn-a", "browser").unwrap();
+        let error = g.attach_request(12, "browser", Some("turn-a")).unwrap_err();
+        assert!(error.message.contains("already ended"), "{}", error.message);
+        assert!(!error.message.contains("Wait"));
+    }
 
     #[test]
     fn standalone_new_respects_request_owner_without_requiring_a_default_tab() {

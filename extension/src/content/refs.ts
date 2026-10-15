@@ -1,7 +1,8 @@
 import { accessibleName, roleOf } from "./dom";
 import { ProtocolError } from "../protocol/errors";
 
-const REF_RE = /^s(\d+)f(\d+)e(\d+)$/;
+const REF_RE = /^s([0-9a-z]+)f(\d+)e(\d+)$/;
+export const snapshotToken = (id: number) => id.toString(36);
 const KEEP = 5;
 
 export class RefTable {
@@ -17,14 +18,14 @@ export class RefTable {
       el.getAttribute('target'), el.getAttribute('type'), el.getAttribute('formaction')]);
   }
   constructor(public snapshotId: number, public frameId: number) {}
-  add(el: Element): string { this.els.push({ node: new WeakRef(el), identity: this.identity(el) }); return `s${this.snapshotId}f${this.frameId}e${this.els.length}`; }
+  add(el: Element): string { this.els.push({ node: new WeakRef(el), identity: this.identity(el) }); return `s${snapshotToken(this.snapshotId)}f${this.frameId}e${this.els.length}`; }
   get(index: number, allowChanged = false): Element | undefined {
     const entry = this.els[index - 1], el = entry?.node.deref();
     return el && (allowChanged || entry!.identity === this.identity(el)) ? el : undefined;
   }
   static parse(ref: string) {
     const m = REF_RE.exec(ref);
-    return m ? { snapshotId: Number(m[1]), frameId: Number(m[2]), index: Number(m[3]) } : null;
+    return m ? { snapshotId: parseInt(m[1]!, 36), frameId: Number(m[2]), index: Number(m[3]) } : null;
   }
 }
 

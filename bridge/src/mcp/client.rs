@@ -15,7 +15,7 @@ const START_WAIT: Duration = Duration::from_secs(10);
 const RETRY_EVERY: Duration = Duration::from_millis(200);
 const START_COOLDOWN: Duration = Duration::from_secs(30);
 /// Longest tool timeout serve applies (navigate, 30s) plus headroom for its own bookkeeping.
-const REPLY_WAIT: Duration = Duration::from_secs(60);
+pub(crate) const REPLY_WAIT: Duration = Duration::from_secs(60);
 
 /// Returns true when an agent-browser serve answers on `port`.
 ///
