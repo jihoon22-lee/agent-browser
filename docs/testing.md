@@ -8,7 +8,7 @@ Linux 테스트 통과, Windows용 빌드 성공, 실제 Windows 프로세스 �
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-extension test
-node --test tests/fixtures/*.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.test.ts tests/e2e/interop-check.test.mjs
+node --test tests/fixtures/*.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.test.ts tests/e2e/interop-check.test.mjs tests/install/wsl-probe.test.mjs
 pnpm --filter agent-browser-extension build
 cargo build --offline --locked -p agent-browser-bridge
 pnpm --filter agent-browser-e2e exec playwright test
