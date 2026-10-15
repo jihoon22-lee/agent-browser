@@ -77,7 +77,7 @@ namespace AgentBrowser.Installer {
             var copyToken=new Button{Text="토큰 복사"};Position(pairing,copyToken,"CopyPairingToken",496,166,160,32);copyToken.Click+=delegate{Clipboard.SetText(pairingToken.Text);status.Text="토큰을 복사했습니다. Chrome 확장 옵션에 붙여 넣으세요.";};
             LabelAt(pairing,"확장에 ‘Bridge에 연결되었습니다’가 표시되면 [다음]을 누르세요.",0,240,656,42).ForeColor=Muted;
             LabelAt(runtime,"사용할 OpenCode 실행 환경을 설정합니다.\r\nWindows 또는 WSL의 실행 파일과 작업 폴더를 확인하고 저장하세요.",0,4,656,62);
-            profiles.Text="OpenCode 실행 환경 설정...";Position(runtime,profiles,"ManagedProfiles",0,98,268,36);profiles.Click+=delegate{try{using(var dialog=new ProfileForm(Installed()))dialog.ShowDialog(this);}catch(Exception error){status.Text=error.Message;}};
+            profiles.Text="OpenCode 실행 환경 설정...";Position(runtime,profiles,"ManagedProfiles",0,98,268,36);profiles.Click+=delegate{try{using(var dialog=new ProfileForm(Installed()))dialog.ShowDialog(this);}catch(Exception error){status.Text=Friendly.Message(error);}};
             LabelAt(runtime,"이미 저장된 실행 환경은 그대로 사용할 수 있습니다.\r\n외부 서버 연결은 Chrome 확장 옵션에서 설정할 수 있습니다.",0,182,656,56).ForeColor=Muted;
             LabelAt(runtime,"설정을 마쳤으면 [다음]을 누르세요.",0,264,656).ForeColor=Muted;
             var check=LabelAt(done,"✓",0,30,56,60);check.Font=new Font("Segoe UI Symbol",32F);check.ForeColor=Color.FromArgb(24,128,74);
@@ -129,7 +129,7 @@ namespace AgentBrowser.Installer {
         }
         void LoadState(){
             manage.Enabled=profiles.Enabled=false;
-            try{var old=InstallerEngine.State(folder.Text);bool changed=!InstallerEngine.Same(loadedFolder,folder.Text);if(old!=null){if(changed){if(operation.SelectedIndex!=2)operation.SelectedIndex=1;port.Value=old.Port;startup.Checked=old.Startup!=null;if(old.Startup!=null)startupPath.Text=Path.GetDirectoryName(old.Startup.Path);}profiles.Enabled=true;manage.Enabled=operation.SelectedIndex!=2;status.Text="기존 설치 "+old.Version+"을 찾았습니다.";}else{if(operation.SelectedIndex==1)operation.SelectedIndex=0;status.Clear();}loadedFolder=folder.Text;}catch(Exception error){status.Text=error.Message;}
+            try{var old=InstallerEngine.State(folder.Text);bool changed=!InstallerEngine.Same(loadedFolder,folder.Text);if(old!=null){if(changed){if(operation.SelectedIndex!=2)operation.SelectedIndex=1;port.Value=old.Port;startup.Checked=old.Startup!=null;if(old.Startup!=null)startupPath.Text=Path.GetDirectoryName(old.Startup.Path);}profiles.Enabled=true;manage.Enabled=operation.SelectedIndex!=2;status.Text="기존 설치 "+old.Version+"을 찾았습니다.";}else{if(operation.SelectedIndex==1)operation.SelectedIndex=0;status.Clear();}loadedFolder=folder.Text;}catch(Exception error){status.Text=Friendly.Message(error);}
         }
         InstallState Installed(){
             var state=InstallerEngine.State(folder.Text);if(state==null)throw new IOException("아직 설치되지 않았습니다. [다음]을 눌러 설치를 완료하세요.");
@@ -139,7 +139,7 @@ namespace AgentBrowser.Installer {
             foreach(var file in extensionFiles){string path=NativeIO.SafePath(state.InstallDir,file.Path);if(!File.Exists(path))throw new IOException("Chrome 확장 파일이 없습니다. 업데이트로 복구한 뒤 연결하세요: "+path);}
             return state;
         }
-        bool ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");profiles.Enabled=true;SetPage(4);status.Clear();return true;}catch(Exception error){status.Text=error.Message;return false;}}
+        bool ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");profiles.Enabled=true;SetPage(4);status.Clear();return true;}catch(Exception error){status.Text=Friendly.Message(error);return false;}}
         void ShowAdvanced(){
             // This panel has already scaled with the main form. Do not scale it again
             // when it moves into a dialog, or text and fields overlap at large fonts.
@@ -156,21 +156,21 @@ namespace AgentBrowser.Installer {
             if(working)return;working=true;prepare.Enabled=false;cancel.Enabled=false;status.Text="Chrome 연결을 준비하고 있습니다.";
             try{var state=Installed();await Task.Run(()=>BridgeControl.Start(state));var data=InstallerEngine.Read<Dictionary<string,object>>(Path.Combine(state.DataDir,"config.json"));string token=(string)data["token"];
                 if(!System.Text.RegularExpressions.Regex.IsMatch(token??"","^[a-fA-F0-9]{64}$"))throw new IOException("페어링 토큰을 확인할 수 없습니다.");pairingUrl.Text="ws://127.0.0.1:"+state.Port+"/extension";pairingToken.Text=token;SetPage(5);status.Clear();
-            }catch(Exception error){status.Text=error.Message;}finally{working=false;prepare.Enabled=true;cancel.Enabled=true;}
+            }catch(Exception error){status.Text=Friendly.Message(error);}finally{working=false;prepare.Enabled=true;cancel.Enabled=true;}
         }
         async Task DiscoverInstallations(Func<DiscoveryResult> scan){
             int current=revision;
             try{var result=await Task.Run(scan);if(IsDisposed||Disposing)return;
                 installs.Items.Clear();foreach(string path in result.Installs)installs.Items.Add(path);installs.Enabled=installs.Items.Count>0;
                 if(current==revision&&result.Notices.Count>0)status.Text=String.Join("\r\n",result.Notices);
-            }catch(Exception error){if(!IsDisposed&&!Disposing&&current==revision)status.Text=error.Message;}
+            }catch(Exception error){if(!IsDisposed&&!Disposing&&current==revision)status.Text=Friendly.Message(error);}
         }
         async Task Discover() {
             if(!discover.Enabled||working)return;discover.Enabled=false;int current=revision;status.Text="OpenCode 위치를 확인하고 있습니다.";
             try {var result=await Task.Run(()=>Discovery.Find());if(IsDisposed||Disposing||current!=revision||working)return;
                 candidates.Items.Clear();distribution.Items.Clear();installs.Items.Clear();foreach(var p in result.Installs)installs.Items.Add(p);foreach(var d in result.Distributions)distribution.Items.Add(d);foreach(var c in result.OpenCode)candidates.Items.Add(c);
                 status.Text="기존 설치 "+result.Installs.Count+"개, OpenCode "+result.OpenCode.Count+"개를 찾았습니다.\r\n"+String.Join("\r\n",result.Notices);if(candidates.Items.Count==1)candidates.SelectedIndex=0;
-            }catch(Exception error){if(!IsDisposed&&!Disposing&&current==revision)status.Text=error.Message;}finally{if(!IsDisposed&&!Disposing)discover.Enabled=true;}
+            }catch(Exception error){if(!IsDisposed&&!Disposing&&current==revision)status.Text=Friendly.Message(error);}finally{if(!IsDisposed&&!Disposing)discover.Enabled=true;}
         }
         void SelectCandidate() {
             var c=candidates.SelectedItem as OpenCodeCandidate;if(c==null)return;kind.SelectedItem=c.Kind;distribution.Text=c.Distribution??"";
@@ -179,7 +179,7 @@ namespace AgentBrowser.Installer {
         }
         void AddRegistration() {
             if(!register.Checked){status.Text="CLI 등록을 선택한 뒤 설정 파일을 추가하세요.";return;}
-            try {var c=candidates.SelectedItem as OpenCodeCandidate;string path=Path.GetFullPath(config.Text);if(selected.Any(x=>InstallerEngine.Same(x.Path,path)))throw new IOException("이미 추가한 설정입니다.");var entry=new McpRecord{Path=path,Kind=(string)kind.SelectedItem,Distribution=distribution.Text,User=c!=null&&c.Kind=="wsl"&&c.Distribution==distribution.Text?c.User:null};if(entry.Kind=="wsl"&&String.IsNullOrWhiteSpace(entry.Distribution))throw new IOException("WSL 배포판을 선택하세요.");selected.Add(entry);registrations.Items.Add(entry.Kind+" · "+path);status.Text="선택 목록에 추가했습니다. 미리보기 후 적용할 수 있습니다.";}catch(Exception error){status.Text=error.Message;}
+            try {var c=candidates.SelectedItem as OpenCodeCandidate;string path=Path.GetFullPath(config.Text);if(selected.Any(x=>InstallerEngine.Same(x.Path,path)))throw new IOException("이미 추가한 설정입니다.");var entry=new McpRecord{Path=path,Kind=(string)kind.SelectedItem,Distribution=distribution.Text,User=c!=null&&c.Kind=="wsl"&&c.Distribution==distribution.Text?c.User:null};if(entry.Kind=="wsl"&&String.IsNullOrWhiteSpace(entry.Distribution))throw new IOException("WSL 배포판을 선택하세요.");selected.Add(entry);registrations.Items.Add(entry.Kind+" · "+path);status.Text="선택 목록에 추가했습니다. 미리보기 후 적용할 수 있습니다.";}catch(Exception error){status.Text=Friendly.Message(error);}
         }
         async Task Prepare(){
             if(working)return;working=true;prepare.Enabled=false;back.Enabled=false;input.Enabled=false;status.Text="설치 위치와 파일을 확인하고 있습니다.";
@@ -190,7 +190,7 @@ namespace AgentBrowser.Installer {
                 plan=await Task.Run(()=>InstallerEngine.Prepare(options));
                 preview.Text=plan.Preview;
                 SetPage(2);status.Text="준비가 완료됐습니다.";
-            }catch(Exception error){plan=null;status.Text=error.Message;}finally{working=false;prepare.Enabled=true;back.Enabled=true;input.Enabled=true;}
+            }catch(Exception error){plan=null;status.Text=Friendly.Message(error);}finally{working=false;prepare.Enabled=true;back.Enabled=true;input.Enabled=true;}
         }
         async Task Apply(){
             if(working||plan==null)return;working=true;cancellation=new CancellationTokenSource();SetPage(3);status.Text="설치 중입니다.";
@@ -207,8 +207,38 @@ namespace AgentBrowser.Installer {
                 status.Text=plan.Next==null?"제거 완료.":"설치 완료.";
                 int warning=result.IndexOf("경고:",StringComparison.Ordinal);if(warning>=0)status.Text=result.Substring(warning);
             }catch(OperationCanceledException){SetPage(2);status.Text="취소됐습니다. 변경 사항을 복구했습니다.";}
-            catch(Exception error){SetPage(2);status.Text=error.Message+"\r\n[뒤로]를 눌러 확인하고 다시 시도하세요.";}
+            catch(Exception error){SetPage(2);status.Text=Friendly.Message(error)+"\r\n[뒤로]를 눌러 확인하고 다시 시도하세요.";}
             finally{working=false;cancellation.Dispose();cancellation=null;}
+        }
+    }
+    /// User-facing installer errors: Korean, with the next action. The original stays for diagnosis.
+    internal static class Friendly {
+        static readonly KeyValuePair<string,string>[] Known={
+            new KeyValuePair<string,string>("Choose an absolute dedicated installation folder","설치 폴더는 전체 경로로 지정하세요. 예: C:\\Users\\<사용자>\\AppData\\Local\\AgentBrowser"),
+            new KeyValuePair<string,string>("A drive root cannot be an installation folder","드라이브 최상위(C:\\ 등)에는 설치할 수 없습니다. 전용 하위 폴더를 선택하세요."),
+            new KeyValuePair<string,string>("Choose a dedicated subfolder","사용자 폴더 자체가 아닌 AgentBrowser 전용 하위 폴더를 선택하세요."),
+            new KeyValuePair<string,string>("Bridge installation must be on a Windows local disk","네트워크 경로에는 설치할 수 없습니다. 로컬 드라이브의 폴더를 선택하세요."),
+            new KeyValuePair<string,string>("Bridge installation requires a writable Windows local disk","네트워크 드라이브에는 설치할 수 없습니다. 로컬 드라이브의 폴더를 선택하세요."),
+            new KeyValuePair<string,string>("Installation ownership marker is invalid","선택한 폴더의 설치 기록이 손상됐거나 다른 프로그램의 것입니다. 다른 폴더를 선택하거나 diagnose.cmd 결과를 확인하세요."),
+            new KeyValuePair<string,string>("An installed file was modified","설치된 파일이 수정되어 그대로 보존했습니다. 파일을 원래대로 되돌리거나 새 폴더에 설치하세요."),
+            new KeyValuePair<string,string>("No owned installation was found","이 폴더에서 AgentBrowser 설치를 찾지 못했습니다. [설치]를 선택하거나 기존 설치 폴더를 고르세요."),
+            new KeyValuePair<string,string>("Extract the package outside the destination","압축은 설치 폴더가 아닌 다른 폴더에 풀어 주세요."),
+            new KeyValuePair<string,string>("An unowned file blocks installation","설치 폴더에 AgentBrowser가 만들지 않은 파일이 있습니다. 빈 폴더를 선택하세요."),
+            new KeyValuePair<string,string>("Existing unowned data will not be changed","data 폴더에 다른 데이터가 있어 바꾸지 않았습니다. 빈 폴더를 선택하세요."),
+            new KeyValuePair<string,string>("Package checksum mismatch","설치 파일이 손상됐습니다. 공식 릴리스에서 ZIP을 다시 받아 압축을 풀고 실행하세요."),
+            new KeyValuePair<string,string>("Extract the complete GUI package","ZIP 전체를 압축 해제한 뒤 그 폴더의 AgentBrowser-Setup.exe를 실행하세요."),
+            new KeyValuePair<string,string>("Installation changed after preview","미리보기 이후 설치 상태가 바뀌었습니다. [뒤로]를 눌러 다시 미리보기하세요."),
+            new KeyValuePair<string,string>("A file changed after preview","미리보기 이후 파일이 바뀌었습니다. [뒤로]를 눌러 다시 미리보기하세요."),
+            new KeyValuePair<string,string>("Settings changed during preview","미리보기 중 OpenCode 설정이 바뀌었습니다. [뒤로]를 눌러 다시 미리보기하세요."),
+            new KeyValuePair<string,string>("Port must be between 1 and 65535","포트는 1~65535 사이로 입력하세요."),
+            new KeyValuePair<string,string>("Pair the Chrome extension first","먼저 Chrome 연결 단계를 완료하세요."),
+            new KeyValuePair<string,string>("No authenticated Bridge","Bridge가 실행 중이 아닙니다. [뒤로] 후 다시 [다음]을 누르면 Bridge를 시작합니다."),
+            new KeyValuePair<string,string>("Another operation is already managing this profile","같은 실행 환경을 다른 작업이 처리 중입니다. 잠시 후 다시 시도하세요."),
+        };
+        public static string Message(Exception error) {
+            string text=error.Message??"";
+            foreach(var item in Known) if(text.IndexOf(item.Key,StringComparison.OrdinalIgnoreCase)>=0) return item.Value+"\r\n(원문: "+text+")";
+            return text;
         }
     }
     internal static class Program {
@@ -236,7 +266,7 @@ namespace AgentBrowser.Installer {
                 if(args.Length==2&&args[0]=="--start") {var state=InstallerEngine.State(InstallerEngine.Root(args[1]));if(state==null)throw new IOException("설치 상태를 찾지 못했습니다.");BridgeControl.Start(state);return 0;}
                 if(RelaunchInstalled(args))return 0;
                 SetProcessDPIAware();Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);Application.Run(new SetupForm(args));return 0;
-            } catch(Exception error) {MessageBox.Show(error.Message,"AgentBrowser",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
+            } catch(Exception error) {MessageBox.Show(Friendly.Message(error),"AgentBrowser",MessageBoxButtons.OK,MessageBoxIcon.Error);return 1;}
         }
     }
 }
