@@ -1,5 +1,5 @@
 import { createHmac, webcrypto } from "node:crypto";
-import { BridgeConnection, type ConnStatus, type ConnDeps } from "../src/background/bridge-connection";
+import { BridgeConnection, compareVersions, type ConnStatus, type ConnDeps } from "../src/background/bridge-connection";
 import { makeOk, makeErr, parseEnvelope } from "../src/protocol/envelope";
 
 class FakeWs {
@@ -156,7 +156,7 @@ function nodeProof(side: string, params: Record<string, unknown>, serverNonce: s
   ])).digest("hex");
 }
 
-async function finishAuthentication(ws: FakeWs) {
+async function finishAuthentication(ws: FakeWs, ack: Record<string, unknown> = { authVersion: 1, selected: true }) {
   const hello = parseEnvelope(ws.sent[0]!);
   if (hello.type !== "req") throw new Error("Expected hello request");
   const serverNonce = "22".repeat(32);
@@ -165,7 +165,17 @@ async function finishAuthentication(ws: FakeWs) {
   const prove = ws.sent.map(parseEnvelope).find((req) => req.type === "req" && req.method === "auth.prove");
   if (prove?.type !== "req") throw new Error("Expected client proof");
   expect(prove.params).toEqual({ authVersion: 1, proof: nodeProof("client", hello.params, serverNonce) });
-  ws.reply(makeOk(prove.id, { authVersion: 1, selected: true }));
+  ws.reply(makeOk(prove.id, ack));
+}
+
+async function authenticatedWith(conn: BridgeConnection, ack: Record<string, unknown>) {
+  conn.start();
+  await vi.advanceTimersByTimeAsync(0);
+  const ws = FakeWs.last;
+  ws.open();
+  await finishAuthentication(ws, ack);
+  await vi.advanceTimersByTimeAsync(0);
+  return ws;
 }
 
 async function authenticated(conn: BridgeConnection) {
@@ -179,6 +189,31 @@ async function authenticated(conn: BridgeConnection) {
 
 describe("BridgeConnection lifecycle", () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("reloads at most once per newer Bridge version", async () => {
+    const reload = vi.fn();
+    const { conn, store } = setup({ pairingToken: "tok", clientId: "cli-1" }, { extensionVersion: "0.1.11", reload });
+    await authenticatedWith(conn, { authVersion: 1, serverVersion: "0.1.12" });
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(store.reloadedForBridge).toBe("0.1.12");
+    conn.stop();
+    await authenticatedWith(conn, { authVersion: 1, serverVersion: "0.1.12" });
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("never reloads for an equal or older Bridge", async () => {
+    const reload = vi.fn();
+    const { conn } = setup({ pairingToken: "tok", clientId: "cli-1" }, { extensionVersion: "0.1.11", reload });
+    await authenticatedWith(conn, { authVersion: 1, serverVersion: "0.1.11" });
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("compares release versions numerically", () => {
+    expect(compareVersions("0.1.12", "0.1.11")).toBeGreaterThan(0);
+    expect(compareVersions("0.1.10", "0.1.9")).toBeGreaterThan(0);
+    expect(compareVersions("0.1.11", "0.1.11")).toBe(0);
+    expect(compareVersions("0.2.0-beta", "0.2.0")).toBe(0);
+  });
 
   it.each(["close", "stop"] as const)("rejects pending panel requests on %s and notifies once", async (action) => {
     const { conn, onDisconnect } = setup();

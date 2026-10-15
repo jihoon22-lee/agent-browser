@@ -18,6 +18,10 @@ export interface ConnDeps {
   onEvent?: (event: string, data: unknown) => void;
   /** Cancel browser work immediately when the current transport is lost or stopped. */
   onDisconnect?: () => void;
+  /** This extension's manifest version and a reload hook: an unpacked extension loads from the
+   * install folder, so reloading once after an update runs the new files. */
+  extensionVersion?: string;
+  reload?: () => void;
 }
 
 type Pending = { complete: (env: Res) => void; fail: (error: ProtocolError) => void };
@@ -123,6 +127,7 @@ export class BridgeConnection {
                   if (repair) void this.deps.storage.set("repairPending", false);
                   this.setStatus({ state: "connected" });
                   this.startHeartbeat(ws);
+                  void this.reloadIfOutdated((ack.result as { serverVersion?: unknown } | undefined)?.serverVersion);
                 },
               });
               this.send(ws, prove);
@@ -174,6 +179,14 @@ export class BridgeConnection {
     };
     ws.onerror = () => ws.close();
     ws.onclose = () => finish(false);
+  }
+
+  private async reloadIfOutdated(serverVersion: unknown) {
+    const own = this.deps.extensionVersion, reload = this.deps.reload;
+    if (typeof serverVersion !== "string" || !own || !reload || compareVersions(serverVersion, own) <= 0) return;
+    if ((await this.deps.storage.get("reloadedForBridge")) === serverVersion) return;
+    await this.deps.storage.set("reloadedForBridge", serverVersion);
+    reload();
   }
 
   private authRejected(ws: WebSocket, response: Res) {
@@ -291,4 +304,11 @@ export class BridgeConnection {
       this.send(ws, req);
     });
   }
+}
+
+export function compareVersions(a: string, b: string): number {
+  const parse = (value: string) => value.split(/[-+]/)[0]!.split(".").slice(0, 3).map(part => Number.parseInt(part, 10) || 0);
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
+  return 0;
 }

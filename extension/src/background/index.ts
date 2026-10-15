@@ -17,6 +17,8 @@ const conn = new BridgeConnection({
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
   onStatus: (s) => { lastStatus = s; void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  extensionVersion: chrome.runtime.getManifest().version,
+  reload: () => chrome.runtime.reload(),
   onEvent: (event, data) => { void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {}); },
 });
 
