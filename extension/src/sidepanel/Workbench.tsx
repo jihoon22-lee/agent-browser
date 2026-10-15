@@ -45,6 +45,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   const [files, setFiles] = useState<string[]>([]), [palette, setPalette] = useState(""), [shell, setShell] = useState("");
   const draftCache = useRef(new Map<string, { draft: string; attachments: Data[] }>()), previousDraft = useRef({ key: "", draft: "", attachments: [] as Data[] });
   const messageViewport = useRef<HTMLDivElement>(null), followMessages = useRef(true);
+  const autoSend = useRef(false);
   const composer = useRef<HTMLTextAreaElement>(null);
   const selectedControls = useRef({ key: "", dirty: false });
   const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef(false);
@@ -77,6 +78,11 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = false; previousDraft.current = { key: draftKey, ...next };
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
+  useEffect(() => {
+    if (!autoSend.current || !wb.sessionId || !draft.trim()) return;
+    autoSend.current = false;
+    void send();
+  }, [wb.sessionId, draft]);
   useEffect(() => { if (view === "chat" && drawer === null && followMessages.current && messageViewport.current) messageViewport.current.scrollTop = messageViewport.current.scrollHeight; }, [messages, wb.state.questions, wb.state.permissions, view, drawer]);
   useEffect(() => { followMessages.current = true; setRenaming(null); }, [wb.sessionId]);
   useEffect(() => {
@@ -105,7 +111,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   async function perform(action: () => Promise<void>) { const current = wb.captureScope(); wb.setError(""); try { await action(); } catch (error) { if (current()) wb.setError(error instanceof Error ? error.message : String(error)); } }
   const api = () => { if (!wb.client.current) throw new Error("먼저 실행 환경을 연결하세요."); return wb.client.current; };
   const sessionPath = () => { if (!wb.sessionId) throw new Error("세션을 선택하거나 새로 만드세요."); return `/session/${encodeURIComponent(wb.sessionId)}`; };
-  async function createSession() { const current = wb.captureScope(); const session = await api().post<Data>("/session", { ...(agent ? { agent } : {}), ...(model ? { model: { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) } } : {}) }); if (!current()) return; await wb.refreshSessions(); if (!current()) return; const selection = wb.selectSession(session), destination = wb.captureScope(); await selection; if (destination()) { setNotice(""); onViewChange("chat"); setDrawer(null); } }
+  async function createSession(carry?: { draft: string; attachments: Data[] }): Promise<Data | undefined> { const current = wb.captureScope(); const session = await api().post<Data>("/session", { ...(agent ? { agent } : {}), ...(model ? { model: { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) } } : {}) }); if (!current()) return undefined; if (carry) draftCache.current.set(JSON.stringify([wb.profileId, wb.directory, session.id]), carry); await wb.refreshSessions(); if (!current()) return undefined; const selection = wb.selectSession(session), destination = wb.captureScope(); await selection; if (destination()) { setNotice(""); onViewChange("chat"); setDrawer(null); } return session; }
   async function forkSession(messageID?: string, source = currentSession) {
     if (!source?.id) throw new Error("세션을 선택하거나 새로 만드세요.");
     const current = wb.captureScope(), original = messages.find(item => item.info.id === messageID);
@@ -149,11 +155,19 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     const current = wb.captureScope();
     const ui = /^\/(new|sessions|models|skills|commands)\s*$/.exec(draft.trim());
     if (ui) {
-      if (ui[1] === "new") await perform(createSession);
+      if (ui[1] === "new") await perform(async () => { await createSession(); });
       if (ui[1] === "sessions") onViewChange("sessions");
       if (ui[1] === "models") openDrawer("environment");
       if (ui[1] === "skills" || ui[1] === "commands") { setPalette(ui[1]); openDrawer("tools"); }
       if (current()) setDraft(""); return;
+    }
+    if (!wb.sessionId) {
+      // The first message creates its session; the typed draft moves with it and the effect below sends it there.
+      autoSend.current = true;
+      let created: Data | undefined;
+      await perform(async () => { created = await createSession({ draft, attachments }); });
+      if (!created) autoSend.current = false;
+      return;
     }
     sendLock.current = true; setSending(true); wb.setError("");
     const attempt={key:draftKey,cancelled:false,submitted:false,requestId:undefined as string|undefined};
@@ -294,10 +308,10 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   const filteredModels = models.filter(item => `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(modelSearch.toLowerCase())).sort((a, b) => Number(favorites.includes(`${b.providerID}/${b.id}`)) - Number(favorites.includes(`${a.providerID}/${a.id}`)));
   const environmentPanel = <section className="workspace-bar"><h3>OpenCode 연결</h3>
       <label>실행 환경<select value={wb.profileId} disabled={wb.loading} onChange={event => void wb.connect(event.target.value)}><option value="">환경 선택</option>{wb.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.kind}</option>)}</select></label>
-      {!wb.profiles.length && <p className="muted">설정에서 OpenCode 실행 프로필을 추가하세요.</p>}
+      {!wb.profiles.length && <p className="muted">OpenCode 실행 환경이 없습니다. <button onClick={() => void chrome.runtime.openOptionsPage()}>실행 환경 추가</button></p>}
       {wb.runtime && <details><summary>프로젝트·실행 정보</summary><label>작업 디렉터리<input value={directory} onChange={event => setDirectory(event.target.value)} /></label><button disabled={wb.loading || !directory.trim()} onClick={() => void wb.connect(wb.profileId, directory)}>디렉터리 적용</button><p>{wb.runtime.owned ? "Bridge가 관리하는 실행 서버" : "기존 서버에 연결"} · {wb.runtime.baseUrl}</p>{wb.runtime.attachCommand && <p>대화형 터미널·외부 편집기: <code>{wb.runtime.attachCommand}</code></p>}</details>}
     </section>;
-  const sessionsPanel = <section className="sessions-panel"><div className="view-heading"><div><span className="eyebrow">CONVERSATIONS</span><h2>세션</h2></div><span className="muted">{wb.sessions.length}개</span></div><div className="toolbar"><input aria-label="세션 검색" value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder="세션 검색" /><button disabled={!wb.connected} onClick={() => void perform(() => wb.refreshSessions(sessionSearch))}>검색</button><button disabled={!wb.connected} onClick={() => void perform(createSession)}>새 세션</button></div>
+  const sessionsPanel = <section className="sessions-panel"><div className="view-heading"><div><span className="eyebrow">CONVERSATIONS</span><h2>세션</h2></div><span className="muted">{wb.sessions.length}개</span></div><div className="toolbar"><input aria-label="세션 검색" value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder="세션 검색" /><button disabled={!wb.connected} onClick={() => void perform(() => wb.refreshSessions(sessionSearch))}>검색</button><button disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 세션</button></div>
       <p className="muted session-scope">목록과 검색은 상위 세션 기준입니다. 하위 작업이 있는 세션은 화살표로 펼칠 수 있습니다.</p>
       <SessionTree key={wb.connectionRevision} sessions={wb.sessions.filter(session => !sessionSearch || `${session.title} ${session.directory}`.toLowerCase().includes(sessionSearch.toLowerCase()))} selectedId={wb.sessionId} statuses={wb.state.statuses} directory={wb.directory} childIndex={wb.childIndex} ensureChildren={wb.ensureChildren} loadChildren={wb.loadChildren} onSelect={session => void perform(() => selectSession(session))}
         actions={session => sessionActions(session, "list")} renamingId={renaming?.place === "list" ? renaming.id : undefined} onRename={(session, title) => void perform(() => renameSession(session, title))} onRenameEnd={() => setRenaming(null)} />
@@ -324,7 +338,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         {!turn.user && <TurnCopy messages={turn.messages} />}
       </div>)}
       {waiting && <p className="waiting muted">응답을 준비하는 중…</p>}
-      {!turns.length && !waiting && <div className="empty-chat"><span className="empty-chat-icon" aria-hidden="true">↗</span><h3>브라우저에서 바로 시작하세요</h3><p>페이지를 읽고, 작업을 맡기고,<br />결과를 이곳에서 확인하세요.</p>{!wb.sessionId && <button className="primary" disabled={!wb.connected} onClick={() => void perform(createSession)}>새 대화 시작</button>}</div>}
+      {!turns.length && !waiting && <div className="empty-chat"><span className="empty-chat-icon" aria-hidden="true">↗</span><h3>브라우저에서 바로 시작하세요</h3><p>페이지를 읽고, 작업을 맡기고,<br />결과를 이곳에서 확인하세요.</p>{!wb.profiles.length ? <button className="primary" onClick={() => void chrome.runtime.openOptionsPage()}>실행 환경 추가</button> : !wb.sessionId && <button className="primary" disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 대화 시작</button>}</div>}
       {questions.map(request => <QuestionCard key={request.id} request={request} onReply={replyQuestion} />)}{permissions.map(request => <PermissionCard key={request.id} request={request} onReply={replyPermission} />)}
       {artifact && <aside className="artifact-preview" aria-label="파일 결과"><div className="section-heading"><h3>{artifact.filename}</h3><button onClick={() => setArtifact(undefined)}>닫기</button></div>{artifact.text !== undefined && <pre>{artifact.text.slice(0, 20000)}</pre>}<a href={artifact.url} download={artifact.filename}>파일 내려받기</a>{artifact.text !== undefined && <button onClick={() => void navigator.clipboard.writeText(artifact.text)}>내용 복사</button>}</aside>}
       </div>
@@ -333,7 +347,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         <textarea ref={composer} aria-label="메시지" value={draft} onChange={event => setDraft(event.target.value)} onCompositionStart={() => { composeActive.current = true; }} onCompositionEnd={() => { composeActive.current = false; }} onKeyDown={event => { if (event.key === "ArrowDown" && !composeActive.current) { const option = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".suggestions button"); if (option) { event.preventDefault(); option.focus(); return; } } if (!composeActive.current && shouldSubmit(event.nativeEvent)) { event.preventDefault(); void send(); } }} placeholder="어떤 작업을 할까요?  @참조  /커맨드" rows={3} />
         {mention !== undefined && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성"><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>{wb.agents.filter(item => !item.hidden && item.name.includes(mention)).map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
         {draft.startsWith("/") && !draft.includes(" ") && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)].filter(name => name.includes(draft.slice(1))).slice(0, 15).map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>}
-        <div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-actions"><span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span><div><button className="primary" disabled={!wb.connected || !wb.sessionId || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
+        <div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-actions"><span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span><div><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
           <button type="button" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
             if(stopLock.current)return;
             stopLock.current=true;setStopping(true);

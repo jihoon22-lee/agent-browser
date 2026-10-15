@@ -717,3 +717,28 @@ it('review R8 releases the Stop guard after abort failure so the user can retry'
   await act(async()=>button('응답 중단').click());
   expect(test.post.mock.calls.filter(([path])=>path.endsWith('/abort'))).toHaveLength(2);
 });
+
+it("creates a session and sends the first message when none is selected", async () => {
+  sessions.length = 0;
+  const storage = await chrome.storage.local.get(); delete (storage as any)["recentSession:native"];
+  test.post.mockImplementation(async (path: string) => {
+    if (path === "/session") { const created = { id: "ses-new", title: "새 대화", directory: "/fixture", time: { updated: 2 } }; sessions.push(created); return created; }
+    return true;
+  });
+  (chrome as any).windows = { getLastFocused: vi.fn(async () => ({ id: 4, focused: true, tabs: [{ id: 31, active: true, url: "https://mail.test" }] })) };
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+  runtime.mockImplementation(async (message: any) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+  await render(); await draftValue("첫 요청"); await act(async () => button("보내기").click());
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  const sends = test.post.mock.calls.filter(([path]) => path.endsWith("/prompt_async"));
+  expect(sends.map(([path]) => path)).toEqual(["/session/ses-new/prompt_async"]);
+  expect(JSON.stringify(sends[0]![1].parts)).toContain("첫 요청");
+});
+
+it("offers to add a runtime profile when none exists", async () => {
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+  runtime.mockImplementation(async (message: any) => message.method === "profile.list" ? { ok: true, result: { profiles: [], defaultProfileId: null } } : original(message));
+  await render();
+  await act(async () => button("실행 환경 추가").click());
+  expect(chrome.runtime.openOptionsPage).toHaveBeenCalled();
+});
