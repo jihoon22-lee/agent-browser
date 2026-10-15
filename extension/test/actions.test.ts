@@ -246,3 +246,23 @@ it("uses another visible point when the center of a control is covered", async (
     expect(clicked).toEqual([25, 20]);
   } finally { delete (document as any).elementFromPoint; vi.restoreAllMocks(); }
 });
+
+it("fills rich editors through insertText so their own state updates", async () => {
+  document.body.innerHTML = `<div contenteditable="true" aria-label="본문">이전</div>`;
+  const editor = document.querySelector("div")!;
+  Object.defineProperty(editor, "isContentEditable", { get: () => true });
+  const exec = vi.fn((_command: string, _ui: boolean, value: string) => { editor.textContent = value; return true; });
+  (document as any).execCommand = exec;
+  try {
+    const result = await runAction("fill", { ref: refOf("본문"), text: "새 내용", generation: 10 });
+    expect(exec).toHaveBeenCalledWith("insertText", false, "새 내용");
+    expect(result).toMatchObject({ verified: { method: "insertText", matches: true } });
+  } finally { delete (document as any).execCommand; }
+});
+
+it("refuses to fill buttons and checkboxes", async () => {
+  document.body.innerHTML = `<input type="submit" value="보내기"><input type="checkbox" aria-label="동의">`;
+  await expect(runAction("fill", { ref: refOf("보내기"), text: "x", generation: 10 })).rejects.toMatchObject({ code: "ELEMENT_NOT_INTERACTABLE" });
+  await expect(runAction("fill", { ref: refOf("동의"), text: "x", generation: 10 })).rejects.toMatchObject({ code: "ELEMENT_NOT_INTERACTABLE" });
+  expect((document.querySelector("input[type=submit]") as HTMLInputElement).value).toBe("보내기");
+});

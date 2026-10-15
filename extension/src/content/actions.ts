@@ -4,7 +4,7 @@ import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
-import { pressKey } from "./keyboard";
+import { INPUT_TEXT, pressKey } from "./keyboard";
 import { cancellationError, cancelCommands, withCommandCancellation, type CommandScope } from "./cancellation";
 
 export function cancelUpTo(generation: number) { cancelCommands({ generation }); }
@@ -167,6 +167,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const text = String(p.text ?? "");
       if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
         if (el instanceof HTMLInputElement && el.type === 'file') throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','File upload is not supported by browser_fill; it cannot read a local path or choose a file.');
+        if (el instanceof HTMLInputElement && !INPUT_TEXT.has(el.type)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', el.type === 'checkbox' || el.type === 'radio' ? 'browser_fill only replaces text. Use browser_select with checked for this control.' : 'browser_fill only replaces text. Use browser_click for buttons.');
         if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field is read-only.");
         el.focus();
         nativeSet(el, text);
@@ -177,11 +178,18 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         return { executed: true, verified: isPassword ? { matches: value === text } : { ...verificationValue(value), matches: value === text } };
       }
       if ((el as HTMLElement).isContentEditable) {
-        (el as HTMLElement).focus();
-        el.textContent = text;
-        el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
-        const value = el.textContent ?? "";
-        return { executed: true, verified: { ...verificationValue(value), matches: value === text } };
+        const host = el as HTMLElement, doc = host.ownerDocument;
+        host.focus();
+        const range = doc.createRange(); range.selectNodeContents(host);
+        const selection = doc.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
+        // Editors such as ProseMirror, Draft or Slate update their own model from insertText.
+        const inserted = typeof doc.execCommand === "function" && doc.execCommand("insertText", false, text);
+        if (!inserted) {
+          host.textContent = text;
+          host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
+        }
+        const value = host.textContent ?? "";
+        return { executed: true, verified: { ...verificationValue(value), matches: value === text, method: inserted ? "insertText" : "replace" } };
       }
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_fill only works on text inputs, textareas and editable areas.");
     }
