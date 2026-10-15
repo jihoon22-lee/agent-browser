@@ -34,6 +34,8 @@ export interface SessionStore {
 }
 const KEY = 'commandSession';
 const TTL = 10 * 60000;
+const SNAPSHOT_EPOCH_MS = Date.UTC(2026, 0, 1);
+const LEGACY_SEQUENCE = 1e12;
 type State = {
     requests: Record<string, Entry>;
     cancelled: Record<string, number>;
@@ -102,7 +104,8 @@ function storeOver(read: () => Promise<State | undefined>, write: (s: State) => 
         }),
         isCancelled: (id, p) => transaction(s => !!s.cancelled['req:' + id] || !!s.cancelled['op:' + p.operationId] || (!p.operationId && typeof p.generation === 'number' && p.generation <= s.legacyGeneration), false),
         hasSnapshot: (operationId,tabId,documentId) => transaction(s => Object.values(s.bindings).some(b => b.frames.some(f => f.operationId === operationId && (tabId === undefined || f.tabId === tabId) && (documentId === undefined || f.documentId === documentId))), false),
-        nextSnapshotId: () => transaction(s => { s.sequence = Math.max(s.sequence + 1, Date.now() * 1000); return s.sequence; }),
+        // Deciseconds since 2026 stay short in base 36 and still increase after session storage is cleared.
+        nextSnapshotId: () => transaction(s => { const floor = Math.floor((Date.now() - SNAPSHOT_EPOCH_MS) / 100); s.sequence = s.sequence >= LEGACY_SEQUENCE ? floor : Math.max(s.sequence + 1, floor); return s.sequence; }),
         bind: (id, frames) => transaction(s => { s.bindings[id] = { at: Date.now(), frames }; }),
         binding: (id, frameId) => transaction(s => s.bindings[id]?.frames.find(f => f.frameId === frameId), false),
     };

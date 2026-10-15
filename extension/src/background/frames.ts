@@ -30,9 +30,9 @@ export function frameRouter(api: ChromeApi, store: SessionStore) {
         }
     }
     async function bound(tabId: number, ref?: string, operationId?: string, frameRef?: string) {
-        const match=frameRef===undefined?undefined:/^s(\d+)f(\d+)$/.exec(frameRef);
+        const match=frameRef===undefined?undefined:/^s([0-9a-z]+)f(\d+)$/.exec(frameRef);
         if(frameRef!==undefined&&!match)throw new ProtocolError('INVALID_PARAMS','Use frameRef returned by browser_snapshot.');
-        const explicit=match?{snapshotId:Number(match[1]),frameId:Number(match[2])}:undefined;
+        const explicit=match?{snapshotId:parseInt(match[1]!,36),frameId:Number(match[2])}:undefined;
         const element=ref?RefTable.parse(ref):undefined;
         if(explicit&&ref&&(!element||explicit.snapshotId!==element.snapshotId||explicit.frameId!==element.frameId))
             throw new ProtocolError('INVALID_PARAMS','frameRef and element ref must belong to the same snapshot frame.');

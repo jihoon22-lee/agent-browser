@@ -24,7 +24,7 @@ function world() {
         captureVisibleTab: async () => 'data:image/png;base64,AQID',
         listFrames: async (id) => frames.get(id) ?? [],
         inject: async (_id, frame) => frame,
-        sendToFrame: async (tabId, frame, msg: any) => { sent.push({ tabId, frame, msg }); return { ok: true, result: msg.method === 'snapshot' ? { frameId: frame.frameId, elements: [{ ref: `s${msg.params.snapshotId}f${frame.frameId}e1`, name: 'Button' }], text: { content: 'fixture' } } : { executed: true, verified: { clicked: true } } }; },
+        sendToFrame: async (tabId, frame, msg: any) => { sent.push({ tabId, frame, msg }); return { ok: true, result: msg.method === 'snapshot' ? { frameId: frame.frameId, elements: [{ ref: `s${msg.params.snapshotId.toString(36)}f${frame.frameId}e1`, name: 'Button' }], text: { content: 'fixture' } } : { executed: true, verified: { clicked: true } } }; },
         onTabUpdated: fn => { updates.add(fn); return () => { updates.delete(fn); }; },
         onTabActivated: fn => { activations.add(fn); return () => { activations.delete(fn); }; },
         onTabRemoved: () => () => {}, onCreatedNavigationTarget: () => () => {},
@@ -39,7 +39,7 @@ it('waits in the snapshot-bound child document, rejects navigation and conflicti
     const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://other.test/mail'});
     const h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
     const frameRef=snap.frames[1].frameRef;
-    expect(frameRef).toBe(`s${snap.snapshotId}f7`);
+    expect(frameRef).toBe(`s${snap.snapshotId.toString(36)}f7`);
     await expect(h(request('browser.wait',{frameRef:'',text:'body'}))).rejects.toMatchObject({code:'INVALID_PARAMS'});
     await h(request('browser.wait',{frameRef,text:'body',urlIncludes:'/mail'}));
     expect(w.sent.at(-1)?.frame.documentId).toBe('child');

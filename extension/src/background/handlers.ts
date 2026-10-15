@@ -2,7 +2,7 @@ import { ProtocolError, type Req, type RpcError } from '../protocol/envelope';
 import type { SessionStore, Outcome } from './dedupe';
 import type { ChromeApi, FrameInfo } from './chrome-api';
 import { frameRouter, type FrameError } from './frames';
-import { RefTable } from '../content/refs';
+import { RefTable, snapshotToken } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
@@ -177,7 +177,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 try {
                     await frames.inject(tabId,f);
                     const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
-                    const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotId}f${f.frameId}`};
+                    const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotToken(snapshotId)}f${f.frameId}`};
                     const length=jsonBytes(withDocument);
                     if(length>SNAPSHOT_RESPONSE_BYTES)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
                     if(used+length>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
