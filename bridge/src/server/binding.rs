@@ -16,11 +16,16 @@ pub fn same_directory(cwd: &str, directory: &str, wsl: bool) -> bool {
             Some(format!("/{}", path.replace('\\', "/")))
         });
         if let Some(path) = linux { return path.trim_end_matches('/') == directory.trim_end_matches('/'); }
-        // A directory under /mnt/<drive> is a Windows folder: the proxy sees its drive path,
-        // and the drive compares without case like Windows does.
-        return crate::runtime::windows_to_wsl(cwd).is_some_and(|path| path.trim_end_matches('/').eq_ignore_ascii_case(directory.trim_end_matches('/')));
+        // A directory under /mnt/<drive> is a Windows folder: the proxy sees its drive path.
+        return crate::runtime::windows_to_wsl(cwd).is_some_and(|path| path.trim_end_matches('/') == directory.trim_end_matches('/'));
     }
-    let normal = |path: &str| path.replace('/', "\\").trim_end_matches('\\').to_lowercase();
+    // OpenCode keys its instances by the directory string, and busy sessions are read with the
+    // request's exact string; only the drive letter and separators may differ.
+    let normal = |path: &str| {
+        let mut path = path.replace('/', "\\").trim_end_matches('\\').to_string();
+        if path.as_bytes().get(1) == Some(&b':') { path[..1].make_ascii_lowercase(); }
+        path
+    };
     normal(cwd) == normal(directory)
 }
 
@@ -50,14 +55,16 @@ mod tests {
     use super::*;
     #[test]
     fn directories_compare_like_their_platform() {
-        assert!(same_directory(r"C:\Work\App\", r"c:\work\app", false), "Windows paths ignore case and a trailing separator");
+        assert!(same_directory(r"C:\Work\App\", r"c:\Work\App", false), "the drive letter and a trailing separator do not matter");
+        assert!(!same_directory(r"C:\Work\App", r"C:\work\app", false), "OpenCode keys instances by the exact string; a differently cased folder is another instance");
         assert!(same_directory("C:/Work/App", r"C:\Work\App", false));
         assert!(!same_directory(r"C:\Work\App2", r"C:\Work\App", false));
         assert!(same_directory(r"\\wsl.localhost\Ubuntu\home\u\app", "/home/u/app", true));
         assert!(same_directory(r"\\wsl$\Ubuntu\home\u\app\", "/home/u/app", true));
         assert!(!same_directory(r"\\wsl.localhost\Ubuntu\home\u\App", "/home/u/app", true), "Linux paths keep case");
         assert!(same_directory(r"C:\Users\U\Work", "/mnt/c/Users/U/Work", true), "a WSL directory on a Windows drive is the proxy's drive path");
-        assert!(same_directory(r"c:\users\u\work\", "/mnt/c/Users/U/Work/", true), "drive paths ignore case like the drive itself");
+        assert!(same_directory(r"c:\Users\U\Work\", "/mnt/c/Users/U/Work/", true), "the drive letter and a trailing separator do not matter");
+        assert!(!same_directory(r"C:\users\u\work", "/mnt/c/Users/U/Work", true), "folder case is kept");
         assert!(!same_directory(r"C:\Users\U\Work2", "/mnt/c/Users/U/Work", true));
         assert!(!same_directory(r"C:\Windows\System32", "/home/u/app", true), "an unmapped WSL cwd never binds");
         assert!(!same_directory("", "/home/u/app", true));

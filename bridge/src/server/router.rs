@@ -202,12 +202,24 @@ async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: 
     if !wants_request && !wants_operation { return Ok((args.clone(), false)); }
     let Some(bound) = super::binding::resolve(state, caller).await else { return Ok((args.clone(), false)); };
     let mut args = if args.is_object() { args.clone() } else { json!({}) };
-    if wants_request { args["requestId"] = json!(bound.id); return Ok((args, false)); }
+    if wants_request {
+        // A request that already has an operation adds new tabs to it, as an explicit caller would.
+        match (&bound.operation, action) { (Some(operation), Some("new")) => args["operationId"] = json!(operation), _ => args["requestId"] = json!(bound.id) }
+        return Ok((args, false));
+    }
     let (operation, created) = match bound.operation {
         Some(operation) => (operation, false),
         None if page_tool => {
             let attached = Box::pin(run(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}))).await;
-            match attached.operation_id.clone() { Some(id) if attached.ok => (id, true), _ => return Err(attached) }
+            let Some(id) = attached.operation_id.clone().filter(|_| attached.ok) else { return Err(attached) };
+            // Never write on a page the model has not seen: return the attached page instead.
+            if tools::class_of(name, &args) == CommandClass::Write {
+                let mut held = ToolOutcome::rejected(name, Some(&id), RpcError::new(ErrorCode::StaleElement, Retry::Safe,
+                    "This request's tab was just attached and the action did not run. Review the attached snapshot, then repeat the action."));
+                held.data = attached.data; held.created_operation = true;
+                return Err(held);
+            }
+            (id, true)
         }
         None => return Ok((args, false)),
     };

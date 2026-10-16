@@ -62,6 +62,8 @@ impl Ext {
                                         json!({"snapshotId": 1, "url": "http://127.0.0.1/x", "frames": [], "tabs": [], "tabId": params["tabId"]})
                                     }
                                     "browser.tabs.list" => json!({"tabs": []}),
+                                    "browser.tabs.create" => json!({"tabId": 77, "url": params["url"], "title": "new", "active": false, "attachable": true}),
+                                    "browser.press" => json!({"executed": true, "verified": {"urlChanged": false, "domChanged": false}}),
                                     "browser.click" => json!({"executed": true, "verified": {"urlChanged": false, "domChanged": true}}),
                                     _ => json!({}),
                                 };
@@ -210,4 +212,25 @@ async fn cancelling_an_implicit_attach_releases_the_new_operation() {
     call(&mut mcp, "tool.cancel", json!({"requestId": request.id()})).await;
     let next = tool(&mut mcp, "browser_tabs", json!({"action":"attach","requestId":"req"})).await;
     assert_eq!(next["ok"], true, "the cancelled call's operation must not hold the request: {next}");
+}
+
+#[tokio::test]
+async fn first_id_less_write_returns_the_attached_page_instead_of_running() {
+    let f = setup(false).await;
+    let mut mcp = proxy(&f, Some("rid-now"), DIR).await;
+    let held = tool(&mut mcp, "browser_press", json!({"key":"Enter"})).await;
+    assert_eq!((held["ok"].clone(), held["executed"].clone(), held["error"]["code"].clone()), (json!(false), json!("no"), json!("STALE_ELEMENT")), "{held}");
+    assert!(held["operationId"].is_string() && !held["data"]["snapshot"].is_null(), "the model gets the page it has not seen: {held}");
+    assert!(!f.ext.methods().iter().any(|m| m == "browser.press"), "nothing was pressed on an unseen page");
+    let repeated = tool(&mut mcp, "browser_press", json!({"key":"Enter"})).await;
+    assert_eq!((repeated["ok"].clone(), repeated["operationId"].clone()), (json!(true), held["operationId"].clone()), "{repeated}");
+}
+
+#[tokio::test]
+async fn id_less_new_joins_the_bound_operation() {
+    let f = setup(false).await;
+    let mut mcp = proxy(&f, Some("rid-now"), DIR).await;
+    let read = tool(&mut mcp, "browser_snapshot", json!({})).await;
+    let opened = tool(&mut mcp, "browser_tabs", json!({"action":"new","url":"http://127.0.0.1/y"})).await;
+    assert_eq!((opened["ok"].clone(), opened["operationId"].clone()), (json!(true), read["operationId"].clone()), "{opened}");
 }
