@@ -93,3 +93,12 @@ test("R07 a query returns only the matching row's control, whose ref works at on
   await expect(page.locator("#s2")).toHaveText("취소됨");
   await expect(page.locator("#s1")).toHaveText("배송중");
 });
+
+test("R08 a click whose script navigates 0.8s later returns the arrived page", async () => {
+  const page = await world.open("late-nav.html");
+  const attached = await world.ok("browser_tabs", { action: "attach", tabId: await world.tabId(page) });
+  const button = all(attached.data.snapshot).find(e => e.name === "잠시 후 이동")!;
+  const clicked = await world.ok("browser_click", { operationId: attached.operationId, ref: button.ref });
+  expect(clicked.verified).toMatchObject({ navigated: true, lateNavigation: true });
+  expect(clicked.data.snapshot.url).toContain("detail.html");
+});

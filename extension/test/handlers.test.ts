@@ -616,3 +616,29 @@ it('reads a committed page without waiting for slow subresources to finish loadi
     expect(Date.now() - started).toBeLessThan(2500);
     expect(result.loading).toBe(true);
 });
+
+it('reports a JS navigation that starts after the observation window', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'click') {
+            setTimeout(() => { (w.tabs.get(1) as any).pendingUrl = 'https://example.test/late'; }, 300);
+            return { ok: true, result: { executed: true, verified: { urlChanged: false, domChanged: false } } };
+        }
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.click', { ref }))).resolves.toMatchObject({ verified: { urlChanged: true, navigated: true, lateNavigation: true } });
+});
+
+it('does not hold a click that changed nothing for long', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => msg.kind === 'cmd' && msg.method === 'click'
+        ? { ok: true, result: { executed: true, verified: { urlChanged: false, domChanged: false } } } : original(tabId, frame, msg);
+    const started = Date.now();
+    const result: any = await h(request('browser.click', { ref }));
+    expect(result.verified).toEqual({ urlChanged: false, domChanged: false });
+    expect(Date.now() - started).toBeLessThan(2500);
+});
