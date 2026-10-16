@@ -207,7 +207,7 @@ switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTT
 ## 결과에 붙는 스냅샷·탭 목록과 출력 예산 (2026-10-15)
 
 - **ref 형식:** `s<36진 snapshotId>f<frameId>e<index>`, frameRef는 `s<36진>f<frameId>`다. snapshotId는 2026-01-01 이후 0.1초 단위로 단조 증가한다. 이전 10진 ref는 바인딩이 없으므로 STALE_ELEMENT로 거부된다.
-- **결과에 붙는 스냅샷(`data.snapshot`):** 다음 경우 Bridge가 같은 operation으로 `browser.snapshot`(`maxChars:1500`, `settleMs:6000`)을 추가로 실행해 결과에 붙인다. 실패하면 `data.snapshotError{code,message}`가 붙는다.
+- **결과에 붙는 스냅샷(`data.snapshot`):** 다음 경우 Bridge가 같은 operation으로 `browser.snapshot`(`maxChars:1500`, `settleMs:6000`, `maxElements:40`)을 추가로 실행해 결과에 붙인다. 요소가 더 있으면 `elementsNextOffset`으로 이어 읽는다. 실패하면 `data.snapshotError{code,message}`가 붙는다.
   - `browser_click`이 성공하고 `verified.urlChanged`·`verified.domChanged` 중 하나가 true이거나 작업 탭이 새 탭으로 옮겨 갔을 때
   - `browser_press`·`browser_navigate` 성공, `browser_tabs` attach·switch 성공, URL을 준 new 성공
   - 미실행(`executed:"no"`)인 쓰기 도구의 `STALE_ELEMENT` 실패. 복귀한 탭의 관찰 요구(needsObservation)도 이 스냅샷으로 해소된다.
@@ -217,6 +217,8 @@ switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTT
 - **이동:** goto·back·forward·reload는 snapshot 없이 실행한다. 복귀 탭의 needsObservation 제한은 Bridge가 계속 적용한다.
 - **이동을 일으킨 클릭:** click·press의 content 응답이 끊긴 뒤 1초 안에 그 frame의 문서가 바뀌었거나 탭에 pendingUrl이 있으면 `{executed:true, verified:{navigated:true, urlChanged:true}}`로 보고한다. 문서가 그대로면 기존처럼 unsafe EXECUTION_UNKNOWN이다.
 - **생성 직후 취소:** attach·standalone new가 operation을 만든 뒤 결과의 후속 읽기 중 취소되면 Bridge가 그 operation을 CANCELLED로 정리하고 확장에 browser.cancel을 보낸다.
+- **스냅샷 검색(`query`, 80자 이하):** 대소문자·공백 차이를 무시하고, 그 말이 들어간 본문 줄(줄마다 300자)과 요소만 돌려준다. 요소는 이름·값·href 또는 같은 행(`tr`·`li`·`[role=row]`·`[role=listitem]`·`article`, 없으면 부모. 페이지 전체는 행으로 보지 않음)의 글자가 일치하면 고른다. 비밀번호 칸의 값은 검색 대상이 아니다. 각 frame에 정규화한 `query`를 되돌려 주고, 일치가 없으면 `limits`에 `query-no-match`가 붙는다. 커서(`offset`/`elementOffset`/`frameOffset`)는 걸러낸 결과 안에서 움직이며, ref는 일반 snapshot과 같이 바인딩된다.
+- **늦은 스크립트 이동:** click·press 결과가 `urlChanged:false, domChanged:false`이면 background가 탭의 `pendingUrl`·URL 변화를 최대 1초 지켜본다. 바뀌면 `verified`에 `urlChanged:true, navigated:true, lateNavigation:true`를 넣고, 위 규칙대로 도착 페이지 스냅샷이 붙는다.
 - **출력 예산(UTF-8 바이트):** content frame당 24,000B, background snapshot frame 묶음 28,000B, extract 28,000B, MCP 최종 텍스트 40,000B. OpenCode는 한 줄 도구 결과가 한도(관찰상 약 50KB)를 넘으면 통째로 파일로 돌리므로, 최종 텍스트가 40,000B를 넘으면 먼저 `data.snapshot`만 빼고 `snapshotError.tooLarge`를 붙인다. 그래도 넘으면 읽기는 `ok:false`·`details.tooLarge`로 더 작은 `maxChars`를 안내하고, 실행된 동작은 `ok`·`executed`를 유지한 채 "반복하지 말고 다시 읽으라"는 `data.note`로 바꾼다.
 - **스냅샷 요소:** `role:"clickable"`은 의미 있는 태그·역할 없이 포인터 커서만 있는 최외곽 영역이다. `state`에는 expanded/collapsed/selected/pressed/mixed/current/required/readonly/invalid/focused가 들어간다. ARIA checkbox·switch는 `checked`, 범위 위젯은 `value`다. 같은 role·name이 여러 개면 같은 이름의 다른 요소를 포함하지 않는 가장 큰 조상의 텍스트를 `context`(≤80자)로 붙인다. 이름은 자식 `img alt`·SVG `title`·자식 `aria-label`도 쓴다. DOM 기반이며 Accessibility Tree와 같지 않다.
 - **끝난 requestId:** 진행 중인 패널 요청이 없는데 requestId를 주면 "이미 끝난 요청"이라는 OPERATION_INVALID다(대기 안내가 아니다).
