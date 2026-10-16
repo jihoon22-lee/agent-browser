@@ -48,3 +48,10 @@ it("never matches the hidden value of a password field", () => {
   expect(result.elements).toEqual([]);
   expect(result.limits).toContain("query-no-match");
 });
+
+it("returns the part of a long line around the match", () => {
+  document.body.innerHTML = `<p>${"앞부분 설명입니다. ".repeat(80)}주문 A-1002 처리 완료 ${"뒷부분 설명입니다. ".repeat(80)}</p>`;
+  const result = takeSnapshot({ ...opts, query: "a-1002" });
+  expect(result.text.content).toContain("A-1002");
+  expect(result.text.content.length).toBeLessThanOrEqual(302);
+});

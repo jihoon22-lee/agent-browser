@@ -79,6 +79,14 @@ function rowText(el: Element): string {
   return ((row as HTMLElement).innerText ?? row.textContent ?? "").slice(0, 300);
 }
 
+/** Up to 300 characters of a matching line, centred on the first match so it is always shown. */
+function aroundMatch(line: string, query: string): string {
+  if (line.length <= 300) return line;
+  const at = Math.max(0, line.toLowerCase().replace(/\s+/g, " ").indexOf(query));
+  const start = Math.max(0, Math.min(at - 100, line.length - 298));
+  return `${start > 0 ? "…" : ""}${line.slice(start, start + 298)}${start + 298 < line.length ? "…" : ""}`;
+}
+
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number; query?: string }): FrameSnapshot {
   const query = o.query ? fold(o.query).slice(0, 80) : "";
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
@@ -93,7 +101,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   };
   // A query keeps only the lines that mention it, so a long page costs only what was asked for.
   const fullText = query
-    ? pageText(document).split("\n").filter(line => fold(line).includes(query)).map(line => line.slice(0, 300)).join("\n")
+    ? pageText(document).split("\n").filter(line => fold(line).includes(query)).map(line => aroundMatch(line, query)).join("\n")
     : pageText(document);
   const text = sliceText(fullText, o.offset, Math.min(o.maxChars, 20000));
   // JSON escaping can make a character several times larger on the wire.

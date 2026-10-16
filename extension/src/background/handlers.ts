@@ -120,7 +120,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
      * reply that saw no change at all is checked, and only for this observable tab condition. */
     async function lateNavigation(tabId: number, startUrl: string | undefined, result: any, signal: AbortSignal) {
         const verified = result?.verified;
-        if (startUrl === undefined || verified?.urlChanged !== false || verified?.domChanged !== false) return result;
+        // A click reports whether anything changed; a key press reports a form submission instead.
+        const unchanged = verified?.urlChanged === false && verified?.domChanged === false;
+        if (startUrl === undefined || !(unchanged || verified?.submitted === true)) return result;
         const deadline = Date.now() + LATE_NAVIGATION_MS;
         while (Date.now() < deadline) {
             const tab = await api.tabsGet(tabId).catch(() => undefined);

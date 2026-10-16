@@ -16,3 +16,12 @@ it("does not spend an element slot on a pointer region that holds its own contro
   document.body.innerHTML = `<div style="cursor:pointer"><span>상품 B</span><button>담기</button></div>`;
   expect(takeSnapshot(opts).elements.map(e => [e.role, e.name])).toEqual([["button", "담기"]]);
 });
+
+it("keeps a pointer card whose only control is hidden or disabled", () => {
+  document.body.innerHTML = `<div style="cursor:pointer"><span>상품 C</span><button style="display:none">담기</button></div>
+    <div style="cursor:pointer"><span>상품 D</span><button disabled>품절</button></div>`;
+  const names = takeSnapshot(opts).elements.filter(e => e.role === "clickable").map(e => e.name);
+  expect(names).toHaveLength(2);
+  expect(names[0]).toContain("상품 C");
+  expect(names[1]).toContain("상품 D");
+});
