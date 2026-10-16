@@ -9,6 +9,8 @@ import { trackCreatedTabs } from './tab-routing';
 const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
 const SNAPSHOT_RESPONSE_BYTES = 28_000;
+/** How long a click or key press that changed nothing is watched for a script navigation. */
+const LATE_NAVIGATION_MS = 1000;
 const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
 const asError = (e: unknown) => e instanceof ProtocolError ? e : new ProtocolError('INTERNAL', String(e));
@@ -69,6 +71,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             } catch { aborted(run.controller.signal); return null; }
         };
         const inputBefore = tracksTabs ? await inputState() : null;
+        const startUrl = tracksTabs ? (await api.tabsGet(tabId).catch(() => undefined))?.url : undefined;
         await check(run.req, run.controller.signal);
         if (WRITE.has(run.req.method))
             run.started = true;
@@ -109,9 +112,25 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     ...children.openedTabs.map(tab => ({tabId:tab.tabId,reason:inputBefore && inputAfter ? 'user-intervention' : 'source-unavailable'})),
                 ]};
             }
-            return {...result,...children};
+            return lateNavigation(tabId, startUrl, {...result,...children}, run.controller.signal);
         }
-        return response.result;
+        return lateNavigation(tabId, startUrl, response.result, run.controller.signal);
+    }
+    /** A script may navigate a moment after the click's own observation window closed. Only a
+     * reply that saw no change at all is checked, and only for this observable tab condition. */
+    async function lateNavigation(tabId: number, startUrl: string | undefined, result: any, signal: AbortSignal) {
+        const verified = result?.verified;
+        // A click reports whether anything changed; a key press reports a form submission instead.
+        const unchanged = verified?.urlChanged === false && verified?.domChanged === false;
+        if (startUrl === undefined || !(unchanged || verified?.submitted === true)) return result;
+        const deadline = Date.now() + LATE_NAVIGATION_MS;
+        while (Date.now() < deadline) {
+            const tab = await api.tabsGet(tabId).catch(() => undefined);
+            if (!tab) return result;
+            if (tab.pendingUrl || tab.url !== startUrl) return { ...result, verified: { ...verified, urlChanged: true, navigated: true, lateNavigation: true } };
+            await interruptible(new Promise(r => setTimeout(r, 100)), signal);
+        }
+        return result;
     }
     async function requireSnapshot(p:Record<string,unknown>, tabId?:number, documentId?:string) {
         if (!(await store.hasSnapshot(String(p.operationId),tabId,documentId)))
@@ -240,7 +259,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             return {snapshotId,loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
-                note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results.'};
+                note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results. Pass query to read only matching lines, rows and elements.'};
         }
         if (req.method === 'browser.navigate') {
             const action = p.action ?? 'goto';

@@ -531,3 +531,26 @@ async fn attach_lists_open_tabs_and_a_failed_switch_offers_them_again() {
     assert_eq!(missed["error"]["code"], "TAB_NOT_FOUND");
     assert_eq!(missed["data"]["openTabs"].as_array().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn follow_up_snapshots_ask_for_fewer_elements_than_a_full_read() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut ext, "extension", &cfg.token, "cli-1").await;
+    let mcp = mcp_client(serve.port, &cfg.token, "follow-cap").await;
+    let task = tokio::spawn(async move { let mut mcp = mcp; tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await });
+    let mut snapshot_params = None;
+    let mut task = task;
+    loop {
+        tokio::select! {
+            done = &mut task => { done.unwrap(); break; }
+            env = recv(&mut ext) => if let Envelope::Req { id, method, params, .. } = env {
+                if method == "browser.snapshot" { snapshot_params = Some(params.clone()); }
+                let reply = default_reply(&method, &params).map(|v| Envelope::ok(id.clone(), v))
+                    .unwrap_or_else(|_| Envelope::ok(id.clone(), json!({"tabs": []})));
+                send_raw(&mut ext, &reply.to_text()).await;
+            },
+        }
+    }
+    assert_eq!(snapshot_params.unwrap()["maxElements"], 40);
+}

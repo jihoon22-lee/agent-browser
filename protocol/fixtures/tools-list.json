@@ -17,7 +17,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "requestId": {
@@ -76,7 +76,7 @@
     "name": "browser_bookmarks"
   },
   {
-    "description": "Re-read page text and elements with refs (DOM-based); actions already return one. Continue with offset/elementOffset/frameOffset.",
+    "description": "Re-read page text and elements with refs (DOM-based); actions already return one. query keeps only matching lines, rows and elements. Continue with offset/elementOffset/frameOffset.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -98,7 +98,11 @@
           "type": "integer"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
+          "type": "string"
+        },
+        "query": {
+          "maxLength": 80,
           "type": "string"
         }
       },
@@ -121,7 +125,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "url": {
@@ -141,7 +145,7 @@
           "type": "boolean"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
@@ -162,7 +166,7 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
@@ -190,7 +194,7 @@
           "type": "boolean"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "option": {
@@ -226,7 +230,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
@@ -256,7 +260,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
@@ -280,7 +284,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "refGone": {
@@ -328,7 +332,7 @@
           "type": "integer"
         },
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         },
         "ref": {
@@ -349,7 +353,7 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "From attach/new; omit in a panel request",
+          "description": "From attach/new",
           "type": "string"
         }
       },

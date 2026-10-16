@@ -34,7 +34,7 @@ type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 struct Ext { outbound: tokio::sync::mpsc::UnboundedSender<(Envelope, tokio::sync::oneshot::Sender<Envelope>)>, seen: Seen }
 
 impl Ext {
-    async fn connect(port: u16, token: &str, slow_second_snapshot: bool) -> Self {
+    async fn connect(port: u16, token: &str, slow_first_snapshot: bool) -> Self {
         let mut ws = ws_connect(port, "/extension", Some(EXT)).await.unwrap();
         hello(&mut ws, "extension", token, "cli-1").await;
         let (outbound, mut requests) = tokio::sync::mpsc::unbounded_channel::<(Envelope, tokio::sync::oneshot::Sender<Envelope>)>();
@@ -58,7 +58,7 @@ impl Ext {
                                 let value = match method.as_str() {
                                     "browser.tabs.get" => json!({"tabId": params["tabId"].as_i64().unwrap_or(11), "url": "http://127.0.0.1/x", "title": "x", "active": true, "attachable": true}),
                                     "browser.snapshot" => {
-                                        if slow_second_snapshot && snapshots.fetch_add(1, Ordering::SeqCst) == 1 { tokio::time::sleep(std::time::Duration::from_secs(3)).await; }
+                                        if slow_first_snapshot && snapshots.fetch_add(1, Ordering::SeqCst) == 0 { tokio::time::sleep(std::time::Duration::from_secs(3)).await; }
                                         json!({"snapshotId": 1, "url": "http://127.0.0.1/x", "frames": [], "tabs": [], "tabId": params["tabId"]})
                                     }
                                     "browser.tabs.list" => json!({"tabs": []}),
@@ -96,13 +96,13 @@ impl Ext {
 
 struct Fixture { _home: tempfile::TempDir, _serve: agent_browser_bridge::server::ServeHandle, port: u16, token: String, statuses: Arc<Mutex<Value>>, ext: Ext }
 
-async fn setup(slow_second_snapshot: bool) -> Fixture {
+async fn setup(slow_first_snapshot: bool) -> Fixture {
     let (home, serve, cfg) = start_test_serve().await;
     let statuses = Arc::new(Mutex::new(json!({"ses_panel":{"type":"busy"}})));
     let base = fake_opencode(statuses.clone()).await;
     agent_browser_bridge::runtime::Manager::new(home.path().into(), serve.port)
         .record_runtime_for_tests(json!({"id":"p","name":"P","kind":"windows","directory":DIR,"executable":"C:\\o\\opencode.exe"}), "rid-now", &base);
-    let ext = Ext::connect(serve.port, &cfg.token, slow_second_snapshot).await;
+    let ext = Ext::connect(serve.port, &cfg.token, slow_first_snapshot).await;
     ext.begin().await;
     let port = serve.port;
     Fixture { _home: home, _serve: serve, port, token: cfg.token, statuses, ext }
@@ -202,11 +202,11 @@ async fn stopped_client_block_still_applies() {
 async fn cancelling_an_implicit_attach_releases_the_new_operation() {
     let f = setup(true).await;
     let mut mcp = proxy(&f, Some("rid-now"), DIR).await;
-    // The implicit attach's own snapshot answers at once; the requested snapshot is held back.
+    // The implicit attach in front of a read takes no snapshot of its own; the read is held back.
     let request = Envelope::req("tool.call", json!({"name":"browser_snapshot","arguments":{}}));
     send_raw(&mut mcp, &request.to_text()).await;
     for _ in 0..200 {
-        if f.ext.methods().iter().filter(|m| *m == "browser.snapshot").count() >= 2 { break; }
+        if f.ext.methods().iter().any(|m| m == "browser.snapshot") { break; }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     call(&mut mcp, "tool.cancel", json!({"requestId": request.id()})).await;
@@ -233,4 +233,14 @@ async fn id_less_new_joins_the_bound_operation() {
     let read = tool(&mut mcp, "browser_snapshot", json!({})).await;
     let opened = tool(&mut mcp, "browser_tabs", json!({"action":"new","url":"http://127.0.0.1/y"})).await;
     assert_eq!((opened["ok"].clone(), opened["operationId"].clone()), (json!(true), read["operationId"].clone()), "{opened}");
+}
+
+#[tokio::test]
+async fn an_implicit_attach_before_a_read_reads_the_page_once() {
+    let f = setup(false).await;
+    let mut mcp = proxy(&f, Some("rid-now"), DIR).await;
+    let read = tool(&mut mcp, "browser_snapshot", json!({})).await;
+    assert_eq!(read["ok"], true, "{read}");
+    assert_eq!(f.ext.methods().iter().filter(|m| *m == "browser.snapshot").count(), 1);
+    assert!(!f.ext.methods().iter().any(|m| m == "browser.tabs.list"), "openTabs of a discarded attach result are not read");
 }
