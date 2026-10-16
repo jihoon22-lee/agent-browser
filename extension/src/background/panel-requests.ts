@@ -109,7 +109,7 @@ export function panelRequests(call:Call) {
       await chrome.storage.local.set({[KEY]:lease});
       try {
         check(lease.profileId,generation);
-        await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null});
+        await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null,profileId:lease.profileId,sessionId:lease.sessionId,directory:lease.directory});
         check(lease.profileId,generation);
       }
       catch(error){

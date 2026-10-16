@@ -74,6 +74,19 @@ pub async fn hello_repair(ws: &mut Ws, role: &str, token: &str, client_id: &str,
     call(ws, "auth.prove", serde_json::json!({"authVersion":1,"proof":proof})).await
 }
 
+/// Like `hello`, with extra hello parameters (for example an MCP proxy's runtimeId/cwd).
+pub async fn hello_with(ws: &mut Ws, role: &str, token: &str, client_id: &str, extra: serde_json::Value) -> Envelope {
+    use agent_browser_bridge::auth;
+    let nonce = auth::nonce();
+    let mut params = serde_json::json!({"authVersion":1,"role":role,"clientId":client_id,"clientNonce":nonce,"clientVersion":"test","repair":false});
+    if let (Some(target), Some(fields)) = (params.as_object_mut(), extra.as_object()) { for (key, value) in fields { target.insert(key.clone(), value.clone()); } }
+    let challenge = call(ws, "auth.hello", params).await;
+    let Envelope::Res { ok: true, result: Some(challenge), .. } = challenge else { return challenge };
+    let server_nonce = challenge["serverNonce"].as_str().unwrap();
+    let proof = auth::proof(token, &auth::transcript("client", role, client_id, &nonce, server_nonce, false));
+    call(ws, "auth.prove", serde_json::json!({"authVersion":1,"proof":proof})).await
+}
+
 pub fn err_code(env: &Envelope) -> Option<ErrorCode> {
     match env { Envelope::Res { ok: false, error: Some(e), .. } => Some(e.code), _ => None }
 }

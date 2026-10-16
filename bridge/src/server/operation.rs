@@ -47,8 +47,16 @@ struct GateInner {
     stopped_clients: std::collections::HashMap<String, std::time::Instant>,
 }
 
+/// Which runtime session owns a panel request, as reported by the panel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestScope { pub profile: String, pub session: String, pub directory: String }
+
+/// The open scoped panel request and its current operation, if any.
+#[derive(Clone, Debug)]
+pub struct BoundRequest { pub id: String, pub client: String, pub tab: Option<i64>, pub scope: RequestScope, pub operation: Option<String> }
+
 #[derive(Clone)]
-struct RequestTarget { id: String, client: String, tab: Option<i64> }
+struct RequestTarget { id: String, client: String, tab: Option<i64>, scope: Option<RequestScope> }
 
 impl OperationGate {
     pub fn attach(&self, tab_id: i64, client_id: &str) -> Result<Operation, RpcError> {
@@ -56,14 +64,27 @@ impl OperationGate {
     }
 
     pub fn begin_request(&self, id: &str, client: &str, tab: Option<i64>) -> Result<(), RpcError> {
+        self.begin_scoped_request(id,client,tab,None)
+    }
+
+    pub fn begin_scoped_request(&self, id: &str, client: &str, tab: Option<i64>, scope: Option<RequestScope>) -> Result<(), RpcError> {
         let mut g=self.inner.lock().unwrap();
         if let Some(r)=&g.request {
             if r.id==id && r.client==client { return Ok(()); }
             return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another user request owns the browser. Wait for it to finish or stop it."));
         }
         if g.current.is_some() { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Finish or stop the previous browser operation before starting a new request.")); }
-        g.request=Some(RequestTarget{id:id.into(),client:client.into(),tab});
+        g.request=Some(RequestTarget{id:id.into(),client:client.into(),tab,scope});
         Ok(())
+    }
+
+    /// The open panel request and its current operation, when the panel said which
+    /// runtime session owns it. Binding still needs the caller-side guard in `binding`.
+    pub fn bound_request(&self) -> Option<BoundRequest> {
+        let g=self.inner.lock().unwrap();
+        let r=g.request.as_ref()?; let scope=r.scope.clone()?;
+        let operation=g.current.as_ref().filter(|o| o.state==OpState::Active && o.client_id==r.client).map(|o| o.id.clone());
+        Some(BoundRequest{id:r.id.clone(),client:r.client.clone(),tab:r.tab,scope,operation})
     }
 
     fn request_matches(g:&GateInner,id:Option<&str>,client:&str)->Result<(),RpcError> {
@@ -337,6 +358,20 @@ mod tests {
     use super::*;
     use crate::rpc::ErrorCode;
 
+    #[test]
+    fn a_scoped_request_reports_its_scope_and_current_operation() {
+        let g=OperationGate::default();
+        let scope=RequestScope{profile:"p".into(),session:"ses_1".into(),directory:"/w".into()};
+        g.begin_scoped_request("req","browser",Some(12),Some(scope.clone())).unwrap();
+        let bound=g.bound_request().unwrap();
+        assert_eq!((bound.id.as_str(),bound.tab,&bound.scope,bound.operation.as_deref()),("req",Some(12),&scope,None));
+        let op=g.attach_request(12,"browser",Some("req")).unwrap();
+        assert_eq!(g.bound_request().unwrap().operation,Some(op.id));
+        g.end_request("req","browser").unwrap();
+        assert!(g.bound_request().is_none(),"an ended request binds nothing");
+        g.begin_request("plain","browser",Some(12)).unwrap();
+        assert!(g.bound_request().is_none(),"an unscoped request binds nothing");
+    }
     #[test]
     fn a_finished_request_id_is_explained_instead_of_reported_as_busy() {
         let g = OperationGate::default();

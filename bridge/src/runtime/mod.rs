@@ -1,6 +1,7 @@
 mod diagnostics;
 pub mod profile;
 mod process;
+pub(crate) use process::windows_to_wsl;
 mod storage;
 mod interop;
 #[cfg(all(test, unix))]
@@ -40,6 +41,9 @@ struct ReservedPort<'a> { store: &'a Store, profile: String, port: u16 }
 impl Drop for ReservedPort<'_> { fn drop(&mut self) { let _ = self.store.update(|config| { config.reservations.remove(&self.profile); Ok(()) }); } }
 
 type DocCache = std::sync::Mutex<std::collections::HashSet<String>>;
+
+/// Busy sessions of a managed runtime directory, for guarded panel request binding.
+pub struct RuntimeSessions { pub profile_id: String, pub wsl: bool, pub busy: Vec<String> }
 
 pub struct Manager {
     home: PathBuf,
@@ -196,7 +200,12 @@ impl Manager {
         let exe = std::env::current_exe().map_err(|_| failure("Cannot resolve the Bridge executable"))?.to_string_lossy().into_owned();
         let exe = if profile.kind == Kind::Wsl { process::windows_to_wsl(&exe).ok_or_else(|| invalid("The Bridge executable must be on a Windows drive for WSL profiles"))? } else { exe };
         let mut mcp_env = json!({"AGENT_BROWSER_HOME":self.home.to_string_lossy(), "AGENT_BROWSER_PORT":self.port.to_string()});
-        if profile.kind == Kind::Wsl { mcp_env["WSLENV"] = json!("AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w"); }
+        // The proxy names this launch so the server can bind a guarded panel request.
+        let runtime_id = env.get("AGENT_BROWSER_RUNTIME_ID").cloned();
+        if let Some(id) = &runtime_id { mcp_env["AGENT_BROWSER_RUNTIME_ID"] = json!(id); }
+        if profile.kind == Kind::Wsl {
+            mcp_env["WSLENV"] = json!(if runtime_id.is_some() { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w:AGENT_BROWSER_RUNTIME_ID/w" } else { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w" });
+        }
         mcp.insert("browser".into(), json!({"type":"local","command":[exe,"mcp"],"environment":mcp_env,"enabled":true}));
         env.insert("OPENCODE_CONFIG_CONTENT".into(), overlay.to_string()); Ok(())
     }
@@ -305,6 +314,34 @@ impl Manager {
             }
         }
         Ok(json!({"stoppedProfiles":stopped,"skippedExternal":skipped,"errors":errors}))
+    }
+    /// Integration tests: store a profile and a runtime record owned by this test process.
+    #[doc(hidden)]
+    pub fn record_runtime_for_tests(&self, profile: Value, instance: &str, base_url: &str) {
+        let profile: Profile = serde_json::from_value(profile).expect("test profile");
+        let identity = process::identity(std::process::id()).expect("test process identity");
+        let record = RuntimeRecord{profile_id:profile.id.clone(),instance:instance.into(),base_url:base_url.into(),username:"opencode".into(),password:"test".into(),launcher:identity,server:None,wsl_owner_file:None,version:None,bridge_port:Some(self.port),bridge_executable:None,wsl_keeper:None};
+        self.store.update(|config| { config.profiles.insert(profile.id.clone(), profile); Ok(()) }).expect("store test profile");
+        self.persist(&record).expect("store test runtime");
+    }
+
+    /// Busy sessions of one OpenCode directory on the runtime launched as `instance`.
+    /// A proxy from an earlier launch finds no record and gets an error.
+    pub async fn busy_sessions(&self, instance: &str, directory: &str) -> Result<RuntimeSessions, RpcError> {
+        let config = self.store.read()?;
+        let record = config.runtimes.values().find(|record| record.instance == instance).cloned()
+            .ok_or_else(|| invalid("This MCP proxy does not belong to the current runtime launch"))?;
+        let wsl = config.profiles.get(&record.profile_id).is_some_and(|profile| profile.kind == Kind::Wsl);
+        let mut url = reqwest::Url::parse(&format!("{}/session/status", record.base_url.trim_end_matches('/'))).map_err(|_| failure("Invalid managed runtime URL"))?;
+        url.query_pairs_mut().append_pair("directory", directory);
+        let response = http_client(&record.base_url)?.get(url).basic_auth(&record.username, Some(&record.password)).send().await
+            .map_err(|_| failure("Cannot read the runtime's session status"))?;
+        if !response.status().is_success() { return Err(failure("The runtime refused the session status request")); }
+        let statuses = limited_json(response, 1 << 20).await?;
+        let busy = statuses.as_object().map(|map| map.iter()
+            .filter(|(_, status)| matches!(status["type"].as_str(), Some("busy" | "retry")))
+            .map(|(id, _)| id.clone()).collect()).unwrap_or_default();
+        Ok(RuntimeSessions { profile_id: record.profile_id, wsl, busy })
     }
     pub async fn status(&self, id: &str) -> Result<Value, RpcError> {
         let profile = self.profile(id)?;
@@ -705,6 +742,37 @@ async fn limited_json(mut response: reqwest::Response, limit: usize) -> Result<V
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn busy_sessions_reads_only_the_current_launch_and_directory() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut buffer = vec![0; 4096];
+                let read = stream.read(&mut buffer).await.unwrap();
+                let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+                log.lock().unwrap().push(request.lines().next().unwrap_or_default().to_string());
+                let authorized = request.to_ascii_lowercase().contains("authorization: basic");
+                let body = r#"{"ses_a":{"type":"busy"},"ses_b":{"type":"idle"},"ses_c":{"type":"retry","attempt":1,"message":"x","next":1}}"#;
+                let response = if authorized { format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body) } else { "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into() };
+                stream.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"windows","directory":"C:\\w","executable":"C:\\o\\opencode.exe"})).unwrap();
+        manager.store.update(|config| { config.profiles.insert("p".into(), profile); Ok(()) }).unwrap();
+        manager.persist(&RuntimeRecord{profile_id:"p".into(),instance:"rid-now".into(),base_url:base,username:"opencode".into(),password:"private".into(),launcher:process::identity(std::process::id()).unwrap(),server:None,wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None}).unwrap();
+        let found = manager.busy_sessions("rid-now","C:\\w").await.unwrap();
+        assert_eq!((found.profile_id.as_str(),found.wsl),("p",false));
+        let mut busy = found.busy; busy.sort(); assert_eq!(busy,vec!["ses_a","ses_c"]);
+        assert!(seen.lock().unwrap()[0].starts_with("GET /session/status?directory=C%3A%5Cw "),"{:?}",seen.lock().unwrap());
+        assert!(manager.busy_sessions("rid-old","C:\\w").await.is_err(),"a previous launch's proxy must not bind");
+    }
+
+    #[tokio::test]
     async fn health_verifies_the_api_document_once_per_server_version() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -782,6 +850,19 @@ mod tests {
         let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
         assert_eq!(value["model"],"fixture/model"); assert_eq!(value["provider"]["fixture"]["options"]["secret"],"private"); assert_eq!(value["plugin"],json!(["fixture"])); assert_eq!(value["mcp"]["existing"]["enabled"],false);
         assert_eq!(value["mcp"]["browser"]["environment"]["AGENT_BROWSER_PORT"],"54321");
+    }
+    #[test]
+    fn overlay_hands_the_runtime_id_to_the_browser_mcp() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),54321);
+        let kinds: &[(&str,bool)] = if cfg!(windows) { &[("windows",false),("wsl",true)] } else { &[("windows",false)] };
+        for (kind,wsl) in kinds {
+            let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":kind,"distribution":"Ubuntu","directory":"/fixture","executable":"/fixture/opencode"})).unwrap();
+            let mut env = BTreeMap::from([("AGENT_BROWSER_RUNTIME_ID".to_string(),"rid-1".to_string())]);
+            manager.overlay(&profile,&mut env).unwrap();
+            let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+            assert_eq!(value["mcp"]["browser"]["environment"]["AGENT_BROWSER_RUNTIME_ID"],"rid-1");
+            assert_eq!(value["mcp"]["browser"]["environment"]["WSLENV"].as_str().is_some_and(|v| v.split(':').any(|e| e=="AGENT_BROWSER_RUNTIME_ID/w")),*wsl);
+        }
     }
 }
 

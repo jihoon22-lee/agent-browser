@@ -1,6 +1,6 @@
 [
   {
-    "description": "list/windows read tabs. attach (no tabId = request's tab) or new (url) starts work with the Browser context requestId; then reuse the returned operationId. Results include a snapshot and openTabs. switch/close/release take operationId; about:blank tabs cannot be closed.",
+    "description": "list/windows read tabs. In a panel request attach/new and page tools may omit requestId and operationId; otherwise attach (no tabId = request's tab) or new (url) with the Browser context requestId, then reuse operationId. Results include a snapshot and openTabs. about:blank tabs cannot be closed.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -17,7 +17,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "requestId": {
@@ -98,13 +98,10 @@
           "type": "integer"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         }
       },
-      "required": [
-        "operationId"
-      ],
       "type": "object"
     },
     "name": "browser_snapshot"
@@ -124,16 +121,13 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "url": {
           "type": "string"
         }
       },
-      "required": [
-        "operationId"
-      ],
       "type": "object"
     },
     "name": "browser_navigate"
@@ -147,7 +141,7 @@
           "type": "boolean"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "ref": {
@@ -156,7 +150,6 @@
         }
       },
       "required": [
-        "operationId",
         "ref"
       ],
       "type": "object"
@@ -169,7 +162,7 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "ref": {
@@ -181,7 +174,6 @@
         }
       },
       "required": [
-        "operationId",
         "ref",
         "text"
       ],
@@ -198,7 +190,7 @@
           "type": "boolean"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "option": {
@@ -210,7 +202,6 @@
         }
       },
       "required": [
-        "operationId",
         "ref"
       ],
       "type": "object"
@@ -235,7 +226,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "ref": {
@@ -244,7 +235,6 @@
         }
       },
       "required": [
-        "operationId",
         "key"
       ],
       "type": "object"
@@ -266,7 +256,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "ref": {
@@ -275,7 +265,6 @@
         }
       },
       "required": [
-        "operationId",
         "direction"
       ],
       "type": "object"
@@ -291,7 +280,7 @@
           "type": "string"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "refGone": {
@@ -312,9 +301,6 @@
           "type": "string"
         }
       },
-      "required": [
-        "operationId"
-      ],
       "type": "object"
     },
     "name": "browser_wait"
@@ -342,7 +328,7 @@
           "type": "integer"
         },
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         },
         "ref": {
@@ -351,7 +337,6 @@
         }
       },
       "required": [
-        "operationId",
         "kind"
       ],
       "type": "object"
@@ -364,13 +349,10 @@
       "additionalProperties": false,
       "properties": {
         "operationId": {
-          "description": "From attach/new",
+          "description": "From attach/new; omit in a panel request",
           "type": "string"
         }
       },
-      "required": [
-        "operationId"
-      ],
       "type": "object"
     },
     "name": "browser_screenshot"

@@ -126,6 +126,10 @@ struct Hello {
     client_id: String,
     #[serde(default)]
     repair: bool,
+    #[serde(default)]
+    runtime_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 type Ws = WebSocketStream<TcpStream>;
@@ -206,8 +210,9 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
             state.broadcast_status();
         }
         Role::Mcp => {
+            let caller = router::Caller { runtime_id: hello.runtime_id.clone(), cwd: hello.cwd.clone() };
             if send_hello_ok(&mut ws, hello_id, &connection_id, false, &hello.client_id).await {
-                serve_mcp(&mut ws, &state).await;
+                serve_mcp(&mut ws, &state, &caller).await;
             }
         }
     }
@@ -410,7 +415,7 @@ fn not_available(id: String) -> Envelope {
     Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
 }
 
-async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
+async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
     use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered};
     let mut pending = FuturesUnordered::new();
     let mut running = std::collections::HashMap::<String, AbortHandle>::new();
@@ -465,18 +470,18 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState) {
                 }
                 let name = params["name"].as_str().unwrap_or_default().to_string();
                 let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-                let attach = name == "browser_tabs" && (arguments["action"] == "attach" || (arguments["action"] == "new" && arguments.get("operationId").is_none()));
                 let (abort, registration) = AbortHandle::new_pair();
                 running.insert(id.clone(), abort);
+                let caller = caller.clone();
                 pending.push(async move {
-                    let result = Abortable::new(router::call_tool(state, &name, arguments), registration).await;
-                    (id, attach, result)
+                    let result = Abortable::new(router::call_tool_as(state, &caller, &name, arguments), registration).await;
+                    (id, result)
                 });
             }
-            Some((id, attach, result)) = pending.next(), if !pending.is_empty() => {
+            Some((id, result)) = pending.next(), if !pending.is_empty() => {
                 running.remove(&id);
                 let Ok(outcome) = result else { continue }; // Dropping the router sends request-scoped browser.cancel.
-                let created = attach && outcome.ok;
+                let created = outcome.created_operation;
                 if created { attached = outcome.operation_id.clone().map(|op| (id.clone(), op)); }
                 let reply = Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"));
                 if !send(ws, &reply).await {
@@ -565,8 +570,13 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             let Some(client)=params["clientId"].as_str().filter(|s|!s.is_empty() && (method=="request.end" || Some(*s)==state.registry.selected_client().as_deref())) else {
                 return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
             };
+            let scope=match (params["profileId"].as_str(),params["sessionId"].as_str(),params["directory"].as_str()) {
+                (Some(p),Some(s),Some(d)) if !p.is_empty() && p.len()<=128 && !s.is_empty() && s.len()<=128 && !d.is_empty() && d.len()<=4096 =>
+                    Some(super::operation::RequestScope{profile:p.into(),session:s.into(),directory:d.into()}),
+                _=>None,
+            };
             let result=if method=="request.begin" {
-                state.ops.begin_request(request,client,params["tabId"].as_i64().filter(|n|*n>0)).map(|_|None)
+                state.ops.begin_scoped_request(request,client,params["tabId"].as_i64().filter(|n|*n>0),scope).map(|_|None)
             } else if params["abort"] == true { state.ops.cancel_request(request,client) }
             else { state.ops.end_request(request,client) };
             match result {

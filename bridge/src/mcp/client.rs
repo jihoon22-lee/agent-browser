@@ -174,10 +174,9 @@ impl ServeClient {
         .map_err(|e| e.to_string())?;
         let client_id = format!("mcp-{}", std::process::id());
         let client_nonce = auth::nonce();
-        let hello = Envelope::req("auth.hello", json!({
-            "authVersion":auth::VERSION,"role":"mcp","clientId":client_id,"clientNonce":client_nonce,
-            "clientVersion":env!("CARGO_PKG_VERSION"),"repair":false
-        }));
+        let hello = Envelope::req("auth.hello", hello_params(&client_id, &client_nonce,
+            std::env::var("AGENT_BROWSER_RUNTIME_ID").ok(),
+            std::env::current_dir().ok().map(|dir| dir.to_string_lossy().into_owned())));
         let challenge = auth_exchange(&mut ws, &hello).await?;
         let server_nonce = challenge["serverNonce"].as_str().unwrap_or_default();
         if challenge["authVersion"].as_u64() != Some(auth::VERSION) || !auth::valid_hex(server_nonce)
@@ -376,9 +375,29 @@ impl ServeClient {
     }
 }
 
+/// A managed runtime starts one proxy per OpenCode directory with that directory as cwd
+/// and passes its per-launch id; the server uses both only to bind a guarded panel request.
+pub(crate) fn hello_params(client_id: &str, client_nonce: &str, runtime_id: Option<String>, cwd: Option<String>) -> Value {
+    json!({
+        "authVersion":auth::VERSION,"role":"mcp","clientId":client_id,"clientNonce":client_nonce,
+        "clientVersion":env!("CARGO_PKG_VERSION"),"repair":false,
+        "runtimeId":runtime_id.filter(|id| !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')),
+        "cwd":cwd.filter(|dir| dir.len() <= 4096),
+    })
+}
+
 #[cfg(test)]
 mod auth_tests {
     use super::*;
+    #[test]
+    fn hello_names_the_runtime_and_directory_only_when_known() {
+        let named = super::hello_params("mcp-1","00",Some("rid".into()),Some("/work".into()));
+        assert_eq!(named["runtimeId"],"rid"); assert_eq!(named["cwd"],"/work"); assert_eq!(named["role"],"mcp");
+        let plain = super::hello_params("mcp-1","00",None,None);
+        assert!(plain["runtimeId"].is_null() && plain["cwd"].is_null());
+        let oversized = super::hello_params("mcp-1","00",Some("x".repeat(65)),None);
+        assert!(oversized["runtimeId"].is_null(),"an implausible runtime id is not sent");
+    }
 
 
     #[tokio::test]

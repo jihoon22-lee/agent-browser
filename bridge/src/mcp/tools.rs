@@ -3,13 +3,13 @@ use serde_json::{json, Value};
 
 pub struct ToolDef { pub name: &'static str, pub description: &'static str, pub schema: Value }
 
-fn op() -> Value { json!({"type":"string","description":"From attach/new"}) }
+fn op() -> Value { json!({"type":"string","description":"From attach/new; omit in a panel request"}) }
 fn r#ref() -> Value { json!({"type":"string","description":"Snapshot ref"}) }
 
 pub fn all() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
-            "list/windows read tabs. attach (no tabId = request's tab) or new (url) starts work with the Browser context requestId; then reuse the returned operationId. Results include a snapshot and openTabs. switch/close/release take operationId; about:blank tabs cannot be closed.",
+            "list/windows read tabs. In a panel request attach/new and page tools may omit requestId and operationId; otherwise attach (no tabId = request's tab) or new (url) with the Browser context requestId, then reuse operationId. Results include a snapshot and openTabs. about:blank tabs cannot be closed.",
             schema: json!({"type":"object","properties":{
                 "action":{"type":"string","enum":["list","windows","attach","new","switch","close","release"]},
                 "tabId":{"type":"integer"},
@@ -31,35 +31,35 @@ pub fn all() -> Vec<ToolDef> {
                 "offset":{"type":"integer","minimum":0},
                 "elementOffset":{"type":"integer","minimum":0},
                 "frameOffset":{"type":"integer","minimum":0}},
-                "required":["operationId"],"additionalProperties":false}) },
+                "additionalProperties":false}) },
         ToolDef { name: "browser_navigate", description: "goto a URL, or back/forward/reload. Waits for load and returns a snapshot.",
             schema: json!({"type":"object","properties":{"operationId":op(),
                 "action":{"type":"string","enum":["goto","back","forward","reload"]},
-                "url":{"type":"string"}},"required":["operationId"],"additionalProperties":false}) },
+                "url":{"type":"string"}},"additionalProperties":false}) },
         ToolDef { name: "browser_click", description: "Click a ref; returns a snapshot if the page changed. newTab opens an http(s) link in a new operation tab.",
-            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean"}},"required":["operationId","ref"],"additionalProperties":false}) },
+            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean"}},"required":["ref"],"additionalProperties":false}) },
         ToolDef { name: "browser_fill", description: "Replace the text of an input, textarea or editable area.",
-            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"text":{"type":"string"}},"required":["operationId","ref","text"],"additionalProperties":false}) },
+            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"text":{"type":"string"}},"required":["ref","text"],"additionalProperties":false}) },
         ToolDef { name: "browser_select", description: "Choose a select option by value or label, or set checked on a checkbox/radio.",
-            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"option":{"type":"string"},"checked":{"type":"boolean"}},"required":["operationId","ref"],"additionalProperties":false}) },
+            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"option":{"type":"string"},"checked":{"type":"boolean"}},"required":["ref"],"additionalProperties":false}) },
         ToolDef { name: "browser_press", description: "Press a key on ref or the focused element (Enter in a field submits); returns a snapshot.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "key":{"type":"string","enum":["Enter","Tab","Escape","Space","Backspace","ArrowUp","ArrowDown"]}},
-                "required":["operationId","key"],"additionalProperties":false}) },
+                "required":["key"],"additionalProperties":false}) },
         ToolDef { name: "browser_scroll", description: "Scroll the page or a ref container.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
-                "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["operationId","direction"],"additionalProperties":false}) },
+                "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["direction"],"additionalProperties":false}) },
         ToolDef { name: "browser_wait", description: "Wait until any of text, textGone, refGone or urlIncludes holds, or timeout.",
             schema: json!({"type":"object","properties":{"operationId":op(),"text":{"type":"string"},"textGone":{"type":"string"},
                 "refGone":{"type":"string"},"urlIncludes":{"type":"string"},"frameRef":{"type":"string"},
                 "timeoutMs":{"type":"integer","minimum":100,"maximum":30000}},
-                "required":["operationId"],"additionalProperties":false}) },
+                "additionalProperties":false}) },
         ToolDef { name: "browser_extract", description: "Extract text, selection or a table (ref, else the first table); continue with nextOffset.",
             schema: json!({"type":"object","properties":{"operationId":op(),"kind":{"type":"string","enum":["text","selection","table"]},
                 "ref":r#ref(),"maxChars":{"type":"integer","minimum":200,"maximum":50000},"offset":{"type":"integer","minimum":0}},
-                "required":["operationId","kind"],"additionalProperties":false}) },
+                "required":["kind"],"additionalProperties":false}) },
         ToolDef { name: "browser_screenshot", description: "PNG of the operation tab; that tab must be active.",
-            schema: json!({"type":"object","properties":{"operationId":op()},"required":["operationId"],"additionalProperties":false}) },
+            schema: json!({"type":"object","properties":{"operationId":op()},"additionalProperties":false}) },
     ]
 }
 
@@ -92,6 +92,16 @@ mod tests {
     fn total_schema_size_stays_small_for_free_models() {
         let size: usize = super::all().iter().map(|t| t.description.len() + t.schema.to_string().len()).sum();
         assert!(size < 4800, "tool definitions grew to {size} chars");
+    }
+
+    #[test]
+    fn page_tools_do_not_require_an_operation_id_in_the_schema() {
+        for tool in super::all() {
+            let required = tool.schema["required"].as_array().cloned().unwrap_or_default();
+            assert!(!required.iter().any(|k| k == "operationId"), "{} still requires operationId", tool.name);
+        }
+        let tabs = super::all().into_iter().find(|t| t.name == "browser_tabs").unwrap();
+        assert!(tabs.description.contains("panel"), "the description must say ids may be omitted in a panel request");
     }
 
     #[test]

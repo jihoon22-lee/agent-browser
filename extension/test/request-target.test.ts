@@ -25,6 +25,13 @@ it('keeps explicit user targets ahead of the captured default in request instruc
   expect(text).toContain('request-a');expect(text).toContain('explicit');expect(text).toContain('31');
   expect(text.length).toBeLessThan(800);
 });
+it("tells the model ids are optional in a panel request but still names them", () => {
+  const text = requestInstructions("req-1", { tabId: 7, windowId: 1 });
+  expect(text.length).toBeLessThan(600);
+  expect(text).toContain("requestId=req-1");
+  expect(text).toMatch(/omit/i);
+  expect(text).toContain("7");
+});
 it('only finishes on the submitted message response, not an old idle state or unrelated session',()=>{
   const lease={requestId:'r',messageId:'m',sessionId:'s'};
   expect(completedRequest(lease,[{info:{role:'assistant',sessionID:'s',parentID:'old',time:{completed:1}},parts:[]}])).toBe(false);
