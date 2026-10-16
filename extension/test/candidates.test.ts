@@ -11,3 +11,8 @@ it("lists outer pointer regions and ARIA widgets that were missing", () => {
     ["clickable", "추천 상품: 노트북 거치대19,900원"], ["searchbox", "상품 검색"], ["textbox", "메모"], ["button", "저장"],
   ]);
 });
+
+it("does not spend an element slot on a pointer region that holds its own control", () => {
+  document.body.innerHTML = `<div style="cursor:pointer"><span>상품 B</span><button>담기</button></div>`;
+  expect(takeSnapshot(opts).elements.map(e => [e.role, e.name])).toEqual([["button", "담기"]]);
+});

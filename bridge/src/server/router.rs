@@ -402,10 +402,14 @@ fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
     }
 }
 
+/// Follow-up snapshots ride on every page-changing action; on busy pages the next step rarely
+/// needs more than the first screenful of controls, and elementsNextOffset says how to read on.
+pub(crate) const FOLLOW_UP_MAX_ELEMENTS: u64 = 40;
+
 async fn follow_up_snapshot(state: &ServerState, op_id: &str) -> Result<Value, RpcError> {
     // A smaller text budget: the elements are what the next action needs. settleMs lets a
     // link click finish committing the next document before it is read.
-    let params = json!({ "maxChars": 1500, "settleMs": 6000 }).as_object().cloned().expect("object");
+    let params = json!({ "maxChars": 1500, "settleMs": 6000, "maxElements": FOLLOW_UP_MAX_ELEMENTS }).as_object().cloned().expect("object");
     let queued = queue_operation_tool(state, op_id, "browser.snapshot", params, CommandClass::Read)?;
     let origin = queued.origin.clone();
     let result = queued.wait(FOLLOW_UP_TIMEOUT).await;

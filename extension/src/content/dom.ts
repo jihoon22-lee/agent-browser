@@ -10,6 +10,8 @@ export function isPointerTarget(el: Element): boolean {
   if (getComputedStyle(el).cursor !== "pointer") return false;
   const parent = el.parentElement;
   if (parent && getComputedStyle(parent).cursor === "pointer") return false;
+  // A card that holds its own button or link is acted on through that control.
+  if (el.querySelector(INTERACTIVE)) return false;
   return !parent?.closest(INTERACTIVE);
 }
 
