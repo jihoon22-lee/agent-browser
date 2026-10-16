@@ -81,3 +81,15 @@ test("R06 a link click that navigates returns the arrived page, not the old one"
   expect(clicked.data.snapshot.url).toContain("search.html");
   expect(all(clicked.data.snapshot).some(e => e.name === "검색어")).toBe(true);
 });
+
+test("R07 a query returns only the matching row's control, whose ref works at once", async () => {
+  const { page, operationId } = await attachShop();
+  const found = await world.ok("browser_snapshot", { operationId, query: "A-1002" });
+  const cancels = all(found.data).filter(e => e.name === "취소");
+  expect(cancels).toHaveLength(1);
+  expect(found.data.frames[0].query).toBe("a-1002");
+  expect(bytes(found)).toBeLessThan(bytes(await world.ok("browser_snapshot", { operationId })) / 2);
+  await world.ok("browser_click", { operationId, ref: cancels[0]!.ref });
+  await expect(page.locator("#s2")).toHaveText("취소됨");
+  await expect(page.locator("#s1")).toHaveText("배송중");
+});

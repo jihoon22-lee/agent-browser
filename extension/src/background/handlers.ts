@@ -240,7 +240,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             return {snapshotId,loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
-                note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results.'};
+                note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results. Pass query to read only matching lines, rows and elements.'};
         }
         if (req.method === 'browser.navigate') {
             const action = p.action ?? 'goto';
