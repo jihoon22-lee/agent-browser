@@ -41,3 +41,10 @@ it("leaves the snapshot unchanged without a query", () => {
   expect(plain.elements.filter(e => e.role === "button")).toHaveLength(2);
   expect(plain.query).toBeUndefined();
 });
+
+it("never matches the hidden value of a password field", () => {
+  document.body.innerHTML = `<label>비밀번호 <input type="password" aria-label="비밀번호" value="hunter2-secret"></label>`;
+  const result = takeSnapshot({ ...opts, query: "hunter2" });
+  expect(result.elements).toEqual([]);
+  expect(result.limits).toContain("query-no-match");
+});

@@ -111,7 +111,9 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
     const pointer = !isInteractive(el) && el.tagName !== "TABLE" && isPointerTarget(el);
     if ((!isInteractive(el) && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
-    if (query && ![accessibleName(el), (el as HTMLInputElement).value ?? "", (el as HTMLAnchorElement).href ?? "", rowText(el)].some(field => fold(String(field)).includes(query))) return;
+    // Match only what a snapshot would show: a password value must not become a search oracle.
+    const shownValue = el instanceof HTMLInputElement && el.type === "password" ? "" : (el as HTMLInputElement).value ?? "";
+    if (query && ![accessibleName(el), shownValue, (el as HTMLAnchorElement).href ?? "", rowText(el)].some(field => fold(String(field)).includes(query))) return;
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;
     const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
