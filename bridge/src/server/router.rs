@@ -210,7 +210,8 @@ async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: 
     let (operation, created) = match bound.operation {
         Some(operation) => (operation, false),
         None if page_tool => {
-            let attached = Box::pin(run(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}))).await;
+            let read = tools::class_of(name, &args) == CommandClass::Read;
+            let attached = Box::pin(run_with(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}), !read)).await;
             let Some(id) = attached.operation_id.clone().filter(|_| attached.ok) else { return Err(attached) };
             // Never write on a page the model has not seen: return the attached page instead.
             if tools::class_of(name, &args) == CommandClass::Write {
@@ -228,6 +229,12 @@ async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: 
 }
 
 async fn run(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> ToolOutcome {
+    run_with(state, caller, name, args, true).await
+}
+
+/// `follow_up=false` skips the attached snapshot and tab list: an implicit attach in front of a
+/// read discards them, and the read itself reads the page.
+async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value, follow_up: bool) -> ToolOutcome {
     let (bound_args, implicit) = match bind_arguments(state, caller, name, args).await { Ok(bound) => bound, Err(failed) => return failed };
     let args = &bound_args;
     let Some(def) = tools::all().into_iter().find(|t| t.name == name) else {
@@ -261,8 +268,10 @@ async fn run(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> 
     };
     let creates = name == "browser_tabs" && (args["action"] == "attach" || (args["action"] == "new" && args.get("operationId").is_none()));
     let mut created = CreatedOperation { state, id: if creates && outcome.ok { outcome.operation_id.clone() } else { None } };
-    add_follow_up_snapshot(state, name, args, &mut outcome).await;
-    if name == "browser_tabs" { add_open_tabs(state, args, &mut outcome).await; }
+    if follow_up {
+        add_follow_up_snapshot(state, name, args, &mut outcome).await;
+        if name == "browser_tabs" { add_open_tabs(state, args, &mut outcome).await; }
+    }
     created.id = None;
     implicit_guard.id = None;
     outcome.created_operation = implicit || (creates && outcome.ok);
