@@ -554,3 +554,20 @@ async fn follow_up_snapshots_ask_for_fewer_elements_than_a_full_read() {
     }
     assert_eq!(snapshot_params.unwrap()["maxElements"], 40);
 }
+
+#[tokio::test]
+async fn resume_requires_a_fresh_snapshot_before_writing() {
+    let (_h, serve, cfg) = start_test_serve().await;
+    let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut ext, "extension", &cfg.token, "cli-1").await;
+    let mcp = mcp_client(serve.port, &cfg.token, "handoff").await;
+    let (mcp, attached) = attach_with_socket(mcp, &mut ext, json!({"action":"attach"})).await;
+    let op = attached["operationId"].clone();
+    assert!(matches!(call(&mut ext, "operation.pause", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    assert!(matches!(call(&mut ext, "operation.resume", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    let (mcp, stale) = call_with_socket(mcp, &mut ext, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await;
+    assert_eq!(stale["error"]["code"], "STALE_ELEMENT", "{stale}");
+    let (mcp, _) = call_with_socket(mcp, &mut ext, "browser_snapshot", json!({"operationId":op})).await;
+    let (_mcp, filled) = call_with_socket(mcp, &mut ext, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await;
+    assert_eq!(filled["ok"], true, "{filled}");
+}

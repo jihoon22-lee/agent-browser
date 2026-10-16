@@ -42,7 +42,7 @@ impl Role {
     /// Methods a connection of this role may call on serve. Anything else is FORBIDDEN_METHOD.
     fn allows(self, method: &str) -> bool {
         match self {
-            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "request.begin" | "request.end" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
+            Role::Extension => matches!(method, "heartbeat" | "status.get" | "operation.abort" | "operation.pause" | "operation.resume" | "request.begin" | "request.end" | "browser.use" | "profile.list" | "profile.save" | "profile.delete" | "runtime.ensure" | "runtime.status" | "runtime.stop" | "doctor.run"),
             Role::Mcp => matches!(method, "tool.call" | "tool.cancel" | "status.get" | "pairing.open"),
         }
     }
@@ -587,6 +587,16 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
                 Err(error)=>Envelope::err(id,error),
             }
         },
+        "operation.pause" | "operation.resume" => {
+            let (Some(operation_id), Some(client)) = (params["operationId"].as_str(), params["clientId"].as_str()) else {
+                return Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "operationId and clientId are required"));
+            };
+            let result = if method == "operation.pause" { state.ops.pause(operation_id, client) } else { state.ops.resume(operation_id, client) };
+            match result {
+                Ok(op) => { state.broadcast_status(); Envelope::ok(id, json!(op)) }
+                Err(error) => Envelope::err(id, error),
+            }
+        }
         "operation.abort" => {
             let operation_id = params.get("operationId").and_then(Value::as_str);
             match state.ops.abort_user(operation_id) {

@@ -286,8 +286,12 @@ fn operation_required(name: &str) -> ToolOutcome {
     )
 }
 
+/// How long a tool call waits while the user holds the browser; below the MCP reply window.
+pub(crate) const HANDOFF_WAIT: Duration = Duration::from_secs(45);
+
 async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schema: &Value) -> ToolOutcome {
     let Some(op_id) = args["operationId"].as_str() else { return operation_required(name) };
+    if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(name, Some(op_id), error); }
     // Forward only what the published schema declares; the gate owns operation, generation and tab.
     let declared = schema["properties"].as_object();
     let params: serde_json::Map<String, Value> = args
@@ -465,6 +469,10 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         let delivered = e.code != ErrorCode::BrowserDisconnected;
         ToolOutcome::failure(NAME, op, delivered, e)
     };
+    // Tab actions inside an operation wait while the user holds the browser, like page tools.
+    if let Some(op_id) = args["operationId"].as_str().filter(|_| matches!(action, "new" | "switch" | "close")) {
+        if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(NAME, Some(op_id), error); }
+    }
     match action {
         "list" | "windows" => match read(if action == "windows" {"browser.windows.list"} else {"browser.tabs.list"}, json!({"windowId":args["windowId"]})).await {
             Ok(data) => ToolOutcome::success(NAME, None, true, Executed::No, Value::Null, data),

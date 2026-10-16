@@ -18,6 +18,8 @@ pub struct Operation {
     pub state: OpState,
     pub current_tab_closed: bool,
     pub needs_observation: bool,
+    /// The user holds the browser: tool calls wait until resume (handoff §16).
+    pub paused: bool,
     #[serde(skip)]
     pub target_epoch: u64,
 }
@@ -32,6 +34,8 @@ pub struct AbortedOperation {
 #[derive(Default)]
 pub struct OperationGate {
     inner: Mutex<GateInner>,
+    /// Wakes calls waiting on a handoff when it is resumed or the operation ends.
+    resumed: tokio::sync::Notify,
 }
 
 #[derive(Default)]
@@ -130,7 +134,9 @@ impl OperationGate {
         if cancel { Self::stop_client(&mut g,client); }
         g.request=None;g.generation+=1;let generation=g.generation;
         let state=if cancel {OpState::Aborted} else {OpState::Released};
-        Ok(Self::finish(&mut g,state).map(|op|AbortedOperation{id:op.id,generation,client_id:op.client_id}))
+        let finished=Self::finish(&mut g,state).map(|op|AbortedOperation{id:op.id,generation,client_id:op.client_id});
+        drop(g); self.resumed.notify_waiters();
+        Ok(finished)
     }
 
     pub fn attach_request(&self, tab_id:i64, client_id:&str, request_id:Option<&str>)->Result<Operation,RpcError> {
@@ -164,7 +170,7 @@ impl OperationGate {
             client_id: client_id.to_string(),
             state: OpState::Active,
             current_tab_closed: tab_id.is_none(),
-            needs_observation:false,target_epoch:0,
+            needs_observation:false,paused:false,target_epoch:0,
         };
         g.current = Some(op.clone());
         Ok(op)
@@ -324,7 +330,46 @@ impl OperationGate {
         let mut g = self.inner.lock().unwrap();
         Self::active(&g, id)?;
         Self::finish(&mut g, OpState::Released);
+        drop(g); self.resumed.notify_waiters();
         Ok(())
+    }
+
+    /// The user takes the browser over; only the operation's own browser may do so.
+    pub fn pause(&self, id: &str, client: &str) -> Result<Operation, RpcError> {
+        let mut g = self.inner.lock().unwrap();
+        Self::active(&g, id)?;
+        let op = g.current.as_mut().filter(|op| op.client_id == client)
+            .ok_or_else(|| RpcError::new(ErrorCode::OperationInvalid, Retry::Never, "Only the browser running this operation can take it over."))?;
+        op.paused = true;
+        Ok(op.clone())
+    }
+
+    /// Hands the browser back. The user may have changed the page, so the next write needs a fresh snapshot.
+    pub fn resume(&self, id: &str, client: &str) -> Result<Operation, RpcError> {
+        let mut g = self.inner.lock().unwrap();
+        Self::active(&g, id)?;
+        let op = g.current.as_mut().filter(|op| op.client_id == client && op.paused)
+            .ok_or_else(|| RpcError::new(ErrorCode::OperationInvalid, Retry::Never, "This operation is not held by this browser."))?;
+        op.paused = false; op.target_epoch += 1; op.needs_observation = true;
+        let op = op.clone();
+        drop(g); self.resumed.notify_waiters();
+        Ok(op)
+    }
+
+    /// Waits while the user holds the operation; returns at once when it is not held.
+    pub async fn wait_until_resumed(&self, id: &str, limit: std::time::Duration) -> Result<(), RpcError> {
+        let deadline = tokio::time::Instant::now() + limit;
+        loop {
+            let notified = self.resumed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if !self.check_active(id)?.paused { return Ok(()); }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Safe,
+                    "The user has taken over this tab. Wait, then try again; take a fresh snapshot before acting.")
+                    .with_details(json!({"handoff": true})));
+            }
+        }
     }
 
     /// Closes the gate first: any later call for this operation gets CANCELLED.
@@ -345,7 +390,9 @@ impl OperationGate {
         if !matches { return None; }
         g.generation += 1;
         let generation = g.generation;
-        Self::finish(&mut g, OpState::Aborted).map(|op| AbortedOperation { id: op.id, generation, client_id: op.client_id })
+        let aborted = Self::finish(&mut g, OpState::Aborted).map(|op| AbortedOperation { id: op.id, generation, client_id: op.client_id });
+        drop(g); self.resumed.notify_waiters();
+        aborted
     }
 
     pub fn current(&self) -> Option<Operation> {
@@ -357,6 +404,44 @@ impl OperationGate {
 mod tests {
     use super::*;
     use crate::rpc::ErrorCode;
+
+    #[tokio::test]
+    async fn paused_calls_wait_then_continue_after_resume() {
+        let g=std::sync::Arc::new(OperationGate::default());
+        let op=g.attach(12,"browser").unwrap();
+        assert!(g.pause(&op.id,"browser").unwrap().paused);
+        let waiting={let g=g.clone();let id=op.id.clone();tokio::spawn(async move{g.wait_until_resumed(&id,std::time::Duration::from_secs(5)).await})};
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(!waiting.is_finished(),"a call waits while the user holds the browser");
+        let resumed=g.resume(&op.id,"browser").unwrap();
+        assert!(!resumed.paused && resumed.needs_observation);
+        assert!(waiting.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn paused_calls_time_out_with_a_handoff_message() {
+        let g=OperationGate::default();let op=g.attach(12,"browser").unwrap();g.pause(&op.id,"browser").unwrap();
+        let error=g.wait_until_resumed(&op.id,std::time::Duration::from_millis(50)).await.unwrap_err();
+        assert_eq!((error.code,error.retry),(ErrorCode::BrowserBusy,Retry::Safe));
+        assert_eq!(error.details["handoff"],true);
+    }
+
+    #[tokio::test]
+    async fn abort_releases_calls_waiting_on_a_handoff() {
+        let g=std::sync::Arc::new(OperationGate::default());let op=g.attach(12,"browser").unwrap();g.pause(&op.id,"browser").unwrap();
+        let waiting={let g=g.clone();let id=op.id.clone();tokio::spawn(async move{g.wait_until_resumed(&id,std::time::Duration::from_secs(5)).await})};
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        g.abort(Some(&op.id));
+        let error=tokio::time::timeout(std::time::Duration::from_secs(1),waiting).await.expect("abort wakes the waiter").unwrap().unwrap_err();
+        assert_eq!(error.code,ErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn only_the_owner_pauses_or_resumes() {
+        let g=OperationGate::default();let op=g.attach(12,"browser").unwrap();
+        assert!(g.pause(&op.id,"other").is_err());
+        assert!(g.resume(&op.id,"browser").is_err(),"resume needs a pause");
+    }
 
     #[test]
     fn a_scoped_request_reports_its_scope_and_current_operation() {
