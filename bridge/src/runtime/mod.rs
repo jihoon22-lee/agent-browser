@@ -1,6 +1,7 @@
 mod diagnostics;
 pub mod profile;
 mod process;
+pub(crate) use process::windows_to_wsl;
 mod storage;
 mod interop;
 #[cfg(all(test, unix))]

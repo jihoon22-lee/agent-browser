@@ -1,6 +1,6 @@
 // Real side panel/OpenCode/MCP transport; tool choices are deterministic fixture output.
 import assert from 'node:assert/strict';
-export async function runPanelJourneys({context,admin,panel,api,sessionId,providerUrl,siteUrl,until,wait,report}) {
+export async function runPanelJourneys({context,admin,panel,api,sessionId,providerUrl,siteUrl,until,wait,report,bound=false}) {
  const tab=(action,args={})=>({tool:'browser_tabs',args:{action,...args}});
  const attach=()=>tab('attach',{requestId:'$requestId'}),fresh=(url,extra={})=>tab('new',{requestId:'$requestId',...(url?{url}:{}),...extra});
  const select=id=>tab('switch',{operationId:'$operationId',tabId:id});
@@ -20,7 +20,9 @@ export async function runPanelJourneys({context,admin,panel,api,sessionId,provid
   {name:'two new tabs switch close and continue',steps:()=>[attach(),next(detail),next(siteUrl+'/journey-detail.html?id=B'),select('$tab:1'),snapshot(),close(),...save('상세 메모')]},
   {name:'new URL from blank active tab',source:'about:blank',steps:()=>[fresh(detail),...save('상세 메모')]},
   {name:'new blank from Chrome new-tab',source:'chrome://newtab/',steps:()=>[fresh(),navigate(detail),...save('상세 메모')]},
-  {name:'missing requestId rejected then new succeeds',steps:()=>[{...tab('new',{url:detail}),error:true},fresh(detail),...save('상세 메모')]},
+  // A managed runtime binds id-less calls to the panel request; otherwise the omission is rejected and corrected.
+  bound?{name:'omitted ids bind to the panel request',steps:()=>[tab('new',{url:detail}),{tool:'browser_snapshot',args:{}},...save('상세 메모')]}
+   :{name:'missing requestId rejected then new succeeds',steps:()=>[{...tab('new',{url:detail}),error:true},fresh(detail),...save('상세 메모')]},
   {name:'wrong requestId rejected then new succeeds',steps:()=>[{...fresh(detail,{requestId:'invalid-fixture-request'}),error:true},fresh(detail),...save('상세 메모')]},
   {name:'user closes link-opened child and original resumes',steps:()=>[attach(),snapshot(),{tool:'browser_click',args:{operationId:'$operationId',ref:'$ref:상품 A · 12000',newTab:true}},select('$opened:2'),snapshot(),snapshot({pause:true}),...save('비교 메모')]},
  ];

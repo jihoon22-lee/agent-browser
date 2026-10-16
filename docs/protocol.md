@@ -32,7 +32,7 @@ JSON 메시지 규약이다. 계약의 원장은 `protocol/` 디렉터리이며 
 `authVersion: 1`인 HMAC-SHA256 상호 인증을 사용한다. 인증 전에 일반 메서드를 보내면
 `AUTH_REQUIRED`로 응답하고 연결을 닫는다.
 
-1. 클라이언트 → `auth.hello`: `{authVersion:1, role, clientId, clientNonce, clientVersion, repair:false}`.
+1. 클라이언트 → `auth.hello`: `{authVersion:1, role, clientId, clientNonce, clientVersion, repair:false}`. 관리 런타임이 띄운 MCP 프록시는 선택 필드 `runtimeId`(기동마다 새로 만드는 `AGENT_BROWSER_RUNTIME_ID`, 64자 이하 영숫자·하이픈)와 `cwd`(프록시의 현재 폴더)를 함께 보낸다. 인증 transcript에는 포함하지 않으며 아래 "패널 요청 자동 결합"에만 쓴다.
    `clientNonce`는 새 연결마다 만드는 64자리 소문자 hex이고, `clientId`는 비어 있지 않은 256바이트 이하 문자열이다.
 2. 서버 → hello 성공 응답: `{authVersion:1, serverName:"agent-browser", serverNonce, serverProof}`.
    `serverNonce`도 연결마다 새로 만드는 64자리 소문자 hex다. 이 응답만으로 연결을 인증하거나
@@ -146,7 +146,16 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 
 ### 패널 요청의 탭 예약
 
-Extension 관리 RPC `request.begin {requestId, clientId, tabId?}`는 선택된 브라우저의 새 사용자 요청을 예약한다. 하나의 요청만 예약할 수 있다. tabId 누락은 안전한 기본 대상이 없음을 뜻하며 attach 시 현재 탭으로 대체하지 않는다. `browser_tabs action=attach`의 선택적 requestId가 예약과 일치해야 한다. 명시적 tabId는 캡처된 기본값보다 우선한다. 기존 CLI는 예약이 없을 때 requestId 없이 attach할 수 있다.
+Extension 관리 RPC `request.begin {requestId, clientId, tabId?, profileId?, sessionId?, directory?}`는 선택된 브라우저의 새 사용자 요청을 예약한다. 하나의 요청만 예약할 수 있다. tabId 누락은 안전한 기본 대상이 없음을 뜻하며 attach 시 현재 탭으로 대체하지 않는다. `browser_tabs action=attach`의 선택적 requestId가 예약과 일치해야 한다. 명시적 tabId는 캡처된 기본값보다 우선한다. 기존 CLI는 예약이 없을 때 requestId 없이 attach할 수 있다.
+
+`profileId`·`sessionId`·`directory`는 이 요청을 처리하는 실행 환경·OpenCode 세션·작업 폴더다. 셋이 모두 있을 때만 요청 범위로 기록하고, 없으면 기존처럼 범위 없는 요청이다.
+
+**패널 요청 자동 결합.** 관리 런타임의 MCP 프록시가 보낸 도구 호출이 아래 조건을 모두 만족하면 Bridge가 생략된 ID를 현재 패널 요청으로 채운다. 조건은 호출마다 다시 확인한다.
+- 프록시의 `runtimeId`가 현재 런타임 기록의 실행 ID와 같다(이전 기동의 프록시는 결합하지 않는다).
+- 그 런타임의 프로필이 요청의 `profileId`와 같고, 프록시 `cwd`가 요청 `directory`와 같다. Windows는 대소문자·구분자·끝 구분자를 무시하고, WSL은 `\\wsl.localhost\<배포판>\…`·`\\wsl$\…`를 Linux 경로로 바꿔 비교한다.
+- Bridge가 그 런타임의 `GET /session/status?directory=<directory>`를 직접 조회했을 때 busy·retry 세션이 요청 세션뿐이다. 같은 서버에 붙은 CLI 세션이나 다른 패널 세션이 작업 중이면 결합하지 않는다.
+
+결합되면 `browser_tabs` attach/new의 `requestId`, switch/close/release와 페이지 도구의 `operationId`를 채운다. 페이지 도구인데 요청에 작업이 아직 없으면 캡처된 탭에 attach한 뒤 실행한다. 이 암묵 attach는 일반 attach와 같은 snapshot·쓰기 안전 규칙을 따르고, 호출이 취소되면 새 작업을 해제한다. 조건이 하나라도 어긋나면 인수를 바꾸지 않으므로 기존 오류(`OPERATION_REQUIRED`, "Missing requestId…", 끝난 요청, 정지 후 30초 차단)가 그대로 난다. 외부 서버 프로필과 사용자가 직접 등록한 CLI MCP는 `runtimeId`가 없어 항상 명시 ID를 쓴다.
 
 `request.end {requestId, clientId, abort?:boolean}`는 정확히 일치하는 예약을 끝내고 content 명령을 취소한다. 정상 완료는 Released, 사용자 Stop(`abort:true`)은 Aborted로 남겨 이전 operation 호출에 CANCELLED를 반환한다. Stop 후 같은 client의 requestId 없는 attach/new는 30초 동안 CANCELLED이며, 명시적인 새 사용자 requestId는 즉시 사용할 수 있다. 이 유한한 중단 표시가 Bridge 재시작이나 30초 이후까지 모든 늦은 호출을 막는다고 보장하지 않는다. MCP tool.cancel/응답 전송 실패의 operation abort는 예약과 캡처한 기본 탭을 유지한다. Extension의 operation.abort는 사용자 중단으로 예약도 끝낸다.
 

@@ -1,3 +1,20 @@
+# 패널 요청 자동 결합(계획 3A) — 2026-10-16 KST, 미배포
+
+[계획](./plans/2026-10-16-request-binding.md)에 따라 `feat/m7-request-binding`에서 7개 과제를 구현했다. 버전 변경·배포는 하지 않았다.
+
+- **실측 근거:** 실제 OpenCode 1.18.29(격리 HOME)는 local MCP를 디렉터리마다 별도 프로세스로 띄우고, cwd는 그 디렉터리이며, 부모 환경변수와 설정 `environment`를 모두 넘긴다.
+- **변경:**
+  - 관리 런타임의 MCP 프록시가 hello에 `runtimeId`(기동별 `AGENT_BROWSER_RUNTIME_ID`)와 `cwd`를 보낸다. `request.begin`이 profileId·sessionId·directory를 기록한다.
+  - Bridge가 호출마다 그 런타임의 `/session/status?directory=`를 직접 읽는다. 실행 ID·프로필·폴더가 같고 작업 중 세션이 요청 세션뿐일 때만 생략된 requestId/operationId를 채운다. 페이지 도구는 필요하면 캡처된 탭에 암묵 attach한다.
+  - 도구 스키마에서 operationId 필수를 없앴고(설명 예산 < 4,800 유지), 패널 지시문을 448자 이하로 줄였다.
+- **Linux:** Rust **194 통과**(새 `request_binding` 7개 포함. 가드 조건을 일부러 깨면 그중 4개가 실패하는 것을 확인), 확장 **436/436**, tsc 통과, Linux Chromium E2E **145 통과 / 3 제외**(J12 등 명시 ID 경로 그대로 통과).
+- **실제 Windows:** Windows Chrome 154 E2E(journeys·reliability) **58 통과**. 실제 OpenCode 1.18.29 + headed 사이드 패널 + 합성 provider:
+  - Windows 프로필: 두 패널 요청 모두 ID 없이 결합, 12개 연속 작업 통과.
+  - WSL 프로필: 첫 실행에서는 결합되지 않고 명시 ID로 복구됐다. debug 로그로 원인을 확인했다. 작업 폴더가 `/mnt/c/…`이면 프록시 cwd가 `C:\…`로 보인다. 이 형식을 `/mnt/<드라이브>`로 바꿔 비교하도록 고친 뒤 두 요청과 연속 작업 모두 결합·통과했다.
+- **미검증:** 실제 모델(Zen)의 ID 생략 행동, `\\wsl.localhost\…` 형식(WSL 리눅스 홈 폴더)의 실제 실행(단위 테스트만), 사용자 배포 PC.
+
+---
+
 # 설치·첫 사용 개선(계획 2) — 2026-10-16 KST, 미배포
 
 [계획](./plans/2026-10-15-install-first-run.md)에 따라 `feat/m6-install-first-run`(계획 1 위에 쌓음)에서 12개 과제를 구현했다. 버전 변경·배포는 하지 않았다.

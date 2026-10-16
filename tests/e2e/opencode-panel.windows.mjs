@@ -134,19 +134,23 @@ await new Promise(r => site.listen(0,'127.0.0.1',r));
     const attach=calls.findLast(p=>p.tool.endsWith('browser_tabs')&&p.state.input.action==='attach');
     const snapshot=calls.find(p=>p.tool.endsWith('browser_snapshot'));
     const turn={index,requestId:lease.requestId,tabId:active.id,attachInput:attach?.state.input,attachState:attach?.state.status,snapshotState:snapshot?.state.status,finish:answer.info.finish,toolCount:calls.length};report.turns.push(turn);
-    assert.equal(attach?.state.input.requestId,lease.requestId,'Attach must carry the current panel requestId');
-    if(!values.model){assert.equal(calls[0]?.state.input.requestId,undefined);assert.equal(calls[0]?.state.status,'error');turn.recoveredMissingId=true;}
+    // A managed runtime binds the id-less first attach to this panel request. A real model may
+    // still pass the requestId it was given; the explicit path must keep working then.
+    turn.boundWithoutId=calls[0]?.state.input.requestId===undefined&&calls[0]?.state.status==='completed';
+    if(turn.boundWithoutId)assert.equal(attach,calls[0]);
+    else {assert.equal(attach?.state.input.requestId,lease.requestId,'Attach must carry the current panel requestId');if(!values.model){assert.equal(calls[0]?.state.status,'error');turn.recoveredMissingId=true;}}
+    if(!values.model)assert(turn.boundWithoutId,'A managed runtime must bind the panel request without copied ids');
     assert.equal(attach?.state.status,'completed');assert.equal(snapshot?.state.status,'completed');
     const outcome=JSON.parse(snapshot.state.output);assert.equal(outcome.ok,true);assert.equal(outcome.data.tabId,active.id);assert.equal(outcome.data.title,'Panel fixture '+suffix.toUpperCase());
     await until(async()=>!(await admin.evaluate(async()=> (await chrome.storage.local.get('panelBrowserRequest')).panelBrowserRequest)),'request released after completion');
     await until(()=>panel(`Array.from(document.querySelectorAll('button')).find(b=>b.textContent==='응답 중단')?.disabled === true`),'Stop disabled after completion');
-    turn.stopDisabled=true;report.checks.push(`Turn ${index+1}: current requestId -> attach -> current page snapshot -> completion -> Stop disabled`);
+    turn.stopDisabled=true;report.checks.push(`Turn ${index+1}: ${turn.boundWithoutId?'bound without ids':'explicit requestId'} -> attach -> current page snapshot -> completion -> Stop disabled`);
   }
   assert.notEqual(report.turns[0].requestId,report.turns[1].requestId);
   assert.notEqual(report.turns[0].tabId,report.turns[1].tabId);
   if(!values.model) {
     for(const page of context.pages())if(page!==admin)await page.close();
-    await runPanelJourneys({context,admin,panel,api,sessionId,providerUrl,siteUrl:`http://127.0.0.1:${site.address().port}`,until,wait,report});
+    await runPanelJourneys({context,admin,panel,api,sessionId,providerUrl,siteUrl:`http://127.0.0.1:${site.address().port}`,until,wait,report,bound:report.turns.every(turn=>turn.boundWithoutId)});
     await fetch(providerUrl+'/test/error');
     await panel(`(()=>{const t=document.querySelector('textarea[aria-label="메시지"]');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(t,'오류 응답 완료 상태 검사');t.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await wait(100);await panel(`document.querySelector('textarea[aria-label="메시지"]').closest('form').requestSubmit()`);
