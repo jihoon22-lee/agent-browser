@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 
 pub struct ToolDef { pub name: &'static str, pub description: &'static str, pub schema: Value }
 
-fn op() -> Value { json!({"type":"string","description":"From attach/new; omit in a panel request"}) }
+fn op() -> Value { json!({"type":"string","description":"From attach/new"}) }
 fn r#ref() -> Value { json!({"type":"string","description":"Snapshot ref"}) }
 
 pub fn all() -> Vec<ToolDef> {
@@ -25,8 +25,9 @@ pub fn all() -> Vec<ToolDef> {
                 "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},
                 "additionalProperties":false}) },
         ToolDef { name: "browser_snapshot", description:
-            "Re-read page text and elements with refs (DOM-based); actions already return one. Continue with offset/elementOffset/frameOffset.",
+            "Re-read page text and elements with refs (DOM-based); actions already return one. query keeps only matching lines, rows and elements. Continue with offset/elementOffset/frameOffset.",
             schema: json!({"type":"object","properties":{"operationId":op(),
+                "query":{"type":"string","maxLength":80},
                 "maxChars":{"type":"integer","minimum":200,"maximum":20000},
                 "offset":{"type":"integer","minimum":0},
                 "elementOffset":{"type":"integer","minimum":0},
@@ -92,6 +93,13 @@ mod tests {
     fn total_schema_size_stays_small_for_free_models() {
         let size: usize = super::all().iter().map(|t| t.description.len() + t.schema.to_string().len()).sum();
         assert!(size < 4800, "tool definitions grew to {size} chars");
+    }
+
+    #[test]
+    fn snapshot_can_be_narrowed_by_a_query() {
+        let snapshot = super::all().into_iter().find(|t| t.name == "browser_snapshot").unwrap();
+        assert_eq!(snapshot.schema["properties"]["query"]["type"], "string");
+        assert!(snapshot.description.contains("query"));
     }
 
     #[test]
