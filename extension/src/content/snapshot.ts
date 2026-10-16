@@ -3,7 +3,7 @@ import { newTable } from "./refs";
 
 export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean; state?: string[]; context?: string };
 export type TextSlice = { content: string; totalChars: number; offset: number; returnedChars: number; truncated: boolean; nextOffset: number | null };
-export type FrameSnapshot = { frameId: number; url: string; title: string; text: TextSlice; elements: SnapElement[]; elementsTruncated: boolean; elementsTotal: number; elementsOffset: number; elementsNextOffset: number | null; limits: string[] };
+export type FrameSnapshot = { frameId: number; url: string; title: string; text: TextSlice; elements: SnapElement[]; elementsTruncated: boolean; elementsTotal: number; elementsOffset: number; elementsNextOffset: number | null; limits: string[]; query?: string };
 
 export function sliceText(full: string, offset: number, maxChars: number): TextSlice {
   const content = full.slice(offset, offset + maxChars);
@@ -70,7 +70,17 @@ function contextOf(el: Element, lookAlikes: Element[]): string {
   return ((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number }): FrameSnapshot {
+const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+/** The row or item a control belongs to, so "A-1002 취소" finds the button in that row. */
+function rowText(el: Element): string {
+  const row = el.closest("tr,li,[role=row],[role=listitem],article") ?? el.parentElement;
+  // The whole page is not a row: without one, only the control's own text counts.
+  if (!row || row === el.ownerDocument.body || row === el.ownerDocument.documentElement) return "";
+  return ((row as HTMLElement).innerText ?? row.textContent ?? "").slice(0, 300);
+}
+
+export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number; query?: string }): FrameSnapshot {
+  const query = o.query ? fold(o.query).slice(0, 80) : "";
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
   const offset = Math.max(0, Math.floor(o.elementOffset ?? 0));
   const table = newTable(o.snapshotId, o.frameId);
@@ -81,7 +91,10 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     if (value.length > size) { limits.add("element-fields-truncated"); return value.slice(0, size); }
     return value;
   };
-  const fullText = pageText(document);
+  // A query keeps only the lines that mention it, so a long page costs only what was asked for.
+  const fullText = query
+    ? pageText(document).split("\n").filter(line => fold(line).includes(query)).map(line => line.slice(0, 300)).join("\n")
+    : pageText(document);
   const text = sliceText(fullText, o.offset, Math.min(o.maxChars, 20000));
   // JSON escaping can make a character several times larger on the wire.
   while (JSON.stringify(text).length > MAX_SNAPSHOT_CHARS / 2 || utf8Bytes(JSON.stringify(text)) > MAX_SNAPSHOT_BYTES / 2) {
@@ -98,6 +111,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
     const pointer = !isInteractive(el) && el.tagName !== "TABLE" && isPointerTarget(el);
     if ((!isInteractive(el) && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
+    if (query && ![accessibleName(el), (el as HTMLInputElement).value ?? "", (el as HTMLAnchorElement).href ?? "", rowText(el)].some(field => fold(String(field)).includes(query))) return;
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;
     const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
@@ -145,6 +159,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     const context = contextOf(nodes[i]!, group);
     if (context && context !== e.name) e.context = clip(context, 80);
   });
+  if (query) { result.query = query; if (!result.elementsTotal && !fullText) limits.add("query-no-match"); }
   while (elements.length && utf8Bytes(JSON.stringify(result)) > MAX_SNAPSHOT_BYTES - 512) {
     elements.pop(); nodes.pop(); limits.add("snapshot-size-limited");
   }

@@ -1,0 +1,43 @@
+import { takeSnapshot } from "../src/content/snapshot";
+import { resetRegistry } from "../src/content/refs";
+const opts = { snapshotId: 1, frameId: 0, maxChars: 4000, offset: 0, checkLayout: false };
+beforeEach(() => { document.body.innerHTML = ""; resetRegistry(); });
+
+const orders = `<h1>주문 목록</h1><p>배송 안내 문단입니다.</p><table>
+  <tr><td>A-1001</td><td>무선 마우스</td><td><button>취소</button></td></tr>
+  <tr><td>A-1002</td><td>키보드</td><td><button>취소</button></td></tr></table>
+  <a href="/help">고객센터</a>`;
+
+it("matches a control by the text of its row", () => {
+  document.body.innerHTML = orders;
+  const result = takeSnapshot({ ...opts, query: "a-1002" });
+  const buttons = result.elements.filter(e => e.role === "button");
+  expect(buttons).toHaveLength(1);
+  expect(buttons[0]!.name).toBe("취소");
+  expect(result.query).toBe("a-1002");
+  expect(result.text.content).toContain("A-1002");
+  expect(result.text.content).not.toContain("배송 안내");
+});
+
+it("matches names, values and links and keeps refs bound like a full snapshot", () => {
+  document.body.innerHTML = orders + `<input aria-label="메모" value="고객센터 문의">`;
+  const result = takeSnapshot({ ...opts, query: "고객센터" });
+  expect(result.elements.map(e => e.name).sort()).toEqual(["고객센터", "메모"]);
+  expect(result.elements.every(e => /^s.+f0e\w+$/.test(e.ref))).toBe(true);
+  expect(result.elementsTotal).toBe(2);
+});
+
+it("reports no match instead of the whole page", () => {
+  document.body.innerHTML = orders;
+  const result = takeSnapshot({ ...opts, query: "없는말" });
+  expect(result.elements).toEqual([]);
+  expect(result.text.content).toBe("");
+  expect(result.limits).toContain("query-no-match");
+});
+
+it("leaves the snapshot unchanged without a query", () => {
+  document.body.innerHTML = orders;
+  const plain = takeSnapshot(opts);
+  expect(plain.elements.filter(e => e.role === "button")).toHaveLength(2);
+  expect(plain.query).toBeUndefined();
+});
