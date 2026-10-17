@@ -256,7 +256,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 throw new ProtocolError('FRAME_UNAVAILABLE', 'Navigation changed the snapshot repeatedly. Wait for the expected page state and take a fresh snapshot.', 'safe');
             }
             await store.bind(snapshotId,bindings.map(f=>({...f,tabId,operationId:String(p.operationId)})));
-            return {snapshotId,loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
+            // A query answers for the whole page: a match in any frame clears every frame's "no match".
+            const queryMatched = typeof p.query === 'string' && p.query.trim()
+                ? results.some((f: any) => (f.elements?.length ?? 0) > 0 || !!f.text?.content) : undefined;
+            if (queryMatched) for (const f of results as any[]) if (Array.isArray(f.limits)) f.limits = f.limits.filter((l: string) => l !== 'query-no-match');
+            return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
                 note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results. Pass query to read only matching lines, rows and elements.'};

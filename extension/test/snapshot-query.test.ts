@@ -55,3 +55,19 @@ it("returns the part of a long line around the match", () => {
   expect(result.text.content).toContain("A-1002");
   expect(result.text.content.length).toBeLessThanOrEqual(302);
 });
+
+it("does not treat a large parent as a row", () => {
+  document.body.innerHTML = `<main><p>주문 A-1003 ${"긴 소개 문단. ".repeat(40)}</p><button>저장</button><button>닫기</button></main>`;
+  const result = takeSnapshot({ ...opts, query: "a-1003" });
+  expect(result.elements.filter(e => e.role === "button")).toEqual([]);
+});
+
+it("reads each row's text once even for many controls in it", () => {
+  document.body.innerHTML = `<ul><li>${Array.from({ length: 300 }, (_, i) => `<a href="#${i}">링크 ${i}</a>`).join(" ")}</li></ul>`;
+  const row = document.querySelector("li")!;
+  const read = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")!.get!;
+  let reads = 0;
+  Object.defineProperty(row, "textContent", { configurable: true, get() { reads++; return read.call(this); } });
+  takeSnapshot({ ...opts, query: "링크 299" });
+  expect(reads).toBeLessThanOrEqual(2);
+});
