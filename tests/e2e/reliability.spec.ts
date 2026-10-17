@@ -117,7 +117,7 @@ test("V01 the work marker shows on the operation tab but never in snapshots or c
 
 test("H01 a held operation makes the agent wait, then look again before continuing", async () => {
   const { page, attached, operationId } = await attachShop();
-  const clientId = await world.adminPage.evaluate(async () => (await chrome.storage.local.get("clientId")).clientId);
+  const clientId = await world.adminPage.evaluate(async () => (await (globalThis as any).chrome.storage.local.get("clientId")).clientId);
   await world.admin("operation.pause", { operationId, clientId });
   await expect(page.locator("#agent-browser-work-marker")).toHaveCount(1);
   const pending = world.mcp.call("browser_snapshot", { operationId });
