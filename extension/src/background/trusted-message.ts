@@ -12,7 +12,7 @@ export function acceptTrustedRequest(msg: any, sender: TrustedSender, ctx: Trust
   const tabId = sender.tab?.id;
   if (msg?.kind !== "trusted-input" || sender.id !== ctx.runtimeId || typeof tabId !== "number" || sender.frameId !== 0) return false;
   if (!ctx.enabled || !ctx.attached(tabId) || typeof msg.requestId !== "string") return false;
-  if (msg.action === "click") return Number.isFinite(msg.x) && Number.isFinite(msg.y) && ctx.running(tabId, msg.requestId, "browser.click");
+  if (msg.action === "click") return Number.isFinite(msg.x) && Number.isFinite(msg.y) && [undefined, "click", "double", "right", "hover"].includes(msg.mode) && ctx.running(tabId, msg.requestId, "browser.click");
   if (msg.action === "key") return typeof msg.key === "string" && ctx.running(tabId, msg.requestId, "browser.press");
   return false;
 }

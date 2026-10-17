@@ -14,3 +14,10 @@ it("accepts only a running click or press of this tab's top frame", () => {
   expect(acceptTrustedRequest(ok, top, { ...ctx, attached: () => false })).toBe(false);
   expect(acceptTrustedRequest({ ...ok, x: Number.NaN }, top, ctx)).toBe(false);
 });
+
+it("accepts pointer modes but not drag or unknown modes through the click action", () => {
+  const ctx = { runtimeId: "ext", running: () => true, enabled: true, attached: () => true };
+  const top = { id: "ext", tab: { id: 1 }, frameId: 0 };
+  for (const mode of ["double", "right", "hover"]) expect(acceptTrustedRequest({ kind: "trusted-input", requestId: "r", action: "click", x: 1, y: 1, mode }, top, ctx)).toBe(true);
+  for (const mode of ["drag", "triple"]) expect(acceptTrustedRequest({ kind: "trusted-input", requestId: "r", action: "click", x: 1, y: 1, mode }, top, ctx)).toBe(false);
+});

@@ -94,13 +94,13 @@ export function trustedInput(api: DebuggerApi) {
         for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !state.operationTabs.includes(tabId)) await release(tabId);
       });
     },
-    click(tabId: number, x: number, y: number) {
-      const base = { x, y, button: "left" as const, clickCount: 1 };
-      return deliver(tabId, [
-        () => api.send(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
-        () => api.send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", ...base }),
-        () => api.send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", ...base }),
-      ]);
+    click(tabId: number, x: number, y: number, mode: ClickMode = "click") {
+      const mouse = (params: object) => () => api.send(tabId, "Input.dispatchMouseEvent", params);
+      const button = mode === "right" ? "right" as const : "left" as const;
+      const steps = [mouse({ type: "mouseMoved", x, y })];
+      if (mode !== "hover") for (const clickCount of mode === "double" ? [1, 2] : [1])
+        steps.push(mouse({ type: "mousePressed", x, y, button, clickCount }), mouse({ type: "mouseReleased", x, y, button, clickCount }));
+      return deliver(tabId, steps);
     },
     key(tabId: number, key: string) {
       const spec = KEYS[key];
@@ -120,6 +120,7 @@ export function trustedInput(api: DebuggerApi) {
   };
 }
 export type TrustedInput = ReturnType<typeof trustedInput>;
+export type ClickMode = "click" | "double" | "right" | "hover";
 
 /** chrome.debugger behind the small interface above. */
 export function chromeDebugger(): DebuggerApi {

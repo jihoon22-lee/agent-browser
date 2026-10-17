@@ -344,3 +344,26 @@ describe("trusted input keeps the keyboard and click safety checks", () => {
     expect(clicks).not.toHaveBeenCalled();
   });
 });
+
+describe("pointer modes", () => {
+  it("hover moves over the element without pressing or clicking it", async () => {
+    document.body.innerHTML = '<a href="#go">메뉴</a>';
+    const link = document.querySelector('a')!;
+    vi.spyOn(link, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+    const seen: string[] = []; for (const t of ['mouseover', 'mouseenter', 'mousemove', 'mousedown', 'click']) link.addEventListener(t, () => seen.push(t));
+    const result: any = await runAction('click', { ref: refOf('메뉴'), mode: 'hover', generation: 10 });
+    expect(seen).toEqual(['mouseover', 'mouseenter', 'mousemove']);
+    expect(result.verified.mode).toBe('hover');
+  });
+  it("double and right clicks send their own event sequences", async () => {
+    document.body.innerHTML = '<div role="button" tabindex="0">항목</div>';
+    const el = document.querySelector('div')!;
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+    const seen: string[] = []; for (const t of ['click', 'dblclick', 'contextmenu']) el.addEventListener(t, () => seen.push(t));
+    await runAction('click', { ref: refOf('항목'), mode: 'double', generation: 10 });
+    expect(seen).toEqual(['click', 'click', 'dblclick']);
+    seen.length = 0;
+    await runAction('click', { ref: refOf('항목'), mode: 'right', generation: 10 });
+    expect(seen).toEqual(['contextmenu']);
+  });
+});

@@ -138,14 +138,17 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     }
     case "click": {
       const el = resolveRef(String(p.ref));
+      const mode = String(p.mode ?? "click");
+      if (!["click", "double", "right", "hover"].includes(mode)) throw new ProtocolError("INVALID_PARAMS", `Unsupported click mode ${mode}.`);
+      const modeNote = mode === "click" ? {} : { mode };
       const point = assertInteractable(el) ?? clickPoint(el);
       const unmark = highlight(el);
       const changes = observeChanges(500, signal);
       void changes.then(unmark, unmark);
       let trustedReason: string | undefined;
       if (p.trusted === true && trustedFrame()) {
-        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY });
-        if (answer.ok) return { executed: true, verified: { ...await changes, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY, ...modeNote });
+        if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted click reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
         if (!answer.ok) trustedReason = answer.reason;
       }
@@ -153,10 +156,22 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
       void changes.catch(() => {});
-      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
-        const down=type.endsWith('down');
-        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:down?1:0,pointerId:1,pointerType:'mouse',isPrimary:true,pressure:down?0.5:0}));
+      const pointer = (type: string, init: Record<string, unknown>) =>
+        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
+      if (mode === "hover") {
+        // enter events do not bubble; over/move do.
+        for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"])
+          pointer(type, { buttons: 0, detail: 0, bubbles: !type.endsWith("enter") });
+        return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
       }
+      const button = mode === "right" ? 2 : 0;
+      const press = (detail: number) => {
+        for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+          const down=type.endsWith('down');
+          pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+        }
+      };
+      press(1);
       let finalPoint: Point;
       try {
         finalPoint = assertInteractable(el) ?? clickPoint(el);
@@ -169,8 +184,17 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
-      el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
-      return { executed: true, verified: { ...await changes, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+      if (mode === "right") {
+        el.dispatchEvent(new MouseEvent('contextmenu',{...base,...finalPoint,button:2,buttons:0}));
+      } else {
+        el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
+        if (mode === "double") {
+          press(2);
+          el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0,detail:2}));
+          el.dispatchEvent(new MouseEvent('dblclick',{...base,...finalPoint,buttons:0,detail:2}));
+        }
+      }
+      return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
     }
     case "fill": {
       const el = resolveRef(String(p.ref));

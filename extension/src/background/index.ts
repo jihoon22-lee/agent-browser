@@ -98,7 +98,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const ok = acceptTrustedRequest(msg, sender, { runtimeId: chrome.runtime.id, running: handleBridgeRequest.isRunning, enabled: trustedEnabled, attached: tabId => trusted.isAttached(tabId) });
     if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed" }); return; }
     const tabId = sender.tab!.id!;
-    (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y) : trusted.key(tabId, msg.key))
+    (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y, msg.mode) : trusted.key(tabId, msg.key))
       .then(result => sendResponse({ ok: true, ...result }), error => sendResponse({ ok: false, reason: trusted.cancelledReason(tabId) ?? "debugger-error", ...(error?.dispatched ? { dispatched: true } : {}) }));
     return true;
   }
