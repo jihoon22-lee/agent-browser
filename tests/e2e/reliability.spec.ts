@@ -114,3 +114,17 @@ test("V01 the work marker shows on the operation tab but never in snapshots or c
   await world.ok("browser_tabs", { action: "release", operationId });
   await expect(page.locator("#agent-browser-work-marker")).toHaveCount(0);
 });
+
+test("H01 a held operation makes the agent wait, then continue after a fresh read", async () => {
+  const { page, attached, operationId } = await attachShop();
+  const clientId = await world.adminPage.evaluate(async () => (await chrome.storage.local.get("clientId")).clientId);
+  await world.admin("operation.pause", { operationId, clientId });
+  await expect(page.locator("#agent-browser-work-marker")).toHaveCount(1);
+  const pending = world.mcp.call("browser_snapshot", { operationId });
+  const settledEarly = await Promise.race([pending.then(() => true), new Promise(r => setTimeout(() => r(false), 700))]);
+  expect(settledEarly).toBe(false);
+  await world.admin("operation.resume", { operationId, clientId });
+  expect((await pending).ok).toBe(true);
+  const filter = all(attached.data.snapshot).find(e => e.name === "필터 열기")!;
+  expect((await world.mcp.call("browser_click", { operationId, ref: filter.ref })).ok).toBe(true);
+});

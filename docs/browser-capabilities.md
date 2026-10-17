@@ -18,6 +18,7 @@
 | 탭 닫기 | close로 현재 명시 선택한 웹 탭. 기존 탭도 선택 후 닫기 가능 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
 | 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
 | back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰. 결과에 도착 페이지 snapshot 포함 | 이동 전 snapshot 불필요. 링크 클릭으로 인한 이동은 navigated:true로 성공 보고 |
+| 작업 표시·넘겨받기 | 작업 탭 테두리, 클릭 대상 강조, 아이콘 상태(●·!·‖). 패널의 잠시 넘겨받기/이어서 진행 | 표시는 닫힌 shadow DOM·클릭 통과라 스냅샷·클릭 판정에 나타나지 않는다. 재개 뒤 첫 쓰기 전에는 새 스냅샷이 필요하다 |
 | 스냅샷 검색 | browser_snapshot {query}로 그 말이 들어간 본문 줄, 같은 행에 그 말이 있는 컨트롤, 이름·값·링크가 맞는 요소만 읽는다 | 결과의 ref는 일반 snapshot과 같다. 일치 없으면 `query-no-match`. 비밀번호 값은 검색하지 않는다 |
 | 동작 결과의 스냅샷 | 페이지를 바꾼 클릭·키·이동 결과에 도착 페이지를 붙인다(요소 40개까지). 클릭이나 Enter 제출 후 1초 안에 시작된 스크립트 이동도 포함 | 더 많은 요소는 browser_snapshot의 elementOffset. 버튼을 품은 카드는 그 버튼으로만 나온다 |
 | snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM. 포인터 커서 영역(clickable), 상태(state), 반복 버튼의 행 맥락(context), 아이콘 이름. 페이지를 바꾼 동작의 결과에 자동 포함 | UTF-8 바이트 예산 안에서 잘리며 cursor로 이어 읽음. 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
