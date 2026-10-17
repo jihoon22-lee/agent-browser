@@ -671,3 +671,15 @@ it('reports a query match across frames so frame 0 alone never reads as no match
     expect(result.queryMatched).toBe(true);
     expect(result.frames.find((f: any) => f.frameId === 0).limits).not.toContain('query-no-match');
 });
+
+it('keeps an executed click when it is cancelled during the late-navigation watch', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => msg.kind === 'cmd' && msg.method === 'click'
+        ? { ok: true, result: { executed: true, verified: { urlChanged: false, domChanged: false } } } : original(tabId, frame, msg);
+    const work = h(request('browser.click', { ref }, 'late-click'));
+    await new Promise(r => setTimeout(r, 200));
+    await h(request('browser.cancel', { requestId: 'late-click', operationId: undefined, generation: undefined }));
+    await expect(work).resolves.toMatchObject({ executed: true });
+});
