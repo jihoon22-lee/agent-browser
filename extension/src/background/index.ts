@@ -92,7 +92,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })().catch(error => sendResponse({ ok: false, error: { code: "UNSUPPORTED_PAGE", message: error instanceof Error ? error.message : "페이지 참조를 읽지 못했습니다.", retry: "never" } }));
     return true;
   }
-  if (msg?.kind === "bridge" && ["status.get", "operation.abort", "browser.use", "profile.list", "profile.save", "profile.delete", "runtime.ensure", "runtime.status", "runtime.stop", "doctor.run"].includes(msg.method)) {
+  if (msg?.kind === "bridge" && ["status.get", "operation.abort", "operation.pause", "operation.resume", "browser.use", "profile.list", "profile.save", "profile.delete", "runtime.ensure", "runtime.status", "runtime.stop", "doctor.run"].includes(msg.method)) {
     const work=()=>conn.request(msg.method, msg.params ?? {}).then(async r => {
       if(msg.method==='profile.delete')await requests.removeProfile(msg.params?.profileId);
       return r;

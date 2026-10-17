@@ -1,6 +1,6 @@
 import type { ConnStatus } from "../background/bridge-connection";
 
-export type Operation = { id: string; tabs: number[]; currentTab: number; state: string; clientId?: string; currentTabClosed?: boolean };
+export type Operation = { id: string; tabs: number[]; currentTab: number; state: string; clientId?: string; currentTabClosed?: boolean; paused?: boolean };
 export type BrowserInfo = { clientId: string; connected: boolean; selected: boolean };
 export type TimelineEntry = { atMs: number; operationId?: string | null; tool: string; summary: string; outcome: string };
 export type PanelState = { conn: ConnStatus; operation: Operation | null; browsers: BrowserInfo[]; timeline: TimelineEntry[]; stopping: boolean; stopped: boolean; error: string | null };

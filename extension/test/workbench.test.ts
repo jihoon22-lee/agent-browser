@@ -763,3 +763,23 @@ it("offers to add a runtime profile when none exists", async () => {
   await act(async () => button("실행 환경 추가").click());
   expect(chrome.runtime.openOptionsPage).toHaveBeenCalled();
 });
+
+it("lets the user take over the browser and hand it back", async () => {
+  await render();
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>;
+  await act(async () => button("잠시 넘겨받기").click());
+  expect(runtime.mock.calls.map(([m]) => m).filter(m => m.method === "operation.pause")).toEqual([
+    { kind: "bridge", method: "operation.pause", params: { operationId: "op-known", clientId: "local" } },
+  ]);
+  await act(async () => { for (const listener of listeners) listener({ kind: "bridge-event", event: "status.changed", data: { operation: { id: "op-known", clientId: "local", tabs: [1], currentTab: 1, state: "active", paused: true }, browsers: [], timeline: [] } }); await new Promise(r => setTimeout(r, 0)); });
+  expect(host.textContent).toContain("브라우저를 직접 조작하는 중입니다");
+  await act(async () => button("이어서 진행").click());
+  expect(runtime.mock.calls.map(([m]) => m).some(m => m.method === "operation.resume" && m.params.operationId === "op-known")).toBe(true);
+});
+
+it("offers no take-over for another browser's operation", async () => {
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+  runtime.mockImplementation(async (message: any) => message.method === "status.get" ? { ok: true, result: { operation: { id: "op-other", clientId: "other", tabs: [1], currentTab: 1, state: "active" }, browsers: [], timeline: [] } } : original(message));
+  await render();
+  expect(button("잠시 넘겨받기")).toBeUndefined();
+});
