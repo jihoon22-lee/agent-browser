@@ -122,6 +122,20 @@ export function panelRequests(call:Call) {
       return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target)};
     });},
     finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>observeCompletion(scope),
+    /** A saved request whose session waits for the user's answer; only a hint, so it never throws. */
+    attention:async():Promise<{waiting:boolean;kind?:'question'|'permission'}>=>{
+      try {
+        const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
+        if(!saved)return {waiting:false};
+        const api=await client(saved);
+        if(!api)return {waiting:false};
+        const [questions,permissions]=await Promise.all([api.get<any[]>('/question'),api.get<any[]>('/permission')]);
+        const mine=(items:any[])=>Array.isArray(items)&&items.some(item=>item?.sessionID===saved.sessionId);
+        if(mine(questions))return {waiting:true,kind:'question'};
+        if(mine(permissions))return {waiting:true,kind:'permission'};
+        return {waiting:false};
+      } catch { return {waiting:false}; }
+    },
     reconcile:async()=>{
       if(polling)return false;
       polling=true;
