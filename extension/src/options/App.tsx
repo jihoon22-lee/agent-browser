@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_BRIDGE_URL, type ConnStatus } from "../background/bridge-connection";
 import { bridgeRequest, type Data } from "../sidepanel/workbench-state";
-import { validatePairing, profilePayload, type ProfileForm, passwordDropped } from "./profile-form";
+import { validatePairing, profilePayload, type ProfileForm, passwordDropped, formFromProfile } from "./profile-form";
 import "./style.css";
 import { BookmarksPermission } from "./BookmarksPermission";
 import { THEMES, themeNames, useTheme } from "../theme/themes";
@@ -40,7 +40,7 @@ export function App() {
     <section><div className="row"><h2>OpenCode 실행 환경</h2><button disabled={busy || !connected} onClick={() => { setForm(blank); setEditing(false); }}>프로필 추가</button></div>
       {!connected && <p>Bridge에 먼저 연결하세요.</p>}
       <ul className="profiles">{profiles.map(profile => <li key={profile.id}><div><strong>{profile.name}</strong> <span>{profile.kind}{profile.id === defaultId ? " · 기본" : ""}</span><small>{profile.directory}</small></div><div className="row">
-        <button disabled={busy} onClick={() => { setForm({ ...blank, ...profile, password: "", envText: "", port: profile.port ? String(profile.port) : "" }); setEditing(true); setMakeDefault(profile.id === defaultId); }}>편집</button>
+        <button disabled={busy} onClick={() => { setForm(formFromProfile(blank, profile as unknown as Record<string, unknown>)); setEditing(true); setMakeDefault(profile.id === defaultId); }}>편집</button>
         <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.ensure", { profileId: profile.id }); if (info.state !== "ready") throw new Error(info.error ?? "실행 환경을 준비하지 못했습니다."); setNotice(`${profile.name}: 준비됨 · OpenCode ${info.version ?? "버전 정보 없음"}`); })}>시작·연결 확인</button>
         <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.stop", { profileId: profile.id }); setNotice(info.stopped ? "Bridge가 시작한 서버를 종료했습니다." : "종료할 소유 서버가 없습니다. 기존 외부 서버는 유지됩니다."); })}>서버 중지</button>
         <button disabled={busy} onClick={() => { if (window.confirm(`프로필 '${profile.name}'을 삭제할까요? 기존 OpenCode 설정·대화는 유지됩니다.`)) void run(async () => { await bridgeRequest("profile.delete", { profileId: profile.id }); await chrome.runtime.sendMessage({ kind: "profiles-changed", profileId: profile.id }).catch(() => {}); await refresh(); setNotice("프로필을 삭제했습니다."); }); }}>삭제</button>

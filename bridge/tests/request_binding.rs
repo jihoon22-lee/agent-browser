@@ -283,3 +283,13 @@ async fn another_directory_does_not_query_status() {
     assert!(message(&attached).contains("Missing requestId"), "{attached}");
     assert_eq!(STATUS_REQUESTS.load(Ordering::SeqCst), before, "a proxy for another folder is rejected before any HTTP call");
 }
+
+#[tokio::test]
+async fn a_concurrent_write_joining_the_new_operation_is_held_like_a_first_write() {
+    let f = setup(false).await;
+    let (mut a, mut b) = (proxy(&f, Some("rid-now"), DIR).await, proxy(&f, Some("rid-now"), DIR).await);
+    let (read, write) = tokio::join!(tool(&mut a, "browser_snapshot", json!({})), tool(&mut b, "browser_navigate", json!({"url":"http://127.0.0.1/elsewhere"})));
+    assert_eq!(read["ok"], true, "{read}");
+    assert_eq!((write["ok"].clone(), write["executed"].clone(), write["error"]["code"].clone()), (json!(false), json!("no"), json!("STALE_ELEMENT")), "{write}");
+    assert!(!f.ext.methods().iter().any(|m| m == "browser.navigate"), "nothing navigated an unseen page");
+}

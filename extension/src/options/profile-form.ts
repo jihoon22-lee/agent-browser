@@ -21,9 +21,15 @@ export function profilePayload(form: ProfileForm): Record<string, unknown> {
   return profile;
 }
 
-/** The Bridge keeps a saved password only for the same server; say so when an edit dropped it. */
 /** The Bridge keeps a saved password only for the same server and user (profile.rs preserve_secrets). */
 export function passwordDropped(original: { kind: string; baseUrl?: string; username?: string; hasPassword?: boolean } | undefined, payload: Record<string, unknown>): boolean {
   return !!original?.hasPassword && original.kind === "external" && payload.kind === "external" && typeof payload.password !== "string"
     && (original.baseUrl !== payload.baseUrl || (original.username ?? "") !== (payload.username ?? ""));
+}
+
+/** The edit form for a saved profile. A missing username stays empty: the new-profile default
+ * would read as a changed user and make the Bridge drop the saved password. */
+export function formFromProfile<T extends Record<string, unknown>>(blank: T, profile: Record<string, unknown>): T {
+  return { ...blank, ...profile, username: typeof profile.username === "string" ? profile.username : "", password: "", envText: "",
+    port: typeof profile.port === "number" ? String(profile.port) : "" } as T;
 }

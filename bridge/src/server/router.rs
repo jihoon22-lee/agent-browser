@@ -217,6 +217,11 @@ async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: 
             // A concurrent id-less call may have attached first: join the operation it made.
             if attached.error.as_ref().is_some_and(|error| error.code == ErrorCode::BrowserBusy) {
                 if let Some(operation) = state.ops.bound_request().filter(|now| now.id == bound.id).and_then(|now| now.operation) {
+                    // A write joining it has not seen the page either: hold it like a first write.
+                    if tools::class_of(name, &args) == CommandClass::Write {
+                        return Err(ToolOutcome::rejected(name, Some(&operation), RpcError::new(ErrorCode::StaleElement, Retry::Safe,
+                            "This request's tab was just attached by another call and the action did not run. Take browser_snapshot, then repeat the action.")));
+                    }
                     args["operationId"] = json!(operation);
                     return Ok((args, false));
                 }
@@ -467,8 +472,6 @@ impl Drop for CreatedOperation<'_> {
     }
 }
 
-/// Why the next write needs a fresh snapshot: the user handled the browser, or a closed tab sent
-/// the operation back to an earlier one.
 /// The user may take the browser over between the handoff wait and the enqueue.
 fn ensure_not_held(op: &super::operation::Operation) -> Result<(), RpcError> {
     if !op.paused { return Ok(()); }
@@ -476,6 +479,8 @@ fn ensure_not_held(op: &super::operation::Operation) -> Result<(), RpcError> {
         "The user has taken over this tab. Wait, then try again; take a fresh snapshot before acting.").with_details(json!({"handoff": true})))
 }
 
+/// Why the next write needs a fresh snapshot: the user handled the browser, or a closed tab sent
+/// the operation back to an earlier one.
 fn observation_required(op: &super::operation::Operation) -> RpcError {
     if op.handed_back {
         RpcError::new(ErrorCode::StaleElement,Retry::Safe,"The user handled the browser and handed it back. Take browser_snapshot to see the current page before changing it.")
