@@ -170,3 +170,22 @@ describe("pointer modes over the debugger", () => {
     await expect(t.click(1, 1, 1, "double")).rejects.toMatchObject({ dispatched: true });
   });
 });
+
+describe("trusted drag", () => {
+  it("presses on the source, moves in steps and releases on the target", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    await t.drag(1, { x: 1, y: 1 }, { x: 9, y: 9 });
+    const mouse = d.calls.filter(c => c[2] === "Input.dispatchMouseEvent").map(c => c[3] as any);
+    expect(mouse.filter(m => m.type === "mousePressed")).toEqual([expect.objectContaining({ x: 1, y: 1, button: "left" })]);
+    const pressedAt = mouse.findIndex(m => m.type === "mousePressed");
+    expect(mouse.slice(pressedAt + 1).filter(m => m.type === "mouseMoved" && m.buttons === 1).length).toBeGreaterThanOrEqual(3);
+    expect(mouse.at(-1)).toMatchObject({ type: "mouseReleased", x: 9, y: 9 });
+  });
+  it("a drag cut short after the press is partly delivered", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    let pressed = false; d.api.send = async (_tab, method, params: any) => { if (method !== "Input.dispatchMouseEvent") return {} as any; if (params.type === "mousePressed") pressed = true; else if (pressed) throw new Error("detached"); return {} as any; };
+    await expect(t.drag(1, { x: 1, y: 1 }, { x: 9, y: 9 })).rejects.toMatchObject({ dispatched: true });
+  });
+});

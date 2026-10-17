@@ -367,3 +367,35 @@ describe("pointer modes", () => {
     expect(seen).toEqual(['contextmenu']);
   });
 });
+
+describe("drag", () => {
+  const box = (el: Element, left: number) => vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ left, top: 10, width: 80, height: 20, right: left + 80, bottom: 30 } as DOMRect);
+  it("drag delivers pointer moves and an HTML5 drop on the target", async () => {
+    document.body.innerHTML = '<div draggable="true">카드</div><div role="listitem" tabindex="0">완료</div>';
+    const [card, done] = [...document.querySelectorAll('div')];
+    box(card!, 10); box(done!, 200);
+    const seen: string[] = []; for (const t of ['mousedown', 'dragstart']) card!.addEventListener(t, () => seen.push('card:' + t));
+    for (const t of ['mouseup', 'drop']) done!.addEventListener(t, e => { e.preventDefault(); seen.push('done:' + t); });
+    done!.addEventListener('dragover', e => e.preventDefault());
+    const result: any = await runAction('click', { ref: refOf('카드'), toRef: refOf('완료'), mode: 'drag', generation: 10 });
+    expect(seen).toEqual(['card:mousedown', 'done:mouseup', 'card:dragstart', 'done:drop']);
+    expect(result.verified.mode).toBe('drag');
+  });
+  it("a plain element gets pointer events but no HTML5 drag", async () => {
+    document.body.innerHTML = '<div tabindex="0">손잡이</div><div tabindex="0">자리</div>';
+    const [handle, slot] = [...document.querySelectorAll('div')];
+    box(handle!, 10); box(slot!, 200);
+    const moves: number[] = []; document.addEventListener('mousemove', e => moves.push((e as MouseEvent).clientX));
+    const drags = vi.fn(); handle!.addEventListener('dragstart', drags);
+    await runAction('click', { ref: refOf('손잡이'), toRef: refOf('자리'), mode: 'drag', generation: 10 });
+    expect(moves.length).toBeGreaterThanOrEqual(2);
+    expect(moves.at(-1)).toBe(240);
+    expect(drags).not.toHaveBeenCalled();
+  });
+  it("drag refuses a stale target ref", async () => {
+    document.body.innerHTML = '<div draggable="true">카드</div><div tabindex="0">완료</div>';
+    const card = refOf('카드'), target = refOf('완료');
+    document.querySelectorAll('div')[1]!.remove();
+    await expect(runAction('click', { ref: card, toRef: target, mode: 'drag', generation: 10 })).rejects.toMatchObject({ code: 'STALE_ELEMENT' });
+  });
+});

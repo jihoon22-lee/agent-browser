@@ -102,6 +102,13 @@ export function trustedInput(api: DebuggerApi) {
         steps.push(mouse({ type: "mousePressed", x, y, button, clickCount }), mouse({ type: "mouseReleased", x, y, button, clickCount }));
       return deliver(tabId, steps);
     },
+    drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }) {
+      const mouse = (params: object) => () => api.send(tabId, "Input.dispatchMouseEvent", params);
+      const steps = [mouse({ type: "mouseMoved", ...from }), mouse({ type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 })];
+      for (const f of [0.25, 0.5, 0.75, 1]) steps.push(mouse({ type: "mouseMoved", x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f, button: "left", buttons: 1 }));
+      steps.push(mouse({ type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 }));
+      return deliver(tabId, steps);
+    },
     key(tabId: number, key: string) {
       const spec = KEYS[key];
       if (!spec) return Promise.reject(new Error(`Unsupported key ${key}`));

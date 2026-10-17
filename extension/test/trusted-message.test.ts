@@ -21,3 +21,12 @@ it("accepts pointer modes but not drag or unknown modes through the click action
   for (const mode of ["double", "right", "hover"]) expect(acceptTrustedRequest({ kind: "trusted-input", requestId: "r", action: "click", x: 1, y: 1, mode }, top, ctx)).toBe(true);
   for (const mode of ["drag", "triple"]) expect(acceptTrustedRequest({ kind: "trusted-input", requestId: "r", action: "click", x: 1, y: 1, mode }, top, ctx)).toBe(false);
 });
+
+it("accepts a drag only with finite source and target points", () => {
+  const ctx = { runtimeId: "ext", running: () => true, enabled: true, attached: () => true };
+  const top = { id: "ext", tab: { id: 1 }, frameId: 0 };
+  const drag = { kind: "trusted-input", requestId: "r", action: "drag", x: 1, y: 1, toX: 9, toY: 9 };
+  expect(acceptTrustedRequest(drag, top, ctx)).toBe(true);
+  expect(acceptTrustedRequest({ ...drag, toX: Number.NaN }, top, ctx)).toBe(false);
+  expect(acceptTrustedRequest(drag, top, { ...ctx, running: (_t: number, _r: string, method: string) => method === "browser.press" })).toBe(false);
+});

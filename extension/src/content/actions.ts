@@ -98,6 +98,50 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
   return withCommandCancellation(p, (activeSignal) => executeAction(method, p, activeSignal), signal);
 }
 
+/** Drag ref onto toRef: trusted mouse input when allowed and the source is not an HTML5 drag source,
+ * otherwise pointer events followed, for HTML5 sources, by a drag sequence sharing one DataTransfer. */
+async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const from = assertInteractable(el) ?? clickPoint(el);
+  const to = assertInteractable(target) ?? clickPoint(target);
+  const html5 = (el as HTMLElement).draggable === true || el.getAttribute('draggable') === 'true' || el instanceof HTMLImageElement || (el instanceof HTMLAnchorElement && el.hasAttribute('href'));
+  const unmark = highlight(el);
+  const changes = observeChanges(500, signal);
+  void changes.then(unmark, unmark);
+  void changes.catch(() => {});
+  let trustedReason: string | undefined;
+  if (p.trusted === true && trustedFrame() && !html5) {
+    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", { x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
+    if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+    if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted drag reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+    trustedReason = answer.reason;
+  }
+  const pointer = (on: Element, type: string, at: Point, down: boolean) =>
+    on.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {
+      ...at, bubbles: true, cancelable: true, composed: true, button: 0, buttons: down ? 1 : 0, detail: type.endsWith("move") ? 0 : 1,
+      pointerId: 1, pointerType: 'mouse', isPrimary: true, pressure: down ? 0.5 : 0 }));
+  const middle = { clientX: (from.clientX + to.clientX) / 2, clientY: (from.clientY + to.clientY) / 2 };
+  pointer(el, "pointerdown", from, true); pointer(el, "mousedown", from, true);
+  pointer(el, "pointermove", middle, true); pointer(el, "mousemove", middle, true);
+  pointer(target, "pointermove", to, true); pointer(target, "mousemove", to, true);
+  pointer(target, "pointerup", to, false); pointer(target, "mouseup", to, false);
+  if (html5) {
+    const dataTransfer = typeof DataTransfer !== "undefined" ? new DataTransfer() : null;
+    const drag = (on: Element, type: string, at: Point) => {
+      const init = { ...at, bubbles: true, cancelable: true, composed: true, dataTransfer };
+      const event = typeof DragEvent !== "undefined" ? new DragEvent(type, init) : Object.assign(new MouseEvent(type, init), { dataTransfer });
+      return on.dispatchEvent(event);
+    };
+    // A cancelled dragstart means the page refused the drag; do not drop.
+    if (drag(el, "dragstart", from)) {
+      drag(target, "dragenter", to);
+      const accepted = !drag(target, "dragover", to);
+      if (accepted) drag(target, "drop", to);
+      drag(el, "dragend", to);
+    }
+  }
+  return { executed: true, verified: { ...await changes, mode: "drag", ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+}
+
 async function executeAction(method: string, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
   switch (method) {
     case "link": {
@@ -139,6 +183,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     case "click": {
       const el = resolveRef(String(p.ref));
       const mode = String(p.mode ?? "click");
+      if (mode === "drag") return dragOnto(el, resolveRef(String(p.toRef)), p, signal);
       if (!["click", "double", "right", "hover"].includes(mode)) throw new ProtocolError("INVALID_PARAMS", `Unsupported click mode ${mode}.`);
       const modeNote = mode === "click" ? {} : { mode };
       const point = assertInteractable(el) ?? clickPoint(el);

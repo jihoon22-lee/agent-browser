@@ -1,5 +1,5 @@
 const INTERACTIVE = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=combobox],[role=textbox],[role=searchbox],[role=spinbutton],[role=slider],[role=treeitem],[contenteditable=''],[contenteditable=true],[contenteditable=plaintext-only]";
-export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick], [onmousedown], [onpointerdown]') ||
+export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick], [onmousedown], [onpointerdown], [draggable=true]') ||
   (el.hasAttribute('tabindex') && (el as HTMLElement).tabIndex>=0);
 
 /** Frameworks attach click handlers at the root, so a pointer cursor is often the only DOM
