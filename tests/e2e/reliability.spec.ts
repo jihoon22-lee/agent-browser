@@ -102,3 +102,15 @@ test("R08 a click whose script navigates 0.8s later returns the arrived page", a
   expect(clicked.verified).toMatchObject({ navigated: true, lateNavigation: true });
   expect(clicked.data.snapshot.url).toContain("detail.html");
 });
+
+test("V01 the work marker shows on the operation tab but never in snapshots or clicks", async () => {
+  const { page, attached, operationId } = await attachShop();
+  await expect(page.locator("#agent-browser-work-marker")).toHaveCount(1);
+  const read = await world.ok("browser_snapshot", { operationId });
+  expect(JSON.stringify(read.data)).not.toContain("작업 중");
+  const filter = all(attached.data.snapshot).find(e => e.name === "필터 열기")!;
+  await world.ok("browser_click", { operationId, ref: filter.ref });
+  await expect(page.locator("#filter")).toHaveAttribute("aria-expanded", "true");
+  await world.ok("browser_tabs", { action: "release", operationId });
+  await expect(page.locator("#agent-browser-work-marker")).toHaveCount(0);
+});

@@ -266,3 +266,19 @@ it("refuses to fill buttons and checkboxes", async () => {
   await expect(runAction("fill", { ref: refOf("동의"), text: "x", generation: 10 })).rejects.toMatchObject({ code: "ELEMENT_NOT_INTERACTABLE" });
   expect((document.querySelector("input[type=submit]") as HTMLInputElement).value).toBe("보내기");
 });
+
+it("outlines the click target while the click is observed, outside snapshots and hit testing", async () => {
+  document.body.innerHTML = '<button>표시 확인</button>';
+  const button = document.querySelector('button')!;
+  vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+  let during: HTMLElement | null = null;
+  button.addEventListener('click', () => { during = document.getElementById('agent-browser-target'); });
+  const result = await runAction('click', { ref: refOf('표시 확인'), generation: 10 });
+  expect(during).not.toBeNull();
+  expect(during!.style.pointerEvents).toBe('none');
+  expect(during!.shadowRoot).toBeNull();
+  expect((result as any).verified.domChanged).toBe(false);
+  await Promise.resolve();
+  expect(document.getElementById('agent-browser-target')).toBeNull();
+  expect(snap().elements.map(e => e.name)).toEqual(['표시 확인']);
+});
