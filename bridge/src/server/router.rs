@@ -129,6 +129,11 @@ fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
             Some("switch") if args["tabId"].as_i64().is_none() => Err(invalid("action=switch requires `tabId`")),
             _ => Ok(()),
         },
+        "browser_click" => match (args["mode"].as_str(), args.get("toRef").is_some_and(|v| !v.is_null())) {
+            (Some("drag"), false) => Err(invalid("mode=drag requires `toRef`")),
+            (mode, true) if mode != Some("drag") => Err(invalid("`toRef` is only for mode=drag")),
+            _ => Ok(()),
+        },
         "browser_navigate" if args["action"].as_str().unwrap_or("goto") == "goto" => {
             check_url(args["url"].as_str().ok_or_else(|| invalid("action=goto requires `url`"))?)
         }
@@ -188,8 +193,8 @@ pub async fn call_tool_as(state: &ServerState, caller: &Caller, name: &str, args
 }
 
 /// Tools that act inside an operation; in a bound panel request their operationId may be omitted.
-pub const OPERATION_TOOLS: [&str; 10] = ["browser_snapshot","browser_navigate","browser_click","browser_fill","browser_select",
-    "browser_press","browser_scroll","browser_wait","browser_extract","browser_screenshot"];
+pub const OPERATION_TOOLS: [&str; 11] = ["browser_snapshot","browser_navigate","browser_click","browser_fill","browser_select",
+    "browser_press","browser_scroll","browser_wait","browser_extract","browser_screenshot","browser_upload"];
 
 /// Fills ids a model omitted when the caller is bound to the open panel request.
 /// Returns the arguments to run with and whether an implicit attach created the operation.
@@ -419,7 +424,7 @@ async fn add_open_tabs(state: &ServerState, args: &Value, outcome: &mut ToolOutc
 /// Unchanged pages keep their refs, so an unchanged click returns none and saves context.
 fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
     match name {
-        "browser_click" => outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
+        "browser_click" | "browser_upload" => outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
         "browser_press" | "browser_navigate" => true,
         "browser_tabs" => match args["action"].as_str() {
             Some("attach" | "switch") => true,
@@ -655,6 +660,13 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn drag_needs_a_target_and_only_drag_takes_one() {
+        assert!(validate_action("browser_click", &json!({"ref":"a","mode":"drag"})).is_err());
+        assert!(validate_action("browser_click", &json!({"ref":"a","mode":"drag","toRef":"b"})).is_ok());
+        assert!(validate_action("browser_click", &json!({"ref":"a","toRef":"b"})).is_err());
+    }
 
     #[test]
     fn a_held_operation_is_not_enqueued() {
