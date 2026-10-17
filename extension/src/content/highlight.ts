@@ -7,7 +7,9 @@ export function highlight(el: Element): () => void {
   const rect = el.getBoundingClientRect();
   const host = document.createElement("div");
   host.id = id; host.setAttribute("aria-hidden", "true");
-  host.style.cssText = `position:fixed;left:${rect.left - 3}px;top:${rect.top - 3}px;width:${rect.width + 6}px;height:${rect.height + 6}px;pointer-events:none;z-index:2147483647`;
+  for (const [name, value] of ([["all", "initial"], ["position", "fixed"], ["left", `${rect.left - 3}px`], ["top", `${rect.top - 3}px`], ["width", `${rect.width + 6}px`],
+    ["height", `${rect.height + 6}px`], ["pointer-events", "none"], ["z-index", "2147483647"], ["display", "block"]] as [string, string][]))
+    host.style.setProperty(name, value, "important");
   const ring = document.createElement("div");
   ring.style.cssText = "position:absolute;inset:0;border:2px solid #f59e0b;border-radius:4px;box-sizing:border-box";
   host.attachShadow({ mode: "closed" }).append(ring);

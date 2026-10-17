@@ -108,6 +108,7 @@ test("V01 the work marker shows on the operation tab but never in snapshots or c
   await expect(page.locator("#agent-browser-work-marker")).toHaveCount(1);
   const read = await world.ok("browser_snapshot", { operationId });
   expect(JSON.stringify(read.data)).not.toContain("작업 중");
+  expect(all(read.data).some(e => e.name === "필터 열기")).toBe(true);
   const filter = all(attached.data.snapshot).find(e => e.name === "필터 열기")!;
   await world.ok("browser_click", { operationId, ref: filter.ref });
   await expect(page.locator("#filter")).toHaveAttribute("aria-expanded", "true");

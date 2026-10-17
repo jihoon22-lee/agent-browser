@@ -196,9 +196,11 @@ pub const OPERATION_TOOLS: [&str; 10] = ["browser_snapshot","browser_navigate","
 async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> Result<(Value, bool), ToolOutcome> {
     let action = args["action"].as_str();
     let tabs = name == "browser_tabs";
-    let wants_request = tabs && matches!(action, Some("attach" | "new")) && args.get("requestId").is_none() && args.get("operationId").is_none();
+    // A null id is an omitted id: free models often send optional fields as null.
+    let omitted = |key: &str| args.get(key).is_none_or(Value::is_null);
+    let wants_request = tabs && matches!(action, Some("attach" | "new")) && omitted("requestId") && omitted("operationId");
     let page_tool = OPERATION_TOOLS.contains(&name);
-    let wants_operation = args.get("operationId").is_none() && (page_tool || (tabs && matches!(action, Some("switch" | "close" | "release"))));
+    let wants_operation = omitted("operationId") && (page_tool || (tabs && matches!(action, Some("switch" | "close" | "release"))));
     if !wants_request && !wants_operation { return Ok((args.clone(), false)); }
     let Some(bound) = super::binding::resolve(state, caller).await else { return Ok((args.clone(), false)); };
     let mut args = if args.is_object() { args.clone() } else { json!({}) };
@@ -211,8 +213,20 @@ async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: 
         Some(operation) => (operation, false),
         None if page_tool => {
             let read = tools::class_of(name, &args) == CommandClass::Read;
-            let attached = Box::pin(run_with(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}), !read)).await;
-            let Some(id) = attached.operation_id.clone().filter(|_| attached.ok) else { return Err(attached) };
+            let mut attached = Box::pin(run_with(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}), !read)).await;
+            // A concurrent id-less call may have attached first: join the operation it made.
+            if attached.error.as_ref().is_some_and(|error| error.code == ErrorCode::BrowserBusy) {
+                if let Some(operation) = state.ops.bound_request().filter(|now| now.id == bound.id).and_then(|now| now.operation) {
+                    // A write joining it has not seen the page either: hold it like a first write.
+                    if tools::class_of(name, &args) == CommandClass::Write {
+                        return Err(ToolOutcome::rejected(name, Some(&operation), RpcError::new(ErrorCode::StaleElement, Retry::Safe,
+                            "This request's tab was just attached by another call and the action did not run. Take browser_snapshot, then repeat the action.")));
+                    }
+                    args["operationId"] = json!(operation);
+                    return Ok((args, false));
+                }
+            }
+            let Some(id) = attached.operation_id.clone().filter(|_| attached.ok) else { attached.tool = name.to_string(); return Err(attached) };
             // Never write on a page the model has not seen: return the attached page instead.
             if tools::class_of(name, &args) == CommandClass::Write {
                 let mut held = ToolOutcome::rejected(name, Some(&id), RpcError::new(ErrorCode::StaleElement, Retry::Safe,
@@ -316,6 +330,7 @@ impl OperationCommand<'_> { async fn wait(self, timeout: Duration) -> Result<Val
 
 fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass) -> Result<OperationCommand<'a>, RpcError> {
     state.ops.with_checked(op_id, true, |op| {
+        ensure_not_held(op)?;
         if class==CommandClass::Write && op.needs_observation {return Err(observation_required(op));}
         params.insert("operationId".into(), json!(op.id));
         params.insert("generation".into(), json!(op.generation));
@@ -457,6 +472,13 @@ impl Drop for CreatedOperation<'_> {
     }
 }
 
+/// The user may take the browser over between the handoff wait and the enqueue.
+fn ensure_not_held(op: &super::operation::Operation) -> Result<(), RpcError> {
+    if !op.paused { return Ok(()); }
+    Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Safe,
+        "The user has taken over this tab. Wait, then try again; take a fresh snapshot before acting.").with_details(json!({"handoff": true})))
+}
+
 /// Why the next write needs a fresh snapshot: the user handled the browser, or a closed tab sent
 /// the operation back to an earlier one.
 fn observation_required(op: &super::operation::Operation) -> RpcError {
@@ -534,6 +556,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 }
             };
             let queued = state.ops.with_checked(op_id, false, |op| {
+                ensure_not_held(op)?;
                 let params = json!({ "url": args["url"].as_str().unwrap_or("about:blank"), "operationId": op.id, "generation": op.generation,
                     "windowId":args["windowId"],"sourceTabId":if op.current_tab_closed {None} else {Some(op.current_tab)} });
                 state.registry.queue_command_for(&op.client_id, "browser.tabs.create", params, CommandClass::Write)
@@ -568,6 +591,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             let tab_id = args["tabId"].as_i64().unwrap_or_default();
             let queued = state.ops.with_checked(op_id, false, |op| {
+                ensure_not_held(op)?;
                 state.registry.queue_command_for(&op.client_id, "browser.tabs.get", json!({ "tabId": tab_id }), CommandClass::Read)
             });
             let queued = match queued {
@@ -592,6 +616,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             // Target is the current operation tab; never accept an arbitrary tabId.
             let queued = state.ops.with_checked(op_id, true, |op| {
+                ensure_not_held(op)?;
                 if op.needs_observation {return Err(observation_required(op));}
                 if args.get("tabId").is_some() { return Err(invalid("close targets the current tab; switch first")); }
                 let params = json!({"operationId":op.id,"generation":op.generation,"tabId":op.current_tab});
@@ -630,6 +655,15 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_held_operation_is_not_enqueued() {
+        let gate = super::super::operation::OperationGate::default();
+        let op = gate.attach(12, "browser").unwrap();
+        assert!(ensure_not_held(&op).is_ok());
+        let held = gate.pause(&op.id, "browser").unwrap();
+        assert_eq!(ensure_not_held(&held).unwrap_err().details["handoff"], true);
+    }
 
     #[tokio::test]
     async fn an_unbound_caller_still_needs_an_operation_id() {

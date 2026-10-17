@@ -6,7 +6,9 @@ export function markerScript(on: boolean, label: string): void {
   if (!on) return;
   const host = document.createElement("div");
   host.id = id; host.setAttribute("aria-hidden", "true");
-  host.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483647";
+  // Important, so page CSS (div{pointer-events:auto!important}) cannot make it block clicks.
+  for (const [name, value] of ([["all", "initial"], ["position", "fixed"], ["inset", "0"], ["pointer-events", "none"], ["z-index", "2147483647"], ["display", "block"]] as [string, string][]))
+    host.style.setProperty(name, value, "important");
   const root = host.attachShadow({ mode: "closed" });
   const frame = document.createElement("div");
   frame.style.cssText = "position:absolute;inset:0;border:3px solid #2563eb;box-sizing:border-box";
@@ -37,4 +39,9 @@ export async function markedBefore(session: SessionArea, webTabs: () => Promise<
   const saved = (await session.get("markedTabs")).markedTabs;
   if (Array.isArray(saved)) return new Set(saved.filter(Number.isInteger));
   return new Set(await webTabs());
+}
+
+/** A marked tab whose top document changed lost its marker with the old document. */
+export function shouldRemark(tabId: number, frameId: number, marked: Set<number> | null): boolean {
+  return frameId === 0 && !!marked?.has(tabId);
 }

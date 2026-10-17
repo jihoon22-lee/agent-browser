@@ -103,6 +103,19 @@ namespace AgentBrowser.Installer {
      form.Close();
     }}finally{Uninstall(root);}
    });
+   Case("long result and check lines stay readable",()=>{
+    using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"read-lines")})){
+     Assert(Field<ListBox>(form,"DoneChecks").HorizontalScrollbar,"final checks cannot scroll sideways");
+     var state=Field<TextBox>(form,"PairingState");Assert(state.Multiline&&state.ReadOnly&&state.ScrollBars==ScrollBars.Vertical,"pairing errors are clipped");
+    }
+   });
+   Case("discovery uses the found distribution and always shows its notices",()=>{
+    Assert(SetupForm.DistributionToStart("",new[]{"Ubuntu","Debian"})=="Ubuntu","empty field starts nothing");
+    Assert(SetupForm.DistributionToStart(" Debian ",new[]{"Ubuntu"})=="Debian","typed name wins");
+    Assert(SetupForm.DistributionToStart("",new string[0])==null,"no distribution to start");
+    Assert(SetupForm.DiscoveryMessage(2,new[]{"Debian is stopped"}).Contains("Debian is stopped"),"notices hidden behind candidates");
+    Assert(SetupForm.DiscoveryMessage(0,new string[0]).Contains("직접 입력"),"no candidates explains the manual path");
+   });
    Case("new folder guides installation before maintenance",()=>{using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"new")})){form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Application.DoEvents();Assert(!form.Controls.Find("StartInstalledBridge",true).Any(c=>c.Visible),"Bridge start is exposed before installation");Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is exposed before installation");Assert(!Field<Button>(form,"ManageConnection").Enabled,"maintenance is enabled before installation");Assert(Field<Button>(form,"Preview").Text.Contains("다음"),"primary action has no next-step label");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"advanced package path is exposed by default");Assert(Field<Panel>(form,"WelcomePanel").Visible,"welcome page is missing");Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"SettingsPanel").Visible,"Next did not open location page");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"location page exposes advanced fields");Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"WelcomePanel").Visible,"Back did not return to welcome");form.Close();}});
    Case("changing installed folder clears stale maintenance state",()=>{string root=Path.Combine(fixture,"existing");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,s=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Assert(Field<Button>(form,"ManageConnection").Enabled,"installed Bridge action disabled");Field<TextBox>(form,"InstallFolder").Text=Path.Combine(fixture,"different");Assert(!Field<Button>(form,"ManageConnection").Enabled,"folder edit retained old installation controls");Invoke(form,"LoadState");Assert(Field<ComboBox>(form,"Operation").SelectedIndex==0,"new folder retained Update mode");}}finally{Uninstall(root);}});
    Case("Chrome pairing and runtime setup occupy separate sequential pages",()=>{

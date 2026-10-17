@@ -1,3 +1,4 @@
+import { watchesLateNavigation } from './late-navigation';
 import { ProtocolError, type Req, type RpcError } from '../protocol/envelope';
 import type { SessionStore, Outcome } from './dedupe';
 import type { ChromeApi, FrameInfo } from './chrome-api';
@@ -21,6 +22,8 @@ type Running = {
     controller: AbortController;
     started: boolean;
     promise: Promise<unknown>;
+    /** The action's confirmed result while only the late-navigation watch is still running. */
+    confirmed?: unknown;
 };
 export function createHandlers(api: ChromeApi, store: SessionStore) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
@@ -112,23 +115,26 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                     ...children.openedTabs.map(tab => ({tabId:tab.tabId,reason:inputBefore && inputAfter ? 'user-intervention' : 'source-unavailable'})),
                 ]};
             }
-            return lateNavigation(tabId, startUrl, {...result,...children}, run.controller.signal);
+            const confirmed = {...result,...children};
+            if (tracksTabs) run.confirmed = confirmed;
+            return lateNavigation(tabId, startUrl, confirmed, run.controller.signal);
         }
+        // Only a click or key press is final once its frame replies; a snapshot still has frames to read.
+        if (tracksTabs) run.confirmed = response.result;
         return lateNavigation(tabId, startUrl, response.result, run.controller.signal);
     }
     /** A script may navigate a moment after the click's own observation window closed. Only a
      * reply that saw no change at all is checked, and only for this observable tab condition. */
     async function lateNavigation(tabId: number, startUrl: string | undefined, result: any, signal: AbortSignal) {
         const verified = result?.verified;
-        // A click reports whether anything changed; a key press reports a form submission instead.
-        const unchanged = verified?.urlChanged === false && verified?.domChanged === false;
-        if (startUrl === undefined || !(unchanged || verified?.submitted === true)) return result;
+        if (startUrl === undefined || !watchesLateNavigation(result)) return result;
         const deadline = Date.now() + LATE_NAVIGATION_MS;
-        while (Date.now() < deadline) {
+        while (Date.now() < deadline && !signal.aborted) {
             const tab = await api.tabsGet(tabId).catch(() => undefined);
             if (!tab) return result;
             if (tab.pendingUrl || tab.url !== startUrl) return { ...result, verified: { ...verified, urlChanged: true, navigated: true, lateNavigation: true } };
-            await interruptible(new Promise(r => setTimeout(r, 100)), signal);
+            // The action already ran: a cancel during this watch ends the watch, not the result.
+            try { await interruptible(new Promise(r => setTimeout(r, 100)), signal); } catch { return result; }
         }
         return result;
     }
@@ -256,7 +262,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
                 throw new ProtocolError('FRAME_UNAVAILABLE', 'Navigation changed the snapshot repeatedly. Wait for the expected page state and take a fresh snapshot.', 'safe');
             }
             await store.bind(snapshotId,bindings.map(f=>({...f,tabId,operationId:String(p.operationId)})));
-            return {snapshotId,loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
+            // A query answers for the whole page: a match in any frame clears every frame's "no match".
+            const queryMatched = typeof p.query === 'string' && p.query.trim()
+                ? results.some((f: any) => (f.elements?.length ?? 0) > 0 || !!f.text?.content) : undefined;
+            if (queryMatched) for (const f of results as any[]) if (Array.isArray(f.limits)) f.limits = f.limits.filter((l: string) => l !== 'query-no-match');
+            return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
                 note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results. Pass query to read only matching lines, rows and elements.'};
@@ -388,6 +398,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         }
         catch (e) {
             let error = asError(e);
+            // Cancelled while only watching for a late navigation: the action ran and was confirmed.
+            if (error.code === 'CANCELLED' && run.confirmed !== undefined) {
+                if (claimed) await store.saveResult(req.id, { ok: true, result: run.confirmed });
+                return run.confirmed;
+            }
             if (run.started && error.code === 'INTERNAL')
                 error = new ProtocolError('EXECUTION_UNKNOWN', 'The action was dispatched but its outcome could not be confirmed. Inspect the page before retrying.', 'unsafe');
             if (run.started && error.code === 'CANCELLED' && !(error.details as any)?.executed)

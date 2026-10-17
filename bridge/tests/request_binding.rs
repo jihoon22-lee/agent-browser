@@ -11,6 +11,8 @@ const EXT: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
 const DIR: &str = "C:\\w";
 
 /// Fake OpenCode answering `/session/status` with the shared value; returns its base URL.
+static STATUS_REQUESTS: AtomicUsize = AtomicUsize::new(0);
+
 async fn fake_opencode(statuses: Arc<Mutex<Value>>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
@@ -19,6 +21,7 @@ async fn fake_opencode(statuses: Arc<Mutex<Value>>) -> String {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut buffer = vec![0; 4096];
             let _ = stream.read(&mut buffer).await.unwrap();
+            STATUS_REQUESTS.fetch_add(1, Ordering::SeqCst);
             let body = statuses.lock().unwrap().to_string();
             let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
             let _ = stream.write_all(response.as_bytes()).await;
@@ -243,4 +246,50 @@ async fn an_implicit_attach_before_a_read_reads_the_page_once() {
     assert_eq!(read["ok"], true, "{read}");
     assert_eq!(f.ext.methods().iter().filter(|m| *m == "browser.snapshot").count(), 1);
     assert!(!f.ext.methods().iter().any(|m| m == "browser.tabs.list"), "openTabs of a discarded attach result are not read");
+}
+
+#[tokio::test]
+async fn concurrent_id_less_first_calls_share_one_operation() {
+    let f = setup(false).await;
+    let (mut a, mut b) = (proxy(&f, Some("rid-now"), DIR).await, proxy(&f, Some("rid-now"), DIR).await);
+    let (x, y) = tokio::join!(tool(&mut a, "browser_snapshot", json!({})), tool(&mut b, "browser_snapshot", json!({})));
+    assert_eq!((x["ok"].clone(), y["ok"].clone()), (json!(true), json!(true)), "{x} {y}");
+    assert_eq!(x["operationId"], y["operationId"]);
+}
+
+#[tokio::test]
+async fn null_ids_count_as_omitted() {
+    let f = setup(false).await;
+    let mut mcp = proxy(&f, Some("rid-now"), DIR).await;
+    let read = tool(&mut mcp, "browser_snapshot", json!({"operationId": null})).await;
+    assert_eq!(read["ok"], true, "{read}");
+}
+
+#[tokio::test]
+async fn an_unreadable_status_reply_never_binds() {
+    let f = setup(false).await;
+    *f.statuses.lock().unwrap() = json!(["ses_cli"]);
+    let mut mcp = proxy(&f, Some("rid-now"), DIR).await;
+    let attached = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await;
+    assert!(message(&attached).contains("Missing requestId"), "{attached}");
+}
+
+#[tokio::test]
+async fn another_directory_does_not_query_status() {
+    let f = setup(false).await;
+    let mut mcp = proxy(&f, Some("rid-now"), "C:\\other").await;
+    let before = STATUS_REQUESTS.load(Ordering::SeqCst);
+    let attached = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await;
+    assert!(message(&attached).contains("Missing requestId"), "{attached}");
+    assert_eq!(STATUS_REQUESTS.load(Ordering::SeqCst), before, "a proxy for another folder is rejected before any HTTP call");
+}
+
+#[tokio::test]
+async fn a_concurrent_write_joining_the_new_operation_is_held_like_a_first_write() {
+    let f = setup(false).await;
+    let (mut a, mut b) = (proxy(&f, Some("rid-now"), DIR).await, proxy(&f, Some("rid-now"), DIR).await);
+    let (read, write) = tokio::join!(tool(&mut a, "browser_snapshot", json!({})), tool(&mut b, "browser_navigate", json!({"url":"http://127.0.0.1/elsewhere"})));
+    assert_eq!(read["ok"], true, "{read}");
+    assert_eq!((write["ok"].clone(), write["executed"].clone(), write["error"]["code"].clone()), (json!(false), json!("no"), json!("STALE_ELEMENT")), "{write}");
+    assert!(!f.ext.methods().iter().any(|m| m == "browser.navigate"), "nothing navigated an unseen page");
 }

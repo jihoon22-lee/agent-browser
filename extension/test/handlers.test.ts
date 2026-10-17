@@ -656,3 +656,30 @@ it('watches for a late navigation after a key press that submitted a form', asyn
     };
     await expect(h(request('browser.press', { ref, key: 'Enter' }))).resolves.toMatchObject({ verified: { submitted: true, navigated: true, lateNavigation: true } });
 });
+
+it('reports a query match across frames so frame 0 alone never reads as no match', async () => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://example.test/frame' });
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'snapshot') return { ok: true, result: frame.frameId === 0
+            ? { frameId: 0, elements: [], text: { content: '' }, limits: ['query-no-match'], query: 'a-1' }
+            : { frameId: 7, elements: [{ ref: `s${msg.params.snapshotId.toString(36)}f7e1`, name: 'A-1 취소' }], text: { content: 'A-1' }, limits: [], query: 'a-1' } };
+        return original(tabId, frame, msg);
+    };
+    const h = createHandlers(w.api, memorySessionStore());
+    const result: any = await h(request('browser.snapshot', { query: 'A-1' }));
+    expect(result.queryMatched).toBe(true);
+    expect(result.frames.find((f: any) => f.frameId === 0).limits).not.toContain('query-no-match');
+});
+
+it('keeps an executed click when it is cancelled during the late-navigation watch', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => msg.kind === 'cmd' && msg.method === 'click'
+        ? { ok: true, result: { executed: true, verified: { urlChanged: false, domChanged: false } } } : original(tabId, frame, msg);
+    const work = h(request('browser.click', { ref }, 'late-click'));
+    await new Promise(r => setTimeout(r, 200));
+    await h(request('browser.cancel', { requestId: 'late-click', operationId: undefined, generation: undefined }));
+    await expect(work).resolves.toMatchObject({ executed: true });
+});

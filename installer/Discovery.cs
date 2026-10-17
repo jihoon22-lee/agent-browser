@@ -125,9 +125,10 @@ if command -v bash >/dev/null 2>&1; then p=$(bash -lc 'command -v opencode' 2>/d
 c=${XDG_CONFIG_HOME:-$HOME/.config}/opencode
 for p in ""$c/opencode.json"" ""$c/opencode.jsonc""; do [ ! -f ""$p"" ] || printf 'CFG\t%s\n' ""$p""; done
 ";
-        public static List<OpenCodeCandidate> FindWsl(string distribution,string user) {
+        public static List<OpenCodeCandidate> FindWsl(string distribution,string user) { return FindWsl(distribution,user,15000); }
+        public static List<OpenCodeCandidate> FindWsl(string distribution,string user,int timeout) {
             var args=new List<string>{"--distribution",distribution};if(!String.IsNullOrEmpty(user)) args.AddRange(new [] {"--user",user});args.AddRange(new [] {"--exec","/bin/sh","-c",WslProbe.Replace("\r\n","\n")});
-            var text=NativeIO.RunChecked(NativeIO.WslExe,args);
+            var text=NativeIO.RunChecked(NativeIO.WslExe,args,timeout:timeout);
             var executables=new HashSet<string>();var configs=new List<string>();string actualUser=null,home=null;
             foreach(var line in text.Split('\n')) {var parts=line.TrimEnd('\r').Split(new [] {'\t'},2);if(parts.Length!=2) continue;switch(parts[0]) {case "USER":actualUser=parts[1];break;case "HOME":home=parts[1];break;case "EXE":executables.Add(parts[1]);break;case "CFG":configs.Add(parts[1]);break;}}
             if(String.IsNullOrEmpty(actualUser)||String.IsNullOrEmpty(home)||!home.StartsWith("/")) throw new IOException("WSL 사용자와 홈 경로를 확인하지 못했습니다.");

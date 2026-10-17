@@ -71,12 +71,20 @@ function contextOf(el: Element, lookAlikes: Element[]): string {
 }
 
 const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
-/** The row or item a control belongs to, so "A-1002 취소" finds the button in that row. */
-function rowText(el: Element): string {
-  const row = el.closest("tr,li,[role=row],[role=listitem],article") ?? el.parentElement;
-  // The whole page is not a row: without one, only the control's own text counts.
-  if (!row || row === el.ownerDocument.body || row === el.ownerDocument.documentElement) return "";
-  return ((row as HTMLElement).innerText ?? row.textContent ?? "").slice(0, 300);
+/** The row or item a control belongs to, so "A-1002" finds the button in that row. Each row is read
+ * once per snapshot. Without a row element, only a small parent counts: a large one (main, form)
+ * would make every control inside it match. */
+function rowText(el: Element, rows: Map<Element, string>): string {
+  const row = el.closest("tr,li,[role=row],[role=listitem],article");
+  const candidate = row ?? el.parentElement;
+  if (!candidate || candidate === el.ownerDocument.body || candidate === el.ownerDocument.documentElement) return "";
+  let text = rows.get(candidate);
+  if (text === undefined) {
+    const full = candidate.textContent ?? "";
+    text = row || full.length <= 300 ? full.slice(0, 300) : "";
+    rows.set(candidate, text);
+  }
+  return text;
 }
 
 /** Up to 300 characters of a matching line, centred on the first match so it is always shown. */
@@ -89,6 +97,7 @@ function aroundMatch(line: string, query: string): string {
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number; query?: string }): FrameSnapshot {
   const query = o.query ? fold(o.query).slice(0, 80) : "";
+  const rows = new Map<Element, string>();
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
   const offset = Math.max(0, Math.floor(o.elementOffset ?? 0));
   const table = newTable(o.snapshotId, o.frameId);
@@ -120,11 +129,16 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     const pointer = !isInteractive(el) && el.tagName !== "TABLE" && isPointerTarget(el);
     if ((!isInteractive(el) && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
     // Match only what a snapshot would show: a password value must not become a search oracle.
-    const shownValue = el instanceof HTMLInputElement && el.type === "password" ? "" : (el as HTMLInputElement).value ?? "";
-    if (query && ![accessibleName(el), shownValue, (el as HTMLAnchorElement).href ?? "", rowText(el)].some(field => fold(String(field)).includes(query))) return;
+    let name: string | undefined;
+    if (query) {
+      const matches = (field: unknown) => typeof field === "string" && fold(field).includes(query);
+      name = accessibleName(el);
+      const shownValue = el instanceof HTMLInputElement && el.type === "password" ? "" : (el as HTMLInputElement).value;
+      if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows)))) return;
+    }
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;
-    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
+    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: name ?? accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
     if (inShadow) e.inShadow = true;
     if (el instanceof HTMLInputElement) {
       if (el.type === "checkbox" || el.type === "radio") e.checked = el.checked;

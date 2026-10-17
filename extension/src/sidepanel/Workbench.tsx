@@ -19,7 +19,14 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   const [stopping,setStopping]=useState(false);
   // This browser's id, so take-over is offered only for an operation it runs.
   const [ownClient,setOwnClient]=useState<string>();
-  useEffect(()=>{ void chrome.storage.local.get("clientId").then(({clientId})=>{ if(typeof clientId==="string")setOwnClient(clientId); }).catch(()=>{}); },[]);
+  const [handoffBusy,setHandoffBusy]=useState(false);
+  useEffect(()=>{
+    void chrome.storage.local.get("clientId").then(({clientId})=>{ if(typeof clientId==="string")setOwnClient(clientId); }).catch(()=>{});
+    // Pairing while the panel is open assigns the id later.
+    const changed=(changes:Record<string,{newValue?:unknown}>,area:string)=>{ if(area==="local"&&typeof changes.clientId?.newValue==="string")setOwnClient(changes.clientId.newValue); };
+    chrome.storage.onChanged?.addListener(changed);
+    return ()=>chrome.storage.onChanged?.removeListener(changed);
+  },[]);
   const heldOperation=operation&&ownClient&&operation.clientId===ownClient?operation:null;
   const stopLock=useRef(false);
   useEffect(()=>{
@@ -340,7 +347,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         {currentSession?.id && <SessionMenu label="현재 세션 작업" actions={sessionActions(currentSession, "header")} />}</div>
       {currentSession?.parentID && <div className="session-breadcrumb"><button className="quiet" onClick={() => void perform(selectParent)}>상위 세션으로</button><span>{wb.knownSessions[currentSession.parentID]?.title ?? "하위 작업 대화"}</span></div>}
       {(wb.state.errors[wb.sessionId] ?? wb.state.errors.global) && <p className="error" role="alert">{wb.state.errors[wb.sessionId] ?? wb.state.errors.global}</p>}
-      {heldOperation?.paused && <div className="notice">브라우저를 직접 조작하는 중입니다. 끝나면 [이어서 진행]을 누르세요. 에이전트는 기다립니다.</div>}
+      {heldOperation?.paused && <div className="notice" role="status">브라우저를 직접 조작하는 중입니다. 끝나면 [이어서 진행]을 누르세요. 에이전트는 기다립니다.</div>}
       {currentSession?.revert && <div className="notice">이전 메시지로 되돌린 상태입니다. 새 메시지를 보내 이어갈 수 있습니다. <button onClick={() => void perform(async () => { await api().post(sessionPath() + "/unrevert"); await wb.resync(); })}>되돌리기 취소</button></div>}
       <div className="message-viewport" ref={messageViewport} onScroll={event => { if (view !== "chat" || drawer !== null) return; const el = event.currentTarget; followMessages.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} aria-label="대화 메시지">
       {turns.map(turn => <div key={turn.key} className={`turn ${turn.user ? "user" : "assistant"}`}>
@@ -387,8 +394,10 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
             if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync();
             } finally { stopLock.current=false;setStopping(false); }
           })}>응답 중단</button>
-          {heldOperation && <button type="button" onClick={() => void perform(async () => {
-            await bridgeRequest(heldOperation.paused ? "operation.resume" : "operation.pause", { operationId: heldOperation.id, clientId: ownClient });
+          {heldOperation && <button type="button" disabled={handoffBusy} onClick={() => void perform(async () => {
+            setHandoffBusy(true);
+            try { await bridgeRequest(heldOperation.paused ? "operation.resume" : "operation.pause", { operationId: heldOperation.id, clientId: ownClient }); }
+            finally { setHandoffBusy(false); }
           })}>{heldOperation.paused ? "이어서 진행" : "잠시 넘겨받기"}</button>}</div></div>
       </form>
     </section>;
