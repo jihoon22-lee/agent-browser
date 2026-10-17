@@ -20,19 +20,35 @@ const KEYS: Record<string, { key: string; code: string; windowsVirtualKeyCode: n
   Space: { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " },
 };
 
+/** The input state for this browser: its operation's tabs, none while the person holds the browser. */
+export function trustedTargets(operation: { id?: string; clientId?: string; tabs?: number[]; paused?: boolean } | null, clientId: string | undefined, enabled: boolean): TrustedState & { operationId: string | null } {
+  const mine = operation && clientId && operation.clientId === clientId ? operation : null;
+  return { enabled, operationTabs: mine && !mine.paused ? mine.tabs ?? [] : [], operationId: mine?.id ?? null };
+}
+
+/** An input that already reached the page must never be sent again as DOM events. */
+export class PartlyDelivered extends Error { readonly dispatched = true; }
+
 export function trustedInput(api: DebuggerApi) {
   const attached = new Set<number>();
-  // A user who pressed [Cancel] on the debugging bar keeps DOM input for that operation.
-  const cancelled = new Map<number, { operationId: string | null | undefined; reason: string }>();
+  // [Cancel] on Chrome's debugging bar applies to the whole operation, not one tab.
+  let cancelled: { operationId: string | null | undefined; reason: string } | undefined;
   const dialogs = new Map<number, Dialog>();
+  // Dialogs are answered only during an agent input and shortly after; others belong to the person.
+  const inputUntil = new Map<number, number>();
   let operationId: string | null | undefined;
+  let current: TrustedState = { enabled: false, operationTabs: [] };
+  // Attach, detach and sync run one at a time, so a session can never escape tracking.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serial = <T>(work: () => Promise<T>) => { const next = queue.then(work); queue = next.catch(() => {}); return next; };
 
   api.onDetach((tabId, reason) => {
     attached.delete(tabId);
-    if (reason === "canceled_by_user") cancelled.set(tabId, { operationId, reason });
+    if (reason === "canceled_by_user") cancelled = { operationId, reason };
   });
   api.onEvent((tabId, method, params) => {
     if (method !== "Page.javascriptDialogOpening" || !attached.has(tabId)) return;
+    if (!((inputUntil.get(tabId) ?? 0) >= Date.now())) return;
     // An alert only informs; a confirm, prompt or leave-page question is the user's decision.
     const accept = params?.type === "alert";
     dialogs.set(tabId, { type: String(params?.type ?? "unknown"), message: String(params?.message ?? "").slice(0, 200) });
@@ -40,51 +56,67 @@ export function trustedInput(api: DebuggerApi) {
   });
 
   const takeDialog = (tabId: number) => { const dialog = dialogs.get(tabId); dialogs.delete(tabId); return dialog ? { dialog } : {}; };
+  const isCancelled = () => !!cancelled && cancelled.operationId === operationId;
 
   async function release(tabId: number) {
-    attached.delete(tabId); dialogs.delete(tabId);
+    attached.delete(tabId); dialogs.delete(tabId); inputUntil.delete(tabId);
     await api.detach(tabId).catch(() => {});
+  }
+  /** Runs one agent input; a failure after the first event reached the page is marked as partly delivered. */
+  async function deliver(tabId: number, steps: Array<() => Promise<unknown>>) {
+    inputUntil.set(tabId, Number.POSITIVE_INFINITY);
+    let sent = 0;
+    try { for (const step of steps) { await step(); sent++; } }
+    catch (error) { if (sent > 0) throw new PartlyDelivered(error instanceof Error ? error.message : String(error)); throw error; }
+    finally { inputUntil.set(tabId, Date.now() + 1500); }
+    return takeDialog(tabId);
   }
 
   return {
-    async ensure(tabId: number, state: TrustedState): Promise<boolean> {
-      if (!state.enabled || !state.operationTabs.includes(tabId)) return false;
-      if (state.operationId !== undefined) operationId = state.operationId;
-      const stop = cancelled.get(tabId);
-      if (stop && stop.operationId === operationId) return false;
-      if (attached.has(tabId)) return true;
-      try {
-        await api.attach(tabId);
-        attached.add(tabId);
-        await api.send(tabId, "Page.enable");
-        return true;
-      } catch { attached.delete(tabId); return false; }
+    ensure(tabId: number, state: TrustedState): Promise<boolean> {
+      return serial(async () => {
+        if (state.operationId !== undefined && state.operationId !== operationId) { operationId = state.operationId; if (cancelled && cancelled.operationId !== operationId) cancelled = undefined; }
+        current = state;
+        if (!state.enabled || !state.operationTabs.includes(tabId) || isCancelled()) return false;
+        if (attached.has(tabId)) return true;
+        try {
+          await api.attach(tabId);
+          attached.add(tabId);
+          await api.send(tabId, "Page.enable");
+          return true;
+        } catch { await release(tabId); return false; }
+      });
     },
-    async sync(state: TrustedState & { operationId: string | null }) {
-      if (state.operationId !== operationId) { cancelled.clear(); operationId = state.operationId; }
-      for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !state.operationTabs.includes(tabId)) await release(tabId);
+    sync(state: TrustedState & { operationId: string | null }): Promise<void> {
+      return serial(async () => {
+        if (state.operationId !== operationId) { cancelled = undefined; operationId = state.operationId; }
+        current = state;
+        for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !state.operationTabs.includes(tabId)) await release(tabId);
+      });
     },
-    async click(tabId: number, x: number, y: number) {
+    click(tabId: number, x: number, y: number) {
       const base = { x, y, button: "left" as const, clickCount: 1 };
-      await api.send(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
-      await api.send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", ...base });
-      await api.send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", ...base });
-      return takeDialog(tabId);
+      return deliver(tabId, [
+        () => api.send(tabId, "Input.dispatchMouseEvent", { type: "mouseMoved", x, y }),
+        () => api.send(tabId, "Input.dispatchMouseEvent", { type: "mousePressed", ...base }),
+        () => api.send(tabId, "Input.dispatchMouseEvent", { type: "mouseReleased", ...base }),
+      ]);
     },
-    async key(tabId: number, key: string) {
+    key(tabId: number, key: string) {
       const spec = KEYS[key];
-      if (!spec) throw new Error(`Unsupported key ${key}`);
-      await api.send(tabId, "Input.dispatchKeyEvent", { type: "keyDown", ...spec });
+      if (!spec) return Promise.reject(new Error(`Unsupported key ${key}`));
       const { text: _text, ...up } = spec;
-      await api.send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...up });
-      return takeDialog(tabId);
+      return deliver(tabId, [
+        () => api.send(tabId, "Input.dispatchKeyEvent", { type: "keyDown", ...spec }),
+        () => api.send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...up }),
+      ]);
     },
     async screenshot(tabId: number) {
       const { data } = await api.send<{ data: string }>(tabId, "Page.captureScreenshot", { format: "png" });
       return `data:image/png;base64,${data}`;
     },
-    cancelledReason: (tabId: number) => cancelled.get(tabId)?.reason,
-    isAttached: (tabId: number) => attached.has(tabId),
+    cancelledReason: (_tabId: number) => isCancelled() ? cancelled!.reason : undefined,
+    isAttached: (tabId: number) => attached.has(tabId) && current.operationTabs.includes(tabId),
   };
 }
 export type TrustedInput = ReturnType<typeof trustedInput>;

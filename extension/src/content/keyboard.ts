@@ -28,7 +28,9 @@ function replaceSelection(target: HTMLInputElement | HTMLTextAreaElement, text: 
   return true;
 }
 
-export function pressKey(p: Record<string, unknown>, validate: (element: Element) => void): Record<string, unknown> {
+/** Checks shared by DOM and trusted key presses: supported key, a focusable target, and no
+ * read-only, rich-editor or selection-less editing. Leaves the target focused. */
+export function preparePress(p: Record<string, unknown>, validate: (element: Element) => void): HTMLElement {
   const key = String(p.key);
   if (!KEYS.has(key)) throw new ProtocolError("INVALID_PARAMS", "Unsupported key. Use Enter, Tab, Escape, Space, Backspace, ArrowUp or ArrowDown.");
   const target = (p.ref ? resolveRef(String(p.ref)) : activeElement() ?? document.body) as HTMLElement;
@@ -41,6 +43,15 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
   if (edits && editableValue(target) && key !== "ArrowUp" && key !== "ArrowDown" && target.selectionStart === null) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "This field does not support text selection. Use browser_fill.");
   target.focus();
   if (p.ref && activeElement() !== target) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The referenced element cannot receive keyboard focus.");
+  return target;
+}
+
+export function pressKey(p: Record<string, unknown>, validate: (element: Element) => void): Record<string, unknown> {
+  const key = String(p.key);
+  const target = preparePress(p, validate);
+  const editableHost = target.closest("[contenteditable]");
+  const rich = target.isContentEditable || (editableHost !== null && editableHost.getAttribute("contenteditable") !== "false");
+  const edits = key === "Backspace" || key === "Space" || (key === "Enter" && (target instanceof HTMLTextAreaElement || rich)) || ((key === "ArrowUp" || key === "ArrowDown") && target instanceof HTMLInputElement && target.type === "number");
   const event = (type: string) => target.dispatchEvent(new KeyboardEvent(type, { key: key === "Space" ? " " : key, code: key, bubbles: true, cancelable: true, composed: true }));
   const down = event("keydown"), printable = down && ((key !== "Enter" && key !== "Space") || event("keypress"));
   // A Space button action occurs on release. Honor cancellation of either phase.

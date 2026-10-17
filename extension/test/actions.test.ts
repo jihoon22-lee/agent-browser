@@ -316,3 +316,31 @@ describe("trusted input", () => {
     expect(result.verified).toMatchObject({ key: 'Enter', trusted: true, urlChanged: false });
   });
 });
+
+describe("trusted input keeps the keyboard and click safety checks", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("refuses a key on an element that cannot take focus before sending anything", async () => {
+    const sendMessage = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    document.body.innerHTML = '<button>삭제</button><div role="button">보기</div>';
+    document.querySelector('button')!.focus();
+    await expect(runAction('press', { ref: refOf('보기'), key: 'Enter', generation: 10, requestId: 'k-1', trusted: true })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+  it("refuses keyboard editing of a rich editor the same way", async () => {
+    const sendMessage = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("chrome", { runtime: { sendMessage } });
+    document.body.innerHTML = '<div contenteditable="true" aria-label="본문">글</div>';
+    await expect(runAction('press', { ref: refOf('본문'), key: 'Enter', generation: 10, requestId: 'k-2', trusted: true })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+  it("never repeats a click that was partly delivered as trusted input", async () => {
+    vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: false, reason: 'debugger-error', dispatched: true })) } });
+    document.body.innerHTML = '<button>한 번만</button>';
+    const button = document.querySelector('button')!;
+    vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+    const clicks = vi.fn(); button.addEventListener('click', clicks);
+    await expect(runAction('click', { ref: refOf('한 번만'), generation: 10, requestId: 'c-1', trusted: true })).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+    expect(clicks).not.toHaveBeenCalled();
+  });
+});

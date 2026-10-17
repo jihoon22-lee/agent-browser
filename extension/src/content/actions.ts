@@ -1,12 +1,12 @@
 import { highlight } from "./highlight";
-import { requestTrusted, trustedFrame } from "./trusted";
+import { partlyDelivered, requestTrusted, trustedFrame } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
-import { INPUT_TEXT, pressKey } from "./keyboard";
+import { INPUT_TEXT, preparePress, pressKey } from "./keyboard";
 import { cancellationError, cancelCommands, withCommandCancellation, type CommandScope } from "./cancellation";
 
 export function cancelUpTo(generation: number) { cancelCommands({ generation }); }
@@ -146,7 +146,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       if (p.trusted === true && trustedFrame()) {
         const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY });
         if (answer.ok) return { executed: true, verified: { ...await changes, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
-        trustedReason = answer.reason;
+        if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted click reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+        if (!answer.ok) trustedReason = answer.reason;
       }
       const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
       // A rejected pre-click check must not leave an unhandled observation when
@@ -238,16 +239,18 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     }
     case "press": {
       if (p.trusted === true && trustedFrame()) {
-        const target = p.ref ? resolveRef(String(p.ref)) : null;
-        if (target) { assertInteractable(target); (target as HTMLElement).focus(); }
+        // The same checks as a DOM key press run first: a real key must not reach another element.
+        const target = preparePress(p, assertInteractable);
+        if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
         const changes = observeChanges(500, signal);
         void changes.catch(() => {});
         const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key: String(p.key) });
         // The browser itself performs the key's default action; nothing is emulated here.
         if (answer.ok) return { executed: true, verified: { key: String(p.key), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
+        if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted key press reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
         const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
-        return { ...fallback, verified: { ...fallback.verified, trusted: false, trustedReason: answer.reason } };
+        return { ...fallback, verified: { ...fallback.verified, trusted: false, trustedReason: answer.ok ? "" : answer.reason } };
       }
       return pressKey(p, assertInteractable);
     }

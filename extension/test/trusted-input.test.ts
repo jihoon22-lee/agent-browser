@@ -71,6 +71,7 @@ it("reattaches after a non-user detach", async () => {
 it("accepts an alert, dismisses a confirm and reports each once", async () => {
   const d = fakeDebugger(), t = trustedInput(d.api);
   await t.ensure(1, on([1]));
+  await t.click(1, 1, 1); // dialogs are answered during and shortly after an agent input
   d.event(1, "Page.javascriptDialogOpening", { type: "confirm", message: "삭제할까요?" });
   await new Promise(r => setTimeout(r, 0));
   expect(d.calls.find(c => c[2] === "Page.handleJavaScriptDialog")?.[3]).toEqual({ accept: false });
@@ -91,4 +92,59 @@ it("sends a full mouse click and key strokes", async () => {
   expect(keys.map(k => k.type)).toEqual(["keyDown", "keyUp"]);
   expect(keys[0]).toMatchObject({ key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
   expect(await t.screenshot(1)).toBe("data:image/png;base64,AAAA");
+});
+
+describe("review fixes", () => {
+  it("detaches when enabling page events fails", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    d.api.send = async (_tab, method) => { if (method === "Page.enable") throw new Error("boom"); return {} as any; };
+    expect(await t.ensure(1, on([1]))).toBe(false);
+    expect(d.calls.filter(c => c[0] === "detach").map(c => c[1])).toEqual([1]);
+    expect(t.isAttached(1)).toBe(false);
+  });
+  it("attaches once for concurrent requests on one tab", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    const [a, b] = await Promise.all([t.ensure(1, on([1])), t.ensure(1, on([1]))]);
+    expect([a, b]).toEqual([true, true]);
+    expect(d.calls.filter(c => c[0] === "attach")).toHaveLength(1);
+    expect(t.isAttached(1)).toBe(true);
+  });
+  it("detaches a tab whose operation ended while it was attaching", async () => {
+    const d = fakeDebugger(); let release!: () => void;
+    const attach = d.api.attach; d.api.attach = async tab => { await new Promise<void>(r => { release = r; }); return attach(tab); };
+    const t = trustedInput(d.api);
+    const pending = t.ensure(1, on([1]));
+    await new Promise(r => setTimeout(r, 0));
+    const ended = t.sync({ enabled: true, operationTabs: [], operationId: null });
+    release(); await pending; await ended;
+    expect(t.isAttached(1)).toBe(false);
+    expect(d.calls.filter(c => c[0] === "detach").map(c => c[1])).toEqual([1]);
+  });
+  it("marks a partly delivered input so it is never repeated", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    let sent = 0; d.api.send = async (_tab, method) => { if (method === "Input.dispatchMouseEvent" && ++sent === 2) return {} as any; if (method === "Input.dispatchMouseEvent" && sent === 3) throw new Error("detached"); return {} as any; };
+    await expect(t.click(1, 1, 1)).rejects.toMatchObject({ dispatched: true });
+  });
+  it("a user cancel keeps every tab of the operation on DOM input", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1, 2]));
+    d.detach(1, "canceled_by_user");
+    expect(await t.ensure(2, on([1, 2]))).toBe(false);
+    expect(t.cancelledReason(2)).toBe("canceled_by_user");
+  });
+  it("leaves a dialog that opens outside an agent input to the person", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    d.event(1, "Page.javascriptDialogOpening", { type: "confirm", message: "사람의 확인창" });
+    await new Promise(r => setTimeout(r, 0));
+    expect(d.calls.some(c => c[2] === "Page.handleJavaScriptDialog")).toBe(false);
+  });
+});
+
+it("hands a held operation's tabs back to the person", async () => {
+  const { trustedTargets } = await import("../src/background/trusted-input");
+  expect(trustedTargets({ id: "op", clientId: "me", tabs: [1] }, "me", true)).toEqual({ enabled: true, operationTabs: [1], operationId: "op" });
+  expect(trustedTargets({ id: "op", clientId: "me", tabs: [1], paused: true }, "me", true).operationTabs).toEqual([]);
+  expect(trustedTargets({ id: "op", clientId: "other", tabs: [1] }, "me", true).operationTabs).toEqual([]);
 });

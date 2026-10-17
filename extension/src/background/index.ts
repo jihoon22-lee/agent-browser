@@ -5,7 +5,7 @@ import { ProtocolError } from "../protocol/errors";
 import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
-import { chromeDebugger, trustedInput } from './trusted-input';
+import { chromeDebugger, trustedInput, trustedTargets } from './trusted-input';
 import { acceptTrustedRequest } from './trusted-message';
 import { chromeGroups, syncGroup, type GroupState } from './tab-groups';
 import { applyBadge, badgeFor } from './badge';
@@ -15,16 +15,15 @@ import { markedBefore, markerScript, shouldRemark, syncMarkers } from './work-ma
 const trusted = trustedInput(chromeDebugger());
 let trustedEnabled = false, ownClientId: string | undefined;
 void chrome.storage.local.get(["trustedInput", "clientId"]).then(({ trustedInput: on, clientId }) => { trustedEnabled = on === true; if (typeof clientId === "string") ownClientId = clientId; }).catch(() => {});
-const trustedState = () => {
-  const mine = lastOperation && ownClientId && lastOperation.clientId === ownClientId ? lastOperation : null;
-  return { enabled: trustedEnabled, operationTabs: mine?.tabs ?? [], operationId: mine?.id ?? null };
-};
+// The person holding the browser (paused operation) gets every tab back, debugger detached.
+const trustedState = () => trustedTargets(lastOperation, ownClientId, trustedEnabled);
 const syncTrusted = () => void trusted.sync(trustedState()).catch(() => {});
 // Optional tab groups: serialized so status bursts cannot group a tab twice.
 let groups: GroupState = { grouped: new Set() }, grouping: Promise<unknown> = Promise.resolve();
 const syncGroups = () => { grouping = grouping.then(async () => {
   const granted = await chrome.permissions.contains({ permissions: ["tabGroups"] }).catch(() => false);
-  groups = await syncGroup(chromeGroups(), granted, trustedState().operationTabs, groups);
+  const mine = lastOperation && ownClientId && lastOperation.clientId === ownClientId ? lastOperation : null;
+  groups = await syncGroup(chromeGroups(), granted, mine?.tabs ?? [], groups);
 }).catch(() => {}); };
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
   ensure: tabId => trusted.ensure(tabId, trustedState()),
@@ -100,7 +99,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed" }); return; }
     const tabId = sender.tab!.id!;
     (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y) : trusted.key(tabId, msg.key))
-      .then(result => sendResponse({ ok: true, ...result }), () => sendResponse({ ok: false, reason: trusted.cancelledReason(tabId) ?? "debugger-error" }));
+      .then(result => sendResponse({ ok: true, ...result }), error => sendResponse({ ok: false, reason: trusted.cancelledReason(tabId) ?? "debugger-error", ...(error?.dispatched ? { dispatched: true } : {}) }));
     return true;
   }
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
