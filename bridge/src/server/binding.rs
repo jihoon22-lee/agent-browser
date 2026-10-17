@@ -35,16 +35,23 @@ pub fn only_this_session_busy(busy: &[String], session: &str) -> bool { busy.ite
 pub async fn resolve(state: &ServerState, caller: &Caller) -> Option<BoundRequest> {
     let (runtime, cwd) = (caller.runtime_id.as_deref()?, caller.cwd.as_deref()?);
     let request = state.ops.bound_request()?;
-    let sessions = match state.runtime.busy_sessions(runtime, &request.scope.directory).await {
-        Ok(sessions) => sessions,
+    let launched = match state.runtime.runtime_of(runtime) {
+        Ok(launched) => launched,
+        Err(error) => { tracing::debug!(error = %error.message, "panel request not bound: unknown runtime launch"); return None; }
+    };
+    // The cheap checks first: a proxy for another profile or folder never costs an HTTP call.
+    let (profile, directory) = (launched.profile_id == request.scope.profile, same_directory(cwd, &request.scope.directory, launched.wsl));
+    if !(profile && directory) {
+        tracing::debug!(profile, directory, cwd, request_directory = %request.scope.directory, "panel request not bound");
+        return None;
+    }
+    let busy = match state.runtime.busy_in(&launched, &request.scope.directory).await {
+        Ok(busy) => busy,
         Err(error) => { tracing::debug!(error = %error.message, "panel request not bound: runtime status unavailable"); return None; }
     };
-    let (profile, directory, idle) = (sessions.profile_id == request.scope.profile, same_directory(cwd, &request.scope.directory, sessions.wsl),
-        only_this_session_busy(&sessions.busy, &request.scope.session));
-    if !(profile && directory && idle) {
-        tracing::debug!(profile, directory, idle, cwd, request_directory = %request.scope.directory, busy = sessions.busy.len(), "panel request not bound");
-    }
-    let fits = profile && directory && idle;
+    let idle = only_this_session_busy(&busy, &request.scope.session);
+    if !idle { tracing::debug!(busy = busy.len(), "panel request not bound: another session is working"); }
+    let fits = idle;
     // The request may have ended or gained an operation while status was read.
     let now = state.ops.bound_request()?;
     (fits && now.id == request.id).then_some(now)

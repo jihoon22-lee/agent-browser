@@ -45,6 +45,16 @@ type DocCache = std::sync::Mutex<std::collections::HashSet<String>>;
 /// Busy sessions of a managed runtime directory, for guarded panel request binding.
 pub struct RuntimeSessions { pub profile_id: String, pub wsl: bool, pub busy: Vec<String> }
 
+/// A managed runtime found by its launch id.
+pub struct RuntimeRef { pub profile_id: String, pub wsl: bool, record: RuntimeRecord }
+
+/// Every session that is not idle counts as working, so an unknown new state never reads as free;
+/// a reply that is not a map is an error, never "no busy sessions".
+fn busy_from(statuses: &Value) -> Result<Vec<String>, RpcError> {
+    let map = statuses.as_object().ok_or_else(|| failure("The runtime's session status is not a map"))?;
+    Ok(map.iter().filter(|(_, status)| status["type"].as_str() != Some("idle")).map(|(id, _)| id.clone()).collect())
+}
+
 pub struct Manager {
     home: PathBuf,
     port: u16,
@@ -325,24 +335,34 @@ impl Manager {
         self.persist(&record).expect("store test runtime");
     }
 
-    /// Busy sessions of one OpenCode directory on the runtime launched as `instance`.
-    /// A proxy from an earlier launch finds no record and gets an error.
-    pub async fn busy_sessions(&self, instance: &str, directory: &str) -> Result<RuntimeSessions, RpcError> {
+    /// The runtime launched as `instance`, read from the store without any HTTP call.
+    pub fn runtime_of(&self, instance: &str) -> Result<RuntimeRef, RpcError> {
         let config = self.store.read()?;
         let record = config.runtimes.values().find(|record| record.instance == instance).cloned()
             .ok_or_else(|| invalid("This MCP proxy does not belong to the current runtime launch"))?;
         let wsl = config.profiles.get(&record.profile_id).is_some_and(|profile| profile.kind == Kind::Wsl);
+        Ok(RuntimeRef { profile_id: record.profile_id.clone(), wsl, record })
+    }
+
+    /// Sessions of one directory that are not idle, read from the runtime itself.
+    pub async fn busy_in(&self, runtime: &RuntimeRef, directory: &str) -> Result<Vec<String>, RpcError> {
+        let record = &runtime.record;
         let mut url = reqwest::Url::parse(&format!("{}/session/status", record.base_url.trim_end_matches('/'))).map_err(|_| failure("Invalid managed runtime URL"))?;
         url.query_pairs_mut().append_pair("directory", directory);
         let response = http_client(&record.base_url)?.get(url).basic_auth(&record.username, Some(&record.password)).send().await
             .map_err(|_| failure("Cannot read the runtime's session status"))?;
         if !response.status().is_success() { return Err(failure("The runtime refused the session status request")); }
-        let statuses = limited_json(response, 1 << 20).await?;
-        let busy = statuses.as_object().map(|map| map.iter()
-            .filter(|(_, status)| matches!(status["type"].as_str(), Some("busy" | "retry")))
-            .map(|(id, _)| id.clone()).collect()).unwrap_or_default();
-        Ok(RuntimeSessions { profile_id: record.profile_id, wsl, busy })
+        busy_from(&limited_json(response, 1 << 20).await?)
     }
+
+    /// Busy sessions of one OpenCode directory on the runtime launched as `instance`.
+    /// A proxy from an earlier launch finds no record and gets an error.
+    pub async fn busy_sessions(&self, instance: &str, directory: &str) -> Result<RuntimeSessions, RpcError> {
+        let runtime = self.runtime_of(instance)?;
+        let busy = self.busy_in(&runtime, directory).await?;
+        Ok(RuntimeSessions { profile_id: runtime.profile_id, wsl: runtime.wsl, busy })
+    }
+
     pub async fn status(&self, id: &str) -> Result<Value, RpcError> {
         let profile = self.profile(id)?;
         let lock = self.lock(id);
@@ -770,6 +790,12 @@ mod tests {
         let mut busy = found.busy; busy.sort(); assert_eq!(busy,vec!["ses_a","ses_c"]);
         assert!(seen.lock().unwrap()[0].starts_with("GET /session/status?directory=C%3A%5Cw "),"{:?}",seen.lock().unwrap());
         assert!(manager.busy_sessions("rid-old","C:\\w").await.is_err(),"a previous launch's proxy must not bind");
+    }
+
+    #[test]
+    fn unknown_session_states_count_as_busy() {
+        assert_eq!(busy_from(&json!({"a":{"type":"compacting"},"b":{"type":"idle"},"c":{"type":"busy"}})).unwrap(), vec!["a","c"]);
+        assert!(busy_from(&json!(["a"])).is_err(), "a reply that is not a map never reads as idle");
     }
 
     #[tokio::test]
