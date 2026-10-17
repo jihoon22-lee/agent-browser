@@ -783,3 +783,25 @@ it("offers no take-over for another browser's operation", async () => {
   await render();
   expect(button("잠시 넘겨받기")).toBeUndefined();
 });
+
+it("announces the take-over notice and blocks a second press while it is sent", async () => {
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+  let release!: () => void; const gate = new Promise<void>(r => { release = r; });
+  runtime.mockImplementation(async (message: any) => message.method === "operation.pause" ? (await gate, { ok: true, result: {} }) : original(message));
+  await render();
+  await act(async () => { button("잠시 넘겨받기").click(); });
+  expect(button("잠시 넘겨받기").disabled).toBe(true);
+  await act(async () => { release(); await new Promise(r => setTimeout(r, 0)); });
+  await act(async () => { for (const listener of listeners) listener({ kind: "bridge-event", event: "status.changed", data: { operation: { id: "op-known", clientId: "local", tabs: [1], currentTab: 1, state: "active", paused: true }, browsers: [], timeline: [] } }); await new Promise(r => setTimeout(r, 0)); });
+  expect([...host.querySelectorAll('[role="status"]')].some(e => e.textContent?.includes("브라우저를 직접 조작하는 중입니다"))).toBe(true);
+});
+
+it("offers take-over once this browser is paired while the panel is open", async () => {
+  const storage = await chrome.storage.local.get() as Record<string, unknown>; delete storage.clientId;
+  const changes = new Set<(c: any, area: string) => void>();
+  (chrome as any).storage.onChanged = { addListener: (f: any) => changes.add(f), removeListener: (f: any) => changes.delete(f) };
+  await render();
+  expect(button("잠시 넘겨받기")).toBeUndefined();
+  await act(async () => { storage.clientId = "local"; for (const f of changes) f({ clientId: { newValue: "local" } }, "local"); await new Promise(r => setTimeout(r, 0)); });
+  expect(button("잠시 넘겨받기")).toBeDefined();
+});

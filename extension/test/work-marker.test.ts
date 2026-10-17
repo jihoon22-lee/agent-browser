@@ -1,4 +1,4 @@
-import { markerScript, syncMarkers } from "../src/background/work-marker";
+import { markerScript, shouldRemark, syncMarkers } from "../src/background/work-marker";
 
 beforeEach(() => { document.querySelectorAll("#agent-browser-work-marker").forEach(e => e.remove()); });
 
@@ -41,4 +41,18 @@ it("remembers marked tabs across worker restarts and sweeps all web tabs after a
   expect([...await markedBefore(session, query, null)]).toEqual([7, 8]);
   store.markedTabs = [3];
   expect([...await markedBefore(session, query, null)]).toEqual([3]);
+});
+
+it("re-marks a marked tab when its top document changes", () => {
+  expect(shouldRemark(5, 0, new Set([5]))).toBe(true);
+  expect(shouldRemark(5, 3, new Set([5]))).toBe(false);
+  expect(shouldRemark(6, 0, new Set([5]))).toBe(false);
+  expect(shouldRemark(5, 0, null)).toBe(false);
+});
+
+it("marks with important styles so page CSS cannot make it clickable", () => {
+  markerScript(true, "x");
+  const host = document.getElementById("agent-browser-work-marker") as HTMLElement;
+  expect(host.style.getPropertyPriority("pointer-events")).toBe("important");
+  expect(host.style.getPropertyPriority("position")).toBe("important");
 });

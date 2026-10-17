@@ -6,7 +6,7 @@ import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
 import { applyBadge, badgeFor } from './badge';
-import { markedBefore, syncMarkers } from './work-marker';
+import { markedBefore, markerScript, shouldRemark, syncMarkers } from './work-marker';
 
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore());
 let lastStatus: ConnStatus = { state: "disconnected" };
@@ -108,4 +108,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 chrome.tabs.onRemoved.addListener((tabId) => { conn.sendEvent("tab.closed", { tabId }); });
+// A navigation replaces the document and its marker; put it back on a tab that is still marked.
+chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
+  if (!shouldRemark(tabId, frameId, marked)) return;
+  const label = lastOperation?.paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
+  void chrome.scripting.executeScript({ target: { tabId }, func: markerScript, args: [true, label] }).catch(() => {});
+});
 conn.start();
