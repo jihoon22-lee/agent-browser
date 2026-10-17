@@ -5,9 +5,15 @@ import { ProtocolError } from "../protocol/errors";
 import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
+import { applyBadge, badgeFor } from './badge';
 
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore());
 let lastStatus: ConnStatus = { state: "disconnected" };
+// Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
+let lastOperation: { clientId: string; paused?: boolean; tabs?: number[]; id?: string } | null = null, waiting = false;
+const refreshBadge = () => void chrome.storage.local.get("clientId")
+  .then(({ clientId }) => applyBadge(badgeFor({ operation: lastOperation, clientId: typeof clientId === "string" ? clientId : undefined, waiting })))
+  .catch(() => {});
 const conn = new BridgeConnection({
   WebSocketImpl: WebSocket,
   storage: chromeStorage,
@@ -16,10 +22,13 @@ const conn = new BridgeConnection({
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
-  onStatus: (s) => { lastStatus = s; void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   extensionVersion: chrome.runtime.getManifest().version,
   reload: () => chrome.runtime.reload(),
-  onEvent: (event, data) => { void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {}); },
+  onEvent: (event, data) => {
+    if (event === "status.changed") { lastOperation = (data as { operation?: typeof lastOperation })?.operation ?? null; refreshBadge(); }
+    void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {});
+  },
 });
 
 const requests=panelRequests((method,params)=>conn.request(method,params));
@@ -31,7 +40,11 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 // Alarms wake a suspended worker; the timer makes completion prompt while the
 // WebSocket keeps it alive. Neither path starts an unavailable OpenCode profile.
-const reconcile=()=>{ if(lastStatus.state==='connected')void requests.reconcile().catch(()=>{}); };
+const reconcile=()=>{
+  if(lastStatus.state!=='connected')return;
+  void requests.reconcile().catch(()=>{});
+  void requests.attention().then(found=>{ if(found.waiting!==waiting){ waiting=found.waiting; refreshBadge(); } });
+};
 // Keep the alarm compatible with the existing minimum Chrome 116.
 void chrome.alarms.create('panel-request-reconcile',{periodInMinutes:1});
 setInterval(reconcile,15_000);
