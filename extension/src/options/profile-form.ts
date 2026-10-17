@@ -22,7 +22,8 @@ export function profilePayload(form: ProfileForm): Record<string, unknown> {
 }
 
 /** The Bridge keeps a saved password only for the same server; say so when an edit dropped it. */
-export function passwordDropped(original: { kind: string; baseUrl?: string; hasPassword?: boolean } | undefined, payload: Record<string, unknown>): boolean {
-  return !!original?.hasPassword && original.kind === "external" && payload.kind === "external"
-    && original.baseUrl !== payload.baseUrl && typeof payload.password !== "string";
+/** The Bridge keeps a saved password only for the same server and user (profile.rs preserve_secrets). */
+export function passwordDropped(original: { kind: string; baseUrl?: string; username?: string; hasPassword?: boolean } | undefined, payload: Record<string, unknown>): boolean {
+  return !!original?.hasPassword && original.kind === "external" && payload.kind === "external" && typeof payload.password !== "string"
+    && (original.baseUrl !== payload.baseUrl || (original.username ?? "") !== (payload.username ?? ""));
 }
