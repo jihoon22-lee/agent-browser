@@ -5,10 +5,24 @@ import { ProtocolError } from "../protocol/errors";
 import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
+import { chromeDebugger, trustedInput } from './trusted-input';
+import { acceptTrustedRequest } from './trusted-message';
 import { applyBadge, badgeFor } from './badge';
 import { markedBefore, markerScript, shouldRemark, syncMarkers } from './work-marker';
 
-const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore());
+// Trusted input (off by default): the debugger is attached only to this browser's operation tabs.
+const trusted = trustedInput(chromeDebugger());
+let trustedEnabled = false, ownClientId: string | undefined;
+void chrome.storage.local.get(["trustedInput", "clientId"]).then(({ trustedInput: on, clientId }) => { trustedEnabled = on === true; if (typeof clientId === "string") ownClientId = clientId; }).catch(() => {});
+const trustedState = () => {
+  const mine = lastOperation && ownClientId && lastOperation.clientId === ownClientId ? lastOperation : null;
+  return { enabled: trustedEnabled, operationTabs: mine?.tabs ?? [], operationId: mine?.id ?? null };
+};
+const syncTrusted = () => void trusted.sync(trustedState()).catch(() => {});
+const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
+  ensure: tabId => trusted.ensure(tabId, trustedState()),
+  screenshot: tabId => trusted.screenshot(tabId),
+});
 let lastStatus: ConnStatus = { state: "disconnected" };
 // Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
 let lastOperation: { clientId: string; paused?: boolean; tabs?: number[]; id?: string } | null = null, waiting = false;
@@ -34,11 +48,11 @@ const conn = new BridgeConnection({
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
-  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   extensionVersion: chrome.runtime.getManifest().version,
   reload: () => chrome.runtime.reload(),
   onEvent: (event, data) => {
-    if (event === "status.changed") { lastOperation = (data as { operation?: typeof lastOperation })?.operation ?? null; refreshBadge(); refreshMarkers(); }
+    if (event === "status.changed") { lastOperation = (data as { operation?: typeof lastOperation })?.operation ?? null; refreshBadge(); refreshMarkers(); syncTrusted(); }
     void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {});
   },
 });
@@ -65,9 +79,23 @@ chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === 'panel-request-reconcile') reconcile();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && (changes.trustedInput || changes.clientId)) {
+    if (changes.trustedInput) trustedEnabled = changes.trustedInput.newValue === true;
+    if (typeof changes.clientId?.newValue === "string") ownClientId = changes.clientId.newValue;
+    syncTrusted();
+  }
   if (area === "local" && (changes.pairingToken || changes.bridgeUrl)) { conn.stop(); conn.start(); }
 });
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // The one content-script request: trusted input for the click or key it is executing right now.
+  if (msg?.kind === "trusted-input") {
+    const ok = acceptTrustedRequest(msg, sender, { runtimeId: chrome.runtime.id, running: handleBridgeRequest.isRunning, enabled: trustedEnabled, attached: tabId => trusted.isAttached(tabId) });
+    if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed" }); return; }
+    const tabId = sender.tab!.id!;
+    (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y) : trusted.key(tabId, msg.key))
+      .then(result => sendResponse({ ok: true, ...result }), () => sendResponse({ ok: false, reason: trusted.cancelledReason(tabId) ?? "debugger-error" }));
+    return true;
+  }
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
   if(['request-prepare','request-cancel','request-finish','request-discard'].includes(msg?.kind)) {

@@ -1,4 +1,5 @@
 import { highlight } from "./highlight";
+import { requestTrusted, trustedFrame } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
@@ -141,6 +142,12 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const unmark = highlight(el);
       const changes = observeChanges(500, signal);
       void changes.then(unmark, unmark);
+      let trustedReason: string | undefined;
+      if (p.trusted === true && trustedFrame()) {
+        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY });
+        if (answer.ok) return { executed: true, verified: { ...await changes, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+        trustedReason = answer.reason;
+      }
       const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
@@ -162,7 +169,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
       el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
-      return { executed: true, verified: await changes };
+      return { executed: true, verified: { ...await changes, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
     }
     case "fill": {
       const el = resolveRef(String(p.ref));
@@ -229,7 +236,21 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_select works on select, checkbox and radio elements.");
     }
-    case "press": return pressKey(p, assertInteractable);
+    case "press": {
+      if (p.trusted === true && trustedFrame()) {
+        const target = p.ref ? resolveRef(String(p.ref)) : null;
+        if (target) { assertInteractable(target); (target as HTMLElement).focus(); }
+        const changes = observeChanges(500, signal);
+        void changes.catch(() => {});
+        const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key: String(p.key) });
+        // The browser itself performs the key's default action; nothing is emulated here.
+        if (answer.ok) return { executed: true, verified: { key: String(p.key), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+        await changes.catch(() => {});
+        const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
+        return { ...fallback, verified: { ...fallback.verified, trusted: false, trustedReason: answer.reason } };
+      }
+      return pressKey(p, assertInteractable);
+    }
     case "scroll": return scroll(p);
     case "wait": return waitFor(p, signal);
     case "extract": return extract(p);

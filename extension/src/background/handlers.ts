@@ -25,7 +25,9 @@ type Running = {
     /** The action's confirmed result while only the late-navigation watch is still running. */
     confirmed?: unknown;
 };
-export function createHandlers(api: ChromeApi, store: SessionStore) {
+/** Trusted input, when the user enabled it: decides per tab whether clicks and keys go through the debugger. */
+export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string> };
+export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
     /** A link click may still be committing the next document; read the page it produced. Wait for
      * the commit, then give subresources only a short grace: slow ads must not delay a readable DOM. */
@@ -75,6 +77,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
         };
         const inputBefore = tracksTabs ? await inputState() : null;
         const startUrl = tracksTabs ? (await api.tabsGet(tabId).catch(() => undefined))?.url : undefined;
+        // Off by default: only an enabled, attached debugger turns the content command into trusted input.
+        if (tracksTabs && frame.frameId === 0 && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true };
         await check(run.req, run.controller.signal);
         if (WRITE.has(run.req.method))
             run.started = true;
@@ -441,5 +445,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore) {
             run.controller.abort(new ProtocolError(run.started ? 'EXECUTION_UNKNOWN' : 'BROWSER_DISCONNECTED', 'Bridge disconnected during the command.', run.started ? 'unsafe' : 'safe'));
         }
     };
-    return Object.assign(handle, { disconnect });
+    /** Whether a click or key press with this request id is executing on this tab right now. */
+    const isRunning = (tabId: number, requestId: string, method: string) => {
+        const run = running.get(requestId);
+        return !!run && run.req.method === method && Number(run.req.params.tabId) === tabId;
+    };
+    return Object.assign(handle, { disconnect, isRunning });
 }
