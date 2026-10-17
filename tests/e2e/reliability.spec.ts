@@ -102,3 +102,32 @@ test("R08 a click whose script navigates 0.8s later returns the arrived page", a
   expect(clicked.verified).toMatchObject({ navigated: true, lateNavigation: true });
   expect(clicked.data.snapshot.url).toContain("detail.html");
 });
+
+test("V01 the work marker shows on the operation tab but never in snapshots or clicks", async () => {
+  const { page, attached, operationId } = await attachShop();
+  await expect(page.locator("#agent-browser-work-marker")).toHaveCount(1);
+  const read = await world.ok("browser_snapshot", { operationId });
+  expect(JSON.stringify(read.data)).not.toContain("작업 중");
+  const filter = all(attached.data.snapshot).find(e => e.name === "필터 열기")!;
+  await world.ok("browser_click", { operationId, ref: filter.ref });
+  await expect(page.locator("#filter")).toHaveAttribute("aria-expanded", "true");
+  await world.ok("browser_tabs", { action: "release", operationId });
+  await expect(page.locator("#agent-browser-work-marker")).toHaveCount(0);
+});
+
+test("H01 a held operation makes the agent wait, then look again before continuing", async () => {
+  const { page, attached, operationId } = await attachShop();
+  const clientId = await world.adminPage.evaluate(async () => (await (globalThis as any).chrome.storage.local.get("clientId")).clientId);
+  await world.admin("operation.pause", { operationId, clientId });
+  await expect(page.locator("#agent-browser-work-marker")).toHaveCount(1);
+  const pending = world.mcp.call("browser_snapshot", { operationId });
+  const settledEarly = await Promise.race([pending.then(() => true), new Promise(r => setTimeout(() => r(false), 700))]);
+  expect(settledEarly).toBe(false);
+  await world.admin("operation.resume", { operationId, clientId });
+  const handedBack = await pending;
+  expect([handedBack.ok, handedBack.executed, handedBack.error?.code]).toEqual([false, "no", "STALE_ELEMENT"]);
+  expect(handedBack.error?.message).toContain("handed the browser back");
+  expect((await world.mcp.call("browser_snapshot", { operationId })).ok).toBe(true);
+  const filter = all(attached.data.snapshot).find(e => e.name === "필터 열기")!;
+  expect((await world.mcp.call("browser_click", { operationId, ref: filter.ref })).ok).toBe(true);
+});

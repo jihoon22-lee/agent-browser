@@ -227,3 +227,18 @@ it('background reconcile retains a busy request when one status probe reports er
   expect(call.mock.calls.some(([method]) => method === 'request.end')).toBe(false);
   expect(storage.panelBrowserRequest).toEqual(lease('one'));
 });
+
+it('reports a pending question or permission of the saved request session only', async () => {
+  await panelRequests(call).prepare(lease('one'), { tabId: 11, windowId: 1 });
+  api.get.mockImplementation(async (path: string) => path === '/question' ? [{ id: 'q1', sessionID: 'session-other' }]
+    : path === '/permission' ? [{ id: 'p1', sessionID: 'session-one' }] : {});
+  await expect(panelRequests(call).attention()).resolves.toEqual({ waiting: true, kind: 'permission' });
+  api.get.mockImplementation(async () => []);
+  await expect(panelRequests(call).attention()).resolves.toEqual({ waiting: false });
+});
+
+it('treats an unreachable runtime as nothing to report', async () => {
+  await panelRequests(call).prepare(lease('one'), { tabId: 11, windowId: 1 });
+  call.mockImplementation(async (method: string) => { if (method === 'runtime.status') throw Error('offline'); return {}; });
+  await expect(panelRequests(call).attention()).resolves.toEqual({ waiting: false });
+});

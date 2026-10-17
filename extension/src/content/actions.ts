@@ -1,3 +1,4 @@
+import { highlight } from "./highlight";
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
@@ -137,7 +138,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     case "click": {
       const el = resolveRef(String(p.ref));
       const point = assertInteractable(el) ?? clickPoint(el);
+      const unmark = highlight(el);
       const changes = observeChanges(500, signal);
+      void changes.then(unmark, unmark);
       const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.

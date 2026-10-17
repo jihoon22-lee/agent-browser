@@ -286,8 +286,12 @@ fn operation_required(name: &str) -> ToolOutcome {
     )
 }
 
+/// How long a tool call waits while the user holds the browser; below the MCP reply window.
+pub(crate) const HANDOFF_WAIT: Duration = Duration::from_secs(45);
+
 async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schema: &Value) -> ToolOutcome {
     let Some(op_id) = args["operationId"].as_str() else { return operation_required(name) };
+    if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(name, Some(op_id), error); }
     // Forward only what the published schema declares; the gate owns operation, generation and tab.
     let declared = schema["properties"].as_object();
     let params: serde_json::Map<String, Value> = args
@@ -312,7 +316,7 @@ impl OperationCommand<'_> { async fn wait(self, timeout: Duration) -> Result<Val
 
 fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass) -> Result<OperationCommand<'a>, RpcError> {
     state.ops.with_checked(op_id, true, |op| {
-        if class==CommandClass::Write && op.needs_observation {return Err(restored_target_needs_snapshot());}
+        if class==CommandClass::Write && op.needs_observation {return Err(observation_required(op));}
         params.insert("operationId".into(), json!(op.id));
         params.insert("generation".into(), json!(op.generation));
         params.insert("tabId".into(), json!(op.current_tab));
@@ -453,6 +457,14 @@ impl Drop for CreatedOperation<'_> {
     }
 }
 
+/// Why the next write needs a fresh snapshot: the user handled the browser, or a closed tab sent
+/// the operation back to an earlier one.
+fn observation_required(op: &super::operation::Operation) -> RpcError {
+    if op.handed_back {
+        RpcError::new(ErrorCode::StaleElement,Retry::Safe,"The user handled the browser and handed it back. Take browser_snapshot to see the current page before changing it.")
+    } else { restored_target_needs_snapshot() }
+}
+
 fn restored_target_needs_snapshot() -> RpcError {
     RpcError::new(ErrorCode::StaleElement,Retry::Safe,"The current tab closed and this operation returned to a previously visited tab. Take browser_snapshot to confirm the restored target before changing or closing it.")
 }
@@ -465,6 +477,10 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         let delivered = e.code != ErrorCode::BrowserDisconnected;
         ToolOutcome::failure(NAME, op, delivered, e)
     };
+    // Tab actions inside an operation wait while the user holds the browser, like page tools.
+    if let Some(op_id) = args["operationId"].as_str().filter(|_| matches!(action, "new" | "switch" | "close")) {
+        if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(NAME, Some(op_id), error); }
+    }
     match action {
         "list" | "windows" => match read(if action == "windows" {"browser.windows.list"} else {"browser.tabs.list"}, json!({"windowId":args["windowId"]})).await {
             Ok(data) => ToolOutcome::success(NAME, None, true, Executed::No, Value::Null, data),
@@ -576,7 +592,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
             // Target is the current operation tab; never accept an arbitrary tabId.
             let queued = state.ops.with_checked(op_id, true, |op| {
-                if op.needs_observation {return Err(restored_target_needs_snapshot());}
+                if op.needs_observation {return Err(observation_required(op));}
                 if args.get("tabId").is_some() { return Err(invalid("close targets the current tab; switch first")); }
                 let params = json!({"operationId":op.id,"generation":op.generation,"tabId":op.current_tab});
                 let queued = state.registry.queue_command_for(&op.client_id,"browser.tabs.close",params,CommandClass::Write)?;

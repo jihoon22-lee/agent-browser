@@ -5,9 +5,27 @@ import { ProtocolError } from "../protocol/errors";
 import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
+import { applyBadge, badgeFor } from './badge';
+import { markedBefore, syncMarkers } from './work-marker';
 
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore());
 let lastStatus: ConnStatus = { state: "disconnected" };
+// Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
+let lastOperation: { clientId: string; paused?: boolean; tabs?: number[]; id?: string } | null = null, waiting = false;
+let marked: Set<number> | null = null, marking: Promise<unknown> = Promise.resolve();
+const markerApi = { executeScript: (tabId: number, func: (...args: any[]) => void, args: [boolean, string]) => chrome.scripting.executeScript({ target: { tabId }, func, args }) };
+/** Frames this browser's operation tabs; serialized so quick status bursts cannot interleave. */
+const refreshMarkers = () => { marking = marking.then(async () => {
+  const { clientId } = await chrome.storage.local.get("clientId");
+  const mine = lastOperation && lastOperation.clientId === clientId ? lastOperation : null;
+  const webTabs = async () => (await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] })).map(tab => tab.id).filter((id): id is number => Number.isInteger(id));
+  const previous = await markedBefore(chrome.storage.session, webTabs, marked);
+  marked = await syncMarkers(markerApi, previous, mine ? { tabs: mine.tabs ?? [], paused: !!mine.paused } : null);
+  await chrome.storage.session.set({ markedTabs: [...marked] });
+}).catch(() => {}); };
+const refreshBadge = () => void chrome.storage.local.get("clientId")
+  .then(({ clientId }) => applyBadge(badgeFor({ operation: lastOperation, clientId: typeof clientId === "string" ? clientId : undefined, waiting })))
+  .catch(() => {});
 const conn = new BridgeConnection({
   WebSocketImpl: WebSocket,
   storage: chromeStorage,
@@ -16,10 +34,13 @@ const conn = new BridgeConnection({
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
-  onStatus: (s) => { lastStatus = s; void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   extensionVersion: chrome.runtime.getManifest().version,
   reload: () => chrome.runtime.reload(),
-  onEvent: (event, data) => { void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {}); },
+  onEvent: (event, data) => {
+    if (event === "status.changed") { lastOperation = (data as { operation?: typeof lastOperation })?.operation ?? null; refreshBadge(); refreshMarkers(); }
+    void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {});
+  },
 });
 
 const requests=panelRequests((method,params)=>conn.request(method,params));
@@ -31,7 +52,11 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 // Alarms wake a suspended worker; the timer makes completion prompt while the
 // WebSocket keeps it alive. Neither path starts an unavailable OpenCode profile.
-const reconcile=()=>{ if(lastStatus.state==='connected')void requests.reconcile().catch(()=>{}); };
+const reconcile=()=>{
+  if(lastStatus.state!=='connected')return;
+  void requests.reconcile().catch(()=>{});
+  void requests.attention().then(found=>{ if(found.waiting!==waiting){ waiting=found.waiting; refreshBadge(); } });
+};
 // Keep the alarm compatible with the existing minimum Chrome 116.
 void chrome.alarms.create('panel-request-reconcile',{periodInMinutes:1});
 setInterval(reconcile,15_000);
@@ -70,7 +95,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })().catch(error => sendResponse({ ok: false, error: { code: "UNSUPPORTED_PAGE", message: error instanceof Error ? error.message : "페이지 참조를 읽지 못했습니다.", retry: "never" } }));
     return true;
   }
-  if (msg?.kind === "bridge" && ["status.get", "operation.abort", "browser.use", "profile.list", "profile.save", "profile.delete", "runtime.ensure", "runtime.status", "runtime.stop", "doctor.run"].includes(msg.method)) {
+  if (msg?.kind === "bridge" && ["status.get", "operation.abort", "operation.pause", "operation.resume", "browser.use", "profile.list", "profile.save", "profile.delete", "runtime.ensure", "runtime.status", "runtime.stop", "doctor.run"].includes(msg.method)) {
     const work=()=>conn.request(msg.method, msg.params ?? {}).then(async r => {
       if(msg.method==='profile.delete')await requests.removeProfile(msg.params?.profileId);
       return r;
