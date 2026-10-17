@@ -289,8 +289,15 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
         if (req.method === 'browser.screenshot') {
-            if (!tab.active)
+            if (!tab.active) {
+                // Trusted input can capture a background tab without activating it.
+                if (trusted && await trusted.ensure(tabId).catch(() => false)) {
+                    const image = await interruptible(trusted.screenshot(tabId), signal);
+                    if (!image.startsWith('data:image/png;base64,')) throw new ProtocolError('INTERNAL', 'Chrome returned an invalid screenshot.');
+                    return { mimeType: 'image/png', base64: image.slice('data:image/png;base64,'.length) };
+                }
                 throw new ProtocolError('NEEDS_TAB_ACTIVATION', 'Activate the operation tab before taking a screenshot.');
+            }
             let changed = false;
             const off = api.onTabActivated(info => { if (info.windowId === tab.windowId && info.tabId !== tabId)
                 changed = true; });
