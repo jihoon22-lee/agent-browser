@@ -699,3 +699,10 @@ it('still asks for activation when trusted input is unavailable', async () => {
     await firstRef(h);
     await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
 });
+
+it('discards a trusted capture of an inactive tab that navigated meanwhile', async () => {
+    const w = world(); w.tabs.get(1)!.active = false;
+    const h = createHandlers(w.api, memorySessionStore(), { ensure: async () => true, screenshot: async () => { w.tabs.get(1)!.url = 'https://other.test/private'; return 'data:image/png;base64,AAAA'; } });
+    await firstRef(h);
+    await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
+});
