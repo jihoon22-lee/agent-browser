@@ -18,6 +18,8 @@
 | 탭 닫기 | close로 현재 명시 선택한 웹 탭. 기존 탭도 선택 후 닫기 가능 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
 | 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
 | back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰. 결과에 도착 페이지 snapshot 포함 | 이동 전 snapshot 불필요. 링크 클릭으로 인한 이동은 navigated:true로 성공 보고 |
+| 신뢰 입력(설정에서 켬) | 최상위 문서의 클릭·키 입력을 Chrome 디버거로 보냄. alert은 확인·confirm은 취소 후 결과로 알림. 비활성 작업 탭 캡처 | 기본 꺼짐. 하위 frame과 디버거를 쓸 수 없을 때는 일반 입력(`trusted:false`, 이유 포함). 작업이 끝나면 바로 분리 |
+| 작업 탭 묶음(선택 권한) | 작업 탭을 "AgentBrowser" 탭 그룹으로 묶음 | 사용자가 이미 묶은 탭은 옮기지 않고, 직접 묶은 탭만 해제 |
 | 작업 표시·넘겨받기 | 작업 탭 테두리, 클릭 대상 강조, 아이콘 상태(●·!·‖). 패널의 잠시 넘겨받기/이어서 진행 | 표시는 닫힌 shadow DOM·클릭 통과라 스냅샷·클릭 판정에 나타나지 않는다. 재개 뒤 첫 쓰기 전에는 새 스냅샷이 필요하다 |
 | 스냅샷 검색 | browser_snapshot {query}로 그 말이 들어간 본문 줄, 같은 행에 그 말이 있는 컨트롤, 이름·값·링크가 맞는 요소만 읽는다 | 결과의 ref는 일반 snapshot과 같다. 일치 없으면 `query-no-match`. 비밀번호 값은 검색하지 않는다 |
 | 동작 결과의 스냅샷 | 페이지를 바꾼 클릭·키·이동 결과에 도착 페이지를 붙인다(요소 40개까지). 클릭이나 Enter 제출 후 1초 안에 시작된 스크립트 이동도 포함 | 더 많은 요소는 browser_snapshot의 elementOffset. 버튼을 품은 카드는 그 버튼으로만 나온다 |

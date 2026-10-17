@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>Trusted input</title>
+<button id="trusted-only">신뢰 버튼</button>
+<button id="alert-button">알림 띄우기</button>
+<button id="confirm-button">확인창 띄우기</button>
+<p id="result"></p>
+<script>
+const result=document.getElementById('result');
+document.getElementById('trusted-only').addEventListener('click',e=>{result.textContent=e.isTrusted?'눌림':'무시';});
+document.getElementById('alert-button').addEventListener('click',()=>{alert('저장됨');result.textContent='알림 닫힘';});
+document.getElementById('confirm-button').addEventListener('click',()=>{result.textContent=confirm('삭제할까요?')?'확인':'취소';});
+</script>

@@ -11,7 +11,8 @@
     "storage",
     "sidePanel",
     "alarms",
-    "webNavigation"
+    "webNavigation",
+    "debugger"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -31,6 +32,7 @@
     "extension_pages": "script-src 'self'; object-src 'self'"
   },
   "optional_permissions": [
-    "bookmarks"
+    "bookmarks",
+    "tabGroups"
   ]
 }

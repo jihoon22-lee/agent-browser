@@ -683,3 +683,26 @@ it('keeps an executed click when it is cancelled during the late-navigation watc
     await h(request('browser.cancel', { requestId: 'late-click', operationId: undefined, generation: undefined }));
     await expect(work).resolves.toMatchObject({ executed: true });
 });
+
+it('captures an inactive operation tab through trusted input when available', async () => {
+    const w = world(); w.tabs.get(1)!.active = false;
+    const capture = vi.spyOn(w.api, 'captureVisibleTab');
+    const h = createHandlers(w.api, memorySessionStore(), { ensure: async () => true, screenshot: async () => 'data:image/png;base64,AAAA' });
+    await firstRef(h);
+    expect(await h(request('browser.screenshot'))).toEqual({ mimeType: 'image/png', base64: 'AAAA' });
+    expect(capture).not.toHaveBeenCalled();
+});
+
+it('still asks for activation when trusted input is unavailable', async () => {
+    const w = world(); w.tabs.get(1)!.active = false;
+    const h = createHandlers(w.api, memorySessionStore(), { ensure: async () => false, screenshot: async () => 'data:image/png;base64,AAAA' });
+    await firstRef(h);
+    await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
+});
+
+it('discards a trusted capture of an inactive tab that navigated meanwhile', async () => {
+    const w = world(); w.tabs.get(1)!.active = false;
+    const h = createHandlers(w.api, memorySessionStore(), { ensure: async () => true, screenshot: async () => { w.tabs.get(1)!.url = 'https://other.test/private'; return 'data:image/png;base64,AAAA'; } });
+    await firstRef(h);
+    await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
+});

@@ -4,6 +4,8 @@ import { bridgeRequest, type Data } from "../sidepanel/workbench-state";
 import { validatePairing, profilePayload, type ProfileForm, passwordDropped, formFromProfile } from "./profile-form";
 import "./style.css";
 import { BookmarksPermission } from "./BookmarksPermission";
+import { TrustedInputSetting } from "./TrustedInputSetting";
+import { TabGroupsPermission } from "./TabGroupsPermission";
 import { THEMES, themeNames, useTheme } from "../theme/themes";
 const LABELS: Record<ConnStatus["state"], string> = { unpaired: "페어링 토큰을 입력하세요.", connecting: "연결하는 중…", connected: "Bridge에 연결되었습니다.", auth_failed: "상호 인증에 실패했습니다. 주소·버전·토큰을 확인하세요.", not_paired: "다른 확장과 페어링되어 있습니다. 토큰으로 다시 페어링하세요.", disconnected: "Bridge 연결을 다시 시도하는 중…" };
 const blank: ProfileForm = { id: "", name: "", kind: "windows", directory: "", executable: "", distribution: "", user: "", baseUrl: "http://127.0.0.1:4096", username: "opencode", password: "", port: "", envText: "" };
@@ -59,6 +61,8 @@ export function App() {
       </form>
     </section>
     <BookmarksPermission />
+    <TrustedInputSetting />
+    <TabGroupsPermission />
     <section><h2>연결 진단</h2><p>Extension·Bridge·실행 환경·OpenCode·MCP 상태를 확인합니다. 모델 요청은 보내지 않습니다.</p><button disabled={busy || !connected} onClick={() => void run(async () => { setDoctor(await bridgeRequest("doctor.run")); })}>진단 실행</button>{doctor && <pre className="diagnostic">{JSON.stringify(doctor, null, 2)}</pre>}</section>
   </main>;
 }
