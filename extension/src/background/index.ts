@@ -7,6 +7,7 @@ import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
 import { chromeDebugger, trustedInput } from './trusted-input';
 import { acceptTrustedRequest } from './trusted-message';
+import { chromeGroups, syncGroup, type GroupState } from './tab-groups';
 import { applyBadge, badgeFor } from './badge';
 import { markedBefore, markerScript, shouldRemark, syncMarkers } from './work-marker';
 
@@ -19,6 +20,12 @@ const trustedState = () => {
   return { enabled: trustedEnabled, operationTabs: mine?.tabs ?? [], operationId: mine?.id ?? null };
 };
 const syncTrusted = () => void trusted.sync(trustedState()).catch(() => {});
+// Optional tab groups: serialized so status bursts cannot group a tab twice.
+let groups: GroupState = { grouped: new Set() }, grouping: Promise<unknown> = Promise.resolve();
+const syncGroups = () => { grouping = grouping.then(async () => {
+  const granted = await chrome.permissions.contains({ permissions: ["tabGroups"] }).catch(() => false);
+  groups = await syncGroup(chromeGroups(), granted, trustedState().operationTabs, groups);
+}).catch(() => {}); };
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
   ensure: tabId => trusted.ensure(tabId, trustedState()),
   screenshot: tabId => trusted.screenshot(tabId),
@@ -48,11 +55,11 @@ const conn = new BridgeConnection({
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
-  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   extensionVersion: chrome.runtime.getManifest().version,
   reload: () => chrome.runtime.reload(),
   onEvent: (event, data) => {
-    if (event === "status.changed") { lastOperation = (data as { operation?: typeof lastOperation })?.operation ?? null; refreshBadge(); refreshMarkers(); syncTrusted(); }
+    if (event === "status.changed") { lastOperation = (data as { operation?: typeof lastOperation })?.operation ?? null; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); }
     void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {});
   },
 });
