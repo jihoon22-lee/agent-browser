@@ -6,19 +6,22 @@ import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
 import { applyBadge, badgeFor } from './badge';
-import { syncMarkers } from './work-marker';
+import { markedBefore, syncMarkers } from './work-marker';
 
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore());
 let lastStatus: ConnStatus = { state: "disconnected" };
 // Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
 let lastOperation: { clientId: string; paused?: boolean; tabs?: number[]; id?: string } | null = null, waiting = false;
-let marked = new Set<number>(), marking: Promise<unknown> = Promise.resolve();
+let marked: Set<number> | null = null, marking: Promise<unknown> = Promise.resolve();
 const markerApi = { executeScript: (tabId: number, func: (...args: any[]) => void, args: [boolean, string]) => chrome.scripting.executeScript({ target: { tabId }, func, args }) };
 /** Frames this browser's operation tabs; serialized so quick status bursts cannot interleave. */
 const refreshMarkers = () => { marking = marking.then(async () => {
   const { clientId } = await chrome.storage.local.get("clientId");
   const mine = lastOperation && lastOperation.clientId === clientId ? lastOperation : null;
-  marked = await syncMarkers(markerApi, marked, mine ? { tabs: mine.tabs ?? [], paused: !!mine.paused } : null);
+  const webTabs = async () => (await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] })).map(tab => tab.id).filter((id): id is number => Number.isInteger(id));
+  const previous = await markedBefore(chrome.storage.session, webTabs, marked);
+  marked = await syncMarkers(markerApi, previous, mine ? { tabs: mine.tabs ?? [], paused: !!mine.paused } : null);
+  await chrome.storage.session.set({ markedTabs: [...marked] });
 }).catch(() => {}); };
 const refreshBadge = () => void chrome.storage.local.get("clientId")
   .then(({ clientId }) => applyBadge(badgeFor({ operation: lastOperation, clientId: typeof clientId === "string" ? clientId : undefined, waiting })))

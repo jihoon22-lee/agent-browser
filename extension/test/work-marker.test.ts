@@ -23,3 +23,22 @@ it("marks new operation tabs and clears tabs that left", async () => {
   await syncMarkers(api, marked, null);
   expect(calls).toEqual([[1, true], [2, true], [2, true], [1, false], [2, false]]);
 });
+
+it("replaces markers left by an earlier extension instance instead of adding another", () => {
+  const stray = document.createElement("div"); stray.id = "agent-browser-work-marker"; document.documentElement.append(stray);
+  markerScript(true, "AgentBrowser 작업 중");
+  expect(document.querySelectorAll("#agent-browser-work-marker")).toHaveLength(1);
+  markerScript(false, "");
+  expect(document.querySelectorAll("#agent-browser-work-marker")).toHaveLength(0);
+});
+
+it("remembers marked tabs across worker restarts and sweeps all web tabs after a reload", async () => {
+  const { markedBefore } = await import("../src/background/work-marker");
+  const store: Record<string, unknown> = {};
+  const session = { get: async (key: string) => ({ [key]: store[key] }), set: async (value: Record<string, unknown>) => { Object.assign(store, value); } };
+  const query = async () => [7, 8];
+  expect([...await markedBefore(session, query, new Set([1]))]).toEqual([1]);
+  expect([...await markedBefore(session, query, null)]).toEqual([7, 8]);
+  store.markedTabs = [3];
+  expect([...await markedBefore(session, query, null)]).toEqual([3]);
+});

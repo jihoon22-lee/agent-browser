@@ -567,6 +567,7 @@ async fn resume_requires_a_fresh_snapshot_before_writing() {
     assert!(matches!(call(&mut ext, "operation.resume", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
     let (mcp, stale) = call_with_socket(mcp, &mut ext, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await;
     assert_eq!(stale["error"]["code"], "STALE_ELEMENT", "{stale}");
+    assert!(stale["error"]["message"].as_str().unwrap().contains("user handled the browser"), "{stale}");
     let (mcp, _) = call_with_socket(mcp, &mut ext, "browser_snapshot", json!({"operationId":op})).await;
     let (_mcp, filled) = call_with_socket(mcp, &mut ext, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await;
     assert_eq!(filled["ok"], true, "{filled}");

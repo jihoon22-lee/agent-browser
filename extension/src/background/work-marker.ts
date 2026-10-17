@@ -1,10 +1,10 @@
 /** Runs in the page: a fixed, click-through, closed-shadow frame that snapshots cannot read. */
 export function markerScript(on: boolean, label: string): void {
   const id = "agent-browser-work-marker";
-  const existing = document.getElementById(id) as (HTMLElement & { __label?: HTMLElement }) | null;
-  if (!on) { existing?.remove(); return; }
-  if (existing?.__label) { existing.__label.textContent = label; return; }
-  const host = document.createElement("div") as HTMLElement & { __label?: HTMLElement };
+  // Replace every earlier marker, including ones left by a previous extension instance.
+  document.querySelectorAll(`#${id}`).forEach(element => element.remove());
+  if (!on) return;
+  const host = document.createElement("div");
   host.id = id; host.setAttribute("aria-hidden", "true");
   host.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483647";
   const root = host.attachShadow({ mode: "closed" });
@@ -13,7 +13,7 @@ export function markerScript(on: boolean, label: string): void {
   const tag = document.createElement("div");
   tag.style.cssText = "position:absolute;top:0;right:0;background:#2563eb;color:#fff;font:12px sans-serif;padding:2px 8px";
   tag.textContent = label;
-  root.append(frame, tag); host.__label = tag;
+  root.append(frame, tag);
   document.documentElement.append(host);
 }
 
@@ -26,4 +26,15 @@ export async function syncMarkers(api: MarkerApi, previous: Set<number>, next: {
   for (const tab of now) await api.executeScript(tab, markerScript, [true, label]).catch(() => {});
   for (const tab of previous) if (!now.has(tab)) await api.executeScript(tab, markerScript, [false, ""]).catch(() => {});
   return now;
+}
+
+export type SessionArea = { get(key: string): Promise<Record<string, unknown>>; set(value: Record<string, unknown>): Promise<void> };
+
+/** Tabs that may carry a marker: this worker's memory, else the session record (worker restart),
+ * else every web tab (a new extension instance cannot know what an earlier one marked). */
+export async function markedBefore(session: SessionArea, webTabs: () => Promise<number[]>, inMemory: Set<number> | null): Promise<Set<number>> {
+  if (inMemory) return inMemory;
+  const saved = (await session.get("markedTabs")).markedTabs;
+  if (Array.isArray(saved)) return new Set(saved.filter(Number.isInteger));
+  return new Set(await webTabs());
 }

@@ -20,6 +20,9 @@ pub struct Operation {
     pub needs_observation: bool,
     /// The user holds the browser: tool calls wait until resume (handoff §16).
     pub paused: bool,
+    /// needs_observation was set by a hand-back, not by a tab restore (only the message differs).
+    #[serde(skip)]
+    pub handed_back: bool,
     #[serde(skip)]
     pub target_epoch: u64,
 }
@@ -170,7 +173,7 @@ impl OperationGate {
             client_id: client_id.to_string(),
             state: OpState::Active,
             current_tab_closed: tab_id.is_none(),
-            needs_observation:false,paused:false,target_epoch:0,
+            needs_observation:false,paused:false,handed_back:false,target_epoch:0,
         };
         g.current = Some(op.clone());
         Ok(op)
@@ -265,7 +268,7 @@ impl OperationGate {
         g.recent_tabs.push(tab);
         let op=g.current.as_mut().unwrap();
         op.current_tab=tab;op.current_tab_closed=false;
-        op.target_epoch+=1;op.needs_observation=false;
+        op.target_epoch+=1;op.needs_observation=false;op.handed_back=false;
     }
 
     pub fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
@@ -291,7 +294,7 @@ impl OperationGate {
             if op.current_tab==tab {
                 if let Some(previous)=g.recent_tabs.iter().rev().find(|id|op.tabs.contains(id)) {
                     op.current_tab=*previous;op.current_tab_closed=false;
-                    op.target_epoch+=1;op.needs_observation=true;
+                    op.target_epoch+=1;op.needs_observation=true;op.handed_back=false;
                 } else {op.current_tab_closed=true;}
             }
         }
@@ -299,7 +302,7 @@ impl OperationGate {
 
     pub fn observe_target(&self, origin: &Operation) {
         let mut g=self.inner.lock().unwrap();
-        if let Some(op)=g.current.as_mut().filter(|op|op.id==origin.id && op.target_epoch==origin.target_epoch && op.current_tab==origin.current_tab && !op.current_tab_closed) {op.needs_observation=false;}
+        if let Some(op)=g.current.as_mut().filter(|op|op.id==origin.id && op.target_epoch==origin.target_epoch && op.current_tab==origin.current_tab && !op.current_tab_closed) {op.needs_observation=false;op.handed_back=false;}
     }
 
     pub fn remove_tab(&self, tab: i64) {
@@ -350,7 +353,7 @@ impl OperationGate {
         Self::active(&g, id)?;
         let op = g.current.as_mut().filter(|op| op.client_id == client && op.paused)
             .ok_or_else(|| RpcError::new(ErrorCode::OperationInvalid, Retry::Never, "This operation is not held by this browser."))?;
-        op.paused = false; op.target_epoch += 1; op.needs_observation = true;
+        op.paused = false; op.target_epoch += 1; op.needs_observation = true; op.handed_back = true;
         let op = op.clone();
         drop(g); self.resumed.notify_waiters();
         Ok(op)
@@ -359,11 +362,19 @@ impl OperationGate {
     /// Waits while the user holds the operation; returns at once when it is not held.
     pub async fn wait_until_resumed(&self, id: &str, limit: std::time::Duration) -> Result<(), RpcError> {
         let deadline = tokio::time::Instant::now() + limit;
+        let mut waited = false;
         loop {
             let notified = self.resumed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            if !self.check_active(id)?.paused { return Ok(()); }
+            if !self.check_active(id)?.paused {
+                // A call that waited does not run: the page may have changed, and the remaining
+                // MCP reply window may not fit the command and its follow-up reads.
+                if waited { return Err(RpcError::new(ErrorCode::StaleElement, Retry::Safe,
+                    "The user handed the browser back. Nothing ran; take browser_snapshot to see the current page, then continue.")); }
+                return Ok(());
+            }
+            waited = true;
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
                 return Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Safe,
                     "The user has taken over this tab. Wait, then try again; take a fresh snapshot before acting.")
@@ -415,7 +426,7 @@ mod tests {
         assert!(!waiting.is_finished(),"a call waits while the user holds the browser");
         let resumed=g.resume(&op.id,"browser").unwrap();
         assert!(!resumed.paused && resumed.needs_observation);
-        assert!(waiting.await.unwrap().is_ok());
+        assert!(waiting.await.unwrap().is_err(),"the waiting call is told to look again, not run");
     }
 
     #[tokio::test]
@@ -434,6 +445,18 @@ mod tests {
         g.abort(Some(&op.id));
         let error=tokio::time::timeout(std::time::Duration::from_secs(1),waiting).await.expect("abort wakes the waiter").unwrap().unwrap_err();
         assert_eq!(error.code,ErrorCode::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn a_call_that_waited_reports_the_hand_back_instead_of_running() {
+        let g=std::sync::Arc::new(OperationGate::default());let op=g.attach(12,"browser").unwrap();g.pause(&op.id,"browser").unwrap();
+        let waiting={let g=g.clone();let id=op.id.clone();tokio::spawn(async move{g.wait_until_resumed(&id,std::time::Duration::from_secs(5)).await})};
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        g.resume(&op.id,"browser").unwrap();
+        let error=waiting.await.unwrap().unwrap_err();
+        assert_eq!((error.code,error.retry),(ErrorCode::StaleElement,Retry::Safe));
+        assert!(error.message.contains("handed the browser back"));
+        assert!(g.wait_until_resumed(&op.id,std::time::Duration::from_millis(10)).await.is_ok(),"an unheld operation runs at once");
     }
 
     #[test]
