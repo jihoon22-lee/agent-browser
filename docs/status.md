@@ -1,3 +1,18 @@
+# B10 간헐 시간 초과 조사 — 2026-10-18 KST, 미해결
+
+`board-navigation.spec.ts:160` B10(앞서 검사한 iframe이 나중 close 검사 중 수정됨)이 Linux E2E에서 90초 시간 초과로 멈추는 간헐 실패를 조사했다. 원인은 확정하지 못했고 코드는 바꾸지 않았다.
+
+- **발생 기록:** 계획 4 검증(2026-10-17) 때 1회, v0.2.0 태그 대상 [main CI 39124432525](https://github.com/jihoon22-lee/agent-browser/actions/runs/39124432525) 1차 시도에서 1회. 계획 4 이전에는 기록이 없다.
+- **재현:** `taskset -c 0,1 pnpm --filter agent-browser-e2e exec playwright test board-navigation.spec.ts --repeat-each N --workers 1`로 spec 전체를 반복하면 재현된다. 계측 없음 1/8, 단계 로그만 넣었을 때 1/10(B10 기준). B10 단독 실행에서는 재현하지 못했다.
+- **멈춘 위치:** 단계 로그상 `browser_tabs new`는 정상 반환했고, 이어지는 iframe 입력칸 `toBeVisible()` 두 줄에서 멈췄다. expect 제한은 10초인데 테스트는 90초 동안 멈췄다. 이 모순은 풀지 못했다. 테스트 코드보다 아래 단계(브라우저·CDP)에서 걸렸을 가능성이 있다.
+- **실패 화면:** CI artifact의 확장 설정 화면이 "Bridge 연결을 다시 시도하는 중…"이었다. 실패 순간 확장과 Bridge 연결이 끊겨 있었던 것으로 보인다. 정상 실행 때의 같은 화면과는 비교하지 못했다.
+- **가설(미확인):** spec의 `beforeAll`이 반복마다 새 world를 띄우므로 B10은 항상 그 world의 마지막 테스트다. 시작 시점이 연결 약 15~20초 뒤라서, 확장의 첫 heartbeat(연결 20초 뒤 전송, 응답 10초 제한, 없으면 소켓 종료 — `extension/src/background/bridge-connection.ts`)와 겹친다. Bridge `serve_extension`(`bridge/src/server/conn.rs`)은 확장의 일반 요청을 수신 루프 안에서 직접 기다리므로, 그동안 heartbeat 응답이 늦어질 수 있는 구조다.
+- **배제:** 신뢰 입력 debugger는 이 spec에서 꺼져 있어 탭에 붙지 않는다.
+- **중단 이유:** 30·60초 상태 덤프(페이지·frame, 서비스 워커 evaluate, 연결 상태, `status.get`, Bridge 출력)와 trace 보존을 넣은 뒤로는 B10이 80회 연속 통과했다. 계측이 타이밍을 바꿔 경합을 숨기는 것으로 보인다.
+- **다음에 할 일:** heartbeat 간격을 테스트에서 조정해 B10과 일부러 겹치게 만들고 멈춤이 재현되는지 확인한다. 재현되면 그 테스트를 실패 테스트로 삼아 고친다. 원인 확인 전에 B10에 시간 제한·재시도를 넣지 않는다.
+
+---
+
 # v0.2.0 Windows preview — 게시 완료 (2026-10-18)
 
 [v0.2.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.2.0)(prerelease)을 **2026-10-18 12:03:06 UTC / 21:03:06 KST**에 게시했다. 주석 태그 `v0.2.0` → main `1b1dc7b23f2b83c5b4807b0eaa3e17df41f0fe6e`(PR #30 병합 커밋).
