@@ -252,3 +252,7 @@ it('registers the attached files for the request and forgets them when it ends',
   await requests.cancel(lease('one'));
   expect(uploads.take('one','a.png')).toBeUndefined();
 });
+it('names files the panel left out in the request instructions', async () => {
+  const prepared=await panelRequests(call).prepare(lease('two'),null,undefined,[],['huge.zip']);
+  expect(prepared.system).toContain('huge.zip');
+});

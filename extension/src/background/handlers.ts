@@ -28,7 +28,7 @@ type Running = {
 /** Trusted input, when the user enabled it: decides per tab whether clicks and keys go through the debugger. */
 export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string> };
 /** The file of that name the person attached to the panel request now running, if any. */
-export type AttachmentLookup = (name: string) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
+export type AttachmentLookup = (name: string, panelRequestId: string | undefined) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
 const origin = (url: string | undefined) => { try { const value = url ? new URL(url).origin : "null"; return value === "null" ? undefined : value; } catch { return undefined; } };
 export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
@@ -324,7 +324,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         }
         if (CONTENT.has(req.method)) {
             // Resolve the attachment before touching the page: an unknown name never reaches it.
-            const file = req.method === 'browser.upload' ? await attachment?.(String(p.file ?? '')) : undefined;
+            const file = req.method === 'browser.upload' ? await attachment?.(String(p.file ?? ''), typeof p.panelRequestId === 'string' ? p.panelRequestId : undefined) : undefined;
             if (req.method === 'browser.upload' && !file)
                 throw new ProtocolError('INVALID_PARAMS', `This request has no attachment named ${JSON.stringify(String(p.file ?? '').slice(0, 80))}; attach the file in the panel and send the request again.`);
             const ref = typeof p.ref === 'string' ? p.ref : typeof p.refGone === 'string' ? p.refGone : undefined;
@@ -349,9 +349,19 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
+            // A drag target is bound like the source ref: this operation and tab, and the same document.
+            if (req.method === 'browser.click' && p.mode === 'drag' && typeof p.toRef === 'string') {
+                const target = await frames.bound(tabId, p.toRef, String(p.operationId));
+                if (target.frameId !== frame.frameId)
+                    throw new ProtocolError('INVALID_PARAMS', 'toRef must be in the same frame as ref; dragging between frames is not supported.');
+                if (target.documentId !== frame.documentId)
+                    throw new ProtocolError('STALE_ELEMENT', 'toRef belongs to an old document. Take a new snapshot.');
+            }
             // The person attached the file for the site they are on, not for an embedded frame from another site.
             if (file && (!origin(frame.url) || origin(frame.url) !== origin((await getTab(api, tabId)).url)))
                 throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'This file input is in a frame from another site; attachments are only uploaded to the page\'s own site.');
+            if (req.method === 'browser.click' && p.newTab === true && p.mode !== undefined && p.mode !== 'click')
+                throw new ProtocolError('INVALID_PARAMS', 'newTab opens a link with a plain click; omit mode.');
             if (req.method === 'browser.click' && p.newTab === true) {
                 const link = await interruptible(api.sendToFrame(tabId,frame,{kind:'cmd',method:'link',params:{...p,requestId:req.id}}),signal);
                 if (!link?.ok) { const e=link?.error; throw new ProtocolError(e?.code ?? 'ELEMENT_NOT_INTERACTABLE',e?.message ?? 'The ref is not an HTTP(S) anchor.'); }
@@ -363,7 +373,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // and page readiness are observed by later snapshot/wait calls.
                 return {executed:true,openedTabs:[{...describeTab(created),pendingUrl:created.pendingUrl??(!isWeb(created.url)?url:undefined),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
             }
-            return send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
+            return send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, panelRequestId: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
         }
         throw new ProtocolError('FORBIDDEN_METHOD', `Unknown browser method ${req.method}.`);
     }

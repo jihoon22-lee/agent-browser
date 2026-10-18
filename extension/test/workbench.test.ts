@@ -816,3 +816,15 @@ it("hands the message's attached files to the request so only they can be upload
   const prepare = runtime.mock.calls.map(([m]) => m).find(m => m.kind === "request-prepare");
   expect(prepare.files).toEqual([{ name: "a.png", mime: "image/png", dataUrl: expect.stringMatching(/^data:image\/png;base64,/) }]);
 });
+
+it("sends at most the uploadable attachments so a large message cannot fail to send", async () => {
+  (chrome as any).windows = { getLastFocused: vi.fn(async () => ({ id: 4, focused: true, tabs: [{ id: 31, active: true, url: "https://mail.test" }] })) };
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+  runtime.mockImplementation(async (message: any) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+  await render();
+  for (const n of [1, 2, 3, 4, 5, 6]) await act(async () => { const el = host.querySelector<HTMLInputElement>('input[type="file"]')!; Object.defineProperty(el, "files", { configurable: true, value: [new File(["x"], `${n}.png`, { type: "image/png" })] }); el.dispatchEvent(new Event("change", { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 20)); });
+  await draftValue("올려 줘"); await act(async () => button("보내기").click());
+  const prepare = runtime.mock.calls.map(([m]) => m).find(m => m.kind === "request-prepare");
+  expect(prepare.files.map((f: any) => f.name)).toEqual(["1.png", "2.png", "3.png", "4.png", "5.png"]);
+  expect(prepare.skippedFiles).toEqual(["6.png"]);
+});

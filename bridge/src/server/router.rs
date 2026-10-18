@@ -129,6 +129,7 @@ fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
             Some("switch") if args["tabId"].as_i64().is_none() => Err(invalid("action=switch requires `tabId`")),
             _ => Ok(()),
         },
+        "browser_click" if args["newTab"] == true && args["mode"].as_str().is_some_and(|mode| mode != "click") => Err(invalid("`newTab` opens a link with a plain click; omit `mode`")),
         "browser_click" => match (args["mode"].as_str(), args.get("toRef").is_some_and(|v| !v.is_null())) {
             (Some("drag"), false) => Err(invalid("mode=drag requires `toRef`")),
             (mode, true) if mode != Some("drag") => Err(invalid("`toRef` is only for mode=drag")),
@@ -313,13 +314,16 @@ async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schem
     if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(name, Some(op_id), error); }
     // Forward only what the published schema declares; the gate owns operation, generation and tab.
     let declared = schema["properties"].as_object();
-    let params: serde_json::Map<String, Value> = args
+    let mut params: serde_json::Map<String, Value> = args
         .as_object()
         .into_iter()
         .flatten()
         .filter(|(k, _)| declared.is_some_and(|d| d.contains_key(k.as_str())))
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
+    // The extension uploads only the attachments of the panel request that owns this operation; after a
+    // Bridge restart or outside a panel request there is none, even if the extension still holds files.
+    if name == "browser_upload" { if let Some(request) = state.ops.panel_request_of(op_id) { params.insert("panelRequestId".into(), json!(request)); } }
     let class = tools::class_of(name, args);
     let method = format!("browser.{}", name.trim_start_matches("browser_"));
     let queued = match queue_operation_tool(state, op_id, &method, params, class) {
@@ -669,6 +673,14 @@ mod tests {
     }
 
     #[test]
+    fn new_tab_is_only_a_plain_click() {
+        for mode in ["hover","double","right"] { assert!(validate_action("browser_click", &json!({"ref":"a","mode":mode,"newTab":true})).is_err(), "{mode}"); }
+        assert!(validate_action("browser_click", &json!({"ref":"a","mode":"drag","toRef":"b","newTab":true})).is_err());
+        assert!(validate_action("browser_click", &json!({"ref":"a","mode":"click","newTab":true})).is_ok());
+        assert!(validate_action("browser_click", &json!({"ref":"a","newTab":true})).is_ok());
+    }
+
+    #[test]
     fn a_held_operation_is_not_enqueued() {
         let gate = super::super::operation::OperationGate::default();
         let op = gate.attach(12, "browser").unwrap();
@@ -785,6 +797,30 @@ mod tests {
             assert!(from_b.try_recv().is_err(), "the replacement profile must not receive old work");
             assert_eq!(state.ops.current().unwrap().id, new.id);
         }
+    }
+
+    #[tokio::test]
+    async fn an_upload_names_the_panel_request_that_owns_its_operation_and_nothing_else() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        state.registry.register("A", tx);
+        async fn sent(state: &ServerState, op: String, rx: &mut tokio::sync::mpsc::UnboundedReceiver<String>) -> Value {
+            let mut pending = Box::pin(call_tool(state, "browser_upload", json!({"operationId":op,"ref":"s1f0e1","file":"a.png","panelRequestId":"forged"})));
+            assert!(futures_util::poll!(pending.as_mut()).is_pending());
+            // Skip notifications such as browser.cancel from the previous operation's release.
+            loop {
+                if let Envelope::Req { method, params, .. } = parse_envelope(&rx.try_recv().unwrap()).unwrap() { if method == "browser.upload" { return params; } }
+            }
+        }
+        let unscoped = state.ops.attach(1, "A").unwrap();
+        assert!(sent(&state, unscoped.id.clone(), &mut rx).await.get("panelRequestId").is_none(), "an operation outside a panel request has no attachments, and a caller cannot name one");
+        state.ops.release(&unscoped.id).unwrap();
+        state.ops.begin_request("turn-a", "A", Some(1)).unwrap();
+        let bound = state.ops.attach_request(1, "A", Some("turn-a")).unwrap();
+        assert_eq!(state.ops.panel_request_of(&bound.id).as_deref(), Some("turn-a"));
+        assert_eq!(sent(&state, bound.id, &mut rx).await["panelRequestId"], "turn-a");
     }
 
     #[tokio::test]

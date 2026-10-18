@@ -85,6 +85,13 @@ impl OperationGate {
         Ok(())
     }
 
+    /// The panel request that owns this active operation, if any: only its attachments may be uploaded.
+    pub fn panel_request_of(&self, op_id: &str) -> Option<String> {
+        let g=self.inner.lock().unwrap();
+        let r=g.request.as_ref()?;
+        g.current.as_ref().filter(|o| o.id==op_id && o.state==OpState::Active && o.client_id==r.client).map(|_| r.id.clone())
+    }
+
     /// The open panel request and its current operation, when the panel said which
     /// runtime session owns it. Binding still needs the caller-side guard in `binding`.
     pub fn bound_request(&self) -> Option<BoundRequest> {

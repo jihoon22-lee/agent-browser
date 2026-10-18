@@ -1,5 +1,5 @@
 import { BridgeConnection, type ConnStatus } from "./bridge-connection";
-import { uploads } from "./uploads";
+import { attachmentFor, uploads } from "./uploads";
 import { createHandlers } from "./handlers";
 import { chromeSessionStore } from "./dedupe";
 import { ProtocolError } from "../protocol/errors";
@@ -29,11 +29,10 @@ const syncGroups = () => { grouping = grouping.then(async () => {
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
   ensure: tabId => trusted.ensure(tabId, trustedState()),
   screenshot: tabId => trusted.screenshot(tabId),
-}, async name => {
+}, async (name, panelRequestId) => {
   // Only the panel request that holds the browser now; its files are forgotten when it ends.
   const { panelBrowserRequest } = await chrome.storage.local.get("panelBrowserRequest") as { panelBrowserRequest?: { requestId?: unknown } };
-  const requestId = panelBrowserRequest?.requestId;
-  return typeof requestId === "string" ? uploads.take(requestId, name) : undefined;
+  return attachmentFor(uploads, panelBrowserRequest, panelRequestId, name);
 });
 let lastStatus: ConnStatus = { state: "disconnected" };
 // Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
@@ -111,7 +110,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
   if(['request-prepare','request-cancel','request-finish','request-discard'].includes(msg?.kind)) {
-    const work=msg.kind==='request-prepare'?requests.prepare(msg.lease,msg.target,msg.previousOperationId,msg.files):msg.kind==='request-discard'?requests.discard(msg.requestId):msg.kind==='request-finish'?requests.finish(msg.scope):requests.cancel(msg.scope);
+    const work=msg.kind==='request-prepare'?requests.prepare(msg.lease,msg.target,msg.previousOperationId,msg.files,msg.skippedFiles):msg.kind==='request-discard'?requests.discard(msg.requestId):msg.kind==='request-finish'?requests.finish(msg.scope):requests.cancel(msg.scope);
     work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:error instanceof Error?error.message:String(error)}}));
     return true;
   }

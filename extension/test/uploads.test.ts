@@ -1,4 +1,4 @@
-import { attachmentRegistry, MAX_ATTACHMENT_BYTES } from "../src/background/uploads";
+import { attachmentFor, attachmentRegistry, MAX_ATTACHMENT_BYTES } from "../src/background/uploads";
 
 const file = (name: string, bytes = 3, mime = "image/png") => ({ name, mime, dataUrl: `data:${mime};base64,` + "A".repeat(Math.ceil(bytes / 3) * 4) });
 
@@ -21,4 +21,12 @@ it("skips files over the size limit and beyond five per request", () => {
 it("accepts only data URLs with a plain file name", () => {
   const r = attachmentRegistry();
   expect(r.register("A", [{ name: "x.png", mime: "image/png", dataUrl: "https://example.test/x.png" }, { name: "", mime: "image/png", dataUrl: "data:image/png;base64,AAAA" }, { name: "../x.png", mime: "image/png", dataUrl: "data:image/png;base64,AAAA" }]).accepted).toEqual([]);
+});
+it("gives an attachment only to the panel request the Bridge says owns the operation", () => {
+  const r = attachmentRegistry();
+  r.register("A", [file("a.png")]);
+  expect(attachmentFor(r, { requestId: "A" }, "A", "a.png")).toMatchObject({ name: "a.png" });
+  expect(attachmentFor(r, { requestId: "A" }, undefined, "a.png")).toBeUndefined();
+  expect(attachmentFor(r, { requestId: "A" }, "B", "a.png")).toBeUndefined();
+  expect(attachmentFor(r, undefined, "A", "a.png")).toBeUndefined();
 });

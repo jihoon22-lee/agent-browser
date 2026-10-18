@@ -91,7 +91,7 @@ export function panelRequests(call:Call) {
       if(typeof clientId!=='string')throw Error('Browser client unavailable');
       await end(saved,clientId);
     }),
-    prepare:(lease:RequestLease,target:RequestTarget|null,previousOperationId?:string,files?:unknown)=>{
+    prepare:(lease:RequestLease,target:RequestTarget|null,previousOperationId?:string,files?:unknown,skippedFiles?:unknown)=>{
       const generation=state(lease.profileId).generation;
       return serial(async()=>{
       check(lease.profileId,generation);
@@ -122,7 +122,8 @@ export function panelRequests(call:Call) {
         throw error;
       }
       const attached=uploads.register(lease.requestId,files);
-      return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target,attached.accepted,attached.skipped)};
+      const leftOut=Array.isArray(skippedFiles)?skippedFiles.filter((name):name is string=>typeof name==='string').slice(0,20):[];
+      return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target,attached.accepted,[...leftOut,...attached.skipped])};
     });},
     finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>observeCompletion(scope),
     /** A saved request whose session waits for the user's answer; only a hint, so it never throws. */
