@@ -1,4 +1,5 @@
 import { BridgeConnection, type ConnStatus } from "./bridge-connection";
+import { attachmentFor, uploads } from "./uploads";
 import { createHandlers } from "./handlers";
 import { chromeSessionStore } from "./dedupe";
 import { ProtocolError } from "../protocol/errors";
@@ -28,6 +29,10 @@ const syncGroups = () => { grouping = grouping.then(async () => {
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
   ensure: tabId => trusted.ensure(tabId, trustedState()),
   screenshot: tabId => trusted.screenshot(tabId),
+}, async (name, panelRequestId) => {
+  // Only the panel request that holds the browser now; its files are forgotten when it ends.
+  const { panelBrowserRequest } = await chrome.storage.local.get("panelBrowserRequest") as { panelBrowserRequest?: { requestId?: unknown } };
+  return attachmentFor(uploads, panelBrowserRequest, panelRequestId, name);
 });
 let lastStatus: ConnStatus = { state: "disconnected" };
 // Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
@@ -98,14 +103,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const ok = acceptTrustedRequest(msg, sender, { runtimeId: chrome.runtime.id, running: handleBridgeRequest.isRunning, enabled: trustedEnabled, attached: tabId => trusted.isAttached(tabId) });
     if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed" }); return; }
     const tabId = sender.tab!.id!;
-    (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y) : trusted.key(tabId, msg.key))
+    (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y, msg.mode) : msg.action === "drag" ? trusted.drag(tabId, { x: msg.x, y: msg.y }, { x: msg.toX, y: msg.toY }) : trusted.key(tabId, msg.key, msg.modifiers))
       .then(result => sendResponse({ ok: true, ...result }), error => sendResponse({ ok: false, reason: trusted.cancelledReason(tabId) ?? "debugger-error", ...(error?.dispatched ? { dispatched: true } : {}) }));
     return true;
   }
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
   if(['request-prepare','request-cancel','request-finish','request-discard'].includes(msg?.kind)) {
-    const work=msg.kind==='request-prepare'?requests.prepare(msg.lease,msg.target,msg.previousOperationId):msg.kind==='request-discard'?requests.discard(msg.requestId):msg.kind==='request-finish'?requests.finish(msg.scope):requests.cancel(msg.scope);
+    const work=msg.kind==='request-prepare'?requests.prepare(msg.lease,msg.target,msg.previousOperationId,msg.files,msg.skippedFiles):msg.kind==='request-discard'?requests.discard(msg.requestId):msg.kind==='request-finish'?requests.finish(msg.scope):requests.cancel(msg.scope);
     work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:error instanceof Error?error.message:String(error)}}));
     return true;
   }

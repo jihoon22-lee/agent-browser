@@ -1,5 +1,6 @@
 import { OpenCodeApiError, OpenCodeV1Client } from '../agents/opencode-v1/client';
 import { completedRequest, requestInstructions, type RequestLease, type RequestTarget } from '../sidepanel/request-target';
+import { uploads } from './uploads';
 type Call=(method:string,params:Record<string,unknown>)=>Promise<any>;
 const KEY='panelBrowserRequest';
 export function panelRequests(call:Call) {
@@ -35,6 +36,7 @@ export function panelRequests(call:Call) {
   async function end(lease:RequestLease,clientId:string,abort=false) {
     try { await call('request.end',{requestId:lease.requestId,clientId,...(abort?{abort:true}:{})}); }
     catch(error) { if((error as any)?.code!=='OPERATION_INVALID')throw error; }
+    uploads.forget(lease.requestId);
     await chrome.storage.local.remove(KEY);
   }
   async function completion(saved:RequestLease,unattended=false):Promise<{abort:boolean}|null> {
@@ -89,7 +91,7 @@ export function panelRequests(call:Call) {
       if(typeof clientId!=='string')throw Error('Browser client unavailable');
       await end(saved,clientId);
     }),
-    prepare:(lease:RequestLease,target:RequestTarget|null,previousOperationId?:string)=>{
+    prepare:(lease:RequestLease,target:RequestTarget|null,previousOperationId?:string,files?:unknown,skippedFiles?:unknown)=>{
       const generation=state(lease.profileId).generation;
       return serial(async()=>{
       check(lease.profileId,generation);
@@ -119,7 +121,9 @@ export function panelRequests(call:Call) {
         if(['BROWSER_BUSY','OPERATION_INVALID','INVALID_PARAMS'].includes((error as any)?.code))await chrome.storage.local.remove(KEY);
         throw error;
       }
-      return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target)};
+      const attached=uploads.register(lease.requestId,files);
+      const leftOut=Array.isArray(skippedFiles)?skippedFiles.filter((name):name is string=>typeof name==='string').slice(0,20):[];
+      return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target,attached.accepted,[...leftOut,...attached.skipped])};
     });},
     finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>observeCompletion(scope),
     /** A saved request whose session waits for the user's answer; only a hint, so it never throws. */

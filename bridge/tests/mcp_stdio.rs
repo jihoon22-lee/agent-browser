@@ -47,7 +47,8 @@ async fn initialize_and_list_tools_over_stdio() {
     m.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).await;
     let r = m.recv().await;
     let names: Vec<&str> = r["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names.len(), 12);
+    assert_eq!(names.len(), 13);
+    assert!(names.contains(&"browser_upload"));
     assert!(names.contains(&"browser_bookmarks"));
     assert!(names.contains(&"browser_snapshot"));
 }
@@ -110,7 +111,7 @@ async fn tools_list_works_without_any_serve_and_calls_report_disconnected() {
     let mut m = spawn_mcp(home.path(), port).await;
     m.init().await;
     m.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).await;
-    assert_eq!(m.recv().await["result"]["tools"].as_array().unwrap().len(), 12);
+    assert_eq!(m.recv().await["result"]["tools"].as_array().unwrap().len(), 13);
     m.send(json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"browser_tabs","arguments":{"action":"list"}}})).await;
     let r = m.recv().await;
     assert_eq!(r["result"]["isError"], true);

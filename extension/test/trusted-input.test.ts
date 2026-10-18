@@ -148,3 +148,84 @@ it("hands a held operation's tabs back to the person", async () => {
   expect(trustedTargets({ id: "op", clientId: "me", tabs: [1], paused: true }, "me", true).operationTabs).toEqual([]);
   expect(trustedTargets({ id: "op", clientId: "other", tabs: [1] }, "me", true).operationTabs).toEqual([]);
 });
+
+describe("pointer modes over the debugger", () => {
+  it("double, right and hover send their own mouse events", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    await t.click(1, 1, 1, "double");
+    const mouse = () => d.calls.filter(c => c[2] === "Input.dispatchMouseEvent").map(c => c[3] as any);
+    expect(mouse().filter(m => m.type === "mousePressed").map(m => m.clickCount)).toEqual([1, 2]);
+    d.calls.length = 0;
+    await t.click(1, 1, 1, "right");
+    expect(mouse().filter(m => m.type === "mousePressed").map(m => m.button)).toEqual(["right"]);
+    d.calls.length = 0;
+    await t.click(1, 1, 1, "hover");
+    expect(mouse().map(m => m.type)).toEqual(["mouseMoved"]);
+  });
+  it("a double click cut short after the first press is partly delivered", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    let presses = 0; d.api.send = async (_tab, method, params: any) => { if (method === "Input.dispatchMouseEvent" && params.type === "mousePressed" && ++presses === 2) throw new Error("detached"); return {} as any; };
+    await expect(t.click(1, 1, 1, "double")).rejects.toMatchObject({ dispatched: true });
+  });
+});
+
+describe("trusted drag", () => {
+  it("presses on the source, moves in steps and releases on the target", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    await t.drag(1, { x: 1, y: 1 }, { x: 9, y: 9 });
+    const mouse = d.calls.filter(c => c[2] === "Input.dispatchMouseEvent").map(c => c[3] as any);
+    expect(mouse.filter(m => m.type === "mousePressed")).toEqual([expect.objectContaining({ x: 1, y: 1, button: "left" })]);
+    const pressedAt = mouse.findIndex(m => m.type === "mousePressed");
+    expect(mouse.slice(pressedAt + 1).filter(m => m.type === "mouseMoved" && m.buttons === 1).length).toBeGreaterThanOrEqual(3);
+    expect(mouse.at(-1)).toMatchObject({ type: "mouseReleased", x: 9, y: 9 });
+  });
+  it("a drag cut short after the press is partly delivered", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    let pressed = false; d.api.send = async (_tab, method, params: any) => { if (method !== "Input.dispatchMouseEvent") return {} as any; if (params.type === "mousePressed") pressed = true; else if (pressed) throw new Error("detached"); return {} as any; };
+    await expect(t.drag(1, { x: 1, y: 1 }, { x: 9, y: 9 })).rejects.toMatchObject({ dispatched: true });
+  });
+});
+
+describe("trusted key combinations", () => {
+  it("holds the modifiers around a letter", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    await t.key(1, "a", ["Control"]);
+    const keys = d.calls.filter(c => c[2] === "Input.dispatchKeyEvent").map(c => c[3] as any);
+    expect(keys.map(k => `${k.type} ${k.key} ${k.modifiers ?? 0}`)).toEqual(["keyDown Control 2", "keyDown a 2", "keyUp a 2", "keyUp Control 0"]);
+    expect(keys[1]).toMatchObject({ code: "KeyA", windowsVirtualKeyCode: 65 });
+    expect(keys[1].text).toBeUndefined();
+  });
+  it("types the character only when Shift is the sole modifier, and knows the editing keys", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    await t.key(1, "b", ["Shift"]);
+    await t.key(1, "Delete");
+    await t.key(1, "z", ["Control", "Shift"]);
+    const downs = d.calls.filter(c => c[2] === "Input.dispatchKeyEvent").map(c => c[3] as any).filter(k => k.type === "keyDown" && !["Shift", "Control"].includes(k.key));
+    expect(downs[0]).toMatchObject({ key: "B", code: "KeyB", text: "B", modifiers: 8 });
+    expect(downs[1]).toMatchObject({ key: "Delete", windowsVirtualKeyCode: 46 });
+    expect(downs[2]).toMatchObject({ key: "Z", code: "KeyZ", modifiers: 10 });
+    expect(downs[2].text).toBeUndefined();
+  });
+});
+
+describe("trusted shortcuts stay inside the page's editing", () => {
+  it("refuses clipboard, tab, window and browser-menu shortcuts before any event", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    for (const [key, modifiers] of [["v", ["Control"]], ["c", ["Meta"]], ["x", ["Control"]], ["w", ["Control"]], ["t", ["Control"]], ["Tab", ["Control"]], ["PageDown", ["Control"]], ["d", ["Alt"]], ["ArrowLeft", ["Alt"]], ["Delete", ["Control", "Shift"]], ["i", ["Control", "Shift"]]] as const)
+      await expect(t.key(1, key, [...modifiers])).rejects.toThrow();
+    expect(d.calls.filter(c => c[2] === "Input.dispatchKeyEvent")).toEqual([]);
+  });
+  it("still sends select-all, undo, redo and caret shortcuts", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    for (const [key, modifiers] of [["a", ["Control"]], ["z", ["Meta"]], ["z", ["Control", "Shift"]], ["ArrowLeft", ["Control", "Shift"]], ["Enter", ["Control"]], ["B", ["Shift"]]] as const)
+      await t.key(1, key, [...modifiers]);
+  });
+});

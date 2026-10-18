@@ -1,5 +1,6 @@
+import { trustedShortcut } from "./trusted-input";
 /** Who may ask the background to send trusted input: this extension's top-frame content script,
- * for the click or key press it is executing right now, on a tab the debugger is attached to. */
+ * for the click, drag or key press it is executing right now, on a tab the debugger is attached to. */
 export type TrustedSender = { id?: string; tab?: { id?: number }; frameId?: number };
 export type TrustedContext = {
   runtimeId: string;
@@ -12,7 +13,9 @@ export function acceptTrustedRequest(msg: any, sender: TrustedSender, ctx: Trust
   const tabId = sender.tab?.id;
   if (msg?.kind !== "trusted-input" || sender.id !== ctx.runtimeId || typeof tabId !== "number" || sender.frameId !== 0) return false;
   if (!ctx.enabled || !ctx.attached(tabId) || typeof msg.requestId !== "string") return false;
-  if (msg.action === "click") return Number.isFinite(msg.x) && Number.isFinite(msg.y) && ctx.running(tabId, msg.requestId, "browser.click");
-  if (msg.action === "key") return typeof msg.key === "string" && ctx.running(tabId, msg.requestId, "browser.press");
+  if (msg.action === "click") return Number.isFinite(msg.x) && Number.isFinite(msg.y) && [undefined, "click", "double", "right", "hover"].includes(msg.mode) && ctx.running(tabId, msg.requestId, "browser.click");
+  if (msg.action === "drag") return [msg.x, msg.y, msg.toX, msg.toY].every(Number.isFinite) && ctx.running(tabId, msg.requestId, "browser.click");
+  const modifiersOk = msg.modifiers === undefined || (Array.isArray(msg.modifiers) && msg.modifiers.every((m: unknown) => ["Alt", "Control", "Meta", "Shift"].includes(m as string)));
+  if (msg.action === "key") return typeof msg.key === "string" && modifiersOk && trustedShortcut(msg.key, msg.modifiers ?? []) && ctx.running(tabId, msg.requestId, "browser.press");
   return false;
 }

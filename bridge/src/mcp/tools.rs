@@ -3,8 +3,9 @@ use serde_json::{json, Value};
 
 pub struct ToolDef { pub name: &'static str, pub description: &'static str, pub schema: Value }
 
-fn op() -> Value { json!({"type":"string","description":"From attach/new"}) }
-fn r#ref() -> Value { json!({"type":"string","description":"Snapshot ref"}) }
+/// Field descriptions repeated in every schema cost the most; the tool descriptions say where ids come from.
+fn op() -> Value { json!({"type":"string"}) }
+fn r#ref() -> Value { json!({"type":"string"}) }
 
 pub fn all() -> Vec<ToolDef> {
     vec![
@@ -37,15 +38,17 @@ pub fn all() -> Vec<ToolDef> {
             schema: json!({"type":"object","properties":{"operationId":op(),
                 "action":{"type":"string","enum":["goto","back","forward","reload"]},
                 "url":{"type":"string"}},"additionalProperties":false}) },
-        ToolDef { name: "browser_click", description: "Click a ref; returns a snapshot if the page changed. newTab opens an http(s) link in a new operation tab.",
-            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean"}},"required":["ref"],"additionalProperties":false}) },
+        ToolDef { name: "browser_click", description: "Click a ref (mode double, right, hover, or drag onto toRef); returns a snapshot if the page changed. newTab opens a link in a new operation tab.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean"},
+                "mode":{"type":"string","enum":["click","double","right","hover","drag"]},"toRef":{"type":"string"}},"required":["ref"],"additionalProperties":false}) },
         ToolDef { name: "browser_fill", description: "Replace the text of an input, textarea or editable area.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"text":{"type":"string"}},"required":["ref","text"],"additionalProperties":false}) },
         ToolDef { name: "browser_select", description: "Choose a select option by value or label, or set checked on a checkbox/radio.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"option":{"type":"string"},"checked":{"type":"boolean"}},"required":["ref"],"additionalProperties":false}) },
-        ToolDef { name: "browser_press", description: "Press a key on ref or the focused element (Enter in a field submits); returns a snapshot.",
+        ToolDef { name: "browser_press", description: "Press Enter, Tab, Escape, Space, Backspace, Delete, Home, End, PageUp, PageDown, an arrow, or with modifiers a letter/digit, on ref or the focused element; returns a snapshot.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
-                "key":{"type":"string","enum":["Enter","Tab","Escape","Space","Backspace","ArrowUp","ArrowDown"]}},
+                "key":{"type":"string","maxLength":10},
+                "modifiers":{"type":"array","items":{"enum":["Control","Shift","Alt","Meta"]},"maxItems":4}},
                 "required":["key"],"additionalProperties":false}) },
         ToolDef { name: "browser_scroll", description: "Scroll the page or a ref container.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
@@ -61,12 +64,14 @@ pub fn all() -> Vec<ToolDef> {
                 "required":["kind"],"additionalProperties":false}) },
         ToolDef { name: "browser_screenshot", description: "PNG of the operation tab; that tab must be active.",
             schema: json!({"type":"object","properties":{"operationId":op()},"additionalProperties":false}) },
+        ToolDef { name: "browser_upload", description: "Put a file the user attached to this request into a file input (its ref, label or button). file: the attachment name.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"file":{"type":"string"}},"required":["ref","file"],"additionalProperties":false}) },
     ]
 }
 
 pub fn class_of(name: &str, args: &Value) -> CommandClass {
     match name {
-        "browser_navigate" | "browser_click" | "browser_fill" | "browser_select" | "browser_press" | "browser_scroll" => CommandClass::Write,
+        "browser_navigate" | "browser_click" | "browser_fill" | "browser_select" | "browser_press" | "browser_scroll" | "browser_upload" => CommandClass::Write,
         "browser_tabs" if args["action"] == "new" || args["action"] == "close" => CommandClass::Write,
         _ => CommandClass::Read,
     }
@@ -93,6 +98,17 @@ mod tests {
     fn total_schema_size_stays_small_for_free_models() {
         let size: usize = super::all().iter().map(|t| t.description.len() + t.schema.to_string().len()).sum();
         assert!(size < 4800, "tool definitions grew to {size} chars");
+    }
+
+    #[test]
+    fn pointer_modes_modifiers_and_upload_are_offered() {
+        let tools = super::all();
+        let find = |name: &str| tools.iter().find(|t| t.name == name).unwrap();
+        assert_eq!(find("browser_click").schema["properties"]["mode"]["enum"], serde_json::json!(["click","double","right","hover","drag"]));
+        assert!(find("browser_click").schema["properties"]["toRef"].is_object());
+        assert!(find("browser_press").schema["properties"]["modifiers"].is_object());
+        assert_eq!(find("browser_upload").schema["required"], serde_json::json!(["ref","file"]));
+        assert_eq!(super::class_of("browser_upload", &serde_json::json!({})), crate::server::registry::CommandClass::Write);
     }
 
     #[test]

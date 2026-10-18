@@ -1,0 +1,41 @@
+<!doctype html><meta charset="utf-8"><title>Pointer, keys and upload</title>
+<style>
+#menu-items{display:none}#menu:hover #menu-items,#menu.open #menu-items{display:block}
+.item{padding:6px;border:1px solid #888;margin:4px;width:140px;user-select:none}
+#card{width:80px;padding:6px;border:1px solid #333}
+#drop{width:180px;height:48px;border:2px dashed #555}
+</style>
+<div id="menu"><a href="detail.html">메뉴</a><div id="menu-items"><a href="detail.html">하위 항목</a></div></div>
+<p id="hover">닫힘</p>
+<div role="button" tabindex="0" id="counter">카운터</div>
+<p id="counts">click 0 dbl 0 context 0</p>
+<ul id="list"><li class="item" tabindex="0" data-id="A">항목 A</li><li class="item" tabindex="0" data-id="B">항목 B</li><li class="item" tabindex="0" data-id="C">항목 C</li></ul>
+<p id="order">A,B,C</p>
+<div draggable="true" id="card">카드</div>
+<div id="drop" role="region" aria-label="드롭 영역" tabindex="0">여기에 놓기</div>
+<p id="dropped">없음</p>
+<textarea aria-label="메모">지울 글</textarea>
+<p id="sent">보내지 않음</p>
+<label for="file">사진 선택</label><input id="file" type="file" accept="image/*" hidden>
+<p id="file-name">파일 없음</p>
+<script>
+const $=id=>document.getElementById(id);
+$('menu').addEventListener('mouseenter',()=>{$('menu').classList.add('open');$('hover').textContent='열림';});
+const counts={click:0,dbl:0,context:0},show=()=>{$('counts').textContent=`click ${counts.click} dbl ${counts.dbl} context ${counts.context}`;};
+$('counter').addEventListener('click',()=>{counts.click++;show();});
+$('counter').addEventListener('dblclick',()=>{counts.dbl++;show();});
+$('counter').addEventListener('contextmenu',e=>{e.preventDefault();counts.context++;show();});
+// A pointer-driven sortable list: press an item, release over another to move it before that one.
+let dragging=null;
+$('list').addEventListener('mousedown',e=>{dragging=e.target.closest('.item');});
+document.addEventListener('mouseup',e=>{
+  const over=document.elementFromPoint(e.clientX,e.clientY)?.closest('.item');
+  if(dragging&&over&&over!==dragging){over.before(dragging);$('order').textContent=[...$('list').children].map(li=>li.dataset.id).join(',');}
+  dragging=null;
+});
+$('card').addEventListener('dragstart',e=>e.dataTransfer.setData('text/plain','카드'));
+$('drop').addEventListener('dragover',e=>e.preventDefault());
+$('drop').addEventListener('drop',e=>{e.preventDefault();$('dropped').textContent=(e.dataTransfer.getData('text/plain')||'?')+' 놓임';});
+document.querySelector('textarea').addEventListener('keydown',e=>{if(e.ctrlKey&&e.key==='Enter')$('sent').textContent='보냄: '+e.target.value;});
+$('file').addEventListener('change',e=>{const f=e.target.files[0];$('file-name').textContent=f?`${f.name} ${f.type} ${f.size}`:'파일 없음';});
+</script>

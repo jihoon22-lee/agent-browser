@@ -706,3 +706,43 @@ it('discards a trusted capture of an inactive tab that navigated meanwhile', asy
     await firstRef(h);
     await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
 });
+it('uploads only a file attached to the current request, without asking the page otherwise', async () => {
+    const w = world();
+    const attachment = vi.fn(async (name: string) => name === 'a.png' ? { name, mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' } : undefined);
+    const h = createHandlers(w.api, memorySessionStore(), undefined, attachment);
+    const ref = await firstRef(h);
+    const before = w.sent.length;
+    await expect(h(request('browser.upload', { ref, file: 'other.png' }))).rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringContaining('other.png') });
+    expect(w.sent.slice(before).some(s => s.msg.kind === 'cmd')).toBe(false);
+    await h(request('browser.upload', { ref, file: 'a.png', panelRequestId: 'turn-a' }));
+    expect(attachment).toHaveBeenLastCalledWith('a.png', 'turn-a');
+    expect(w.sent.at(-1)?.msg.params.panelRequestId).toBeUndefined();
+    expect(w.sent.at(-1)?.msg).toMatchObject({ kind: 'cmd', method: 'upload', params: { ref, name: 'a.png', mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' } });
+});
+it('never hands an attachment to a frame from another site', async () => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'ad', url: 'https://ads.other.test/slot' });
+    const attachment = vi.fn(async (name: string) => ({ name, mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' }));
+    const h = createHandlers(w.api, memorySessionStore(), undefined, attachment);
+    const snap: any = await h(request('browser.snapshot'));
+    const before = w.sent.length;
+    await expect(h(request('browser.upload', { ref: snap.frames[1].elements[0].ref, file: 'a.png' }))).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    expect(w.sent.slice(before).some(s => s.msg.method === 'upload')).toBe(false);
+});
+it('opens a link in a new tab only for a plain click, never for hover or other modes', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    const ref = await firstRef(h);
+    await expect(h(request('browser.click', { ref, newTab: true, mode: 'hover' }))).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    expect(w.sent.some(s => s.msg.method === 'link')).toBe(false);
+});
+it('binds a drag target like the source: this operation, this tab, the same frame', async () => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://example.test/child' });
+    const h = createHandlers(w.api, memorySessionStore());
+    const snap: any = await h(request('browser.snapshot'));
+    const [source, inChild] = [snap.frames[0].elements[0].ref, snap.frames[1].elements[0].ref];
+    const before = w.sent.length;
+    await expect(h(request('browser.click', { ref: source, toRef: inChild, mode: 'drag' }))).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    await expect(h(request('browser.click', { ref: source, toRef: 's1f0e1', mode: 'drag' }))).rejects.toMatchObject({ code: 'STALE_ELEMENT' });
+    await expect(h(request('browser.click', { ref: source, toRef: source, mode: 'drag' }, undefined))).resolves.toBeDefined();
+    await expect(h(request('browser.click', { ref: source, toRef: source, mode: 'drag', operationId: 'op-other' }))).rejects.toMatchObject({ code: 'STALE_ELEMENT' });
+    expect(w.sent.slice(before).filter(s => s.msg.method === 'click')).toHaveLength(1);
+});

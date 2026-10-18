@@ -6,7 +6,7 @@ import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
-import { INPUT_TEXT, preparePress, pressKey } from "./keyboard";
+import { INPUT_TEXT, keyOf, preparePress, pressKey } from "./keyboard";
 import { cancellationError, cancelCommands, withCommandCancellation, type CommandScope } from "./cancellation";
 
 export function cancelUpTo(generation: number) { cancelCommands({ generation }); }
@@ -98,6 +98,50 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
   return withCommandCancellation(p, (activeSignal) => executeAction(method, p, activeSignal), signal);
 }
 
+/** Drag ref onto toRef: trusted mouse input when allowed and the source is not an HTML5 drag source,
+ * otherwise pointer events followed, for HTML5 sources, by a drag sequence sharing one DataTransfer. */
+async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const from = assertInteractable(el) ?? clickPoint(el);
+  const to = assertInteractable(target) ?? clickPoint(target);
+  const html5 = (el as HTMLElement).draggable === true || el.getAttribute('draggable') === 'true' || el instanceof HTMLImageElement || (el instanceof HTMLAnchorElement && el.hasAttribute('href'));
+  const unmark = highlight(el);
+  const changes = observeChanges(500, signal);
+  void changes.then(unmark, unmark);
+  void changes.catch(() => {});
+  let trustedReason: string | undefined;
+  if (p.trusted === true && trustedFrame() && !html5) {
+    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", { x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
+    if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+    if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted drag reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+    trustedReason = answer.reason;
+  }
+  const pointer = (on: Element, type: string, at: Point, down: boolean) =>
+    on.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {
+      ...at, bubbles: true, cancelable: true, composed: true, button: 0, buttons: down ? 1 : 0, detail: type.endsWith("move") ? 0 : 1,
+      pointerId: 1, pointerType: 'mouse', isPrimary: true, pressure: down ? 0.5 : 0 }));
+  const middle = { clientX: (from.clientX + to.clientX) / 2, clientY: (from.clientY + to.clientY) / 2 };
+  pointer(el, "pointerdown", from, true); pointer(el, "mousedown", from, true);
+  pointer(el, "pointermove", middle, true); pointer(el, "mousemove", middle, true);
+  pointer(target, "pointermove", to, true); pointer(target, "mousemove", to, true);
+  pointer(target, "pointerup", to, false); pointer(target, "mouseup", to, false);
+  if (html5) {
+    const dataTransfer = typeof DataTransfer !== "undefined" ? new DataTransfer() : null;
+    const drag = (on: Element, type: string, at: Point) => {
+      const init = { ...at, bubbles: true, cancelable: true, composed: true, dataTransfer };
+      const event = typeof DragEvent !== "undefined" ? new DragEvent(type, init) : Object.assign(new MouseEvent(type, init), { dataTransfer });
+      return on.dispatchEvent(event);
+    };
+    // A cancelled dragstart means the page refused the drag; do not drop.
+    if (drag(el, "dragstart", from)) {
+      drag(target, "dragenter", to);
+      const accepted = !drag(target, "dragover", to);
+      if (accepted) drag(target, "drop", to);
+      drag(el, "dragend", to);
+    }
+  }
+  return { executed: true, verified: { ...await changes, mode: "drag", ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+}
+
 async function executeAction(method: string, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
   switch (method) {
     case "link": {
@@ -138,14 +182,18 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     }
     case "click": {
       const el = resolveRef(String(p.ref));
+      const mode = String(p.mode ?? "click");
+      if (mode === "drag") return dragOnto(el, resolveRef(String(p.toRef)), p, signal);
+      if (!["click", "double", "right", "hover"].includes(mode)) throw new ProtocolError("INVALID_PARAMS", `Unsupported click mode ${mode}.`);
+      const modeNote = mode === "click" ? {} : { mode };
       const point = assertInteractable(el) ?? clickPoint(el);
       const unmark = highlight(el);
       const changes = observeChanges(500, signal);
       void changes.then(unmark, unmark);
       let trustedReason: string | undefined;
       if (p.trusted === true && trustedFrame()) {
-        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY });
-        if (answer.ok) return { executed: true, verified: { ...await changes, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY, ...modeNote });
+        if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted click reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
         if (!answer.ok) trustedReason = answer.reason;
       }
@@ -153,10 +201,26 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
       void changes.catch(() => {});
-      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
-        const down=type.endsWith('down');
-        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:down?1:0,pointerId:1,pointerType:'mouse',isPrimary:true,pressure:down?0.5:0}));
+      const pointer = (type: string, init: Record<string, unknown>) =>
+        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
+      if (mode === "hover") {
+        // enter events do not bubble: like a pointer arriving from outside, enter each ancestor, outermost first.
+        const chain: Element[] = [];
+        for (let node: Element | null = el; node; node = node.parentElement ?? ((node.getRootNode() as ShadowRoot).host ?? null)) chain.unshift(node);
+        for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"]) {
+          if (!type.endsWith("enter")) { pointer(type, { buttons: 0, detail: 0 }); continue; }
+          for (const node of chain) node.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:0,detail:0,bubbles:false,pointerId:1,pointerType:'mouse',isPrimary:true}));
+        }
+        return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
       }
+      const button = mode === "right" ? 2 : 0;
+      const press = (detail: number) => {
+        for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
+          const down=type.endsWith('down');
+          pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+        }
+      };
+      press(1);
       let finalPoint: Point;
       try {
         finalPoint = assertInteractable(el) ?? clickPoint(el);
@@ -169,8 +233,17 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
-      el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
-      return { executed: true, verified: { ...await changes, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+      if (mode === "right") {
+        el.dispatchEvent(new MouseEvent('contextmenu',{...base,...finalPoint,button:2,buttons:0}));
+      } else {
+        el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
+        if (mode === "double") {
+          press(2);
+          el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0,detail:2}));
+          el.dispatchEvent(new MouseEvent('dblclick',{...base,...finalPoint,buttons:0,detail:2}));
+        }
+      }
+      return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
     }
     case "fill": {
       const el = resolveRef(String(p.ref));
@@ -244,9 +317,10 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
         const changes = observeChanges(500, signal);
         void changes.catch(() => {});
-        const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key: String(p.key) });
+        const { key, modifiers } = keyOf(p);
+        const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key, ...(modifiers.length ? { modifiers } : {}) });
         // The browser itself performs the key's default action; nothing is emulated here.
-        if (answer.ok) return { executed: true, verified: { key: String(p.key), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+        if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
         if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted key press reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
         const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
@@ -254,11 +328,52 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       return pressKey(p, assertInteractable);
     }
+    case "upload": return upload(p);
     case "scroll": return scroll(p);
     case "wait": return waitFor(p, signal);
     case "extract": return extract(p);
     default: throw new ProtocolError("INVALID_PARAMS", `Unknown action ${method}`);
   }
+}
+
+/** The file input a ref stands for: itself, its label's control, the only one inside it, or the only one in its form. */
+function fileInputFor(el: Element): HTMLInputElement | null {
+  const file = (x: unknown): x is HTMLInputElement => x instanceof HTMLInputElement && x.type === 'file';
+  if (el instanceof HTMLInputElement) return file(el) ? el : null;
+  if (el instanceof HTMLLabelElement) return file(el.control) ? el.control : null;
+  const inside = [...el.querySelectorAll('input[type=file]')];
+  if (inside.length) return inside.length === 1 ? inside[0] as HTMLInputElement : null;
+  const label = el.closest('label');
+  if (label && file(label.control)) return label.control;
+  const form = el.closest('form') ?? ((el as HTMLButtonElement).form ?? null);
+  const inForm = form ? [...form.querySelectorAll('input[type=file]')] : [];
+  return inForm.length === 1 ? inForm[0] as HTMLInputElement : null;
+}
+function accepts(input: HTMLInputElement, name: string, mime: string) {
+  const tokens = input.accept.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+  const lower = name.toLowerCase(), type = mime.toLowerCase();
+  return !tokens.length || tokens.some(t => t.startsWith('.') ? lower.endsWith(t) : t.endsWith('/*') ? type.startsWith(t.slice(0, -1)) : t === type);
+}
+/** Puts one attached file (bytes from the background, never a local path) into the input and fires its events. */
+function upload(p: P) {
+  const el = resolveRef(String(p.ref));
+  assertInteractable(el);
+  const input = fileInputFor(el);
+  if (!input) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'No single file input belongs to this ref. Use the file input, its label, or a button in a form with one file input.');
+  if (input.disabled) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'The file input is disabled.');
+  const name = String(p.name), mime = String(p.mime ?? '');
+  if (!accepts(input, name, mime)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', `This file input accepts ${input.accept.slice(0, 120)}; ${name} does not match.`);
+  const dataUrl = String(p.dataUrl), comma = dataUrl.indexOf(','), body = dataUrl.slice(comma + 1);
+  const bytes = dataUrl.slice(0, comma).endsWith(';base64') ? Uint8Array.from(atob(body), c => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(body));
+  const file = new File([bytes], name, { type: mime });
+  const transfer = new DataTransfer();
+  // A multiple input keeps what it already holds; a single one is replaced.
+  if (input.multiple) for (const kept of Array.from(input.files ?? [])) transfer.items.add(kept);
+  transfer.items.add(file);
+  input.files = transfer.files;
+  input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return { executed: true, verified: { files: Array.from(input.files ?? []).map(f => f.name), size: file.size } };
 }
 
 function scroll(p: P) {

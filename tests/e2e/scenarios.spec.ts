@@ -206,7 +206,7 @@ test("S15 works with side panel closed", async () => {
 
 test("S16 mcp stdout purity", async () => {
   const list = await world.mcp.request("tools/list");
-  expect(list.tools).toHaveLength(12);
+  expect(list.tools).toHaveLength(13);
   expect(list.tools.some((tool:any)=>tool.name === "browser_bookmarks")).toBe(true);
   await world.ok("browser_tabs", { action: "list" });
   expect(world.mcp.stdout.length).toBeGreaterThan(2);

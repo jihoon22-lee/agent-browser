@@ -344,3 +344,100 @@ describe("trusted input keeps the keyboard and click safety checks", () => {
     expect(clicks).not.toHaveBeenCalled();
   });
 });
+
+describe("pointer modes", () => {
+  it("hover moves over the element without pressing or clicking it", async () => {
+    document.body.innerHTML = '<a href="#go">메뉴</a>';
+    const link = document.querySelector('a')!;
+    vi.spyOn(link, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+    const seen: string[] = []; for (const t of ['mouseover', 'mouseenter', 'mousemove', 'mousedown', 'click']) link.addEventListener(t, () => seen.push(t));
+    const result: any = await runAction('click', { ref: refOf('메뉴'), mode: 'hover', generation: 10 });
+    expect(seen).toEqual(['mouseover', 'mouseenter', 'mousemove']);
+    expect(result.verified.mode).toBe('hover');
+  });
+  it("hover enters the element's ancestors too, outermost first, as a real pointer would", async () => {
+    document.body.innerHTML = '<nav><div id="menu"><a href="#go">메뉴</a></div></nav>';
+    const link = document.querySelector('a')!;
+    vi.spyOn(link, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+    const entered: string[] = [];
+    for (const el of [document.querySelector('nav')!, document.querySelector('#menu')!, link]) el.addEventListener('mouseenter', e => { if (e.target === el) entered.push(el.tagName); });
+    await runAction('click', { ref: refOf('메뉴'), mode: 'hover', generation: 10 });
+    expect(entered).toEqual(['NAV', 'DIV', 'A']);
+  });
+  it("double and right clicks send their own event sequences", async () => {
+    document.body.innerHTML = '<div role="button" tabindex="0">항목</div>';
+    const el = document.querySelector('div')!;
+    vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+    const seen: string[] = []; for (const t of ['click', 'dblclick', 'contextmenu']) el.addEventListener(t, () => seen.push(t));
+    await runAction('click', { ref: refOf('항목'), mode: 'double', generation: 10 });
+    expect(seen).toEqual(['click', 'click', 'dblclick']);
+    seen.length = 0;
+    await runAction('click', { ref: refOf('항목'), mode: 'right', generation: 10 });
+    expect(seen).toEqual(['contextmenu']);
+  });
+});
+
+describe("drag", () => {
+  const box = (el: Element, left: number) => vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ left, top: 10, width: 80, height: 20, right: left + 80, bottom: 30 } as DOMRect);
+  it("drag delivers pointer moves and an HTML5 drop on the target", async () => {
+    document.body.innerHTML = '<div draggable="true">카드</div><div role="listitem" tabindex="0">완료</div>';
+    const [card, done] = [...document.querySelectorAll('div')];
+    box(card!, 10); box(done!, 200);
+    const seen: string[] = []; for (const t of ['mousedown', 'dragstart']) card!.addEventListener(t, () => seen.push('card:' + t));
+    for (const t of ['mouseup', 'drop']) done!.addEventListener(t, e => { e.preventDefault(); seen.push('done:' + t); });
+    done!.addEventListener('dragover', e => e.preventDefault());
+    const result: any = await runAction('click', { ref: refOf('카드'), toRef: refOf('완료'), mode: 'drag', generation: 10 });
+    expect(seen).toEqual(['card:mousedown', 'done:mouseup', 'card:dragstart', 'done:drop']);
+    expect(result.verified.mode).toBe('drag');
+  });
+  it("a plain element gets pointer events but no HTML5 drag", async () => {
+    document.body.innerHTML = '<div tabindex="0">손잡이</div><div tabindex="0">자리</div>';
+    const [handle, slot] = [...document.querySelectorAll('div')];
+    box(handle!, 10); box(slot!, 200);
+    const moves: number[] = []; document.addEventListener('mousemove', e => moves.push((e as MouseEvent).clientX));
+    const drags = vi.fn(); handle!.addEventListener('dragstart', drags);
+    await runAction('click', { ref: refOf('손잡이'), toRef: refOf('자리'), mode: 'drag', generation: 10 });
+    expect(moves.length).toBeGreaterThanOrEqual(2);
+    expect(moves.at(-1)).toBe(240);
+    expect(drags).not.toHaveBeenCalled();
+  });
+  it("drag refuses a stale target ref", async () => {
+    document.body.innerHTML = '<div draggable="true">카드</div><div tabindex="0">완료</div>';
+    const card = refOf('카드'), target = refOf('완료');
+    document.querySelectorAll('div')[1]!.remove();
+    await expect(runAction('click', { ref: card, toRef: target, mode: 'drag', generation: 10 })).rejects.toMatchObject({ code: 'STALE_ELEMENT' });
+  });
+});
+
+describe("upload", () => {
+  // jsdom has no DataTransfer and only takes a real FileList; stand in for both.
+  beforeEach(() => {
+    vi.stubGlobal('DataTransfer', class { list: File[] = []; items = { add: (f: File) => { this.list.push(f); } }; get files() { return this.list as unknown as FileList; } });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  const filesOf = (input: HTMLInputElement) => { let value: unknown = []; Object.defineProperty(input, 'files', { configurable: true, get: () => value, set: v => { value = v; } }); return () => value as File[]; };
+  const png = { name: 'a.png', mime: 'image/png', dataUrl: 'data:image/png;base64,iVBORw==' };
+  it("puts the attachment into the file input behind a label and fires change", async () => {
+    document.body.innerHTML = '<label for="f">파일 선택</label><input id="f" type="file" accept="image/*" hidden>';
+    const input = document.querySelector('input')!, files = filesOf(input), changed = vi.fn(); input.addEventListener('change', changed);
+    const result: any = await runAction('upload', { ref: refOf('파일 선택'), ...png, generation: 10 });
+    expect(files().map(f => f.name)).toEqual(['a.png']);
+    expect(files()[0]!.type).toBe('image/png');
+    expect(files()[0]!.size).toBe(4);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(result.verified).toEqual({ files: ['a.png'], size: 4 });
+  });
+  it("refuses a file the input does not accept and leaves it empty", async () => {
+    document.body.innerHTML = '<label for="f">파일 선택</label><input id="f" type="file" accept="image/*,.gif" hidden>';
+    const input = document.querySelector('input')!, files = filesOf(input);
+    await expect(runAction('upload', { ref: refOf('파일 선택'), name: 'a.pdf', mime: 'application/pdf', dataUrl: 'data:application/pdf;base64,AAAA', generation: 10 })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    expect(files()).toEqual([]);
+  });
+  it("finds the one file input of a button's form, but not when there are two", async () => {
+    document.body.innerHTML = '<form><input type="file" hidden><button type="button">올리기</button></form><form><input type="file" hidden><input type="file" hidden><button type="button">둘</button></form>';
+    const [one] = [...document.querySelectorAll('input')], files = filesOf(one!);
+    await runAction('upload', { ref: refOf('올리기'), ...png, generation: 10 });
+    expect(files().map(f => f.name)).toEqual(['a.png']);
+    await expect(runAction('upload', { ref: refOf('둘'), ...png, generation: 10 })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+  });
+});

@@ -124,3 +124,46 @@ it('R07 finds a form-associated image submitter in document order', async () => 
   const image = document.querySelector('input')!, clicks = vi.fn((e: Event) => e.preventDefault()); image.addEventListener('click', clicks);
   await press('query', 'Enter'); expect(clicks).toHaveBeenCalledTimes(1);
 });
+
+describe("key combinations and editing keys", () => {
+  const combo = (name: string, key: string, modifiers?: string[]) => runAction("press", { operationId: "keyboard", generation: 1, ref: ref(name), key, ...(modifiers ? { modifiers } : {}) });
+  it("Control+A selects only the text field, and a bare letter is refused before any event", async () => {
+    document.body.innerHTML = '<input aria-label="메모" value="안녕하세요"><p>본문</p>';
+    const input = document.querySelector('input')!;
+    const flags: boolean[] = []; input.addEventListener('keydown', e => flags.push((e as KeyboardEvent).ctrlKey));
+    expect(await combo('메모', 'a', ['Control'])).toMatchObject({ verified: { defaultAction: 'select-all', defaultApplied: true, modifiers: ['Control'] } });
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 5]);
+    expect(document.getSelection()?.toString() ?? '').not.toContain('본문');
+    expect(flags).toEqual([true]);
+    const seen = vi.fn(); input.addEventListener('keydown', seen);
+    await expect(combo('메모', 'a')).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    await expect(combo('메모', 'a', ['Hyper'])).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    await expect(combo('메모', 'ab', ['Control'])).rejects.toMatchObject({ code: 'INVALID_PARAMS' });
+    expect(seen).not.toHaveBeenCalled();
+  });
+  it("Delete, Home, End and arrows edit and move inside a text field", async () => {
+    document.body.innerHTML = '<input aria-label="칸" value="abc">';
+    const input = document.querySelector('input')!; input.focus(); input.setSelectionRange(0, 0);
+    const types: string[] = []; input.addEventListener('input', e => types.push((e as InputEvent).inputType));
+    await combo('칸', 'Delete');
+    expect(input.value).toBe('bc'); expect(types).toEqual(['deleteContentForward']);
+    await combo('칸', 'End');
+    expect(input.selectionStart).toBe(2);
+    await combo('칸', 'ArrowLeft', ['Shift']);
+    expect([input.selectionStart, input.selectionEnd]).toEqual([1, 2]);
+    await combo('칸', 'Home');
+    expect([input.selectionStart, input.selectionEnd]).toEqual([0, 0]);
+    await combo('칸', 'ArrowRight');
+    expect(input.selectionStart).toBe(1);
+  });
+  it("Delete is refused on a read-only field and other combinations only send flagged events", async () => {
+    document.body.innerHTML = '<input aria-label="잠김" value="x" readonly><textarea aria-label="글">ab</textarea>';
+    await expect(combo('잠김', 'Delete')).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    const textarea = document.querySelector('textarea')!; textarea.setSelectionRange(1, 1);
+    const seen: string[] = []; textarea.addEventListener('keydown', e => { const k = e as KeyboardEvent; seen.push(`${k.ctrlKey ? 'C+' : ''}${k.key}`); });
+    expect(await combo('글', 'Enter', ['Control'])).toMatchObject({ verified: { defaultAction: 'event-only', defaultApplied: false } });
+    expect(textarea.value).toBe('ab');
+    expect(await combo('글', '7', ['Alt'])).toMatchObject({ verified: { defaultAction: 'event-only' } });
+    expect(seen).toEqual(['C+Enter', '7']);
+  });
+});
