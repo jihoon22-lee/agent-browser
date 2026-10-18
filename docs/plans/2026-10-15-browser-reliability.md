@@ -1,6 +1,8 @@
 # 브라우저 작업 신뢰성 개선 (계획 1) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #20](https://github.com/jihoon22-lee/agent-browser/pull/20)로 main에 병합했다(`a2592a9`, 2026-10-15). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 모델이 한 번의 도구 호출로 페이지를 정확히 보고, 다음 조작을 바로 이어 갈 수 있게 한다. 목표는 사용자가 겪은 "클릭 → 실패 → 다시 snapshot → 다시 클릭" 반복을 없애는 것이다.
 
@@ -63,7 +65,7 @@
     - 한도를 넘으면 먼저 `data.snapshot`만 빼고 `data.snapshotError{tooLarge}`로 바꾼다. 이때 `ok`·`executed`는 유지한다.
     - 그래도 넘으면 실행 여부에 맞는 안내로 바꾼다. 실행된 동작은 `ok`를 유지하고 "반복하지 말고 다시 읽어라"라고 안내한다.
 
-- [ ] **Step 0: 브랜치를 만들고 리뷰·계획 문서를 커밋한다**
+- [x] **Step 0: 브랜치를 만들고 리뷰·계획 문서를 커밋한다**
 
 ```bash
 cd /home/jihoon/projects/agent-browser
@@ -72,7 +74,7 @@ git add docs/review-2026-10-15.md docs/plans/2026-10-15-browser-reliability.md
 git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "docs: add 2026-10-15 usability review and browser reliability plan"
 ```
 
-- [ ] **Step 1: 실패하는 확장 테스트를 쓴다**
+- [x] **Step 1: 실패하는 확장 테스트를 쓴다**
 
 `extension/test/output-bytes.test.ts`:
 
@@ -115,12 +117,12 @@ it('bounds a multi-frame Korean snapshot by UTF-8 bytes', async () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/output-bytes.test.ts test/handlers.test.ts -t "byte"`
 Expected: FAIL. 첫 테스트는 `utf8Bytes`를 export하지 않아 import에서 실패하고, handlers 테스트는 `framesNextOffset`가 `null`이다.
 
-- [ ] **Step 3: content 스냅샷에 바이트 예산을 넣는다**
+- [x] **Step 3: content 스냅샷에 바이트 예산을 넣는다**
 
 `extension/src/content/snapshot.ts`에서 `export const MAX_SNAPSHOT_CHARS = 32768;` 바로 아래에 추가한다.
 
@@ -153,7 +155,7 @@ export const utf8Bytes = (value: string) => encoder.encode(value).length;
     usedChars += encoded.length + 24; usedBytes += itemBytes;
 ```
 
-- [ ] **Step 4: extract에 바이트 예산을 넣는다**
+- [x] **Step 4: extract에 바이트 예산을 넣는다**
 
 `extension/src/content/extract.ts` 상단 import를 바꾸고 상수와 도우미를 추가한다.
 
@@ -184,7 +186,7 @@ function boundedSlice(full: string, offset: number, maxChars: number) {
       return { executed: false, verified: {}, text: boundedSlice(s, offset, maxChars) };
 ```
 
-- [ ] **Step 5: background frame 묶음 예산을 바이트로 바꾼다**
+- [x] **Step 5: background frame 묶음 예산을 바이트로 바꾼다**
 
 `extension/src/background/handlers.ts` 파일 상단 상수 영역(`const cancelled = ...` 위)에 추가한다.
 
@@ -206,12 +208,12 @@ snapshot 반복문의 두 길이 계산을 바꾼다.
                     if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
 ```
 
-- [ ] **Step 6: 확장 테스트가 통과하는지 확인한다**
+- [x] **Step 6: 확장 테스트가 통과하는지 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/output-bytes.test.ts test/handlers.test.ts test/snapshot-bounds.test.ts test/table-paging.test.ts`
 Expected: PASS
 
-- [ ] **Step 7: 실패하는 Bridge 테스트를 쓴다**
+- [x] **Step 7: 실패하는 Bridge 테스트를 쓴다**
 
 `bridge/src/mcp/mod.rs` 끝에 추가한다.
 
@@ -255,7 +257,7 @@ mod tests {
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib mcp::tests`
 Expected: FAIL (`bounded_text`가 없어 컴파일 오류)
 
-- [ ] **Step 8: Bridge 최종 출력 상한을 구현한다**
+- [x] **Step 8: Bridge 최종 출력 상한을 구현한다**
 
 `bridge/src/mcp/mod.rs`의 `pub struct BridgeMcp` 위에 추가한다.
 
@@ -319,12 +321,12 @@ pub(crate) fn bounded_text(name: &str, outcome: &serde_json::Value) -> (String, 
         }
 ```
 
-- [ ] **Step 9: Bridge 테스트가 통과하는지 확인한다**
+- [x] **Step 9: Bridge 테스트가 통과하는지 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib mcp::`
 Expected: PASS
 
-- [ ] **Step 10: 커밋한다**
+- [x] **Step 10: 커밋한다**
 
 ```bash
 git add extension/src/content/snapshot.ts extension/src/content/extract.ts extension/src/background/handlers.ts extension/test/output-bytes.test.ts extension/test/handlers.test.ts bridge/src/mcp/mod.rs
@@ -341,7 +343,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fix
 - Consumes: 없음
 - Produces: `accessibleName(el)`가 자식 `img[alt]`, SVG `<title>`, 자식 `[aria-label]`을 반영한다. 시그니처는 그대로다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 import { accessibleName } from "../src/content/dom";
@@ -357,12 +359,12 @@ it("names icon links and buttons from nested alt text and aria-label", () => {
 
 SVG `<title>`은 jsdom에서 textContent로 이미 잡히므로, 단위 테스트로는 실패를 재현할 수 없다. Chromium에서의 확인은 Task 14 R01이 맡는다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/names.test.ts`
 Expected: FAIL. `home`이 `""`이다.
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `dom.ts`의 `clean` 정의 아래에 추가한다.
 
@@ -386,12 +388,12 @@ function nestedLabel(el: Element): string {
   if (nested) return nested;
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/names.test.ts test/snapshot.test.ts test/actions.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/content/dom.ts extension/test/names.test.ts
@@ -410,7 +412,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
   - `export function isPointerTarget(el: Element): boolean` (`dom.ts`)
   - 스냅샷 요소의 새 `role` 값 `"clickable"`: 의미 있는 태그·역할 없이 포인터 커서만 있는 최외곽 영역이다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 import { takeSnapshot } from "../src/content/snapshot";
@@ -428,12 +430,12 @@ it("lists outer pointer regions and ARIA widgets that were missing", () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/candidates.test.ts`
 Expected: FAIL. 카드·searchbox·plaintext-only가 빠져 `[["button","저장"]]`만 나온다.
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `dom.ts`의 `INTERACTIVE`를 바꾸고 `isPointerTarget`을 추가한다.
 
@@ -469,12 +471,12 @@ import { accessibleName, isInteractive, isPointerTarget, isRendered, roleOf, wal
     const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
 ```
 
-- [ ] **Step 4: 통과와 기존 회귀를 확인한다**
+- [x] **Step 4: 통과와 기존 회귀를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/candidates.test.ts test/snapshot.test.ts test/actions.test.ts test/shadow-actions.test.ts`
 Expected: PASS. 기존 "without treating every row as interactive" 테스트도 통과한다(일반 div는 포인터 커서가 없다).
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/content/dom.ts extension/src/content/snapshot.ts extension/test/candidates.test.ts
@@ -493,7 +495,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
   - `export function stateOf(el: Element): string[]`
   - ARIA checkbox·switch는 `checked`, 범위 위젯은 `value`로 보고한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 import { takeSnapshot } from "../src/content/snapshot";
@@ -514,12 +516,12 @@ it("reports widget state that the model needs to choose the next action", () => 
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/states.test.ts`
 Expected: FAIL (`state` 없음)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `SnapElement` 타입에 `state?: string[]`을 추가한다.
 
@@ -559,12 +561,12 @@ walk 안 `if (el.matches(":disabled")) e.disabled = true;` 위에 넣는다.
     if (state.length) e.state = state;
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/states.test.ts test/snapshot.test.ts test/snapshot-bounds.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/content/snapshot.ts extension/test/states.test.ts
@@ -581,7 +583,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
 - Consumes: Task 4의 `SnapElement.context?: string` 타입 필드
 - Produces: 같은 `role`+`name`이 둘 이상일 때만 각 요소에 `context`를 붙인다. 값은 "같은 이름의 다른 요소를 포함하지 않는 가장 큰 조상"의 텍스트이며 최대 80자다. 표·목록뿐 아니라 `div`로 만든 행에도 같은 규칙이 적용된다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 import { takeSnapshot, utf8Bytes, MAX_SNAPSHOT_BYTES } from "../src/content/snapshot";
@@ -609,12 +611,12 @@ it("keeps the byte budget after adding contexts", () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/context.test.ts`
 Expected: FAIL (`context`가 undefined)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `stateOf` 아래에 추가한다.
 
@@ -653,13 +655,13 @@ function contextOf(el: Element, lookAlikes: Element[]): string {
 
 `result.limits = [...limits];`가 이 반복문보다 뒤에 오는지 확인한다(현재 코드 순서상 뒤에 있다).
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/context.test.ts test/output-bytes.test.ts test/snapshot.test.ts test/snapshot-bounds.test.ts`
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/content/snapshot.ts extension/test/context.test.ts
@@ -682,7 +684,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
   - `RefTable.parse`는 `{snapshotId:number, frameId:number, index:number}`를 그대로 반환한다.
   - 새 snapshotId는 2026-01-01 이후 0.1초 단위 값이다. 기존 마이크로초 값(≥1e12)은 처음 호출할 때 새 기준으로 바꾼다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 import { RefTable } from "../src/content/refs";
@@ -705,12 +707,12 @@ it("migrates legacy microsecond snapshot sequences to short ids", async () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/refs-format.test.ts`
 Expected: FAIL. ref 길이가 12를 넘고, 이전 sequence가 그대로 증가한다.
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `refs.ts`:
 
@@ -758,18 +760,18 @@ const LEGACY_SEQUENCE = 1e12;
         nextSnapshotId: () => transaction(s => { const floor = Math.floor((Date.now() - SNAPSHOT_EPOCH_MS) / 100); s.sequence = s.sequence >= LEGACY_SEQUENCE ? floor : Math.max(s.sequence + 1, floor); return s.sequence; }),
 ```
 
-- [ ] **Step 4: ref 문자열을 직접 만드는 기존 테스트를 고친다**
+- [x] **Step 4: ref 문자열을 직접 만드는 기존 테스트를 고친다**
 
 Run: `grep -rn 'snapshotId}f\|snapshotId}e' extension/test tests/e2e`
 
 찾은 모든 곳의 `${...snapshotId}`를 `${(...snapshotId).toString(36)}`로 바꾼다. 예: `handlers.test.ts`의 `world()` mock은 `` ref: `s${msg.params.snapshotId.toString(36)}f${frame.frameId}e1` ``로, frameRef 기대값은 `` `s${snap.snapshotId.toString(36)}f7` ``로 바꾼다.
 
-- [ ] **Step 5: 확장 전체 단위 테스트로 확인한다**
+- [x] **Step 5: 확장 전체 단위 테스트로 확인한다**
 
 Run: `pnpm --filter agent-browser-extension test`
 Expected: PASS(전체). 실패하는 테스트가 있으면 같은 방식으로 ref 조립만 고친다. 검증 의미가 바뀌는 수정은 하지 않는다.
 
-- [ ] **Step 6: 커밋한다**
+- [x] **Step 6: 커밋한다**
 
 ```bash
 git add extension/src extension/test tests/e2e
@@ -785,7 +787,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
 **Interfaces:**
 - Produces: `assertInteractable(el: Element): Point | undefined`. `Point = {clientX:number; clientY:number}`이고, 판정에 성공한 지점이다. 레이아웃이 없으면 `undefined`다. `keyboard.ts`의 `validate: (element: Element) => void` 인자와도 호환된다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `extension/test/actions.test.ts` 끝에 추가한다(파일의 `refOf`, `runAction` 도우미를 쓴다).
 
@@ -822,12 +824,12 @@ it("uses another visible point when the center of a control is covered", async (
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/actions.test.ts -t "label|another visible point"`
 Expected: FAIL. 둘 다 `ELEMENT_NOT_INTERACTABLE ... covered by another element`로 실패한다.
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `actions.ts`의 `clickPoint` 아래에 추가하고, `assertInteractable`을 통째로 바꾼다.
 
@@ -909,13 +911,13 @@ click 분기에서 지점을 판정 결과로 쓰도록 바꾼다.
       return { executed: true, verified: await changes };
 ```
 
-- [ ] **Step 4: 통과와 회귀를 확인한다**
+- [x] **Step 4: 통과와 회귀를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/actions.test.ts test/keyboard.test.ts test/shadow-actions.test.ts test/action-output-bounds.test.ts`
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS. 기존 "clicks a real fragment of a wrapped inline link" 테스트도 통과한다(레이아웃이 없으면 `clickPoint` 경로를 쓴다). 고정된 TypeScript lib가 `behavior: "instant"`를 받지 않으면 `behavior: "instant" as ScrollBehavior`로 바꾼다. Chrome 116은 `"instant"`를 지원한다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/content/actions.ts extension/test/actions.test.ts
@@ -934,7 +936,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fix
   - `export const INPUT_TEXT: Set<string>` (`keyboard.ts`)
   - fill 결과의 `verified.method`. 편집 영역에서는 `"insertText"` 또는 `"replace"`다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it("fills rich editors through insertText so their own state updates", async () => {
@@ -958,12 +960,12 @@ it("refuses to fill buttons and checkboxes", async () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/actions.test.ts -t "insertText|refuses to fill"`
 Expected: FAIL
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `keyboard.ts`: `const INPUT_TEXT = new Set([...])`를 `export const INPUT_TEXT = new Set([...])`로 바꾼다. `actions.ts` import에 `INPUT_TEXT`를 추가한다(`import { INPUT_TEXT, pressKey } from "./keyboard";`).
 
@@ -994,12 +996,12 @@ fill의 입력 분기 시작부를 바꾼다.
       }
 ```
 
-- [ ] **Step 4: 통과와 회귀를 확인한다**
+- [x] **Step 4: 통과와 회귀를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/actions.test.ts test/action-output-bounds.test.ts test/keyboard.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/content/keyboard.ts extension/src/content/actions.ts extension/test/actions.test.ts
@@ -1019,7 +1021,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fix
   - 문제: 링크 클릭·Enter 제출로 문서가 바로 바뀌면, content가 응답하기 전에 문서가 사라진다. 지금은 이를 `EXECUTION_UNKNOWN`으로 보고한다. 기존 E2E도 이를 허용한다(`tests/e2e/board-navigation.spec.ts:15`).
   - 변경: click·press에서 응답이 끊긴 직후 1초 안에 그 frame의 문서가 바뀌었거나 탭에 `pendingUrl`이 있으면, `{executed:true, verified:{navigated:true, urlChanged:true}}`를 반환한다. Task 10의 후속 스냅샷은 `urlChanged`를 보고 도착 페이지를 읽는다. 문서가 그대로면 지금처럼 `EXECUTION_UNKNOWN`이다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it('navigates a web page without requiring a snapshot first', async () => {
@@ -1028,12 +1030,12 @@ it('navigates a web page without requiring a snapshot first', async () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.ts -t "without requiring a snapshot"`
 Expected: FAIL (`STALE_ELEMENT`)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `handlers.ts`에서 아래 한 줄을 지운다.
 
@@ -1041,7 +1043,7 @@ Expected: FAIL (`STALE_ELEMENT`)
             if (isWeb(tab.url)) await requireSnapshot(p,tabId,document?.documentId);
 ```
 
-- [ ] **Step 4: 기존 기대값을 정리하고 확인한다**
+- [x] **Step 4: 기존 기대값을 정리하고 확인한다**
 
 Run: `grep -n "browser.navigate" extension/test/handlers.test.ts`
 
@@ -1050,7 +1052,7 @@ Run: `grep -n "browser.navigate" extension/test/handlers.test.ts`
 Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 페이지를 이동시킨 클릭의 실패 테스트를 쓴다**
+- [x] **Step 5: 페이지를 이동시킨 클릭의 실패 테스트를 쓴다**
 
 `extension/test/handlers.test.ts` 끝에 추가한다.
 
@@ -1084,7 +1086,7 @@ it('keeps an unknown outcome when the document did not change', async () => {
 Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.ts -t "navigated the document|did not change"`
 Expected: 첫 테스트 FAIL(`EXECUTION_UNKNOWN`), 둘째는 PASS.
 
-- [ ] **Step 6: 구현한다**
+- [x] **Step 6: 구현한다**
 
 `handlers.ts`의 `createHandlers` 안, `async function check` 위에 추가한다.
 
@@ -1128,13 +1130,13 @@ Expected: 첫 테스트 FAIL(`EXECUTION_UNKNOWN`), 둘째는 PASS.
   return result;
 ```
 
-- [ ] **Step 7: 통과를 확인한다**
+- [x] **Step 7: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.ts`
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS
 
-- [ ] **Step 8: 커밋한다**
+- [x] **Step 8: 커밋한다**
 
 ```bash
 git add extension/src/background/handlers.ts extension/test/handlers.test.ts tests/e2e/board-navigation.spec.ts
@@ -1164,7 +1166,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fix
   - 확장의 내부 매개변수 `settleMs`: snapshot 전에 탭이 `status:'complete'`이고 `pendingUrl`이 없을 때까지 최대 6초 기다린다. 도구 스키마에는 노출하지 않는다.
   - `fn wants_snapshot(name:&str,args:&Value,outcome:&ToolOutcome)->bool`, `async fn follow_up_snapshot(state:&ServerState, op_id:&str)->Result<Value,RpcError>`, `struct CreatedOperation`, `const FOLLOW_UP_TIMEOUT: Duration`
 
-- [ ] **Step 1: 실패하는 통합 테스트를 쓴다**
+- [x] **Step 1: 실패하는 통합 테스트를 쓴다**
 
 `bridge/tests/tool_router.rs` 끝에 추가한다.
 
@@ -1215,12 +1217,12 @@ async fn click_that_opens_a_tab_returns_the_new_tab_snapshot() {
 }
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router page_changing_actions_return_a_fresh_snapshot click_that_opens_a_tab_returns_the_new_tab_snapshot`
 Expected: FAIL (`data.snapshot`이 null)
 
-- [ ] **Step 3: 도우미를 구현한다**
+- [x] **Step 3: 도우미를 구현한다**
 
 `router.rs` 상단 상수에 추가한다.
 
@@ -1288,7 +1290,7 @@ impl Drop for CreatedOperation<'_> {
 }
 ```
 
-- [ ] **Step 4: `run`에 연결한다**
+- [x] **Step 4: `run`에 연결한다**
 
 `run` 함수의 마지막 `if name == "browser_bookmarks" { ... } else if name == "browser_tabs" { run_tabs(state, args).await } else { run_operation_tool(state, name, args, &def.schema).await }` 식을 `let mut outcome = <같은 식>;`으로 바꾸고, 그 뒤에 이어 쓴다.
 
@@ -1300,7 +1302,7 @@ impl Drop for CreatedOperation<'_> {
     outcome
 ```
 
-- [ ] **Step 5: 생성 직후 취소를 다루는 단위 테스트로 교체한다**
+- [x] **Step 5: 생성 직후 취소를 다루는 단위 테스트로 교체한다**
 
 `router.rs` tests의 `review_attach_creation_and_outcome_complete_in_the_same_poll`을 지우고 아래로 바꾼다. attach는 이제 스냅샷을 기다리므로 "한 번의 poll에 끝난다"는 전제가 사라진다. 대신 그 사이 취소되면 작업이 정리되는지를 고정한다.
 
@@ -1340,7 +1342,7 @@ impl Drop for CreatedOperation<'_> {
     }
 ```
 
-- [ ] **Step 6: 확장에서 로드 완료를 기다리는 `settleMs`를 구현한다**
+- [x] **Step 6: 확장에서 로드 완료를 기다리는 `settleMs`를 구현한다**
 
 `extension/test/handlers.test.ts` 끝에 실패하는 테스트를 추가한다.
 
@@ -1383,13 +1385,13 @@ Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.t
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS
 
-- [ ] **Step 7: 통과를 확인하고 기존 기대값을 정리한다**
+- [x] **Step 7: 통과를 확인하고 기존 기대값을 정리한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib server::router`
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router --test mcp_stdio --test snapshot_paging`
 Expected: PASS. fake extension이 받은 명령 순서·개수를 정확히 비교하는 기존 테스트는 추가된 `browser.snapshot`만큼 기대값을 늘린다. 검증 의미를 바꾸는 수정은 하지 않는다.
 
-- [ ] **Step 8: 커밋한다**
+- [x] **Step 8: 커밋한다**
 
 ```bash
 git add bridge/src/server/router.rs bridge/src/mcp/client.rs bridge/tests extension/src/background/handlers.ts extension/test/handlers.test.ts
@@ -1408,7 +1410,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
   - attach·new 성공 시: 작업 탭이 있는 창의 탭.
   - switch가 `TAB_NOT_FOUND`·`UNSUPPORTED_PAGE`로 실패할 때: 모든 창의 탭.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```rust
 fn tabs_reply(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
@@ -1437,12 +1439,12 @@ async fn attach_lists_open_tabs_and_a_failed_switch_offers_them_again() {
 }
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router attach_lists_open_tabs`
 Expected: FAIL (`openTabs` 없음)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `router.rs`의 `wants_snapshot` 위에 추가한다.
 
@@ -1480,13 +1482,13 @@ async fn add_open_tabs(state: &ServerState, args: &Value, outcome: &mut ToolOutc
     if name == "browser_tabs" { add_open_tabs(state, args, &mut outcome).await; }
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router`
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib server::router`
 Expected: PASS. 명령 개수를 정확히 비교하는 기존 테스트가 있으면 `browser.tabs.list` 호출만큼 기대값을 늘린다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src/server/router.rs bridge/tests/tool_router.rs
@@ -1507,7 +1509,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
   - `async fn health(base, username, password, managed, verified: &DocCache) -> Result<String,RpcError>`
   - panel의 `completion(saved, unattended)`
 
-- [ ] **Step 1: 실패하는 테스트 세 개를 쓴다**
+- [x] **Step 1: 실패하는 테스트 세 개를 쓴다**
 
 `extension/test/panel-requests.test.ts` 끝에 추가한다.
 
@@ -1565,13 +1567,13 @@ it('background reconcile retains a busy request when one status probe reports er
     }
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/panel-requests.test.ts -t "retains a busy request"`
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib a_finished_request_id health_verifies_the_api_document`
 Expected: 확장 테스트는 `request.end`가 호출돼 FAIL. Rust는 문구 assertion 실패와 `DocCache` 컴파일 오류로 FAIL.
 
-- [ ] **Step 3: panel reconcile를 고친다**
+- [x] **Step 3: panel reconcile를 고친다**
 
 `panel-requests.ts`의 `client` 정의를 아래로 바꾼다.
 
@@ -1611,7 +1613,7 @@ Expected: 확장 테스트는 `request.end`가 호출돼 FAIL. Rust는 문구 as
 
 `observeCompletion` 안의 `const result=await completion(saved);`를 `const result=await completion(saved,true);`로 바꾼다.
 
-- [ ] **Step 4: 끝난 requestId 안내를 고친다**
+- [x] **Step 4: 끝난 requestId 안내를 고친다**
 
 `operation.rs`의 `request_matches` match에서 `_=>` 앞에 넣는다.
 
@@ -1620,7 +1622,7 @@ Expected: 확장 테스트는 `request.end`가 호출돼 FAIL. Rust는 문구 as
                 "This requestId belongs to a request that already ended. Do not reuse it; a new panel request provides a new requestId. Outside the panel, omit requestId.")),
 ```
 
-- [ ] **Step 5: `/doc` 확인을 캐시한다**
+- [x] **Step 5: `/doc` 확인을 캐시한다**
 
 `runtime/mod.rs`의 `pub struct Manager` 위에 추가한다.
 
@@ -1649,14 +1651,14 @@ async fn health(base: &str, username: Option<&str>, password: Option<&str>, mana
 
 `health(` 호출 다섯 곳(`grep -n "health(" bridge/src/runtime/mod.rs`)의 마지막 인자에 `&self.verified_docs`를 넣는다.
 
-- [ ] **Step 6: 통과를 확인한다**
+- [x] **Step 6: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/panel-requests.test.ts`
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib server::operation runtime::`
 Run: `cargo test --offline --locked -p agent-browser-bridge --test runtime_management`
 Expected: PASS. F1의 prepare 경로 테스트(`panel-requests.test.ts:100`)도 계속 통과해야 한다.
 
-- [ ] **Step 7: 커밋한다**
+- [x] **Step 7: 커밋한다**
 
 ```bash
 git add extension/src/background/panel-requests.ts extension/test/panel-requests.test.ts bridge/src/server/operation.rs bridge/src/runtime/mod.rs
@@ -1676,7 +1678,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fix
 - Consumes: Task 10·11의 결과 동작(결과에 snapshot·openTabs 포함)
 - Produces: 도구 이름·스키마의 속성 이름·타입·enum은 그대로 두고, 설명만 줄인다. `default` 키는 지운다(Bridge 검증은 쓰지 않고, 확장이 기본값을 적용한다).
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `tools.rs` tests의 예산을 4,800으로 낮추고 테스트를 추가한다.
 
@@ -1706,7 +1708,7 @@ Run: `cargo test --offline --locked -p agent-browser-bridge --lib mcp::tools`
 Run: `pnpm --filter agent-browser-extension exec vitest run test/request-target.test.ts`
 Expected: FAIL. 크기가 5,987이고, 지시문 길이가 약 1,700자다.
 
-- [ ] **Step 2: 도구 정의를 다시 쓴다**
+- [x] **Step 2: 도구 정의를 다시 쓴다**
 
 `tools.rs`의 `op`, `ref`, `all()`을 아래로 바꾼다.
 
@@ -1774,7 +1776,7 @@ pub fn all() -> Vec<ToolDef> {
 
 확장이 기본값을 적용하는지 확인한다. navigate action 기본 `goto`는 `handlers.ts:211`(`p.action ?? 'goto'`), maxChars·offset 기본값은 `handlers.ts:177`, extract 기본값은 `extract.ts`, bookmarks 기본값은 `bookmarks.ts`가 적용한다. Bridge의 `validate_action`은 `args["action"].as_str().unwrap_or("goto")`를 쓰고, `timeout_for`는 `unwrap_or(5000)`을 쓰므로 `default` 키를 지워도 동작이 같다.
 
-- [ ] **Step 3: MCP 지시문과 패널 지시문을 바꾼다**
+- [x] **Step 3: MCP 지시문과 패널 지시문을 바꾼다**
 
 `mcp/mod.rs`의 `.with_instructions(...)` 문자열:
 
@@ -1792,7 +1794,7 @@ export function requestInstructions(requestId:string,target:RequestTarget|null):
 }
 ```
 
-- [ ] **Step 4: fixture를 재생성하고 통과를 확인한다**
+- [x] **Step 4: fixture를 재생성하고 통과를 확인한다**
 
 Run: `UPDATE_FIXTURES=1 cargo test --offline --locked -p agent-browser-bridge --lib tools_list_matches_contract_fixture`
 Run: `cargo test --offline --locked -p agent-browser-bridge`
@@ -1800,7 +1802,7 @@ Run: `pnpm --filter agent-browser-extension test`
 Run: `grep -rn "Never invent\|do not start another operation per tab\|requestId is per panel request" tests extension/test bridge/tests`
 Expected: 모든 테스트 PASS. grep으로 찾은 이전 문구에 의존하는 기대값은 새 문구에 맞춘다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src/mcp/tools.rs bridge/src/mcp/mod.rs extension/src/sidepanel/request-target.ts extension/test/request-target.test.ts protocol/fixtures/tools-list.json
@@ -1817,7 +1819,7 @@ git -c user.email=188744452+jihoon22-lee@users.noreply.github.com commit -m "fea
 **Interfaces:**
 - Consumes: Task 1~13의 모든 동작
 
-- [ ] **Step 1: 합성 페이지를 만든다**
+- [x] **Step 1: 합성 페이지를 만든다**
 
 `tests/fixtures/site/shop.html`:
 
@@ -1847,7 +1849,7 @@ document.getElementById('filter').addEventListener('click',e=>e.currentTarget.se
 </script></body></html>
 ```
 
-- [ ] **Step 2: E2E 시나리오를 쓴다**
+- [x] **Step 2: E2E 시나리오를 쓴다**
 
 `tests/e2e/reliability.spec.ts`:
 
@@ -1937,7 +1939,7 @@ test("R06 a link click that navigates returns the arrived page, not the old one"
 });
 ```
 
-- [ ] **Step 3: Linux에서 빌드하고 실행한다**
+- [x] **Step 3: Linux에서 빌드하고 실행한다**
 
 ```bash
 pnpm --filter agent-browser-extension build
@@ -1947,7 +1949,7 @@ pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts scenari
 
 Expected: PASS. 실패하면 원인을 해당 과제 코드에서 고친다. 이때 그 과제의 단위 테스트를 먼저 추가한다(AGENTS.md).
 
-- [ ] **Step 4: Linux 전체 단위 검증을 실행한다**
+- [x] **Step 4: Linux 전체 단위 검증을 실행한다**
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -1958,7 +1960,7 @@ node --test tests/fixtures/*.test.mjs tests/agent/*.test.mjs tests/e2e/runtime.t
 
 Expected: 모두 PASS. 통과·제외 개수를 기록해 둔다.
 
-- [ ] **Step 5: Windows에서 검증한다**
+- [x] **Step 5: Windows에서 검증한다**
 
 `docs/testing.md`의 "Windows 검증 실행"·"게시판 탐색 회귀" 절차를 그대로 따른다. 독립 복제본에 Windows exe와 확장 빌드를 둔다.
 
@@ -1977,7 +1979,7 @@ node tests/e2e/opencode-panel.windows.mjs --wsl
 
 Expected: PASS. 운영 설치·사용자 Chrome 프로필은 쓰지 않는다(격리 프로필·포트). 실행하지 못한 항목은 미검증으로 기록한다.
 
-- [ ] **Step 6: 문서를 갱신한다**
+- [x] **Step 6: 문서를 갱신한다**
 
 - **`docs/protocol.md`:**
   - ref 형식(36진 snapshotId)과 frameRef 형식을 바꾼다.
@@ -1992,7 +1994,7 @@ Expected: PASS. 운영 설치·사용자 Chrome 프로필은 쓰지 않는다(�
 - **`CHANGELOG.md`:** 맨 위 미배포(Unreleased) 절에 사용자 관점의 변경을 적는다. 출력 잘림 해결, 한 번에 이어지는 클릭, 탭 목록 동봉, 아이콘·카드·상태 인식, 이동 전 snapshot 불필요, 일시 오류로 작업이 끊기던 문제 수정.
 - **`docs/status.md`:** 맨 위에 이번 작업 절을 추가한다. 실제 실행한 Linux·Windows 명령과 결과 개수, 미검증 항목(실제 모델 추론, 배포 PC)을 구분한다.
 
-- [ ] **Step 7: 커밋한다**
+- [x] **Step 7: 커밋한다**
 
 ```bash
 git add tests/fixtures/site/shop.html tests/e2e/reliability.spec.ts docs CHANGELOG.md

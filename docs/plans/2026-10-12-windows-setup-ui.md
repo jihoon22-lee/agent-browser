@@ -1,5 +1,7 @@
 # Windows GUI installer — local implementation complete
 
+> **상태: 완료.** v0.1.5를 2026-10-12 08:49 UTC에 게시했고 이후 릴리스로 대체됐다. 새 작업의 원장으로 쓰지 않는다.
+
 Worktree `/home/jihoon/projects/agent-browser-windows-setup`, branch `feat/windows-setup-ui`, base `fb2bcdbb4672a09395c7d7cc2ee75e6796e897c1`.
 
 The requested local implementation and isolated verification are complete. Changes remain uncommitted and unpublished; operational v0.1.4 remains intact. The current local candidate is 0.1.5.
@@ -18,9 +20,9 @@ Remote publication, production update, company-environment verification and real
 
 The user explicitly authorized commit, push, PR, CI/code/security review, fixes, merge, v0.1.5 tag and release. Production remains v0.1.4. Publication must be followed by downloading the published ZIP and exercising its GUI against isolated fixtures.
 
-- [ ] Publish the branch and PR; resolve valid findings at the latest head.
-- [ ] Confirm CI and code/security review completion before merge.
-- [ ] Create a new v0.1.5 tag/release without replacing existing tags or assets.
-- [ ] Verify published ZIP hashes/version/GUI and isolated install/update/uninstall.
+- [x] Publish the branch and PR; resolve valid findings at the latest head.
+- [x] Confirm CI and code/security review completion before merge.
+- [x] Create a new v0.1.5 tag/release without replacing existing tags or assets.
+- [x] Verify published ZIP hashes/version/GUI and isolated install/update/uninstall.
 
 The local validation report above is a historical pre-publication checkpoint. Its local artifact hash is not a claim about the eventual published asset.

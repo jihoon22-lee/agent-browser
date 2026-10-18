@@ -1,6 +1,8 @@
 # 패널 요청 자동 결합(계획 3A) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #22](https://github.com/jihoon22-lee/agent-browser/pull/22)로 main에 병합했다(`9037a81`, 2026-10-16). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 관리 런타임에서 패널 요청을 처리하는 모델이 `requestId`·`operationId`를 복사하지 않아도 브라우저 도구가 그 요청에 안전하게 결합되게 한다. 모델이 ID를 빠뜨려 실패하고 다시 시도하는 왕복을 없앤다.
 
@@ -74,7 +76,7 @@
   - `pub async fn call_tool_as(state:&ServerState, caller:&Caller, name:&str, args:Value) -> ToolOutcome`. 기존 `call_tool(state,name,args)`는 `Caller::default()`로 위임한다.
   - 관리 런타임 MCP 설정의 `environment.AGENT_BROWSER_RUNTIME_ID`. WSL이면 `WSLENV`에 `AGENT_BROWSER_RUNTIME_ID/w`를 추가한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `bridge/src/mcp/client.rs`의 `#[cfg(test)] mod tests`에 추가한다.
 
@@ -109,12 +111,12 @@
 
 WSL 프로필은 `overlay`에서 `process::windows_to_wsl(&exe)`를 호출한다. 테스트 실행 파일이 Linux 경로이면 `invalid`가 날 수 있다. 그 경우 이 단계의 ruling으로 WSL 줄을 `#[cfg(windows)]`로 나누고, Linux에서는 Windows 프로필만 검사한다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- hello_names overlay_hands`
 Expected: 컴파일 오류(`hello_params` 없음)로 FAIL
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `mcp/client.rs`: `open()` 안의 hello JSON을 함수로 뺀다.
 
@@ -188,7 +190,7 @@ pub async fn call_tool(state: &ServerState, name: &str, args: Value) -> ToolOutc
 
 `ensure_inner`은 `overlay` 직전에 이미 `AGENT_BROWSER_RUNTIME_ID`를 넣는다(`:154`). 그래서 실제 기동에서는 항상 전달된다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- hello_names overlay`
 Expected: PASS. 기존 `overlay_preserves_settings_and_uses_actual_bridge_port` 포함.
@@ -196,7 +198,7 @@ Expected: PASS. 기존 `overlay_preserves_settings_and_uses_actual_bridge_port` 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router --test mcp_stdio --test serve_auth`
 Expected: 기존과 같이 PASS. hello에 필드가 늘어도 인증 transcript는 그대로다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src
@@ -219,7 +221,7 @@ git commit -m "feat(bridge): let a managed runtime's MCP proxy name its launch a
   - `OperationGate::bound_request(&self) -> Option<BoundRequest>`. 범위가 있는 활성 요청과, 그 요청 클라이언트의 Active 작업 ID를 돌려준다.
   - `request.begin` 매개변수 `profileId`, `sessionId`, `directory`. 셋 다 있어야 범위로 인정하고, 아니면 기존처럼 범위 없는 요청이다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `operation.rs` 테스트 모듈에 추가한다.
 
@@ -246,7 +248,7 @@ git commit -m "feat(bridge): let a managed runtime's MCP proxy name its launch a
   expect(call.mock.calls.filter(c=>c[0]==='request.begin')).toEqual([['request.begin',{requestId:'one',clientId:'browser',tabId:11,profileId:'p',sessionId:'s-one',directory:'/w'}]]);
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- a_scoped_request`
 Expected: 컴파일 오류(`RequestScope` 없음)
@@ -254,7 +256,7 @@ Expected: 컴파일 오류(`RequestScope` 없음)
 Run: `pnpm --filter agent-browser-extension exec vitest run test/panel-requests.test.ts`
 Expected: 네 기대값 FAIL
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `operation.rs`:
 
@@ -300,7 +302,7 @@ struct RequestTarget { id: String, client: String, tab: Option<i64>, scope: Opti
         await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null,profileId:lease.profileId,sessionId:lease.sessionId,directory:lease.directory});
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- operation`
 Expected: PASS. 새 테스트와 기존 operation 테스트 모두.
@@ -308,7 +310,7 @@ Expected: PASS. 새 테스트와 기존 operation 테스트 모두.
 Run: `pnpm --filter agent-browser-extension exec vitest run test/panel-requests.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src/server extension/src/background/panel-requests.ts extension/test/panel-requests.test.ts
@@ -326,7 +328,7 @@ git commit -m "feat: record which runtime session owns a panel request"
   - `pub struct RuntimeSessions { pub profile_id: String, pub wsl: bool, pub busy: Vec<String> }`
   - `pub async fn busy_sessions(&self, instance:&str, directory:&str) -> Result<RuntimeSessions, RpcError>`. `instance`가 현재 기록과 다르면(이전 기동) `Err`. `/session/status?directory=<directory>`의 값 중 `type`이 `busy` 또는 `retry`인 세션 ID만 담는다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `runtime/mod.rs`의 `mod tests`에 추가한다. 가짜 서버는 바로 위 `health_verifies_the_api_document_once_per_server_version`과 같은 방식이다.
 
@@ -364,12 +366,12 @@ git commit -m "feat: record which runtime session owns a panel request"
 
 `process::identity`는 Windows·Unix 모두 있다(`process.rs:10,26`). `Manager::save(profile, make_default)`(`mod.rs:74`)가 실행 파일 존재 같은 검증으로 이 가짜 프로필을 거부하면, 같은 모듈의 비공개 `self.store.update`로 `config.profiles`에 직접 넣는다. 이 결정은 ruling으로 기록한다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- busy_sessions`
 Expected: 컴파일 오류(`busy_sessions` 없음)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 ```rust
 pub struct RuntimeSessions { pub profile_id: String, pub wsl: bool, pub busy: Vec<String> }
@@ -398,12 +400,12 @@ impl Manager {
 
 `config.profiles`(`storage.rs:12`)와 `limited_json(response, limit)`(`mod.rs:694`)은 확인한 이름이다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- busy_sessions`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src/runtime/mod.rs
@@ -426,7 +428,7 @@ git commit -m "feat(bridge): read busy sessions of the current managed runtime l
   - `pub fn only_this_session_busy(busy:&[String], session:&str) -> bool`
   - `pub async fn resolve(state:&ServerState, caller:&Caller) -> Option<BoundRequest>`
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `bridge/src/server/binding.rs` 끝:
 
@@ -455,12 +457,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- binding`
 Expected: 컴파일 오류(함수 없음)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 ```rust
 //! Guarded binding of id-less browser tool calls to the open panel request (handoff §11).
@@ -498,12 +500,12 @@ pub async fn resolve(state: &ServerState, caller: &Caller) -> Option<BoundReques
 
 `bound_request()`를 다시 읽는 이유: 상태 조회 중 요청이 끝나거나 바뀌었으면 결합하지 않는다. 또 그 사이 만들어진 작업 ID를 반영한다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- binding`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src/server/binding.rs bridge/src/server/mod.rs
@@ -530,7 +532,7 @@ git commit -m "feat(bridge): guard implicit binding by launch, directory and bus
     - `OPERATION_TOOLS`인데 현재 작업이 없으면 `{"action":"attach","requestId":<id>}`로 암묵 attach한 뒤 그 작업 ID를 쓴다.
     - 결합이 안 되면 인수를 바꾸지 않는다. 그러면 기존 오류(`OPERATION_REQUIRED`, "Missing requestId…")가 그대로 난다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `tools.rs` 테스트 모듈:
 
@@ -561,12 +563,12 @@ git commit -m "feat(bridge): guard implicit binding by launch, directory and bus
 
 이 모듈의 기존 테스트(`:565`)와 같은 생성 방식이다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- page_tools_do_not an_unbound_caller`
 Expected: 첫 테스트 FAIL. 둘째는 `created_operation` 필드가 없어 컴파일 오류.
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `router.rs`:
 
@@ -644,7 +646,7 @@ list/windows read tabs. In a panel request attach/new and page tools may omit re
 In a panel request, browser tools bind to it automatically; pass requestId/operationId only when a result asks for them. Otherwise use browser_tabs attach for the current page or new for a URL with the Browser context requestId, then reuse the returned operationId.
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib`
 Expected: PASS. 아래를 포함한다.
@@ -657,7 +659,7 @@ Expected: PASS. 아래를 포함한다.
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router --test mcp_stdio --test protocol_contract`
 Expected: PASS. `mutating_tool_without_operation_is_rejected_without_contacting_browser`는 결합 정보가 없는 연결이므로 그대로 거부된다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src protocol/fixtures/tools-list.json
@@ -679,7 +681,7 @@ git commit -m "feat(bridge): bind id-less browser tool calls to a guarded panel 
 - Produces:
   - `pub async fn hello_with(ws:&mut Ws, role:&str, token:&str, client_id:&str, extra:serde_json::Value) -> Envelope`. hello 매개변수에 `extra` 객체를 합친다. 인증 transcript는 같다.
 
-- [ ] **Step 1: 테스트 도우미와 실패하는 테스트를 쓴다**
+- [x] **Step 1: 테스트 도우미와 실패하는 테스트를 쓴다**
 
 `common/mod.rs`에 `hello_repair`와 같은 본문으로 `hello_with`를 추가한다. hello JSON을 만든 뒤 `extra`의 키를 덮어쓴다.
 
@@ -734,7 +736,7 @@ git commit -m "feat(bridge): bind id-less browser tool calls to a guarded panel 
 
 각 테스트의 단언은 위 주석을 그대로 `assert!`/`assert_eq!`로 쓴다. 오류 문구는 `operation.rs`의 현재 문자열(`"Missing requestId"`, `"already ended"`, `"Unscoped attach is blocked"`)과 `ErrorCode::OperationRequired`로 비교한다.
 
-- [ ] **Step 2: 실패를 확인하고 통과시킨다**
+- [x] **Step 2: 실패를 확인하고 통과시킨다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test request_binding`
 Expected:
@@ -742,7 +744,7 @@ Expected:
 - 실패가 있으면 그것이 이 과제가 찾아야 할 결함이다. 테스트가 아니라 구현을 고친다(systematic-debugging).
 - 이 과제의 테스트는 Task 5 구현 뒤에 쓰는 회귀 고정이다. 그래서 RED를 보장하려면 각 테스트의 핵심 단언을 한 번 뒤집어 실패하는 것을 확인한 뒤 되돌린다. 예: `busy_cli_session_blocks_implicit_binding`에서 `only_this_session_busy`가 항상 `true`를 돌려주게 임시로 바꾸면 FAIL해야 한다. 되돌릴 때는 `git checkout`을 쓰지 않고 편집으로 되돌린다.
 
-- [ ] **Step 3: 커밋한다**
+- [x] **Step 3: 커밋한다**
 
 ```bash
 git add bridge/tests
@@ -765,7 +767,7 @@ git commit -m "test(bridge): pin guarded request binding against CLI sessions, s
 - Consumes: Task 5의 동작 규칙
 - Produces: 새 `requestInstructions(requestId, target)` 문자열. 길이는 600자 미만이다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `request-target.test.ts`에 추가한다. 기존 길이 테스트(< 800)는 그대로 둔다.
 
@@ -779,12 +781,12 @@ it("tells the model ids are optional in a panel request but still names them", (
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/request-target.test.ts`
 Expected: FAIL(`omit` 없음 또는 길이 초과)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 ```ts
 export function requestInstructions(requestId:string,target:RequestTarget|null):string {
@@ -804,7 +806,7 @@ export function requestInstructions(requestId:string,target:RequestTarget|null):
 
 `:137`의 `attach?.state.input.requestId === lease.requestId` 단언은 지운다.
 
-- [ ] **Step 4: 전체 검증**
+- [x] **Step 4: 전체 검증**
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -821,7 +823,7 @@ bash scripts/test-windows.sh -- journeys.spec.ts reliability.spec.ts
   - 결합되지 않으면 `calls[0]`이 `error`이고 이어서 명시 경로로 복구된다. 이때 프록시가 실제로 보낸 `cwd`를 확인한다(Bridge 로그 또는 임시 `tracing::debug!`). 그 값이 Linux 경로로 바꿀 수 있는 형식이면 `same_directory`에 규칙을 추가하고 Task 4 테스트에 그 형식을 넣는다. 바꿀 수 없으면 WSL은 명시 경로를 유지하고 status.md에 적는다.
   - 두 경우 모두 WSL 단언은 그 결과에 맞춰 분기한다. 이 결정은 ruling으로 남긴다.
 
-- [ ] **Step 5: 문서를 갱신한다**
+- [x] **Step 5: 문서를 갱신한다**
 
 - **`docs/protocol.md`:**
   - request.begin 매개변수 표에 `profileId`·`sessionId`·`directory`(선택, 셋 다 있어야 범위로 인정)를 추가한다.
@@ -831,7 +833,7 @@ bash scripts/test-windows.sh -- journeys.spec.ts reliability.spec.ts
 - **`CHANGELOG.md` `[미배포]`:** "패널에서 보낸 요청은 에이전트가 요청 ID·작업 ID를 옮겨 적지 않아도 브라우저 도구가 그 요청에 연결됩니다. 같은 실행 환경에서 다른 세션이 작업 중이면 기존처럼 ID가 필요합니다."
 - **`docs/status.md` 맨 위:** 실행한 명령·결과, WSL 결과, 미검증을 구분해 기록한다.
 
-- [ ] **Step 6: 커밋한다**
+- [x] **Step 6: 커밋한다**
 
 ```bash
 git add extension tests docs CHANGELOG.md

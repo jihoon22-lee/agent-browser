@@ -1,6 +1,8 @@
 # 미뤄 둔 작은 결함 정리(계획 3D) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #25](https://github.com/jihoon22-lee/agent-browser/pull/25)로 main에 병합했다(`6a0f685`, 2026-10-17). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 계획 2·3A·3B·3C의 최종 리뷰에서 minor로 미룬 20건을 정리한다. 하나하나는 작지만 실제 사용에서 혼란·지연·잘못된 표시로 드러나는 것들이다.
 
@@ -63,7 +65,7 @@
 **(5) 큐 직전 `paused` 재확인**
 - 수정: `queue_operation_tool`, `run_tabs`의 new·switch·close `with_checked` 클로저에서 `op.paused`이면 handoff BUSY를 돌려준다. `wait_until_resumed`의 시간 초과 오류와 같은 문구·`details.handoff`다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `request_binding.rs`:
 
@@ -105,19 +107,19 @@ async fn another_directory_does_not_query_status() {
 
 `tool_router.rs`에 추가한다. pause와 enqueue 사이를 재현하기 어려우므로, 게이트 단위 테스트로 대신한다. `queue_operation_tool`이 쓰는 `with_checked` 클로저 판정을 `fn ensure_not_held(op:&Operation)->Result<(),RpcError>`로 빼서 단위 테스트한다. paused 작업이면 `details.handoff == true`인 BrowserBusy다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test request_binding --lib`
 Expected: 새 테스트들 FAIL
 
-- [ ] **Step 3: 위 수정 내용대로 구현한다**
+- [x] **Step 3: 위 수정 내용대로 구현한다**
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge
@@ -149,7 +151,7 @@ git commit -m "fix(bridge): share concurrent implicit attaches, accept null ids 
 - 증상: iframe에만 일치가 있으면 frame 0에 `query-no-match`가 붙어 모델이 "없음"으로 오해할 수 있다.
 - 수정: background 묶음 결과(`handlers.ts`의 snapshot 묶음)에 `queryMatched: boolean`(전체 frame 기준)을 추가한다. 묶음에 일치가 하나라도 있으면 각 frame의 `query-no-match`를 지운다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it("does not treat a large parent as a row", () => {
@@ -168,11 +170,11 @@ it("reads each row's text once even for many controls in it", () => {
 
 `handlers.test.ts`: 두 frame(0: 일치 없음, 7: 일치 있음) 응답을 주입한다. 묶음의 `queryMatched === true`이고 frame 0의 `limits`에 `query-no-match`가 없음을 단언한다. frame 응답 주입은 같은 파일의 `R05 advances iframe text pages…` 테스트 구성을 따른다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/snapshot-query.test.ts test/handlers.test.ts`
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -194,7 +196,7 @@ git commit -m "perf(extension): read row text once, ignore large parents and rep
 - 증상: content가 실행을 확인한 클릭이 `EXECUTION_UNKNOWN`이 된다.
 - 수정: 감시 루프의 `interruptible` 중단은 잡아서 원래 `result`를 그대로 반환한다. 이미 실행된 결과이고, 취소는 다음 명령부터 적용된다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it('does not watch for late navigation after a click that opened a new tab', async () => {
@@ -211,11 +213,11 @@ it('keeps an executed click when it is cancelled during the late-navigation watc
 
 두 테스트는 같은 파일의 `reports a JS navigation that starts after the observation window`, 새 탭 감지 테스트, 취소 테스트의 도우미를 조합해 쓴다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.ts`
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -250,7 +252,7 @@ git commit -m "fix(extension): skip the late-navigation watch for new tabs and k
 **(5) V01 보강**
 - 수정: 테두리가 있는 탭의 스냅샷에 "필터 열기" 요소가 있음을 단언한다. 빈 스냅샷은 통과하지 못한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it("re-marks a held tab after it navigates", () => {
@@ -271,11 +273,11 @@ it("marks with important styles so page CSS cannot make it clickable", () => {
 - 안내 요소가 `role="status"`를 가진다.
 - 클릭 직후 버튼이 `disabled`다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension test && pnpm --filter agent-browser-extension build && pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts`
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension tests/e2e
@@ -292,7 +294,7 @@ git commit -m "fix(extension): keep markers through navigation and page CSS, and
 - `original`에 `username?`을 받는다. 호출부는 Bridge 목록 요약의 `username`을 넘긴다. 실제 필드 이름은 `profile.list` 응답에서 확인한다.
 - `kind`가 다르거나 username이 달라도 안내한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it("warns when only the username changes, as the Bridge drops the password then", () => {
@@ -303,11 +305,11 @@ it("warns when only the username changes, as the Bridge drops the password then"
 });
 ```
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/profile-form.test.ts`
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -338,7 +340,7 @@ git commit -m "fix(options): warn about a dropped password whenever the Bridge w
 **(4) 긴 페어링 오류 잘림**
 - 수정: `pairingState`를 `runtimeResult`와 같은 읽기 전용·여러 줄·세로 스크롤 `TextBox`로 바꾼다. 테스트의 `Field<Label>(form,"PairingState")` 참조를 함께 고친다.
 
-- [ ] **Step 1: 실패하는 Case를 쓴다**
+- [x] **Step 1: 실패하는 Case를 쓴다**
 
 `SetupFlowTests.cs`:
 
@@ -363,19 +365,19 @@ git commit -m "fix(options): warn about a dropped password whenever the Bridge w
 
 두 함수는 `internal static`으로 두어 테스트가 접근하게 한다. 테스트 러너가 같은 어셈블리로 컴파일한다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 새 Case FAIL(컴파일 오류 포함)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `AB_PACKAGE_ZIP=<방금 만든 dev 패키지> bash scripts/test-installer-windows.sh SetupFlowTests && … SetupDisplayTests`
 Expected: PASS(배율 4종 포함)
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add installer tests/install
@@ -384,7 +386,7 @@ git commit -m "fix(installer): start the found WSL distribution, show its notice
 
 ### Task 7: 전체 검증과 문서
 
-- [ ] **Step 1: 전체 검증**
+- [x] **Step 1: 전체 검증**
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -399,7 +401,7 @@ bash scripts/test-installer-windows.sh SetupFlowTests
 
 실제 OpenCode 검사(Windows·`--wsl`)도 준비된 Windows 작업 폴더에서 다시 돌린다.
 
-- [ ] **Step 2: 문서를 갱신한다**
+- [x] **Step 2: 문서를 갱신한다**
 
 - `docs/status.md` 맨 위에 정리한 20건과 검증 결과를 적는다.
 - `CHANGELOG.md` `[미배포]`에는 사용자에게 보이는 것만 한 줄씩 적는다.
@@ -412,7 +414,7 @@ bash scripts/test-installer-windows.sh SetupFlowTests
   - `/session/status`의 idle 외 상태를 busy로 본다는 점
   - `null` ID 처리
 
-- [ ] **Step 3: 커밋한다**
+- [x] **Step 3: 커밋한다**
 
 ```bash
 git add docs CHANGELOG.md

@@ -1,6 +1,8 @@
 # 마우스 올리기·끌어다 놓기·키 조합·파일 업로드(계획 5) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #27](https://github.com/jihoon22-lee/agent-browser/pull/27)로 main에 병합했다(`ff01ec8`, 2026-10-18). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 에이전트가 메뉴를 펼치는 마우스 올리기, 두 번 클릭·오른쪽 클릭, 끌어다 놓기, Ctrl+A·Delete 같은 키 조합을 쓸 수 있게 한다. 사용자가 패널에 첨부한 파일을 웹페이지의 파일 입력에 올릴 수 있게 한다.
 
@@ -73,7 +75,7 @@
     - `browser_click`이 `mode`와 무관하게 지금 규칙(url·dom 변화)을 따른다.
     - `browser_upload`는 dom 변화가 있으면 스냅샷을 붙인다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `tools.rs` 테스트 모듈:
 
@@ -101,12 +103,12 @@
     }
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- pointer_modes drag_needs`
 Expected: FAIL
 
-- [ ] **Step 3: 구현하고 예산 안으로 줄인다**
+- [x] **Step 3: 구현하고 예산 안으로 줄인다**
 
 스키마를 추가한 뒤 `total_schema_size_stays_small_for_free_models`가 실패하면 줄인다. 설명이 긴 순서(`browser_tabs` 765, `browser_snapshot` 539, `browser_extract` 448, `browser_wait` 404)로 같은 뜻을 짧게 다시 쓴다. 지켜야 할 단언은 다음과 같다.
 - `descriptions_say_results_already_include_a_snapshot`: tabs·navigate·click·press 설명에 "snapshot"이 있다.
@@ -116,12 +118,12 @@ Expected: FAIL
 
 `UPDATE_FIXTURES=1`로 fixture를 재생성한다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib && pnpm --filter agent-browser-extension exec vitest run test/protocol-contract.test.ts`
 Expected: PASS. 예산 4,800 미만이다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge protocol
@@ -148,7 +150,7 @@ git commit -m "feat(bridge): offer pointer modes, key modifiers and attachment u
   - `hover`: `mouseMoved`만 보낸다.
 - 결과 `verified.mode`. 기본 `click`이면 생략한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `actions.test.ts`:
 
@@ -186,11 +188,11 @@ it("double and right clicks send their own event sequences", async () => {
 - `mode:"drag"`는 이 메시지로 거부한다. drag는 Task 3의 별도 action이다.
 - 알 수 없는 mode도 거부한다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/actions.test.ts test/trusted-input.test.ts test/trusted-message.test.ts`
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -217,7 +219,7 @@ git commit -m "feat(extension): double, right and hover pointer modes over DOM e
   3. target에서 `mouseMoved` → `mouseReleased`
 - 결과 `verified: { mode:"drag", ...changes }`
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it("drag delivers pointer moves and an HTML5 drop on the target", async () => {
@@ -241,9 +243,9 @@ it("drag refuses a stale target ref", async () => {
 
 `trusted-input.test.ts`: `drag(1,{x:1,y:1},{x:9,y:9})` → `mousePressed` 1회, 중간 `mouseMoved` 3회 이상, `mouseReleased`가 target 좌표다. 누름 뒤 실패면 `PartlyDelivered`다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -272,7 +274,7 @@ git commit -m "feat(extension): drag one element onto another with pointer and H
   - 수정키 keyDown → 키 keyDown/keyUp → 수정키 keyUp
   - 한 글자 키는 `key`, `code: "Key"+대문자`, `windowsVirtualKeyCode`(대문자 코드)이고, 수정키가 Shift뿐이면 `text`를 넣는다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it("Control+A selects only the text field, and unsupported combinations send nothing", async () => {
@@ -302,9 +304,9 @@ it("Delete, Home, End and arrows edit and move inside a text field", async () =>
 
 `trusted-input.test.ts`: `key(1,"a",["Control"])` → `keyDown Control`(modifiers 2) → `keyDown a`(modifiers 2, code `KeyA`) → `keyUp a` → `keyUp Control`.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -340,7 +342,7 @@ git commit -m "feat(extension): key combinations and editing keys over DOM event
   5. 결과는 `{executed:true, verified:{files:[name], size}}`다.
 - `requestInstructions(requestId, target, files?: string[])`: 파일이 있으면 "Attached files you may upload with browser_upload: a.pdf, b.png" 한 문장을 더한다. 지시문 길이 테스트(< 600)는 파일 목록 없이 기준을 유지하고, 목록이 있으면 파일 이름당 80자까지만 더한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `uploads.test.ts`:
 - 요청 A에 등록한 파일은 B에서 `take`되지 않는다.
@@ -357,11 +359,11 @@ git commit -m "feat(extension): key combinations and editing keys over DOM event
 
 `request-target.test.ts`: 파일 이름이 지시문에 포함된다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Workbench의 전송 경로에서 `request-prepare` 메시지에 `files: attachments.filter(a=>a.type==="file").map(a=>({name:a.filename, mime:a.mime, dataUrl:a.url}))`를 더한다. 첨부는 이미 data URL로 들고 있다(`workbench-state.ts` `filePart`).
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -400,9 +402,9 @@ git commit -m "feat: upload a file the user attached to the request into a page'
 
 Linux·Windows에서 모두 실행한다. CDP의 hover가 headless에서 `:hover`를 바꾸지 않는 등 환경 차이가 있으면 그 단언만 `mouseenter` 기준으로 바꾸고 ruling으로 남긴다.
 
-- [ ] **Step 1: E2E 작성·실행**
-- [ ] **Step 2: 전체 검증**(계획 4와 같은 명령, 실제 OpenCode Windows 프로필 포함)
-- [ ] **Step 3: 문서를 갱신하고 커밋한다**
+- [x] **Step 1: E2E 작성·실행**
+- [x] **Step 2: 전체 검증**(계획 4와 같은 명령, 실제 OpenCode Windows 프로필 포함)
+- [x] **Step 3: 문서를 갱신하고 커밋한다**
 
 ```bash
 git add tests docs CHANGELOG.md

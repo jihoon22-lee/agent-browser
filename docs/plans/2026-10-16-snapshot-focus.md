@@ -1,6 +1,8 @@
 # 필요한 부분만 읽는 스냅샷(계획 3B) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #23](https://github.com/jihoon22-lee/agent-browser/pull/23)로 main에 병합했다(`300bc81`, 2026-10-16). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 바쁜 실제 페이지에서 모델이 받는 스냅샷을 작업에 필요한 부분으로 좁혀, 출력 한도와 맥락 낭비로 생기는 실패를 줄인다.
 
@@ -70,7 +72,7 @@
 **Interfaces:**
 - Produces: `browser_snapshot` 스키마의 `"query":{"type":"string","maxLength":80}`. 라우터는 스키마에 선언된 속성만 확장에 넘긴다(`router.rs:280-290`). 따라서 이 선언만으로 확장의 `browser.snapshot` 매개변수에 `query`가 실린다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `tools.rs` 테스트 모듈:
 
@@ -83,12 +85,12 @@
     }
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- snapshot_can_be_narrowed`
 Expected: FAIL
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 ```rust
 fn op() -> Value { json!({"type":"string","description":"From attach/new"}) }
@@ -108,7 +110,7 @@ fn op() -> Value { json!({"type":"string","description":"From attach/new"}) }
 
 `UPDATE_FIXTURES=1 cargo test --offline --locked -p agent-browser-bridge --lib -- tools_list_matches_contract_fixture`로 fixture를 재생성하고, `git diff protocol/fixtures/tools-list.json`에서 `op` 설명·`query`·snapshot 설명만 바뀌었는지 확인한다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- tools::`
 Expected: PASS. `total_schema_size_stays_small_for_free_models`와 `page_tools_do_not_require_an_operation_id_in_the_schema`를 포함한다. 후자는 `browser_tabs` 설명의 "panel"로 통과한다.
@@ -116,7 +118,7 @@ Expected: PASS. `total_schema_size_stays_small_for_free_models`와 `page_tools_d
 Run: `pnpm --filter agent-browser-extension exec vitest run test/protocol-contract.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge/src/mcp/tools.rs protocol/fixtures/tools-list.json
@@ -140,7 +142,7 @@ git commit -m "feat(bridge): offer a query to narrow browser_snapshot within the
     - 그 요소가 속한 행의 글자. 행은 `closest("tr,li,[role=row],[role=listitem],article")`, 없으면 부모 요소다. 300자까지만 본다.
   - 본문은 검색어가 들어간 줄만, 줄마다 300자까지 이어 붙인 뒤 `offset`/`maxChars`를 적용한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `extension/test/snapshot-query.test.ts`:
 
@@ -190,12 +192,12 @@ it("leaves the snapshot unchanged without a query", () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/snapshot-query.test.ts`
 Expected: FAIL. 처음 세 테스트가 실패한다. 넷째는 통과할 수 있다.
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `snapshot.ts`:
 
@@ -239,12 +241,12 @@ function rowText(el: Element): string {
 
 `FrameSnapshot` 타입에 `query?: string`을 추가한다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/snapshot-query.test.ts test/candidates.test.ts test/context.test.ts test/output-bytes.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/content/snapshot.ts extension/test/snapshot-query.test.ts
@@ -260,7 +262,7 @@ git commit -m "feat(extension): narrow a snapshot to matching lines, rows and el
 **Interfaces:**
 - Consumes: Task 1·2
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `reliability.spec.ts` 끝에 추가한다. `shop.html` 주문표에는 A-1001·A-1002 두 행과 행마다 "취소" 버튼이 있다(`tests/fixtures/site/shop.html`).
 
@@ -280,12 +282,12 @@ test("R07 a query returns only the matching row's control, whose ref works at on
 
 `shop.html`의 행 버튼은 `data-order`에 따라 그 행의 상태 칸(`#s1`/`#s2`)을 "취소됨"으로 바꾼다(`tests/fixtures/site/shop.html:20`). fixture는 고치지 않는다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension build && cargo build --offline --locked -p agent-browser-bridge && pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts -g R07`
 Expected: Task 1·2가 커밋된 상태라 PASS일 수 있다. 이 과제는 실제 브라우저 회귀 고정이므로, 단언 하나(예: `toHaveLength(1)`을 `2`로)를 잠시 바꿔 FAIL을 확인한 뒤 되돌린다.
 
-- [ ] **Step 3: `note`에 한 줄을 더한다**
+- [x] **Step 3: `note`에 한 줄을 더한다**
 
 `handlers.ts:243`의 `note` 끝에 다음을 덧붙인다.
 
@@ -295,12 +297,12 @@ Expected: Task 1·2가 커밋된 상태라 PASS일 수 있다. 이 과제는 실
 
 `extension/test/handlers.test.ts`에서 note 전문을 비교하는 단언이 있으면 함께 고친다(`grep -n "accessibility tree" extension/test`).
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts`
 Expected: R01~R07 PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add tests/e2e extension/src/background/handlers.ts extension/test
@@ -319,7 +321,7 @@ git commit -m "test(e2e): a snapshot query finds a row's control and its ref act
   - `pub(crate) const FOLLOW_UP_MAX_ELEMENTS: u64 = 40` (`router.rs`)
   - `isPointerTarget(el)`은 안에 렌더링된 상호작용 요소(`INTERACTIVE`)가 있으면 `false`다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `tool_router.rs`:
 
@@ -357,7 +359,7 @@ it("does not spend an element slot on a pointer region that holds its own contro
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router -- follow_up_snapshots_ask`
 Expected: FAIL(`maxElements`가 null)
@@ -365,7 +367,7 @@ Expected: FAIL(`maxElements`가 null)
 Run: `pnpm --filter agent-browser-extension exec vitest run test/candidates.test.ts`
 Expected: FAIL. 새 테스트에서 clickable이 하나 더 나온다.
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `router.rs`:
 
@@ -396,7 +398,7 @@ export function isPointerTarget(el: Element): boolean {
 }
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test tool_router`
 Expected: PASS
@@ -404,7 +406,7 @@ Expected: PASS
 Run: `pnpm --filter agent-browser-extension exec vitest run test/candidates.test.ts test/names.test.ts`
 Expected: PASS. 기존 첫 테스트의 카드에는 상호작용 요소가 없어 그대로 clickable이다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge extension
@@ -426,7 +428,7 @@ git commit -m "feat: cap follow-up snapshot elements and skip pointer regions th
   - 바뀌면 `verified`를 `{...verified, urlChanged:true, navigated:true, lateNavigation:true}`로 바꾼다. 그러면 Bridge의 `wants_snapshot`(`router.rs:394`)이 도착 페이지 스냅샷을 붙인다. 이 스냅샷은 `settleMs`로 commit을 기다린다.
   - 바뀌지 않으면 결과를 그대로 둔다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `handlers.test.ts`:
 
@@ -460,12 +462,12 @@ it('does not hold a click that changed nothing for long', async () => {
 
 테스트 world의 탭 객체 필드(`pendingUrl`, `url`)와 `sendToFrame` 응답 모양은 같은 파일의 `reports a click that navigated…` 테스트와 `world()` 정의를 따른다. 응답 모양이 위와 다르면 그 정의에 맞춘다. `trackCreatedTabs`의 관찰 시간이 1초 이상이면 둘째 테스트의 상한을 그 시간 + 1.2초로 둔다. 실제 값은 `tabs.finish()` 구현에서 읽는다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.ts -t "observation window|changed nothing"`
 Expected: 첫 테스트 FAIL. 둘째는 PASS일 수 있다(회귀 고정용).
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `handlers.ts`의 클릭·키 실행 함수(`tracksTabs`가 정의된 함수)에서, 디스패치 전에 시작 URL을 읽는다.
 
@@ -515,7 +517,7 @@ test("R08 a click whose script navigates 0.8s later returns the arrived page", a
 
 `detail.html`은 기존 fixture다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/handlers.test.ts`
 Expected: PASS
@@ -523,7 +525,7 @@ Expected: PASS
 Run: `pnpm --filter agent-browser-extension build && pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts board-navigation.spec.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension tests
@@ -539,7 +541,7 @@ git commit -m "feat(extension): report a script navigation that starts after a c
 **Interfaces:**
 - Produces: `async fn run_with(state, caller, name, args, follow_up: bool) -> ToolOutcome`. `run(state, caller, name, args)`는 `run_with(…, true)`다. 암묵 attach는 바깥 도구가 읽기(`class_of == Read`)이면 `follow_up=false`로 부른다. 쓰기 도구는 attach 결과를 그대로 돌려줘야 하므로 `true`다(3A의 I2 수정).
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `request_binding.rs`:
 
@@ -555,12 +557,12 @@ async fn an_implicit_attach_before_a_read_reads_the_page_once() {
 }
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test request_binding -- reads_the_page_once`
 Expected: FAIL(snapshot 2회)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `run`의 본문을 `run_with(state, caller, name, args, follow_up)`로 옮긴다. `add_follow_up_snapshot`과 `add_open_tabs` 호출을 `if follow_up { … }`로 감싼다. `run`은 `run_with(…, true)`를 부른다.
 
@@ -571,12 +573,12 @@ Expected: FAIL(snapshot 2회)
             let attached = Box::pin(run_with(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}), !read)).await;
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test request_binding --test tool_router`
 Expected: PASS. `first_id_less_write_returns_the_attached_page_instead_of_running`도 포함하며, 쓰기는 여전히 snapshot을 담는다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge
@@ -593,7 +595,7 @@ git commit -m "fix(bridge): read the page once when an implicit attach precedes 
   - `CHANGELOG.md`
   - `docs/status.md`
 
-- [ ] **Step 1: 전체 검증**
+- [x] **Step 1: 전체 검증**
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -609,7 +611,7 @@ bash scripts/test-windows.sh --prepare-only
 
 Expected: 모두 PASS. 개수를 기록한다.
 
-- [ ] **Step 2: 문서를 갱신한다**
+- [x] **Step 2: 문서를 갱신한다**
 
 - **`browser-capabilities.md`:**
   - `browser_snapshot {query}`는 그 말이 들어간 줄, 같은 행에 그 말이 있는 컨트롤, 이름·값·링크가 맞는 요소만 돌려준다.
@@ -624,7 +626,7 @@ Expected: 모두 PASS. 개수를 기록한다.
   - 버튼을 품은 카드가 요소 목록을 차지하지 않는다.
 - **`status.md` 맨 위:** 실행한 명령·결과·미검증을 기록한다.
 
-- [ ] **Step 3: 커밋한다**
+- [x] **Step 3: 커밋한다**
 
 ```bash
 git add docs CHANGELOG.md
