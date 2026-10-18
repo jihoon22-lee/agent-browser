@@ -760,3 +760,14 @@ it('an upload whose document went away reports the navigation instead of an unkn
     };
     await expect(h(request('browser.upload', { ref, file: 'a.png', panelRequestId: 'r' }))).resolves.toMatchObject({ executed: true, verified: { navigated: true } });
 });
+it('keeps queryMatched true on a later page of matching elements', async () => {
+    const w = world();
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'snapshot') return { ok: true, result: { frameId: 0, elements: [], elementsTotal: 3, elementsOffset: 5, text: { content: '', totalChars: 0 }, limits: [], query: 'a-1' } };
+        return original(tabId, frame, msg);
+    };
+    const h = createHandlers(w.api, memorySessionStore());
+    const result: any = await h(request('browser.snapshot', { query: 'A-1', elementOffset: 5 }));
+    expect(result.queryMatched).toBe(true);
+});

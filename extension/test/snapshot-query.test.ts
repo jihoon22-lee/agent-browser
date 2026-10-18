@@ -71,3 +71,10 @@ it("reads each row's text once even for many controls in it", () => {
   takeSnapshot({ ...opts, query: "링크 299" });
   expect(reads).toBeLessThanOrEqual(2);
 });
+
+it("reads a row's rendered text: script text does not match, and cells stay separate words", () => {
+  document.body.innerHTML = `<table><tr><td>주문</td><td><button>취소</button></td><td><script>var id="A-1002"</script></td></tr>
+    <tr><td>A</td><td>1003</td><td><button>보기</button></td></tr></table>`;
+  expect(takeSnapshot({ ...opts, query: "A-1002" }).elements.filter(e => e.role === "button")).toEqual([]);
+  expect(takeSnapshot({ ...opts, query: "a 1003" }).elements.filter(e => e.role === "button").map(e => e.name)).toEqual(["보기"]);
+});

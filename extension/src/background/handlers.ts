@@ -272,7 +272,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             await store.bind(snapshotId,bindings.map(f=>({...f,tabId,operationId:String(p.operationId)})));
             // A query answers for the whole page: a match in any frame clears every frame's "no match".
             const queryMatched = typeof p.query === 'string' && p.query.trim()
-                ? results.some((f: any) => (f.elements?.length ?? 0) > 0 || !!f.text?.content) : undefined;
+                // Totals count every match, not just the page returned (elementOffset/offset).
+                ? results.some((f: any) => (f.elementsTotal ?? f.elements?.length ?? 0) > 0 || (f.text?.totalChars ?? (f.text?.content ? 1 : 0)) > 0) : undefined;
             if (queryMatched) for (const f of results as any[]) if (Array.isArray(f.limits)) f.limits = f.limits.filter((l: string) => l !== 'query-no-match');
             return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
