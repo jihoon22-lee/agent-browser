@@ -1,6 +1,8 @@
 # 설치·첫 사용 경험 개선 (계획 2) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #21](https://github.com/jihoon22-lee/agent-browser/pull/21)로 main에 병합했다(`1d004a1`, 2026-10-15). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 설치 마법사 하나로 "설치 → Chrome 확장 → 연결 → 실행 환경 → 첫 대화"를 끝낼 수 있게 한다. 각 단계는 실제로 성공했는지 확인해 보여 준다.
 
@@ -85,7 +87,7 @@
   - `Profile::preserve_secrets`는 kind·`baseUrl`·`username`이 모두 같을 때만 password를 유지한다. env는 지금처럼 유지한다.
   - `export function passwordDropped(original: {kind:string; baseUrl?: string; hasPassword?: boolean} | undefined, payload: Record<string, unknown>): boolean`
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `profile.rs` tests에 추가한다.
 
@@ -120,7 +122,7 @@ Run: `cargo test --offline --locked -p agent-browser-bridge --lib a_password_is_
 Run: `pnpm --filter agent-browser-extension exec vitest run test/profile-form.test.ts`
 Expected: Rust는 password가 `Some("secret-for-a")`여서 FAIL. TS는 `passwordDropped`가 없어 FAIL.
 
-- [ ] **Step 2: 구현한다**
+- [x] **Step 2: 구현한다**
 
 `profile.rs`:
 
@@ -151,14 +153,14 @@ export function passwordDropped(original: { kind: string; baseUrl?: string; hasP
 
 `profiles` 상태의 원소 타입에 `kind`, `baseUrl`, `hasPassword`가 없으면 그 타입 선언에 추가한다. Bridge의 `Profile::summary`는 이 필드들을 이미 반환한다.
 
-- [ ] **Step 3: 통과를 확인한다**
+- [x] **Step 3: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib runtime::profile`
 Run: `pnpm --filter agent-browser-extension exec vitest run test/profile-form.test.ts test/options.test.ts`
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS. `test/options.test.ts`가 없으면 그 인자는 뺀다.
 
-- [ ] **Step 4: 커밋한다**
+- [x] **Step 4: 커밋한다**
 
 ```bash
 git add bridge/src/runtime/profile.rs extension/src/options extension/test/profile-form.test.ts
@@ -186,7 +188,7 @@ git commit -m "fix: never carry a saved password to a different OpenCode server"
     - 기존 `browser-bridge pair`(토큰 출력)는 그대로다.
   - `pub async fn admin_request(home:&Path, port:u16, method:&str, params:Value) -> anyhow::Result<Value>` (`mcp/client.rs`)
 
-- [ ] **Step 1: 실패하는 통합 테스트를 쓴다**
+- [x] **Step 1: 실패하는 통합 테스트를 쓴다**
 
 `bridge/tests/pairing_window.rs`:
 
@@ -238,7 +240,7 @@ async fn pairing_open_rejects_invalid_ids_and_durations() {
 Run: `cargo test --offline --locked -p agent-browser-bridge --test pairing_window`
 Expected: FAIL. `pair.request`가 `auth.hello must be the first message`로 거부되고, `status.get`이 `FORBIDDEN_METHOD`다.
 
-- [ ] **Step 2: 상태와 페어링 창을 ServerState에 추가한다**
+- [x] **Step 2: 상태와 페어링 창을 ServerState에 추가한다**
 
 `conn.rs`의 `pub struct ServerState` 위에 추가한다.
 
@@ -261,7 +263,7 @@ pub struct PairingWindow { pub extension_id: String, pub until: std::time::Insta
             Role::Mcp => matches!(method, "tool.call" | "tool.cancel" | "status.get" | "pairing.open"),
 ```
 
-- [ ] **Step 3: `pair.request`를 처리한다**
+- [x] **Step 3: `pair.request`를 처리한다**
 
 `authenticate`의 첫 메시지 match에서 `Ok(Envelope::Req { id, method, params, .. }) if method == "auth.hello" => ...` 다음 arm으로 추가한다.
 
@@ -297,7 +299,7 @@ async fn handle_pair_request(ws: &mut Ws, role: Role, extension_id: Option<&str>
 }
 ```
 
-- [ ] **Step 4: MCP 역할의 두 메서드를 처리한다**
+- [x] **Step 4: MCP 역할의 두 메서드를 처리한다**
 
 `serve_mcp`의 `if method == "tool.cancel" { ... continue; }` 블록 바로 뒤에 추가한다.
 
@@ -331,12 +333,12 @@ fn open_pairing(state: &ServerState, params: &Value) -> Result<Value, RpcError> 
 }
 ```
 
-- [ ] **Step 5: 통합 테스트가 통과하는지 확인한다**
+- [x] **Step 5: 통합 테스트가 통과하는지 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --test pairing_window --test serve_auth`
 Expected: PASS
 
-- [ ] **Step 6: CLI를 추가한다**
+- [x] **Step 6: CLI를 추가한다**
 
 `mcp/client.rs`의 `probe_authenticated` 아래에 추가한다.
 
@@ -400,7 +402,7 @@ pub fn run_status() -> anyhow::Result<()> {
 
 `main.rs` 상단의 `log_file` match는 `Command::Serve`만 보므로 바꾸지 않는다.
 
-- [ ] **Step 7: CLI 동작을 확인한다**
+- [x] **Step 7: CLI 동작을 확인한다**
 
 ```bash
 cargo build --offline --locked -p agent-browser-bridge
@@ -418,7 +420,7 @@ Expected:
 Run: `cargo test --offline --locked -p agent-browser-bridge`
 Expected: PASS(전체)
 
-- [ ] **Step 8: 커밋한다**
+- [x] **Step 8: 커밋한다**
 
 ```bash
 git add bridge/src bridge/tests/pairing_window.rs
@@ -438,7 +440,7 @@ git commit -m "feat(bridge): add read-only status and a one-shot pairing window 
   - 토큰이 없으면 상태를 `unpaired`로 두고, 3초마다 `pair.request`를 보낸다.
   - 토큰을 받으면 `pairingToken`과 `repairPending=true`를 저장하고 즉시 정상 연결을 시작한다.
 
-- [ ] **Step 1: 기존 기대를 바꾸고 실패하는 테스트를 쓴다**
+- [x] **Step 1: 기존 기대를 바꾸고 실패하는 테스트를 쓴다**
 
 `bridge-connection.test.ts`의 `"reports unpaired without a token and does not connect"` 테스트를 아래 두 테스트로 바꾼다.
 
@@ -476,7 +478,7 @@ git commit -m "feat(bridge): add read-only status and a one-shot pairing window 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/bridge-connection.test.ts`
 Expected: 두 새 테스트가 FAIL. 토큰이 없으면 소켓을 만들지 않는다.
 
-- [ ] **Step 2: 구현한다**
+- [x] **Step 2: 구현한다**
 
 `bridge-connection.ts` 상단 상수에 추가한다.
 
@@ -546,7 +548,7 @@ const PAIRING_POLL_MS = 3_000;
     this.pairingSocket?.close(); this.pairingSocket = undefined;
 ```
 
-- [ ] **Step 3: 설정 페이지 안내를 바꾼다**
+- [x] **Step 3: 설정 페이지 안내를 바꾼다**
 
 `App.tsx`의 `Bridge 페어링` 절 첫 문장을 바꾼다.
 
@@ -554,13 +556,13 @@ const PAIRING_POLL_MS = 3_000;
     <section><h2>Bridge 페어링</h2><p>설치 마법사의 [Chrome에 연결]을 누르면 자동으로 연결됩니다. 직접 연결하려면 설치 폴더의 페어링 안내에 표시된 토큰을 입력하세요.</p>
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/bridge-connection.test.ts`
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS(기존 테스트 포함)
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/background/bridge-connection.ts extension/src/options/App.tsx extension/test/bridge-connection.test.ts
@@ -580,7 +582,7 @@ git commit -m "feat(extension): request the existing token while an installer pa
   - `export function compareVersions(a: string, b: string): number`
   - 인증 응답의 `serverVersion`이 확장 버전보다 높을 때만 reload한다. 같은 Bridge 버전으로는 한 번만 한다(`storage.reloadedForBridge`).
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `bridge-connection.test.ts`의 기존 도우미 `finishAuthentication(ws)`(137행)는 마지막 응답을 `{ authVersion: 1, selected: true }`로 고정한다. 응답을 인수로 받게 바꾼다. 기본값이 같으므로 기존 호출은 그대로 동작한다.
 
@@ -640,7 +642,7 @@ import에 `compareVersions`를 추가한다.
 Run: `pnpm --filter agent-browser-extension exec vitest run test/bridge-connection.test.ts -t "reload|compares"`
 Expected: FAIL
 
-- [ ] **Step 2: 구현한다**
+- [x] **Step 2: 구현한다**
 
 `bridge-connection.ts`의 `ConnDeps`에 추가한다.
 
@@ -687,13 +689,13 @@ prove 응답의 `complete` 안 `this.startHeartbeat(ws);` 다음 줄에 추가�
   reload: () => chrome.runtime.reload(),
 ```
 
-- [ ] **Step 3: 통과를 확인한다**
+- [x] **Step 3: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/bridge-connection.test.ts`
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS
 
-- [ ] **Step 4: 커밋한다**
+- [x] **Step 4: 커밋한다**
 
 ```bash
 git add extension/src/background extension/test/bridge-connection.test.ts
@@ -711,7 +713,7 @@ git commit -m "feat(extension): reload once after the Bridge is updated to a new
   - 세션 없이 [보내기]를 누르면 세션을 만들고 그 세션을 선택한다. 입력한 초안과 첨부는 새 세션으로 옮겨 그대로 전송한다.
   - 실행 환경이 없으면 대화 화면과 실행 설정에 [실행 환경 추가] 버튼을 보여 준다. 누르면 설정 페이지가 열린다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `workbench.test.ts` 끝에 추가한다.
 
@@ -745,7 +747,7 @@ it("offers to add a runtime profile when none exists", async () => {
 Run: `pnpm --filter agent-browser-extension exec vitest run test/workbench.test.ts -t "creates a session|offers to add"`
 Expected: FAIL. 첫 테스트는 "새 세션을 만들거나 기존 세션을 선택하세요" 오류로 전송하지 않고, 둘째는 버튼이 없다.
 
-- [ ] **Step 2: 구현한다**
+- [x] **Step 2: 구현한다**
 
 `Workbench.tsx` 컴포넌트 안 ref 선언부(`const sendLock = useRef(...)` 근처)에 추가한다.
 
@@ -800,13 +802,13 @@ Expected: FAIL. 첫 테스트는 "새 세션을 만들거나 기존 세션을 �
 
 위 버튼의 `perform(createSession)`도 앞 단락의 tsc 규칙을 따른다.
 
-- [ ] **Step 3: 통과를 확인한다**
+- [x] **Step 3: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/workbench.test.ts`
 Run: `pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS(기존 테스트 포함). 빈 대화 화면에서 "새 대화 시작"을 찾는 기존 테스트는 프로필이 있으면 그대로 통과한다.
 
-- [ ] **Step 4: 커밋한다**
+- [x] **Step 4: 커밋한다**
 
 ```bash
 git add extension/src/sidepanel/Workbench.tsx extension/test/workbench.test.ts
@@ -825,7 +827,7 @@ git commit -m "feat(panel): create the session on first send and offer to add a 
   2. Windows .NET Framework `csc`로 `<TestClass>`를 컴파일한다.
   3. `<fixture> <package>` 인수로 실행하고, 종료 코드를 그대로 반환한다.
 
-- [ ] **Step 1: 스크립트를 만든다**
+- [x] **Step 1: 스크립트를 만든다**
 
 ```bash
 #!/usr/bin/env bash
@@ -852,7 +854,7 @@ unzip -q "$zip" -d "$dest/package"
 }"
 ```
 
-- [ ] **Step 2: 현재 코드로 기존 마법사 테스트를 실행해 기준선을 잡는다**
+- [x] **Step 2: 현재 코드로 기존 마법사 테스트를 실행해 기준선을 잡는다**
 
 ```bash
 chmod +x scripts/test-installer-windows.sh
@@ -862,7 +864,7 @@ bash scripts/test-installer-windows.sh SetupFlowTests
 
 Expected: 기존 `SetupFlowTests`의 PASS 줄들과 종료 코드 0. 실패하면 이 기준선 결과를 ledger에 그대로 기록하고, 다음 과제에서 바뀌는 실패와 구분한다.
 
-- [ ] **Step 3: testing.md에 한 절을 추가하고 커밋한다**
+- [x] **Step 3: testing.md에 한 절을 추가하고 커밋한다**
 
 `docs/testing.md`의 "Windows PowerShell 5.1 배포 진입점 회귀" 절 위에 넣는다.
 
@@ -886,7 +888,7 @@ git commit -m "test: add a development runner for installer C# regressions on Wi
 **Interfaces:**
 - Produces: `internal static class Friendly { public static string Message(Exception error) }`. 알려진 영어 원문은 한국어 안내와 `(원문: …)`로 바꾸고, 그 밖의 원문은 그대로 둔다.
 
-- [ ] **Step 1: 실패하는 Case를 쓴다**
+- [x] **Step 1: 실패하는 Case를 쓴다**
 
 `SetupFlowTests.Main`의 첫 `Case` 앞에 추가한다.
 
@@ -904,7 +906,7 @@ git commit -m "test: add a development runner for installer C# regressions on Wi
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 컴파일 오류(`Friendly` 없음)로 FAIL
 
-- [ ] **Step 2: 구현한다**
+- [x] **Step 2: 구현한다**
 
 `SetupForm.cs`의 `internal static class Program` 위에 추가한다.
 
@@ -943,12 +945,12 @@ Expected: 컴파일 오류(`Friendly` 없음)로 FAIL
 
 `SetupForm.cs` 안의 사용자 표시 지점을 바꾼다: `status.Text=error.Message` → `status.Text=Friendly.Message(error)`, `status.Text=error.Message+"\r\n[뒤로]..."` → `status.Text=Friendly.Message(error)+"\r\n[뒤로]..."`. 대상은 `grep -n "error.Message" installer/SetupForm.cs`로 찾은 모든 곳이다. `Program.Main`의 `MessageBox.Show(error.Message, ...)`도 `Friendly.Message(error)`로 바꾼다.
 
-- [ ] **Step 3: 통과를 확인한다**
+- [x] **Step 3: 통과를 확인한다**
 
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 새 Case PASS, 기존 Case 기준선과 같음
 
-- [ ] **Step 4: 커밋한다**
+- [x] **Step 4: 커밋한다**
 
 ```bash
 git add installer/SetupForm.cs tests/install/SetupFlowTests.cs
@@ -974,7 +976,7 @@ git commit -m "feat(installer): show Korean errors with the next action"
     - `ConnectChrome`: [Chrome에 연결]
     - `PairingState`: 연결 진행 상태 표시
 
-- [ ] **Step 1: 실패하는 Case를 쓴다**
+- [x] **Step 1: 실패하는 Case를 쓴다**
 
 ```csharp
    Case("pairing helpers identify the fixed extension and a connected browser",()=>{
@@ -1006,7 +1008,7 @@ git commit -m "feat(installer): show Korean errors with the next action"
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 컴파일 오류(`Pairing` 없음)로 FAIL
 
-- [ ] **Step 2: 도우미를 구현한다**
+- [x] **Step 2: 도우미를 구현한다**
 
 `Friendly` 위에 추가한다.
 
@@ -1027,7 +1029,7 @@ Expected: 컴파일 오류(`Pairing` 없음)로 FAIL
     }
 ```
 
-- [ ] **Step 3: 확장 추가 화면에 열기 버튼과 감지 표시를 넣는다**
+- [x] **Step 3: 확장 추가 화면에 열기 버튼과 감지 표시를 넣는다**
 
 필드 선언에 `openExtensions`, `connectChrome` Button과 `extensionDetected`, `pairingState` Label, `System.Windows.Forms.Timer detect`를 추가한다. connection 패널의 "Chrome에 확장을 추가한 뒤 [다음]을 누르세요." 줄을 아래로 바꾼다.
 
@@ -1073,7 +1075,7 @@ Expected: 컴파일 오류(`Pairing` 없음)로 FAIL
             detect.Enabled=page==4;
 ```
 
-- [ ] **Step 4: 페어링 화면을 [Chrome에 연결] 중심으로 바꾼다**
+- [x] **Step 4: 페어링 화면을 [Chrome에 연결] 중심으로 바꾼다**
 
 pairing 패널의 첫 안내와 배치를 아래로 바꾼다. 기존 주소·토큰·복사 컨트롤은 "직접 입력" 아래로 내린다.
 
@@ -1112,12 +1114,12 @@ pairing 패널의 첫 안내와 배치를 아래로 바꾼다. 기존 주소·�
 
 페어링 화면의 [다음]은 지금처럼 Task 9의 실행 환경 페이지로 간다. 기존 `prepare.Click`에서 `page==5`일 때 `SetPage(6);status.Clear();` 뒤에 `await EnterRuntimePage();`를 추가한다.
 
-- [ ] **Step 5: 통과를 확인한다**
+- [x] **Step 5: 통과를 확인한다**
 
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 새 Case 두 개 PASS. 기존 "Chrome pairing and runtime setup occupy separate sequential pages" Case는 `ManagedProfiles` 버튼을 확인하므로, Task 9에서 그 기대를 바꾼다. 이 과제 시점에는 그대로 통과해야 한다.
 
-- [ ] **Step 6: 커밋한다**
+- [x] **Step 6: 커밋한다**
 
 ```bash
 git add installer/SetupForm.cs tests/install/SetupFlowTests.cs
@@ -1144,7 +1146,7 @@ git commit -m "feat(installer): detect the loaded extension and connect Chrome w
   - `ManagedProfile.Start(InstallState state, string id) -> string`: 사용자 표시용 결과 문장
   - 테스트용 인수 `--no-runtime-start`: 저장 뒤 시작을 건너뛴다. 실제 OpenCode 없이 화면 흐름을 시험하기 위한 것이다.
 
-- [ ] **Step 1: 실패하는 Case를 쓴다**
+- [x] **Step 1: 실패하는 Case를 쓴다**
 
 ```csharp
    Case("saved runtime appears in the Bridge profile list and on the page",()=>{
@@ -1177,7 +1179,7 @@ git commit -m "feat(installer): detect the loaded extension and connect Chrome w
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: FAIL. `RuntimeKind` 컨트롤이 없다.
 
-- [ ] **Step 2: `ManagedProfile`을 보강하고 대화상자 클래스를 지운다**
+- [x] **Step 2: `ManagedProfile`을 보강하고 대화상자 클래스를 지운다**
 
 `ProfileForm.cs`에서 `internal sealed class ProfileForm : Form { … }` 전체를 지운다. `ManagedProfile`은 남기고 `Save`를 바꾼 뒤 `Start`를 추가한다.
 
@@ -1202,7 +1204,7 @@ Expected: FAIL. `RuntimeKind` 컨트롤이 없다.
         }
 ```
 
-- [ ] **Step 3: 실행 환경 화면을 본 화면 안에 만든다**
+- [x] **Step 3: 실행 환경 화면을 본 화면 안에 만든다**
 
 필드 선언에서 `profiles` Button을 지우고 아래를 추가한다.
 
@@ -1239,7 +1241,7 @@ runtime 패널 높이가 늘었으므로, 패널 생성 루프의 높이 308을 
 
 본문 스크롤 영역의 `AutoScrollMinSize=new Size(720,348)`을 `new Size(720,412)`로 바꾼다.
 
-- [ ] **Step 4: 탐색·저장·목록 메서드를 구현한다**
+- [x] **Step 4: 탐색·저장·목록 메서드를 구현한다**
 
 Task 8에서 둔 빈 `EnterRuntimePage`를 아래 구현으로 바꾸고, 나머지 메서드를 추가한다.
 
@@ -1296,7 +1298,7 @@ Task 8에서 둔 빈 `EnterRuntimePage`를 아래 구현으로 바꾸고, 나머
 
 `SaveRuntime`은 `return` 경로에서도 `finally`를 거치므로 버튼이 다시 활성화된다.
 
-- [ ] **Step 5: 남은 `profiles` 참조를 정리한다**
+- [x] **Step 5: 남은 `profiles` 참조를 정리한다**
 
 Run: `grep -n "profiles\.\|ProfileForm\|ManagedProfiles" installer/*.cs`
 
@@ -1316,12 +1318,12 @@ Run: `grep -n "profiles\.\|ProfileForm\|ManagedProfiles" installer/*.cs`
 
 `--async-profile`의 대화상자 전용 검사(입력 변경 중 저장 차단, 대화상자 닫기)는 새 흐름에 대상이 없으므로 지운다. 대신 `SaveRuntime`을 두 번 빠르게 눌러도 프로필이 하나만 생기는지 확인한다. `working` 플래그가 막는다.
 
-- [ ] **Step 6: 통과를 확인한다**
+- [x] **Step 6: 통과를 확인한다**
 
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 새 Case PASS, 수정한 기존 Case PASS, 나머지는 기준선과 같음
 
-- [ ] **Step 7: 커밋한다**
+- [x] **Step 7: 커밋한다**
 
 ```bash
 git add installer tests/install
@@ -1344,7 +1346,7 @@ git commit -m "feat(installer): save, start and verify the runtime profile on th
     - `~/.nvm/versions/node/*/bin/opencode`
     - 로그인 셸 `bash -lc 'command -v opencode'`
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `tests/install/wsl-probe.test.mjs`:
 
@@ -1377,7 +1379,7 @@ test("the WSL probe finds OpenCode installed through nvm or bun without a login 
 Run: `node --test tests/install/wsl-probe.test.mjs`
 Expected: FAIL ("WslProbe must be a verbatim constant")
 
-- [ ] **Step 2: 구현한다**
+- [x] **Step 2: 구현한다**
 
 `Discovery` 클래스 안에 상수를 추가하고, `FindWsl`의 `const string probe=...` 줄을 지운 뒤 `probe` 대신 `WslProbe`를 쓴다. C# verbatim 문자열에서 큰따옴표는 `""`로 쓰고, 줄바꿈은 그대로다. 줄 끝은 LF여야 한다. 저장소의 `.gitattributes`·편집기 설정을 확인하고, CRLF가 섞이면 `.Replace("\r\n","\n")`로 정규화한다.
 
@@ -1409,7 +1411,7 @@ for p in ""$c/opencode.json"" ""$c/opencode.jsonc""; do [ ! -f ""$p"" ] || print
             if(!System.Text.RegularExpressions.Regex.IsMatch(version,@"^1\.[0-9A-Za-z.+-]+$")) throw new IOException("OpenCode v1 실행파일인지 확인하지 못했습니다. nvm·npm으로 설치한 OpenCode라면 로그인 셸 없이 실행할 수 없을 수 있습니다. ~/.opencode/bin/opencode 같은 독립 실행 파일 경로를 사용하세요.");
 ```
 
-- [ ] **Step 3: 통과를 확인하고 테스트 목록에 넣는다**
+- [x] **Step 3: 통과를 확인하고 테스트 목록에 넣는다**
 
 Run: `node --test tests/install/wsl-probe.test.mjs`
 Expected: PASS
@@ -1419,7 +1421,7 @@ Expected: PASS
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 기준선과 같음(Discovery 변경으로 인한 컴파일·회귀 없음)
 
-- [ ] **Step 4: 커밋한다**
+- [x] **Step 4: 커밋한다**
 
 ```bash
 git add installer/Discovery.cs tests/install/wsl-probe.test.mjs docs/testing.md .github/workflows/ci.yml
@@ -1438,7 +1440,7 @@ git commit -m "feat(installer): find OpenCode installed through nvm, bun or a lo
   - 기존 `doctor --json`(`Manager::doctor`): `checks:[{id,status,message,profileId?,reason?}]`
 - Produces: `internal static class DoneChecks { public static List<string> Lines(Dictionary<string,object> status, Dictionary<string,object> doctor, string extensionId) }`. 컨트롤 `DoneChecks`(ListBox)와 `RunDoneChecks()`.
 
-- [ ] **Step 1: 실패하는 Case를 쓴다**
+- [x] **Step 1: 실패하는 Case를 쓴다**
 
 ```csharp
    Case("the final page reports real connection checks with next actions",()=>{
@@ -1455,7 +1457,7 @@ git commit -m "feat(installer): find OpenCode installed through nvm, bun or a lo
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 컴파일 오류(`DoneChecks` 없음)로 FAIL
 
-- [ ] **Step 2: 구현한다**
+- [x] **Step 2: 구현한다**
 
 `Pairing` 아래에 추가한다.
 
@@ -1505,12 +1507,12 @@ done 패널의 안내 Label 아래에 ListBox를 추가하고, 내용을 채우�
 
 `complete` Label은 생성자 지역 변수다. 필드로 승격해 `readonly Label complete=new Label();`로 선언하고, 생성자에서는 `LabelAt` 결과 대신 이 필드에 `Text`·위치를 설정한다(`Position(done,complete,"CompleteTitle",76,40,560,38);complete.Text="설정이 끝났습니다.";`). 생성자의 `FontChanged`·`Font` 설정 줄도 필드를 쓰도록 바꾼다.
 
-- [ ] **Step 3: 통과를 확인한다**
+- [x] **Step 3: 통과를 확인한다**
 
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupFlowTests`
 Expected: 새 Case PASS, 기존 Case 기준선과 같음
 
-- [ ] **Step 4: 커밋한다**
+- [x] **Step 4: 커밋한다**
 
 ```bash
 git add installer/SetupForm.cs tests/install/SetupFlowTests.cs
@@ -1526,7 +1528,7 @@ git commit -m "feat(installer): end the wizard with real connection checks and n
 **Interfaces:**
 - Consumes: Task 1~11 전체
 
-- [ ] **Step 1: 배율 검사에 새 화면을 포함한다**
+- [x] **Step 1: 배율 검사에 새 화면을 포함한다**
 
 `tests/install/SetupDisplayTests.cs`가 페이지별 컨트롤의 잘림을 검사하는 목록을 갖고 있으면 아래를 추가한다.
 - 페이지 4: `OpenExtensions`, `ExtensionDetected`
@@ -1539,7 +1541,7 @@ git commit -m "feat(installer): end the wizard with real connection checks and n
 Run: `bash scripts/build-release-wsl.sh && bash scripts/test-installer-windows.sh SetupDisplayTests`
 Expected: PASS. 잘리면 해당 과제의 배치 좌표·크기를 고친다.
 
-- [ ] **Step 2: 전체 자동 검증을 실행한다**
+- [x] **Step 2: 전체 자동 검증을 실행한다**
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -1552,7 +1554,7 @@ for t in SetupFlowTests SetupDisplayTests ManagedPathTests; do bash scripts/test
 
 Expected: 모두 PASS. 통과 개수를 기록한다.
 
-- [ ] **Step 3: 실제 GUI로 처음부터 끝까지 확인한다(사용자 보고 시나리오)**
+- [x] **Step 3: 실제 GUI로 처음부터 끝까지 확인한다(사용자 보고 시나리오)**
 
 격리 폴더(`%LOCALAPPDATA%\AgentBrowser-dev\gui-check`)와 별도 포트, 개발용 Chrome 프로필 `AgentBrowser-dev`를 쓴다. 운영 설치·사용자 Chrome 프로필은 쓰지 않는다.
 1. 새 ZIP의 `AgentBrowser-Setup.exe`로 설치한다.
@@ -1568,7 +1570,7 @@ Expected: 모두 PASS. 통과 개수를 기록한다.
 
 결과를 PASS·FAIL·미실행으로 구분해 기록한다.
 
-- [ ] **Step 4: 문서를 갱신한다**
+- [x] **Step 4: 문서를 갱신한다**
 
 - **`README-install.md` §2:** 새 흐름으로 바꾼다. [Chrome 확장 페이지 열기] → 로드 → 자동 감지 → [Chrome에 연결]. 토큰 직접 입력은 대체 방법으로 남긴다. §3은 마법사의 [저장하고 연결 확인]과 저장된 목록, 마지막 점검 화면을 설명한다. §4 업데이트의 "확장 새로고침" 단계는 "자동으로 한 번 새로고침된다. 되지 않으면 수동으로 새로고침"으로 바꾼다.
 - **`docs/user-guide.md` §1~§3:** 위와 같은 흐름. 첫 메시지 전송 시 세션이 자동으로 만들어진다는 점, 실행 환경이 없으면 [실행 환경 추가] 버튼이 나온다는 점을 반영한다.
@@ -1576,7 +1578,7 @@ Expected: 모두 PASS. 통과 개수를 기록한다.
 - **`CHANGELOG.md` 미배포 절:** 사용자 관점 변경을 적는다.
 - **`docs/status.md` 맨 위:** 실제 실행한 명령·결과·미검증(사용자 배포 PC, 실제 모델 추론)을 구분해 기록한다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add README-install.md docs CHANGELOG.md tests/install

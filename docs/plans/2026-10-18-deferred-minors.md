@@ -1,6 +1,8 @@
 # 남은 작은 결함 정리(계획 6) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #29](https://github.com/jihoon22-lee/agent-browser/pull/29)로 main에 병합했다(`e133531`, 2026-10-18). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 18건 중 2건(늦은 이동 감시 중 연결 끊김, 신뢰 클릭 좌표 재확인)은 고치지 않고 판단으로 남겼다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 계획 3D·4·5의 최종 리뷰에서 minor로 미룬 18건을 0.2.0 전에 정리한다. 요청 순서 "3, 2, 4, 1"의 ④다.
 
@@ -51,7 +53,7 @@
 - drag 결과: `verified.dropped: boolean`. HTML5 원본이 아니면 넣지 않는다.
 - 같은 이름 첨부: 등록할 때 두 번째부터 확장자 앞에 ` (2)`, ` (3)`를 붙인다. 예: `a.png`, `a (2).png`. 그 이름이 지시문과 `take`에 쓰인다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 // actions.test.ts
@@ -67,12 +69,12 @@ it("two attachments with the same name both stay uploadable under distinct names
 it("an upload whose document went away reports the navigation instead of an unknown outcome", async () => { /* sendToFrame rejects + documentId changes → verified.navigated */ });
 ```
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension test`
 Expected: 새 테스트가 먼저 실패하고, 구현 뒤 전체 통과
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -93,7 +95,7 @@ git commit -m "fix(extension): observe uploads, bind HTML5 drags to the draggabl
   - `mode`·`toRef`·`modifiers`·`file`(80자)을 요약 키에 넣는다.
   - 기존 요약 형식(`key=value` 나열)을 따른다.
 
-- [ ] **Step 1: 실패하는 테스트**
+- [x] **Step 1: 실패하는 테스트**
 
 ```rust
 #[test]
@@ -105,8 +107,8 @@ fn null_optional_fields_are_omitted_but_required_ones_still_fail() {
 fn timeline_names_the_pointer_mode_target_keys_and_file() { /* summarize에 mode=drag toRef=… file=a.png modifiers=Control */ }
 ```
 
-- [ ] **Step 2~4:** `cargo test --offline --locked -p agent-browser-bridge`
-- [ ] **Step 5:** `git commit -m "fix(bridge): treat null optional fields as omitted and name pointer modes, keys and files in the timeline"`
+- [x] **Step 2~4:** `cargo test --offline --locked -p agent-browser-bridge`
+- [x] **Step 5:** `git commit -m "fix(bridge): treat null optional fields as omitted and name pointer modes, keys and files in the timeline"`
 
 ### Task 3: 스냅샷 — 행 글자와 query 일치 판정
 
@@ -122,12 +124,12 @@ fn timeline_names_the_pointer_mode_target_keys_and_file() { /* summarize에 mode
   - 행마다 한 번 읽는 캐시는 그대로 둔다.
 - `queryMatched`: 돌려준 쪽이 아니라 전체 일치 수로 판정한다. `elementsTotal > 0 || text.totalChars > 0`이다.
 
-- [ ] **Step 1: 실패하는 테스트**
+- [x] **Step 1: 실패하는 테스트**
   - `<tr><td>A-1002</td><td>취소</td><script>/* A-1002 */</script></tr>`: 스크립트만 일치하는 행에서는 버튼이 나오지 않는다.
   - `<td>A</td><td>1002</td>`는 "A 1002"로 일치한다.
   - 일치 요소가 3개인 페이지를 `elementOffset:5`로 읽으면 요소 0개지만 `queryMatched: true`다.
-- [ ] **Step 2~4:** `pnpm --filter agent-browser-extension test`
-- [ ] **Step 5:** `git commit -m "fix(extension): read rendered row text for query and judge queryMatched across pages"`
+- [x] **Step 2~4:** `pnpm --filter agent-browser-extension test`
+- [x] **Step 5:** `git commit -m "fix(extension): read rendered row text for query and judge queryMatched across pages"`
 
 ### Task 4: background 상태 — 탭 표시, 탭 그룹, 권한, 비활성 캡처
 
@@ -145,13 +147,13 @@ fn timeline_names_the_pointer_mode_target_keys_and_file() { /* summarize에 mode
 - 권한: 사용자가 설정에서 tabGroups를 허용하거나 취소하면 다음 상태 변화를 기다리지 않고 `syncGroups()`를 부른다.
 - 비활성 캡처: 캡처 전후로 최상위 frame의 documentId를 비교한다. 같은 URL을 다시 읽어도 결과를 버린다.
 
-- [ ] **Step 1: 실패하는 테스트**
+- [x] **Step 1: 실패하는 테스트**
   - 탐색 재적용과 동시에 작업이 끝나면 표시가 남지 않는다.
   - 저장된 `agentGroups`로 시작한 상태에서 작업이 끝나면 그 탭의 그룹을 푼다.
   - 같은 URL로 다시 읽히는 동안 찍은 비활성 캡처는 버린다(`NEEDS_TAB_ACTIVATION`).
   - 권한 변화 이벤트에서 `syncGroups`가 불린다(index의 연결 함수를 테스트 가능한 모듈로 뺄 때만).
-- [ ] **Step 2~4:** `pnpm --filter agent-browser-extension test`
-- [ ] **Step 5:** `git commit -m "fix(extension): queue re-marking, keep tab-group ownership across worker restarts and recheck inactive captures by document"`
+- [x] **Step 2~4:** `pnpm --filter agent-browser-extension test`
+- [x] **Step 5:** `git commit -m "fix(extension): queue re-marking, keep tab-group ownership across worker restarts and recheck inactive captures by document"`
 
 ### Task 5: 설정·설치기와 E2E 단언
 
@@ -171,12 +173,12 @@ fn timeline_names_the_pointer_mode_target_keys_and_file() { /* summarize에 mode
 - T03: 분리 뒤 디버거가 다시 붙지 않는지 2초 동안 확인한다.
 - T04: 캡처한 PNG의 크기가 0보다 크고, 다른 탭이 여전히 활성인지 확인한다.
 
-- [ ] **Step 1: 실패하는 테스트** — profile-form, SetupFlowTests(`DistributionToStart`).
-- [ ] **Step 2~4:**
+- [x] **Step 1: 실패하는 테스트** — profile-form, SetupFlowTests(`DistributionToStart`).
+- [x] **Step 2~4:**
   - `pnpm --filter agent-browser-extension test`
   - `bash scripts/test-installer-windows.sh SetupFlowTests`
   - `bash scripts/test-windows.sh -- trusted-input.spec.ts`
-- [ ] **Step 5:** `git commit -m "fix: notice dropped passwords on kind changes, never restart a running distribution and tighten trusted E2E checks"`
+- [x] **Step 5:** `git commit -m "fix: notice dropped passwords on kind changes, never restart a running distribution and tighten trusted E2E checks"`
 
 ### Task 6: 판단으로 남기는 2건, 문서와 전체 검증
 
@@ -184,10 +186,10 @@ fn timeline_names_the_pointer_mode_target_keys_and_file() { /* summarize에 mode
 - **감시 중 Bridge 연결이 끊긴 클릭:** content가 실행을 확인한 클릭인데, 1초 늦은 이동 감시 중 Bridge 연결이 끊기면 `EXECUTION_UNKNOWN`이 된다. 확장은 결과를 `store`에 저장하지만, Bridge가 다시 연결한 뒤 그 요청의 결과를 되묻는 경로가 없다. 그러려면 프로토콜에 재조회 RPC가 필요해 범위를 넘는다. 모델은 "페이지를 확인하라"는 안전한 안내를 받는다.
 - **신뢰 클릭 지점의 왕복 뒤 재확인:** content가 판정한 좌표를 background가 디버거로 보내는 몇 ms 사이에 요소가 움직일 수 있다. 재확인하려면 CDP `DOM.getNodeForLocation`과 ref 대응이 필요하다. 클릭 직전의 판정·관찰과 결과 스냅샷이 이미 있다.
 
-- [ ] **Step 1:** docs/status.md·CHANGELOG.md에 기록한다. 0.2.0 전 남은 항목도 정리한다.
-- [ ] **Step 2: 전체 검증**
+- [x] **Step 1:** docs/status.md·CHANGELOG.md에 기록한다. 0.2.0 전 남은 항목도 정리한다.
+- [x] **Step 2: 전체 검증**
   - Rust, 확장, tsc, E2E 타입 검사
   - Linux E2E
   - Windows Chrome E2E(journeys·reliability·trusted-input·pointer-keys-upload)
   - 실제 OpenCode Windows·WSL 패널 검사
-- [ ] **Step 3:** `git commit -m "docs: record plan 6"`
+- [x] **Step 3:** `git commit -m "docs: record plan 6"`

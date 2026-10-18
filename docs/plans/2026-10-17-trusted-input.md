@@ -1,6 +1,8 @@
 # 신뢰 입력(CDP)과 작업 탭 묶음(계획 4) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #26](https://github.com/jihoon22-lee/agent-browser/pull/26)로 main에 병합했다(`8bd87a5`, 2026-10-17). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 합성 이벤트를 무시하는 사이트에서도 클릭·키 입력이 실제 사용자 입력처럼 동작하게 한다. 이를 위해 사용자가 설정에서 켜는 "신뢰 입력"(Chrome 디버거 입력)을 추가한다. 함께 처리하는 것:
 - 작업 중 뜬 alert/confirm이 작업을 멈추지 않게 한다.
@@ -76,7 +78,7 @@
     - [취소]를 누르면 그 작업은 일반 입력으로 계속한다.
   - `TabGroupsPermission`: `chrome.permissions.request({permissions:['tabGroups']})`를 사용자 클릭 안에서 요청·해제한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 import manifest from "../public/manifest.json";
@@ -92,11 +94,11 @@ it("asks for the debugger permission and offers tab groups only as optional", ()
 - 클릭하면 `storage.local.set({trustedInput:true})`가 호출되고, 표시줄 경고 문장이 보인다.
 - 다시 클릭하면 `false`가 된다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/manifest.test.ts test/options-trusted.test.ts`
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -143,7 +145,7 @@ export function trustedInput(api: DebuggerApi): {
   - `keyDown`(text가 있으면 `type:"keyDown"`에 text 포함) 뒤 `keyUp`을 보낸다.
 - 클릭은 `mouseMoved` → `mousePressed`(button left, clickCount 1) → `mouseReleased` 순서다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 가짜 `DebuggerApi`(호출 기록, onDetach·onEvent를 수동으로 발화)로 쓴다.
 
@@ -163,11 +165,11 @@ it("accepts an alert, dismisses a confirm and reports each once", async () => {
 it("sends a full mouse click and key strokes", async () => { /* click → Input.dispatchMouseEvent 3회 순서, key("Enter") → keyDown(text "\r") keyUp */ });
 ```
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/trusted-input.test.ts`
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/background/trusted-input.ts extension/test/trusted-input.test.ts
@@ -206,7 +208,7 @@ git commit -m "feat(extension): manage debugger sessions for trusted input on op
     - `handlers.isRunning(sender.tab.id, msg.requestId, "browser.click" | "browser.press")`
     - 신뢰 입력 켜짐, 그리고 그 탭이 붙어 있음
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `trusted-message.test.ts`는 검증 함수 `acceptTrustedRequest(msg, sender, ctx)`를 순수 함수로 빼서 테스트한다.
 
@@ -227,12 +229,12 @@ it("accepts only a running click or press of this tab's top frame", () => {
 - `trusted:true` 클릭에서 `chrome.runtime.sendMessage` mock이 `{ok:true}`를 돌려주면, 합성 `click` 이벤트가 페이지에 가지 않고 결과에 `trusted:true`가 있다.
 - mock이 `{ok:false, reason:"canceled_by_user"}`면 합성 이벤트가 가고 결과에 `trusted:false, trustedReason:"canceled_by_user"`가 있다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
 Run: `pnpm --filter agent-browser-extension test`
 Expected: 새 테스트 PASS, 기존 전체 PASS(꺼진 상태 무변화)
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -251,7 +253,7 @@ git commit -m "feat(extension): send clicks and keys as trusted input when enabl
 
 `createHandlers`에 선택 의존성 `trusted?: { ensure(tabId): Promise<boolean>; screenshot(tabId): Promise<string> }`을 추가한다. 테스트에서 가짜로 넣을 수 있다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it('captures an inactive operation tab through trusted input when available', async () => {
@@ -265,9 +267,9 @@ it('still asks for activation when trusted input is unavailable', async () => {
 
 결과 형식은 같은 파일의 기존 screenshot 테스트(`browser.screenshot` 결과 필드)를 따른다.
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -287,7 +289,7 @@ git commit -m "feat(extension): capture an inactive operation tab through truste
   - 작업에서 빠진 탭, 작업이 끝난 탭 중 **우리가 넣은 탭만** 그룹에서 뺀다.
   - `api`는 `tabs.group`, `tabs.ungroup`, `tabGroups.update`, `tabs.get`만 가진 얇은 인터페이스다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 it("groups operation tabs and ungroups only the tabs it grouped", async () => { /* … */ });
@@ -295,9 +297,9 @@ it("leaves tabs the user already grouped alone", async () => { /* groupId !== -1
 it("does nothing without the permission", async () => { /* granted:false → 호출 0 */ });
 ```
 
-- [ ] **Step 2~4: 실패 확인 → 구현 → 통과**
+- [x] **Step 2~4: 실패 확인 → 구현 → 통과**
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -332,8 +334,8 @@ git commit -m "feat(extension): group operation tabs when the optional tab group
 
 Linux와 Windows에서 모두 실행한다. Windows에서 Playwright 제어 중 `chrome.debugger`가 동작하지 않으면 그 사실을 status.md에 적고 T 테스트를 Windows에서 건너뛴다(`test.skip(process.platform==='win32', 이유)`). 이 결정은 ruling으로 남긴다.
 
-- [ ] **Step 1: E2E를 쓰고 실패를 확인한다**(Task 1~5 이후라 대부분 통과한다. 꺼진 상태 단언으로 회귀를 고정한다)
-- [ ] **Step 2: 전체 검증**
+- [x] **Step 1: E2E를 쓰고 실패를 확인한다**(Task 1~5 이후라 대부분 통과한다. 꺼진 상태 단언으로 회귀를 고정한다)
+- [x] **Step 2: 전체 검증**
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -345,7 +347,7 @@ bash scripts/test-windows.sh -- journeys.spec.ts reliability.spec.ts board-navig
 
 실제 OpenCode 검사(Windows·`--wsl`)도 다시 돌린다(꺼진 상태 무변화 확인).
 
-- [ ] **Step 3: 문서를 갱신하고 커밋한다**
+- [x] **Step 3: 문서를 갱신하고 커밋한다**
 
 ```bash
 git add tests docs CHANGELOG.md

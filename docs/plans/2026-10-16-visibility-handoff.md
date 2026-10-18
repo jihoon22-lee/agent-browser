@@ -1,6 +1,8 @@
 # 작업 표시·응답 알림·잠시 넘겨받기(계획 3C) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **상태: 완료.** [PR #24](https://github.com/jihoon22-lee/agent-browser/pull/24)로 main에 병합했다(`aee5eae`, 2026-10-17). v0.2.0에 포함. 실제 검증 결과와 남긴 항목은 [상태 기록](../status.md)과 PR 본문에 있다. 새 작업의 원장으로 쓰지 않는다.
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 사용자가 에이전트가 어느 탭에서 무엇을 하는지 보고, 응답이 필요할 때 알고, 로그인·캡차처럼 사람이 할 단계에서 잠시 브라우저를 넘겨받았다가 이어서 진행할 수 있게 한다.
 
@@ -61,7 +63,7 @@
   - Extension RPC `operation.pause {operationId}`, `operation.resume {operationId}`. 호출한 브라우저가 작업 소유자여야 한다.
   - `pub(crate) const HANDOFF_WAIT: Duration = Duration::from_secs(45)` (`router.rs`)
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `operation.rs` 테스트 모듈:
 
@@ -120,12 +122,12 @@ async fn resume_requires_a_fresh_snapshot_before_writing() {
 
 본문은 같은 파일의 `selected_extension_tab_closed_allows_switch_and_release`처럼 확장 소켓을 직접 다루고 `call_with_socket`으로 명령에 응답하는 방식으로 쓴다. `operation.pause`/`operation.resume`은 `call(&mut ext, "operation.pause", json!({"operationId": op}))`로 보낸다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge --lib -- paused_calls abort_releases only_the_owner`
 Expected: 컴파일 오류(`pause` 없음)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `operation.rs`:
 - **필드:**
@@ -172,12 +174,12 @@ pub(crate) const HANDOFF_WAIT: Duration = Duration::from_secs(45);
 - 처리부(`"operation.abort"` 옆)를 추가한다. 매개변수 `operationId` 문자열, 호출한 연결의 `client_id`, 성공 시 `state.broadcast_status()`, 결과는 갱신된 작업이다.
 - 호출한 연결의 클라이언트 ID는 `operation.abort` 처리부와 같은 방식으로 얻는다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `cargo test --offline --locked -p agent-browser-bridge`
 Expected: PASS. 새 테스트와 기존 전체를 포함한다. `protocol_contract`가 Extension 메서드 목록을 고정하면 `protocol/` 계약 문서와 fixture에 두 메서드를 추가한다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add bridge protocol
@@ -196,7 +198,7 @@ git commit -m "feat(bridge): let the user hold an operation and resume with a fr
   - 저장된 패널 요청이 있고, 그 세션에 대기 중인 `/question` 또는 `/permission`(`sessionID === lease.sessionId`)이 있으면 `waiting:true`다.
   - 런타임을 확인할 수 없거나 오류면 `{waiting:false}`다. 알림은 힌트일 뿐이라 오류를 던지지 않는다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `panel-requests.test.ts`에 추가한다. `api.get`은 같은 파일의 기존 mock(경로별 응답)을 쓴다.
 
@@ -217,12 +219,12 @@ it('treats an unreachable runtime as nothing to report', async () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/panel-requests.test.ts`
 Expected: FAIL(`attention` 없음)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `panelRequests`가 돌려주는 객체에 추가한다.
 
@@ -242,12 +244,12 @@ Expected: FAIL(`attention` 없음)
     },
 ```
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/panel-requests.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/background/panel-requests.ts extension/test/panel-requests.test.ts
@@ -275,7 +277,7 @@ git commit -m "feat(extension): notice a panel request waiting for an answer"
     4. 그 밖: `""`, "AgentBrowser"
   - `applyBadge(state)`: `chrome.action.setBadgeText`·`setBadgeBackgroundColor`·`setTitle` 호출
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 ```ts
 import { badgeFor } from "../src/background/badge";
@@ -294,12 +296,12 @@ it("badge_ignores_another_browsers_operation", () => {
 });
 ```
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/badge.test.ts`
 Expected: FAIL(모듈 없음)
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `badge.ts`:
 
@@ -329,12 +331,12 @@ export async function applyBadge(badge: Badge) {
 - `refreshBadge`는 `chrome.storage.local.get('clientId')`로 클라이언트 ID를 읽어 `applyBadge(badgeFor(...))`를 실행한다. 실패는 무시한다.
 - Bridge 연결이 끊기면(`onStatus`의 `state !== 'connected'`) `lastOperation = null`로 두고 배지를 비운다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/badge.test.ts && pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension/src/background/badge.ts extension/src/background/index.ts extension/test/badge.test.ts
@@ -362,7 +364,7 @@ git commit -m "feat(extension): show work, hand-over and needed answers on the t
     - `api`는 `executeScript(tabId, func, args)`만 가진 얇은 인터페이스라 테스트에서 가짜로 바꿀 수 있다.
   - `highlight(el: Element)`(content): 요소 영역에 0.7초 동안 2px 외곽선을 그린다. 같은 방식(닫힌 shadow, `pointer-events:none`)이다. 시간이 지나면 스스로 지운다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `work-marker.test.ts`(jsdom):
 
@@ -393,12 +395,12 @@ it("marks new operation tabs and clears tabs that left", async () => {
 
 `actions.test.ts`: 클릭 테스트 하나에 단언을 추가한다. 클릭 직후 `document.querySelector('#agent-browser-target')`가 존재하고, 0.8초 뒤(가짜 타이머) 사라지는지 확인한다. 같은 파일의 기존 클릭 테스트 구성(`generation:10` 등)을 따른다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/work-marker.test.ts test/actions.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 `work-marker.ts`:
 
@@ -439,7 +441,7 @@ export async function syncMarkers(api: MarkerApi, previous: Set<number>, next: {
 
 `actions.ts`: click·fill·select에서 `assertInteractable` 통과 직후, 실제 이벤트 전에 `highlight(el)`을 호출한다. 구현은 `markerScript`와 같은 방식이다. id `agent-browser-target`, 요소 `getBoundingClientRect()` 위치에 `position:fixed`, 0.7초 뒤 제거한다. 이벤트·포커스·스크롤을 바꾸지 않는다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension test`
 Expected: PASS
@@ -462,7 +464,7 @@ test("V01 the work marker shows on the operation tab but never in snapshots or c
 Run: `pnpm --filter agent-browser-extension build && pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts`
 Expected: PASS. `V01`과 기존 R01~R08을 포함한다.
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension tests/e2e
@@ -484,7 +486,7 @@ git commit -m "feat(extension): frame operation tabs and flash the target, invis
   - `paused`가 아니면 [잠시 넘겨받기], `paused`면 [이어서 진행]이다.
   - 넘겨받은 동안 대화 위에 "브라우저를 직접 조작하는 중입니다. 끝나면 [이어서 진행]을 누르세요. 에이전트는 기다립니다." 안내를 표시한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다**
+- [x] **Step 1: 실패하는 테스트를 쓴다**
 
 `workbench.test.ts`에 추가한다. 같은 파일의 작업 상태 주입 방식(`status.changed` 메시지 또는 store 디스패치)을 따른다.
 
@@ -503,23 +505,23 @@ it("offers no take-over for another browser's operation", async () => {
 
 이 파일의 기존 `render()`·`button()` 도우미와 상태 주입 도우미를 쓴다. 주입 도우미가 없으면 테스트 상단에 `status.changed` bridge-event를 보내는 작은 함수를 추가한다.
 
-- [ ] **Step 2: 실패를 확인한다**
+- [x] **Step 2: 실패를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension exec vitest run test/workbench.test.ts`
 Expected: FAIL
 
-- [ ] **Step 3: 구현한다**
+- [x] **Step 3: 구현한다**
 
 - `status-store.ts`: `Operation` 타입과 `isOperation`이 `paused?: boolean`을 허용하게 한다.
 - `index.ts`: bridge 허용 목록에 `"operation.pause", "operation.resume"`을 추가한다.
 - `Workbench.tsx`: 응답 중단 버튼 옆에 버튼을 둔다. 조건은 `operation && operation.clientId === ownClientId`다. 이 브라우저의 clientId는 기존 코드가 작업 소유 판단에 쓰는 값과 같은 출처(`chrome.storage.local`의 `clientId`)를 쓴다. 클릭 시 `chrome.runtime.sendMessage({kind:'bridge',method: paused?'operation.resume':'operation.pause',params:{operationId:operation.id}})`를 보내고, 실패하면 기존 오류 표시(`wb.setError`)를 쓴다. 안내 문구는 대화 영역 상단 알림 자리(`notice`)를 쓴다.
 
-- [ ] **Step 4: 통과를 확인한다**
+- [x] **Step 4: 통과를 확인한다**
 
 Run: `pnpm --filter agent-browser-extension test && pnpm --filter agent-browser-extension exec tsc --noEmit -p .`
 Expected: PASS
 
-- [ ] **Step 5: 커밋한다**
+- [x] **Step 5: 커밋한다**
 
 ```bash
 git add extension
@@ -538,7 +540,7 @@ git commit -m "feat(panel): take over the browser for a moment and hand it back 
   - `docs/status.md`
   - `docs/review-2026-10-15.md` §E(3C 반영 표시)
 
-- [ ] **Step 1: H01을 쓴다**
+- [x] **Step 1: H01을 쓴다**
 
 ```ts
 test("H01 a held operation makes the agent wait, then continue only after a fresh read", async () => {
@@ -556,7 +558,7 @@ test("H01 a held operation makes the agent wait, then continue only after a fres
 
 `world.admin`이 확장 관리 RPC를 보내는 실제 경로와 허용 메서드는 `tests/e2e/harness.ts`에서 확인한다. 허용 목록이 고정돼 있으면 두 메서드를 추가한다.
 
-- [ ] **Step 2: 전체 검증**
+- [x] **Step 2: 전체 검증**
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -572,7 +574,7 @@ bash scripts/test-windows.sh --prepare-only
 
 Expected: 모두 PASS
 
-- [ ] **Step 3: 문서를 갱신한다**
+- [x] **Step 3: 문서를 갱신한다**
 
 - **`user-guide.md`:**
   - 확장 아이콘의 ●(작업 중)·!(응답 필요)·‖(사용자가 조작 중)
@@ -588,7 +590,7 @@ Expected: 모두 PASS
 - **`review-2026-10-15.md` §E 계획 3:** 가시성·알림·인계 항목에 "계획 3C로 반영" 표시를 단다.
 - **`status.md` 맨 위:** 실행한 명령·결과·미검증을 기록한다.
 
-- [ ] **Step 4: 커밋한다**
+- [x] **Step 4: 커밋한다**
 
 ```bash
 git add tests/e2e docs CHANGELOG.md
