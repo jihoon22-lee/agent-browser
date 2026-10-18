@@ -33,6 +33,16 @@ const MODIFIER_KEYS: Record<string, { bit: number; key: string; code: string; wi
   Meta: { bit: 4, key: "Meta", code: "MetaLeft", windowsVirtualKeyCode: 91 },
   Shift: { bit: 8, key: "Shift", code: "ShiftLeft", windowsVirtualKeyCode: 16 },
 };
+/** Real input with Control, Meta or Alt can reach Chrome's own shortcuts (paste the person's clipboard,
+ * close or switch tabs, open menus or devtools). Only page editing shortcuts are sent; others stay DOM events. */
+const SHORTCUT_KEYS = new Set(["a", "z", "y", "b", "i", "Enter", "Backspace", "Home", "End", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
+export function trustedShortcut(key: string, modifiers: string[]): boolean {
+  if (modifiers.every(m => m === "Shift")) return true;
+  if (modifiers.includes("Alt") || modifiers.includes("Control") === modifiers.includes("Meta")) return false;
+  const single = /^[a-zA-Z]$/.test(key), name = single ? key.toLowerCase() : key;
+  if (!SHORTCUT_KEYS.has(name)) return false;
+  return !modifiers.includes("Shift") || !single || name === "z";
+}
 function keySpec(key: string, modifiers: string[]) {
   if (KEYS[key]) return KEYS[key];
   if (modifiers.length === 0 || !/^[a-zA-Z0-9]$/.test(key)) return undefined;
@@ -131,7 +141,7 @@ export function trustedInput(api: DebuggerApi) {
     },
     key(tabId: number, key: string, modifiers: string[] = []) {
       const spec = keySpec(key, modifiers);
-      if (!spec || modifiers.some(m => !MODIFIER_KEYS[m])) return Promise.reject(new Error(`Unsupported key ${key}`));
+      if (!spec || modifiers.some(m => !MODIFIER_KEYS[m]) || !trustedShortcut(key, modifiers)) return Promise.reject(new Error(`Unsupported key ${key}`));
       const send = (params: object) => () => api.send(tabId, "Input.dispatchKeyEvent", params);
       const held = modifiers.map(m => MODIFIER_KEYS[m]!);
       const bits = held.reduce((sum, m) => sum | m.bit, 0);

@@ -205,11 +205,27 @@ describe("trusted key combinations", () => {
     await t.ensure(1, on([1]));
     await t.key(1, "b", ["Shift"]);
     await t.key(1, "Delete");
-    await t.key(1, "3", ["Control", "Shift"]);
+    await t.key(1, "z", ["Control", "Shift"]);
     const downs = d.calls.filter(c => c[2] === "Input.dispatchKeyEvent").map(c => c[3] as any).filter(k => k.type === "keyDown" && !["Shift", "Control"].includes(k.key));
     expect(downs[0]).toMatchObject({ key: "B", code: "KeyB", text: "B", modifiers: 8 });
     expect(downs[1]).toMatchObject({ key: "Delete", windowsVirtualKeyCode: 46 });
-    expect(downs[2]).toMatchObject({ key: "3", code: "Digit3", modifiers: 10 });
+    expect(downs[2]).toMatchObject({ key: "Z", code: "KeyZ", modifiers: 10 });
     expect(downs[2].text).toBeUndefined();
+  });
+});
+
+describe("trusted shortcuts stay inside the page's editing", () => {
+  it("refuses clipboard, tab, window and browser-menu shortcuts before any event", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    for (const [key, modifiers] of [["v", ["Control"]], ["c", ["Meta"]], ["x", ["Control"]], ["w", ["Control"]], ["t", ["Control"]], ["Tab", ["Control"]], ["PageDown", ["Control"]], ["d", ["Alt"]], ["ArrowLeft", ["Alt"]], ["Delete", ["Control", "Shift"]], ["i", ["Control", "Shift"]]] as const)
+      await expect(t.key(1, key, [...modifiers])).rejects.toThrow();
+    expect(d.calls.filter(c => c[2] === "Input.dispatchKeyEvent")).toEqual([]);
+  });
+  it("still sends select-all, undo, redo and caret shortcuts", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    for (const [key, modifiers] of [["a", ["Control"]], ["z", ["Meta"]], ["z", ["Control", "Shift"]], ["ArrowLeft", ["Control", "Shift"]], ["Enter", ["Control"]], ["B", ["Shift"]]] as const)
+      await t.key(1, key, [...modifiers]);
   });
 });

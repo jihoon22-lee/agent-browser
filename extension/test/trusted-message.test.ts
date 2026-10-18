@@ -34,8 +34,15 @@ it("accepts a drag only with finite source and target points", () => {
 it("accepts key modifiers only from the allowed set", () => {
   const ctx = { runtimeId: "ext", running: () => true, enabled: true, attached: () => true };
   const top = { id: "ext", tab: { id: 1 }, frameId: 0 };
-  const key = { kind: "trusted-input", requestId: "r", action: "key", key: "a", modifiers: ["Control", "Shift"] };
+  const key = { kind: "trusted-input", requestId: "r", action: "key", key: "z", modifiers: ["Control", "Shift"] };
   expect(acceptTrustedRequest(key, top, ctx)).toBe(true);
   expect(acceptTrustedRequest({ ...key, modifiers: ["Control", "Hyper"] }, top, ctx)).toBe(false);
   expect(acceptTrustedRequest({ ...key, modifiers: "Control" }, top, ctx)).toBe(false);
+});
+
+it("never accepts a browser shortcut such as paste for trusted input", () => {
+  const ctx = { runtimeId: "ext", running: () => true, enabled: true, attached: () => true };
+  const top = { id: "ext", tab: { id: 1 }, frameId: 0 };
+  expect(acceptTrustedRequest({ kind: "trusted-input", requestId: "r", action: "key", key: "v", modifiers: ["Control"] }, top, ctx)).toBe(false);
+  expect(acceptTrustedRequest({ kind: "trusted-input", requestId: "r", action: "key", key: "a", modifiers: ["Control"] }, top, ctx)).toBe(true);
 });
