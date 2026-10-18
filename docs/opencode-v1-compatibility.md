@@ -4,6 +4,17 @@
 `GET /doc`에서 받은 OpenAPI 3.1 명세([reference/opencode-1.18.29-openapi.json](./reference/opencode-1.18.29-openapi.json)),
 2026-10-11 확인. 공개 최신 문서·v2 예제는 최종 계약이 아니다.
 
+## 1.19.3 비교 (2026-10-18)
+
+WSL 설치본이 **1.19.3**으로 자동 갱신되어 같은 방식(격리 설정, `opencode serve`, `GET /doc`)으로 명세를 받았다([reference/opencode-1.19.3-openapi.json](./reference/opencode-1.19.3-openapi.json)). `node tests/agent/compare-openapi.mjs`로 1.18.29와 비교한 결과다.
+
+- **v1 연산(`/api/*` 밖):** 추가·삭제·정의 변경 모두 0개.
+- **컴포넌트 스키마:** 추가·삭제 0개. 변경은 `Config`·`ProviderConfig` 두 개다. 모델별 `reasoning_options` 필드가 늘었고, `autoupdate` 설명이 "자동 설치하지 않고 알림만"으로 바뀌었다. 둘 다 opencode.json 설정 스키마이고, 이 제품은 격리 테스트 설정만 쓴다.
+- **헬스 체크:** `{"healthy":true,"version":"1.19.3"}`.
+- **실제 검사:** 실제 WSL 패널 검사(`opencode-panel.windows.mjs --wsl`, 1.19.3)의 12개 시나리오를 통과했다. 검사는 런타임 버전이 비교를 마친 목록(`1.18.29`, `1.19.3`)에 있을 때만 진행한다.
+
+1.18.29 명세는 계속 기준 문서다. 제품은 1.x 버전이면 받아들이고, 버전별 분기는 두지 않는다.
+
 ## 확인된 서버 특성
 
 | 항목 | 확인 결과 | 방법 |

@@ -24,6 +24,8 @@ const workspace = join(temp, 'workspace'), home = join(temp, 'bridge');
 await mkdir(workspace); await mkdir(home);
 const exe = process.env.AB_BRIDGE_EXE ?? join(root, 'target/x86_64-pc-windows-msvc/release/browser-bridge.exe');
 const opencode = process.env.AB_OPENCODE_EXE ?? join(process.env.LOCALAPPDATA, 'AgentBrowser-dev/opencode/1.18.29/opencode.exe');
+// Versions whose v1 path, operation and schema set was compared with docs/reference (see opencode-v1-compatibility.md).
+const VERIFIED_OPENCODE = ['1.18.29', '1.19.3'];
 const report = { actualSidePanel: true, headed: true, runtime: values.wsl ? 'wsl-managed' : 'windows-managed', model: values.model ?? 'synthetic', realLLM: !!values.model, checks: [], turns: [] };
 const owned = []; let context, browserCDP, panel, api, sessionId, admin, capturePanel;
 const linuxPath = path => '/mnt/' + path[0].toLowerCase() + path.slice(2).replaceAll('\\','/');
@@ -95,7 +97,13 @@ await new Promise(r => site.listen(0,'127.0.0.1',r));
     const response = await fetch(`${baseUrl}${path}?directory=${encodeURIComponent(directory)}`,{method,headers:{authorization:'Basic '+Buffer.from('opencode:'+password).toString('base64'),'content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
     assert(response.ok,`OpenCode ${path}: ${response.status}`);return response.status===204?null:response.json();
   };
-  assert.equal((await api('/global/health')).version,'1.18.29');
+  // The Windows run uses the pinned isolated install; a WSL run uses the distribution's own OpenCode.
+  const expectedVersion = values.wsl
+    ? (await exec(join(process.env.SystemRoot,'System32/wsl.exe'),['--distribution','Ubuntu','--exec',profile.executable,'--version'],{windowsHide:true})).stdout.trim()
+    : '1.18.29';
+  assert(VERIFIED_OPENCODE.includes(expectedVersion),`OpenCode ${expectedVersion} has not been compared with the stored v1 contract`);
+  assert.equal((await api('/global/health')).version,expectedVersion);
+  report.openCodeVersion=expectedVersion;
   assert.equal((await ensure()).result.baseUrl,baseUrl,'Repeated connection reuses the managed runtime');
   const session = await api('/session','POST',{title:'Isolated panel browser regression',agent:'browser-test',model:{providerID:model.split('/')[0],id:model.split('/')[1]}}); sessionId = session.id;
   await admin.evaluate(sessionId=>chrome.storage.local.set({lastProfileId:'actual-panel','recentSession:actual-panel':sessionId}),sessionId);
@@ -113,7 +121,7 @@ await new Promise(r => site.listen(0,'127.0.0.1',r));
   capturePanel=()=>command('Page.captureScreenshot',{format:'png'});
   panel=async expression=>{const result=await command('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true,userGesture:true});if(result.exceptionDetails)throw Error(result.exceptionDetails.text);return result.result.value;};
   await until(()=>panel(`!!document.querySelector('textarea[aria-label="메시지"]') && !!document.querySelector('option[value="${model}"]')`),'panel model ready',40000);
-  report.checks.push('Real headed Chrome side panel, isolated OpenCode 1.18.29 and Windows Bridge connected');
+  report.checks.push(`Real headed Chrome side panel, isolated OpenCode ${report.openCodeVersion} and Windows Bridge connected`);
   for(const [index,suffix] of ['a','b'].entries()) {
     const targetPage = index === 0 ? page : await context.newPage();
     await targetPage.goto(`http://127.0.0.1:${site.address().port}/${suffix}`);await targetPage.bringToFront();

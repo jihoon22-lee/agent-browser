@@ -1,3 +1,14 @@
+# WSL OpenCode 1.19.3 확인 — 2026-10-18 KST, 미배포
+
+이 PC의 WSL OpenCode가 1.19.3으로 자동 갱신되어, 1.18.29를 고정한 실제 WSL 패널 검사가 버전 확인에서 멈췄었다(계획 4 기록).
+
+- **계약 비교:** 격리 설정으로 1.19.3을 띄워 `GET /doc` 명세를 받아 [reference/opencode-1.19.3-openapi.json](./reference/opencode-1.19.3-openapi.json)으로 저장했다. `tests/agent/compare-openapi.mjs`로 비교한 결과, v1 연산은 추가·삭제·변경이 없다. 스키마는 opencode.json 설정 스키마(`Config`, `ProviderConfig`)만 바뀌었다. 자세한 내용은 [호환성 문서](./opencode-v1-compatibility.md)에 있다.
+- **제품 코드:** 바꾸지 않았다. Bridge는 이미 1.x 버전을 모두 받는다.
+- **검사 스크립트:** WSL 실행에서는 배포판의 `opencode --version`을 읽어 비교를 마친 목록(`1.18.29`, `1.19.3`)에 있을 때만 진행한다. Windows 실행은 그대로 격리 1.18.29를 쓴다.
+- **실제 실행:** WSL 1.19.3 패널 검사 12개 시나리오 통과, Windows 1.18.29 패널 검사 12개 시나리오 통과(실제 Chrome 측면 패널, 합성 모델 제공자).
+
+---
+
 # 포인터 방식·키 조합·첨부 업로드(계획 5) — 2026-10-18 KST, 미배포
 
 [계획](./plans/2026-10-17-pointer-keys-upload.md)에 따라 `feat/m8-pointer-keys-upload`에서 6개 과제를 구현했다. 버전 변경·배포는 하지 않았다.
@@ -13,7 +24,7 @@
 - **Linux:** Rust **216 통과**, 확장 **538/538**, tsc·E2E 타입 검사 통과, Chromium E2E **162 통과 / 3 제외**(새 P01~P05, 일반·신뢰 입력 모두). 병렬 실행에서 가끔 실패하던 `another_directory_does_not_query_status`는 전역 카운터 공유가 원인이라 fixture별 카운터로 고쳤다.
 - **실제 Windows:** Chrome 154 E2E(pointer-keys-upload·trusted-input·reliability·journeys) **75 통과**. 실제 OpenCode 1.18.29 Windows 프로필 검사 통과.
 - **미뤄 둔 작은 결함:** 업로드 결과의 변화 관찰·스냅샷 없음, 신뢰 입력의 Shift 단독 조합(Shift+Esc), draggable 조상 판정, drop 성립 여부 미보고, mode·toRef null 처리, 타임라인 요약 누락 필드, 같은 이름 첨부.
-- **미검증:** 실제 사이트의 끌어다 놓기 라이브러리(SortableJS 등) 동작, 실제 WSL OpenCode(1.19.3로 갱신됨) 패널 검사.
+- **미검증:** 실제 사이트의 끌어다 놓기 라이브러리(SortableJS 등) 동작. 실제 WSL OpenCode 1.19.3 패널 검사는 다음 항목에서 통과했다.
 
 ---
 
