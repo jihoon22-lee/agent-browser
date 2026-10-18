@@ -238,11 +238,15 @@ namespace AgentBrowser.Installer {
                 if(savedProfiles.Items.Count==0)savedProfiles.Items.Add("아직 없습니다");
             }catch(Exception error){runtimeResult.Text=Friendly.Message(error);}
         }
-        /// The distribution [배포판 켜고 찾기] starts: the typed name, else the first one found.
-        internal static string DistributionToStart(string typed,IEnumerable<string> found){
+        /// The distribution [배포판 켜고 찾기] starts: the typed name, else the first one found stopped.
+        /// A running distribution is never restarted for an empty field.
+        internal static string DistributionToStart(string typed,IEnumerable<string> found,IEnumerable<string> stopped){
             var name=(typed??"").Trim();
-            return name.Length>0?name:found.FirstOrDefault();
+            if(name.Length>0)return name;
+            var off=new HashSet<string>(stopped,StringComparer.OrdinalIgnoreCase);
+            return found.FirstOrDefault(off.Contains);
         }
+        readonly List<string> stoppedDistributions=new List<string>();
         /// The discovery result line; stopped-distribution notices are always shown.
         internal static string DiscoveryMessage(int candidates,IEnumerable<string> notices){
             string text=candidates>0?"OpenCode "+candidates+"개를 찾았습니다. 확인 후 [저장하고 연결 확인]을 누르세요.":"OpenCode를 찾지 못했습니다. 실행 파일 경로를 직접 입력하세요.";
@@ -253,7 +257,7 @@ namespace AgentBrowser.Installer {
             startDistribution.Enabled=false;runtimeResult.Text="OpenCode 위치를 확인하고 있습니다…";
             try{
                 var explicitStart=distribution!=null;
-                var name=explicitStart?DistributionToStart(distribution,runtimeDistribution.Items.Cast<object>().Select(i=>i.ToString())):null;
+                var name=explicitStart?DistributionToStart(distribution,runtimeDistribution.Items.Cast<object>().Select(i=>i.ToString()),stoppedDistributions):null;
                 if(explicitStart&&name==null){runtimeResult.Text="켜고 찾을 WSL 배포판 이름을 입력하세요.";return;}
                 var found=await Task.Run(()=>{
                     if(!explicitStart)return Discovery.Find();
@@ -261,6 +265,8 @@ namespace AgentBrowser.Installer {
                     var single=new DiscoveryResult();single.Distributions.Add(name);single.OpenCode.AddRange(Discovery.FindWsl(name,null,60000));return single;
                 });
                 foreach(var d in found.Distributions)if(!runtimeDistribution.Items.Contains(d))runtimeDistribution.Items.Add(d);
+                if(!explicitStart){stoppedDistributions.Clear();stoppedDistributions.AddRange(found.Stopped);}
+                else stoppedDistributions.RemoveAll(d=>String.Equals(d,name,StringComparison.OrdinalIgnoreCase));
                 if(explicitStart)runtimeDistribution.Text=name;
                 runtimeCandidates.Items.Clear();foreach(var c in found.OpenCode)runtimeCandidates.Items.Add(c);
                 if(runtimeCandidates.Items.Count>0)runtimeCandidates.SelectedIndex=0;

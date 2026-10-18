@@ -17,6 +17,8 @@ namespace AgentBrowser.Installer {
         public readonly List<string> Distributions = new List<string>();
         public readonly List<OpenCodeCandidate> OpenCode = new List<OpenCodeCandidate>();
         public readonly List<string> Notices = new List<string>();
+        /// Distributions found stopped; [배포판 켜고 찾기] may start these and no running one.
+        public readonly List<string> Stopped = new List<string>();
     }
     internal static class Discovery {
         static bool Same(string a,string b) { return String.Equals(a,b,StringComparison.OrdinalIgnoreCase); }
@@ -88,7 +90,7 @@ namespace AgentBrowser.Installer {
                     var distribution=value.Trim('\0',' ','\t');if(distribution.Length==0) continue;
                     if(distribution.StartsWith("docker-desktop",StringComparison.OrdinalIgnoreCase)) continue;
                     result.Distributions.Add(distribution);
-                    if(!running.Contains(distribution)) {result.Notices.Add(distribution+": 중지된 배포판은 자동 시작하지 않았습니다. 사용할 배포판과 경로를 직접 선택하면 확인할 수 있습니다.");continue;}
+                    if(!running.Contains(distribution)) {result.Stopped.Add(distribution);result.Notices.Add(distribution+": 중지된 배포판은 자동 시작하지 않았습니다. 사용할 배포판과 경로를 직접 선택하면 확인할 수 있습니다.");continue;}
                     try { result.OpenCode.AddRange(FindWsl(distribution,null)); }
                     catch(Exception error) { result.Notices.Add(distribution+": "+error.Message); }
                 }

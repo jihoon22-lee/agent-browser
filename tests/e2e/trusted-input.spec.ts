@@ -63,6 +63,9 @@ test("T03 the debugger is detached when the operation ends", async () => {
   expect(await attachedNow()).toBe(true);
   await world.ok("browser_tabs", { action: "release", operationId });
   await expect.poll(attachedNow).toBe(false);
+  // It stays detached: nothing re-attaches to a tab that left the operation.
+  await page.waitForTimeout(2000);
+  expect(await attachedNow()).toBe(false);
 });
 
 test("T04 an inactive operation tab can be captured with trusted input", async () => {
@@ -70,6 +73,11 @@ test("T04 an inactive operation tab can be captured with trusted input", async (
   const { operationId } = await attach();
   const other = await world.open("index.html");
   await other.bringToFront();
-  const shot = await world.mcp.call("browser_screenshot", { operationId });
-  expect(shot.ok).toBe(true);
+  const shot = await world.mcp.callRaw("browser_screenshot", { operationId });
+  expect(shot.isError).not.toBe(true);
+  const image = shot.content.find((part) => part.type === "image");
+  expect([...Buffer.from(image!.data!, "base64").subarray(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+  expect(Buffer.from(image!.data!, "base64").length).toBeGreaterThan(100);
+  // Capturing did not activate the operation tab.
+  expect(await other.evaluate(() => document.visibilityState)).toBe("visible");
 });
