@@ -103,7 +103,9 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
 async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
   const from = assertInteractable(el) ?? clickPoint(el);
   const to = assertInteractable(target) ?? clickPoint(target);
-  const html5 = (el as HTMLElement).draggable === true || el.getAttribute('draggable') === 'true' || el instanceof HTMLImageElement || (el instanceof HTMLAnchorElement && el.hasAttribute('href'));
+  // The browser drags the nearest draggable ancestor (a card holding the link the ref names).
+  const source = el.closest('[draggable=true], a[href]:not([draggable=false]), img:not([draggable=false])');
+  const html5 = source !== null;
   const unmark = highlight(el);
   const changes = observeChanges(500, signal);
   void changes.then(unmark, unmark);
@@ -124,6 +126,7 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
   pointer(el, "pointermove", middle, true); pointer(el, "mousemove", middle, true);
   pointer(target, "pointermove", to, true); pointer(target, "mousemove", to, true);
   pointer(target, "pointerup", to, false); pointer(target, "mouseup", to, false);
+  let dropped = false;
   if (html5) {
     const dataTransfer = typeof DataTransfer !== "undefined" ? new DataTransfer() : null;
     const drag = (on: Element, type: string, at: Point) => {
@@ -132,14 +135,14 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
       return on.dispatchEvent(event);
     };
     // A cancelled dragstart means the page refused the drag; do not drop.
-    if (drag(el, "dragstart", from)) {
+    if (drag(source!, "dragstart", from)) {
       drag(target, "dragenter", to);
-      const accepted = !drag(target, "dragover", to);
-      if (accepted) drag(target, "drop", to);
-      drag(el, "dragend", to);
+      dropped = !drag(target, "dragover", to);
+      if (dropped) drag(target, "drop", to);
+      drag(source!, "dragend", to);
     }
   }
-  return { executed: true, verified: { ...await changes, mode: "drag", ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+  return { executed: true, verified: { ...await changes, mode: "drag", ...(html5 ? { dropped } : {}), ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
 }
 
 async function executeAction(method: string, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
@@ -328,7 +331,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       return pressKey(p, assertInteractable);
     }
-    case "upload": return upload(p);
+    case "upload": return upload(p, signal);
     case "scroll": return scroll(p);
     case "wait": return waitFor(p, signal);
     case "extract": return extract(p);
@@ -355,7 +358,7 @@ function accepts(input: HTMLInputElement, name: string, mime: string) {
   return !tokens.length || tokens.some(t => t.startsWith('.') ? lower.endsWith(t) : t.endsWith('/*') ? type.startsWith(t.slice(0, -1)) : t === type);
 }
 /** Puts one attached file (bytes from the background, never a local path) into the input and fires its events. */
-function upload(p: P) {
+async function upload(p: P, signal: AbortSignal) {
   const el = resolveRef(String(p.ref));
   assertInteractable(el);
   const input = fileInputFor(el);
@@ -366,6 +369,9 @@ function upload(p: P) {
   const dataUrl = String(p.dataUrl), comma = dataUrl.indexOf(','), body = dataUrl.slice(comma + 1);
   const bytes = dataUrl.slice(0, comma).endsWith(';base64') ? Uint8Array.from(atob(body), c => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(body));
   const file = new File([bytes], name, { type: mime });
+  // A change handler may draw a preview or submit; report it like a click so a snapshot follows.
+  const changes = observeChanges(500, signal);
+  void changes.catch(() => {});
   const transfer = new DataTransfer();
   // A multiple input keeps what it already holds; a single one is replaced.
   if (input.multiple) for (const kept of Array.from(input.files ?? [])) transfer.items.add(kept);
@@ -373,7 +379,8 @@ function upload(p: P) {
   input.files = transfer.files;
   input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
-  return { executed: true, verified: { files: Array.from(input.files ?? []).map(f => f.name), size: file.size } };
+  const files = Array.from(input.files ?? []).map(f => f.name);
+  return { executed: true, verified: { files, size: file.size, ...await changes } };
 }
 
 function scroll(p: P) {

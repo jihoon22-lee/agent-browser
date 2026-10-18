@@ -229,3 +229,11 @@ describe("trusted shortcuts stay inside the page's editing", () => {
       await t.key(1, key, [...modifiers]);
   });
 });
+
+it("Shift alone still never sends Escape or other browser shortcuts as real input", async () => {
+  const d = fakeDebugger(), t = trustedInput(d.api);
+  await t.ensure(1, on([1]));
+  await expect(t.key(1, "Escape", ["Shift"])).rejects.toThrow();
+  expect(d.calls.filter(c => c[2] === "Input.dispatchKeyEvent")).toEqual([]);
+  for (const key of ["a", "Tab", "Enter", "ArrowLeft", "Home", "Delete", "Space"]) await t.key(1, key, ["Shift"]);
+});

@@ -36,8 +36,11 @@ const MODIFIER_KEYS: Record<string, { bit: number; key: string; code: string; wi
 /** Real input with Control, Meta or Alt can reach Chrome's own shortcuts (paste the person's clipboard,
  * close or switch tabs, open menus or devtools). Only page editing shortcuts are sent; others stay DOM events. */
 const SHORTCUT_KEYS = new Set(["a", "z", "y", "b", "i", "Enter", "Backspace", "Home", "End", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
+const SHIFT_KEYS = new Set(["Enter", "Tab", "Space", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"]);
 export function trustedShortcut(key: string, modifiers: string[]): boolean {
-  if (modifiers.every(m => m === "Shift")) return true;
+  if (modifiers.length === 0) return true;
+  // Shift alone is typing or selecting, except combinations such as Shift+Escape (Chrome's task manager).
+  if (modifiers.every(m => m === "Shift")) return /^[a-zA-Z0-9]$/.test(key) || SHIFT_KEYS.has(key);
   if (modifiers.includes("Alt") || modifiers.includes("Control") === modifiers.includes("Meta")) return false;
   const single = /^[a-zA-Z]$/.test(key), name = single ? key.toLowerCase() : key;
   if (!SHORTCUT_KEYS.has(name)) return false;

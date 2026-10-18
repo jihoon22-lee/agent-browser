@@ -94,7 +94,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             tabs?.dispose();
             if (e instanceof ProtocolError)
                 throw e;
-            if (tracksTabs && await navigatedAway(tabId, frame))
+            // An upload's change handler may submit or navigate too.
+            if ((tracksTabs || run.req.method === 'browser.upload') && await navigatedAway(tabId, frame))
                 return { executed: true, verified: { navigated: true, urlChanged: true } };
             if (WRITE.has(run.req.method))
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'The document stopped replying after the command was sent. Take a snapshot before retrying.', 'unsafe');

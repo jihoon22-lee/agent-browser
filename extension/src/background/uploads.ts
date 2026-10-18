@@ -18,16 +18,22 @@ function decodedBytes(dataUrl: string) {
 
 /** The files that fit the limits, in order, and the names of the rest. The panel applies it before sending,
  * so the message stays small; the background applies it again on receipt. */
+/** "a.png", then "a (2).png": two attachments with one name stay separately uploadable. */
+function distinct(name: string, used: Set<string>) {
+  if (!used.has(name)) return name;
+  const dot = name.lastIndexOf("."), [stem, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
+  for (let n = 2; ; n++) if (!used.has(`${stem} (${n})${ext}`)) return `${stem} (${n})${ext}`;
+}
 export function selectAttachments(files: unknown): { accepted: Attachment[]; skipped: string[] } {
-  const accepted: Attachment[] = [], skipped: string[] = [];
+  const accepted: Attachment[] = [], skipped: string[] = [], used = new Set<string>();
   let total = 0;
   for (const file of Array.isArray(files) ? files : []) {
-    const name = plainName(file?.name) ? file.name : undefined;
+    const name = plainName(file?.name) ? distinct(file.name, used) : undefined;
     const ok = name !== undefined && typeof file.dataUrl === "string" && file.dataUrl.startsWith("data:") && file.dataUrl.includes(",");
     const bytes = ok ? decodedBytes(file.dataUrl) : 0;
     if (!ok) { if (name) skipped.push(name); continue; }
     if (bytes > MAX_ATTACHMENT_BYTES || accepted.length >= MAX_FILES || total + bytes > MAX_TOTAL_BYTES) { skipped.push(name); continue; }
-    total += bytes;
+    total += bytes; used.add(name);
     accepted.push({ name, mime: typeof file.mime === "string" && file.mime ? file.mime : "application/octet-stream", dataUrl: file.dataUrl });
   }
   return { accepted, skipped };
