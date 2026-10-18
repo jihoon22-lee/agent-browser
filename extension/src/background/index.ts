@@ -8,7 +8,7 @@ import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
 import { chromeDebugger, trustedInput, trustedTargets } from './trusted-input';
 import { acceptTrustedRequest } from './trusted-message';
-import { loadGroupState, saveGroupState, chromeGroups, syncGroup, type GroupState } from './tab-groups';
+import { groupTargets, loadGroupState, saveGroupState, chromeGroups, syncGroup, type GroupState } from './tab-groups';
 import { applyBadge, badgeFor } from './badge';
 import { markedBefore, markerScript, remarkInQueue, shouldRemark, syncMarkers } from './work-marker';
 
@@ -20,12 +20,14 @@ void chrome.storage.local.get(["trustedInput", "clientId"]).then(({ trustedInput
 const trustedState = () => trustedTargets(lastOperation, ownClientId, trustedEnabled);
 const syncTrusted = () => void trusted.sync(trustedState()).catch(() => {});
 // Optional tab groups: serialized so status bursts cannot group a tab twice.
-let groups: GroupState | undefined, grouping: Promise<unknown> = Promise.resolve();
+let everConnected = false, groups: GroupState | undefined, grouping: Promise<unknown> = Promise.resolve();
 const syncGroups = () => { grouping = grouping.then(async () => {
+  const mine = lastOperation && ownClientId && lastOperation.clientId === ownClientId ? lastOperation : null;
+  const targets = groupTargets({ connected: lastStatus.state === "connected", everConnected }, mine?.tabs ?? []);
+  if (targets === null) return;
   groups ??= await loadGroupState(chrome.storage.session);
   const granted = await chrome.permissions.contains({ permissions: ["tabGroups"] }).catch(() => false);
-  const mine = lastOperation && ownClientId && lastOperation.clientId === ownClientId ? lastOperation : null;
-  groups = await syncGroup(chromeGroups(), granted, mine?.tabs ?? [], groups);
+  groups = await syncGroup(chromeGroups(), granted, targets, groups);
   await saveGroupState(chrome.storage.session, groups);
 }).catch(() => {}); };
 // Allowing or revoking tab groups in the options applies now, not at the next status change.
@@ -64,7 +66,7 @@ const conn = new BridgeConnection({
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
-  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  onStatus: (s) => { lastStatus = s; if (s.state === "connected") everConnected = true; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   extensionVersion: chrome.runtime.getManifest().version,
   reload: () => chrome.runtime.reload(),
   onEvent: (event, data) => {

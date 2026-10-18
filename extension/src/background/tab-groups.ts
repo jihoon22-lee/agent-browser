@@ -12,8 +12,13 @@ export type GroupState = { groups?: Map<number, number>; grouped: Set<number> };
 
 export async function syncGroup(api: GroupApi, granted: boolean, tabs: number[], previous: GroupState): Promise<GroupState> {
   const keep = granted ? new Set(tabs) : new Set<number>();
-  // One call per tab: a closed tab must not keep the others grouped.
-  for (const tab of [...previous.grouped].filter(tab => !keep.has(tab))) await api.ungroup([tab]).catch(() => {});
+  // One call per tab: a closed tab must not keep the others grouped. A tab the user moved into
+  // their own group is only let go, never pulled out of it.
+  const owned = new Set(previous.groups?.values() ?? []);
+  for (const tab of [...previous.grouped].filter(tab => !keep.has(tab))) {
+    if (owned.size && !owned.has(await api.groupOf(tab).catch(() => -2))) continue;
+    await api.ungroup([tab]).catch(() => {});
+  }
   const grouped = new Set([...previous.grouped].filter(tab => keep.has(tab)));
   const groups = new Map(grouped.size ? previous.groups ?? [] : []);
   const joining = new Map<number, number[]>();
@@ -36,6 +41,13 @@ export async function syncGroup(api: GroupApi, granted: boolean, tabs: number[],
     if (groupId !== existing) { groups.set(windowId, groupId); await api.name(groupId).catch(() => {}); }
   }
   return { groups, grouped };
+}
+
+/** The tabs to group now, or null to wait: a freshly started worker is "connecting" before it ever
+ * connected, and releasing the tabs an earlier worker grouped then would regroup them a moment later. */
+export function groupTargets(status: { connected: boolean; everConnected: boolean }, tabs: number[]): number[] | null {
+  if (status.connected) return tabs;
+  return status.everConnected ? [] : null;
 }
 
 export function chromeGroups(): GroupApi {

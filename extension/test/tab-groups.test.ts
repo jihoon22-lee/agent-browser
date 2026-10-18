@@ -62,3 +62,20 @@ it("keeps which tabs it grouped across a worker restart", async () => {
   expect(g.calls.filter(c => c.startsWith("ungroup"))).toEqual(["ungroup 1", "ungroup 2"]);
   expect((await loadGroupState({ get: async () => ({}), set: async () => {} })).grouped.size).toBe(0);
 });
+
+it("lets go of a tab the user moved into their own group without ungrouping it", async () => {
+  const groups: Record<number, number> = {};
+  const g = fakeGroups(groups);
+  const state = await syncGroup(g.api, true, [1, 2], { grouped: new Set() });
+  groups[2] = 99; // the user dragged tab 2 into their own group
+  await syncGroup(g.api, true, [], state);
+  expect(g.calls.filter(c => c.startsWith("ungroup"))).toEqual(["ungroup 1"]);
+  expect(groups[2]).toBe(99);
+});
+
+it("waits for the first connection before releasing tabs saved by an earlier worker", async () => {
+  const { groupTargets } = await import("../src/background/tab-groups");
+  expect(groupTargets({ connected: false, everConnected: false }, [])).toBeNull();
+  expect(groupTargets({ connected: false, everConnected: true }, [])).toEqual([]);
+  expect(groupTargets({ connected: true, everConnected: true }, [3])).toEqual([3]);
+});
