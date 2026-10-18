@@ -1,4 +1,14 @@
-# v0.2.0 릴리스 준비 — 2026-10-18 KST, 게시 전
+# v0.2.0 Windows preview — 게시 완료 (2026-10-18)
+
+[v0.2.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.2.0)(prerelease)을 **2026-10-18 12:03:06 UTC / 21:03:06 KST**에 게시했다. 주석 태그 `v0.2.0` → main `1b1dc7b23f2b83c5b4807b0eaa3e17df41f0fe6e`(PR #30 병합 커밋).
+
+- **배포 ZIP:** 3,795,462 bytes / 37 files, SHA256 **`b297dd328a775ad082674b3e60221f1947926ffafe28f211dd5f4154fab4aa5d`**(GitHub asset digest 일치), `SHA256SUMS` 별도 자산. 정확히 태그 커밋의 main에서 `build-release-wsl.sh`로 만들었다. Linux `package_release_test.py` 통과.
+- **최종 ZIP 실제 Windows:** `--version` = `browser-bridge 0.2.0`. `install.tests.ps1` **14/14 + 프로세스 검사**, `runtime-cleanup.tests.ps1` **4 PASS**, 게시된 v0.1.11 → 0.2.0 격리 업데이트·제거 **3 PASS**(아래 후보 검사와 같은 드라이버). 패키징·보안·진단·JSONC 검사는 후보 ZIP 결과이며, 최종 ZIP과 스크립트·문서는 같고 Bridge exe만 pid 수정으로 다르다.
+- **CI:** [PR #30 CI 39123610916](https://github.com/jihoon22-lee/agent-browser/actions/runs/39123610916) Linux·Windows 성공. [태그 대상 main CI 39124432525](https://github.com/jihoon22-lee/agent-browser/actions/runs/39124432525)는 1차에서 Linux E2E B10(`board-navigation.spec.ts:160`)이 90초 시간 초과로 실패했다. 이 테스트는 이전에도 같은 방식으로 한 번 실패했다. 로그에 close 결과 줄이 없어, 자체 시간 제한이 없는 대기(서비스 워커 evaluate·MCP 호출·스냅샷) 중 하나에서 멈춘 것으로 보인다. 로컬 3회 반복은 모두 0.6초 안에 통과했다. 실패 작업 재실행(2차)에서 Linux·Windows 모두 성공했다. 원인은 조사하지 않은 채 남아 있다.
+- **게시본 재다운로드:** `sha256sum -c` 통과, 검증본(`release/v0.2.0-main`)과 ZIP·SHA256SUMS 바이트 일치. 다운로드본으로 설치를 다시 실행하지는 않았다.
+- **미검증:** 설치 GUI 화면·배율 육안 확인, 실제 Chrome에서 0.2.0 확장 로드 후 사용자 흐름, 실제 모델 수행 품질. 운영 설치·사용자 Chrome 프로필·전역 OpenCode 설정은 건드리지 않았다.
+
+## 릴리스 준비 기록
 
 [절차](./plans/2026-10-18-release-0.2.0.md). 버전을 0.2.0으로 한 번 올렸다(계획 1~6과 OpenCode 1.19.3 확인 포함). 브랜치 `release/0.2.0`, [PR #30](https://github.com/jihoon22-lee/agent-browser/pull/30).
 
