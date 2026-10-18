@@ -11,9 +11,8 @@ const EXT: &str = "chrome-extension://abcdefghijklmnopabcdefghijklmnop";
 const DIR: &str = "C:\\w";
 
 /// Fake OpenCode answering `/session/status` with the shared value; returns its base URL.
-static STATUS_REQUESTS: AtomicUsize = AtomicUsize::new(0);
-
-async fn fake_opencode(statuses: Arc<Mutex<Value>>) -> String {
+/// Per fixture: tests run in parallel, so a shared counter would count other tests' requests.
+async fn fake_opencode(statuses: Arc<Mutex<Value>>, requests: Arc<AtomicUsize>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
@@ -21,7 +20,7 @@ async fn fake_opencode(statuses: Arc<Mutex<Value>>) -> String {
             let (mut stream, _) = listener.accept().await.unwrap();
             let mut buffer = vec![0; 4096];
             let _ = stream.read(&mut buffer).await.unwrap();
-            STATUS_REQUESTS.fetch_add(1, Ordering::SeqCst);
+            requests.fetch_add(1, Ordering::SeqCst);
             let body = statuses.lock().unwrap().to_string();
             let response = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
             let _ = stream.write_all(response.as_bytes()).await;
@@ -97,18 +96,19 @@ impl Ext {
     fn methods(&self) -> Vec<String> { self.seen.lock().unwrap().iter().map(|(method, _)| method.clone()).collect() }
 }
 
-struct Fixture { _home: tempfile::TempDir, _serve: agent_browser_bridge::server::ServeHandle, port: u16, token: String, statuses: Arc<Mutex<Value>>, ext: Ext }
+struct Fixture { _home: tempfile::TempDir, _serve: agent_browser_bridge::server::ServeHandle, port: u16, token: String, statuses: Arc<Mutex<Value>>, status_requests: Arc<AtomicUsize>, ext: Ext }
 
 async fn setup(slow_first_snapshot: bool) -> Fixture {
     let (home, serve, cfg) = start_test_serve().await;
     let statuses = Arc::new(Mutex::new(json!({"ses_panel":{"type":"busy"}})));
-    let base = fake_opencode(statuses.clone()).await;
+    let status_requests = Arc::new(AtomicUsize::new(0));
+    let base = fake_opencode(statuses.clone(), status_requests.clone()).await;
     agent_browser_bridge::runtime::Manager::new(home.path().into(), serve.port)
         .record_runtime_for_tests(json!({"id":"p","name":"P","kind":"windows","directory":DIR,"executable":"C:\\o\\opencode.exe"}), "rid-now", &base);
     let ext = Ext::connect(serve.port, &cfg.token, slow_first_snapshot).await;
     ext.begin().await;
     let port = serve.port;
-    Fixture { _home: home, _serve: serve, port, token: cfg.token, statuses, ext }
+    Fixture { _home: home, _serve: serve, port, token: cfg.token, statuses, status_requests, ext }
 }
 
 async fn proxy(f: &Fixture, runtime: Option<&str>, cwd: &str) -> Ws {
@@ -278,10 +278,10 @@ async fn an_unreadable_status_reply_never_binds() {
 async fn another_directory_does_not_query_status() {
     let f = setup(false).await;
     let mut mcp = proxy(&f, Some("rid-now"), "C:\\other").await;
-    let before = STATUS_REQUESTS.load(Ordering::SeqCst);
+    let before = f.status_requests.load(Ordering::SeqCst);
     let attached = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await;
     assert!(message(&attached).contains("Missing requestId"), "{attached}");
-    assert_eq!(STATUS_REQUESTS.load(Ordering::SeqCst), before, "a proxy for another folder is rejected before any HTTP call");
+    assert_eq!(f.status_requests.load(Ordering::SeqCst), before, "a proxy for another folder is rejected before any HTTP call");
 }
 
 #[tokio::test]
