@@ -401,6 +401,23 @@ describe("drag", () => {
     expect(moves.at(-1)).toBe(240);
     expect(drags).not.toHaveBeenCalled();
   });
+  it("drag from a link inside a draggable card starts the card's HTML5 drag and reports the drop", async () => {
+    document.body.innerHTML = '<ul><li draggable="true"><a href="#x">제목</a></li></ul><div role="region" aria-label="놓을 곳" tabindex="0">여기</div>';
+    const [link, zone] = [document.querySelector('a')!, document.querySelector('[role=region]')!];
+    box(link, 10); box(zone, 200);
+    const starts: Element[] = []; document.addEventListener('dragstart', e => starts.push(e.target as Element));
+    zone.addEventListener('dragover', e => e.preventDefault()); zone.addEventListener('drop', e => e.preventDefault());
+    const result: any = await runAction('click', { ref: refOf('제목'), toRef: refOf('놓을 곳'), mode: 'drag', generation: 10 });
+    expect(starts).toEqual([document.querySelector('li')]);
+    expect(result.verified.dropped).toBe(true);
+  });
+  it("a refused drop is reported as not dropped", async () => {
+    document.body.innerHTML = '<div draggable="true">카드</div><div tabindex="0">완료</div>';
+    const [card, done] = [...document.querySelectorAll('div')];
+    box(card!, 10); box(done!, 200);
+    const result: any = await runAction('click', { ref: refOf('카드'), toRef: refOf('완료'), mode: 'drag', generation: 10 });
+    expect(result.verified.dropped).toBe(false);
+  });
   it("drag refuses a stale target ref", async () => {
     document.body.innerHTML = '<div draggable="true">카드</div><div tabindex="0">완료</div>';
     const card = refOf('카드'), target = refOf('완료');
@@ -425,7 +442,14 @@ describe("upload", () => {
     expect(files()[0]!.type).toBe('image/png');
     expect(files()[0]!.size).toBe(4);
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(result.verified).toEqual({ files: ['a.png'], size: 4 });
+    expect(result.verified).toMatchObject({ files: ['a.png'], size: 4 });
+  });
+  it("upload reports a page change made by the input's change handler", async () => {
+    document.body.innerHTML = '<label for="f">파일 선택</label><input id="f" type="file" hidden><div id="preview"></div>';
+    const input = document.querySelector('input')!; filesOf(input);
+    input.addEventListener('change', () => { document.getElementById('preview')!.textContent = '미리보기 a.png'; });
+    const result: any = await runAction('upload', { ref: refOf('파일 선택'), ...png, generation: 10 });
+    expect(result.verified.domChanged).toBe(true);
   });
   it("refuses a file the input does not accept and leaves it empty", async () => {
     document.body.innerHTML = '<label for="f">파일 선택</label><input id="f" type="file" accept="image/*,.gif" hidden>';

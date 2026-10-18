@@ -56,3 +56,14 @@ it("marks with important styles so page CSS cannot make it clickable", () => {
   expect(host.style.getPropertyPriority("pointer-events")).toBe("important");
   expect(host.style.getPropertyPriority("position")).toBe("important");
 });
+
+it("re-marks after a navigation only in the marker queue, after pending refreshes", async () => {
+  const { remarkInQueue } = await import("../src/background/work-marker");
+  let marked: Set<number> | null = new Set([5]);
+  let release!: () => void;
+  const refresh = new Promise<void>(resolve => { release = () => { marked = new Set(); resolve(); }; });
+  const applied: number[] = [];
+  const queue = remarkInQueue(refresh, 5, 0, () => marked, async tabId => { applied.push(tabId); });
+  release(); await queue;
+  expect(applied).toEqual([]);
+});

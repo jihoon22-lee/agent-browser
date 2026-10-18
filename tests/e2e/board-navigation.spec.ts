@@ -97,7 +97,8 @@ test('B04 new-tab article closes and operation returns to original list',async()
   await world.ok('browser_tabs',{operationId,action:'switch',tabId:original});
   expect((await snapshot(operationId)).frames[0].text.content).toContain('Board ready');
   expect((await world.ok('browser_tabs',{operationId,action:'close'})).verified?.closed).toBe(true);
-  expect(page.isClosed()).toBe(true);
+  // Chrome confirmed the close; Playwright learns of it a moment later.
+  await expect.poll(() => page.isClosed()).toBe(true);
 });
 test('B05 edited form is kept open without a force-close fallback',async()=>{
   const {operationId}=await setup();

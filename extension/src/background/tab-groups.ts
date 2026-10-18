@@ -12,8 +12,13 @@ export type GroupState = { groups?: Map<number, number>; grouped: Set<number> };
 
 export async function syncGroup(api: GroupApi, granted: boolean, tabs: number[], previous: GroupState): Promise<GroupState> {
   const keep = granted ? new Set(tabs) : new Set<number>();
-  // One call per tab: a closed tab must not keep the others grouped.
-  for (const tab of [...previous.grouped].filter(tab => !keep.has(tab))) await api.ungroup([tab]).catch(() => {});
+  // One call per tab: a closed tab must not keep the others grouped. A tab the user moved into
+  // their own group is only let go, never pulled out of it.
+  const owned = new Set(previous.groups?.values() ?? []);
+  for (const tab of [...previous.grouped].filter(tab => !keep.has(tab))) {
+    if (owned.size && !owned.has(await api.groupOf(tab).catch(() => -2))) continue;
+    await api.ungroup([tab]).catch(() => {});
+  }
   const grouped = new Set([...previous.grouped].filter(tab => keep.has(tab)));
   const groups = new Map(grouped.size ? previous.groups ?? [] : []);
   const joining = new Map<number, number[]>();
@@ -38,6 +43,13 @@ export async function syncGroup(api: GroupApi, granted: boolean, tabs: number[],
   return { groups, grouped };
 }
 
+/** The tabs to group now, or null to wait: a freshly started worker is "connecting" before it ever
+ * connected, and releasing the tabs an earlier worker grouped then would regroup them a moment later. */
+export function groupTargets(status: { connected: boolean; everConnected: boolean }, tabs: number[]): number[] | null {
+  if (status.connected) return tabs;
+  return status.everConnected ? [] : null;
+}
+
 export function chromeGroups(): GroupApi {
   return {
     groupOf: async tabId => (await chrome.tabs.get(tabId)).groupId ?? -1,
@@ -46,4 +58,17 @@ export function chromeGroups(): GroupApi {
     name: async groupId => { await chrome.tabGroups.update(groupId, { title: "AgentBrowser", color: "blue" }); },
     ungroup: tabIds => chrome.tabs.ungroup(tabIds as [number, ...number[]]),
   };
+}
+
+type SessionArea = { get(key: string): Promise<Record<string, unknown>>; set(value: Record<string, unknown>): Promise<void> };
+const GROUP_KEY = "agentGroups";
+/** Which tabs this extension grouped survives a service-worker restart (session storage). */
+export async function loadGroupState(area: SessionArea): Promise<GroupState> {
+  const saved = (await area.get(GROUP_KEY).catch((): Record<string, unknown> => ({})))[GROUP_KEY] as { grouped?: unknown; groups?: unknown } | undefined;
+  const ints = (value: unknown) => Array.isArray(value) ? value.filter((n): n is number => Number.isInteger(n)) : [];
+  const pairs = Array.isArray(saved?.groups) ? saved!.groups.filter((p): p is [number, number] => Array.isArray(p) && p.length === 2 && p.every(Number.isInteger)) : [];
+  return { grouped: new Set(ints(saved?.grouped)), groups: new Map(pairs) };
+}
+export async function saveGroupState(area: SessionArea, state: GroupState): Promise<void> {
+  await area.set({ [GROUP_KEY]: { grouped: [...state.grouped], groups: [...(state.groups ?? new Map())] } });
 }

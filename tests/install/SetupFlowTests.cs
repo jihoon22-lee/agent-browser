@@ -110,9 +110,11 @@ namespace AgentBrowser.Installer {
     }
    });
    Case("discovery uses the found distribution and always shows its notices",()=>{
-    Assert(SetupForm.DistributionToStart("",new[]{"Ubuntu","Debian"})=="Ubuntu","empty field starts nothing");
-    Assert(SetupForm.DistributionToStart(" Debian ",new[]{"Ubuntu"})=="Debian","typed name wins");
-    Assert(SetupForm.DistributionToStart("",new string[0])==null,"no distribution to start");
+    Assert(SetupForm.DistributionToStart("",new[]{"Ubuntu","Debian"},new[]{"Debian"})=="Debian","empty field must start the stopped distribution, not restart a running one");
+    Assert(SetupForm.DistributionToStart("",new[]{"Ubuntu"},new string[0])==null,"nothing is stopped, so nothing is restarted");
+    Assert(SetupForm.DistributionToStart(" Debian ",new[]{"Ubuntu"},new string[0])=="Debian","typed name wins");
+    Assert(SetupForm.DistributionToStart("",new string[0],new string[0])==null,"no distribution to start");
+    var stopped=new DiscoveryResult();Assert(stopped.Stopped.Count==0,"discovery lists stopped distributions");
     Assert(SetupForm.DiscoveryMessage(2,new[]{"Debian is stopped"}).Contains("Debian is stopped"),"notices hidden behind candidates");
     Assert(SetupForm.DiscoveryMessage(0,new string[0]).Contains("직접 입력"),"no candidates explains the manual path");
    });

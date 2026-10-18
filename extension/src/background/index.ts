@@ -8,9 +8,9 @@ import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
 import { chromeDebugger, trustedInput, trustedTargets } from './trusted-input';
 import { acceptTrustedRequest } from './trusted-message';
-import { chromeGroups, syncGroup, type GroupState } from './tab-groups';
+import { groupTargets, loadGroupState, saveGroupState, chromeGroups, syncGroup, type GroupState } from './tab-groups';
 import { applyBadge, badgeFor } from './badge';
-import { markedBefore, markerScript, shouldRemark, syncMarkers } from './work-marker';
+import { markedBefore, markerScript, remarkInQueue, shouldRemark, syncMarkers } from './work-marker';
 
 // Trusted input (off by default): the debugger is attached only to this browser's operation tabs.
 const trusted = trustedInput(chromeDebugger());
@@ -20,12 +20,19 @@ void chrome.storage.local.get(["trustedInput", "clientId"]).then(({ trustedInput
 const trustedState = () => trustedTargets(lastOperation, ownClientId, trustedEnabled);
 const syncTrusted = () => void trusted.sync(trustedState()).catch(() => {});
 // Optional tab groups: serialized so status bursts cannot group a tab twice.
-let groups: GroupState = { grouped: new Set() }, grouping: Promise<unknown> = Promise.resolve();
+let everConnected = false, groups: GroupState | undefined, grouping: Promise<unknown> = Promise.resolve();
 const syncGroups = () => { grouping = grouping.then(async () => {
-  const granted = await chrome.permissions.contains({ permissions: ["tabGroups"] }).catch(() => false);
   const mine = lastOperation && ownClientId && lastOperation.clientId === ownClientId ? lastOperation : null;
-  groups = await syncGroup(chromeGroups(), granted, mine?.tabs ?? [], groups);
+  const targets = groupTargets({ connected: lastStatus.state === "connected", everConnected }, mine?.tabs ?? []);
+  if (targets === null) return;
+  groups ??= await loadGroupState(chrome.storage.session);
+  const granted = await chrome.permissions.contains({ permissions: ["tabGroups"] }).catch(() => false);
+  groups = await syncGroup(chromeGroups(), granted, targets, groups);
+  await saveGroupState(chrome.storage.session, groups);
 }).catch(() => {}); };
+// Allowing or revoking tab groups in the options applies now, not at the next status change.
+chrome.permissions.onAdded.addListener(syncGroups);
+chrome.permissions.onRemoved.addListener(syncGroups);
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
   ensure: tabId => trusted.ensure(tabId, trustedState()),
   screenshot: tabId => trusted.screenshot(tabId),
@@ -59,7 +66,7 @@ const conn = new BridgeConnection({
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
-  onStatus: (s) => { lastStatus = s; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  onStatus: (s) => { lastStatus = s; if (s.state === "connected") everConnected = true; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   extensionVersion: chrome.runtime.getManifest().version,
   reload: () => chrome.runtime.reload(),
   onEvent: (event, data) => {
@@ -150,7 +157,9 @@ chrome.tabs.onRemoved.addListener((tabId) => { conn.sendEvent("tab.closed", { ta
 // A navigation replaces the document and its marker; put it back on a tab that is still marked.
 chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
   if (!shouldRemark(tabId, frameId, marked)) return;
-  const label = lastOperation?.paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
-  void chrome.scripting.executeScript({ target: { tabId }, func: markerScript, args: [true, label] }).catch(() => {});
+  marking = remarkInQueue(marking, tabId, frameId, () => marked, tabId => {
+    const label = lastOperation?.paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
+    return chrome.scripting.executeScript({ target: { tabId }, func: markerScript, args: [true, label] });
+  });
 });
 conn.start();

@@ -11,7 +11,8 @@ it("bounds giant field values, option labels, hrefs and aggregate snapshot JSON"
   expect(JSON.stringify(snapshot).length).toBeLessThanOrEqual(32768);
   expect(snapshot.elements[0]!.value!.length).toBeLessThanOrEqual(512);
   expect(snapshot.limits).toContain("element-fields-truncated");
-});
+  // About 2.5 s alone on half a megabyte of fixture data; the default 5 s fails under a parallel suite.
+}, 20_000);
 it("paginates more than150 elements independently from text offset", () => {
   document.body.innerHTML = Array.from({ length: 175 }, (_, i) => `<button>button${i}</button>`).join("");
   const first = takeSnapshot(options);

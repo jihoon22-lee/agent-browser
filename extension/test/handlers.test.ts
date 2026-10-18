@@ -746,3 +746,34 @@ it('binds a drag target like the source: this operation, this tab, the same fram
     await expect(h(request('browser.click', { ref: source, toRef: source, mode: 'drag', operationId: 'op-other' }))).rejects.toMatchObject({ code: 'STALE_ELEMENT' });
     expect(w.sent.slice(before).filter(s => s.msg.method === 'click')).toHaveLength(1);
 });
+it('an upload whose document went away reports the navigation instead of an unknown outcome', async () => {
+    const w = world();
+    const h = createHandlers(w.api, memorySessionStore(), undefined, async name => ({ name, mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' }));
+    const ref = await firstRef(h);
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'upload') {
+            w.frames.set(1, [{ frameId: 0, documentId: 'doc-after', url: 'https://example.test/next' }]);
+            throw Error('The message port closed before a response was received.');
+        }
+        return original(tabId, frame, msg);
+    };
+    await expect(h(request('browser.upload', { ref, file: 'a.png', panelRequestId: 'r' }))).resolves.toMatchObject({ executed: true, verified: { navigated: true } });
+});
+it('keeps queryMatched true on a later page of matching elements', async () => {
+    const w = world();
+    const original = w.api.sendToFrame;
+    w.api.sendToFrame = async (tabId, frame, msg: any) => {
+        if (msg.kind === 'cmd' && msg.method === 'snapshot') return { ok: true, result: { frameId: 0, elements: [], elementsTotal: 3, elementsOffset: 5, text: { content: '', totalChars: 0 }, limits: [], query: 'a-1' } };
+        return original(tabId, frame, msg);
+    };
+    const h = createHandlers(w.api, memorySessionStore());
+    const result: any = await h(request('browser.snapshot', { query: 'A-1', elementOffset: 5 }));
+    expect(result.queryMatched).toBe(true);
+});
+it('discards a trusted capture of an inactive tab that reloaded the same address meanwhile', async () => {
+    const w = world(); w.tabs.get(1)!.active = false;
+    const h = createHandlers(w.api, memorySessionStore(), { ensure: async () => true, screenshot: async () => { w.frames.set(1, [{ frameId: 0, documentId: 'reloaded', url: 'https://example.test/1' }]); return 'data:image/png;base64,AAAA'; } });
+    await firstRef(h);
+    await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
+});

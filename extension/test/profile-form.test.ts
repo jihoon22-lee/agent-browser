@@ -21,3 +21,8 @@ it("editing a profile without a username keeps it empty instead of the new-profi
   expect(formFromProfile(blank, { id: "x", kind: "external", baseUrl: "http://a" }).username).toBe("");
   expect(formFromProfile(blank, { id: "x", kind: "external", username: "u1", port: 4100 })).toMatchObject({ username: "u1", port: "4100", password: "" });
 });
+it("notices the saved password is dropped when an external profile becomes another kind", () => {
+  const original = { kind: "external", baseUrl: "https://a.example/", hasPassword: true };
+  expect(passwordDropped(original, { kind: "windows", executable: "C:\\o\\opencode.exe" })).toBe(true);
+  expect(passwordDropped({ kind: "windows" }, { kind: "external", baseUrl: "https://a.example/" })).toBe(false);
+});

@@ -49,3 +49,33 @@ it("keeps a separate group per window so no tab moves between windows", async ()
   await syncGroup(api, true, [1, 2], { grouped: new Set() });
   expect(calls).toEqual(["group 1 new w10", "group 2 new w20"]);
 });
+
+it("keeps which tabs it grouped across a worker restart", async () => {
+  const { loadGroupState, saveGroupState } = await import("../src/background/tab-groups");
+  const stored: Record<string, unknown> = {};
+  const area = { get: async (key: string) => ({ [key]: stored[key] }), set: async (value: Record<string, unknown>) => { Object.assign(stored, value); } };
+  const g = fakeGroups();
+  await saveGroupState(area, await syncGroup(g.api, true, [1, 2], { grouped: new Set() }));
+  // A fresh worker reads the saved state and still releases exactly the tabs it grouped.
+  const restored = await loadGroupState(area);
+  await syncGroup(g.api, true, [], restored);
+  expect(g.calls.filter(c => c.startsWith("ungroup"))).toEqual(["ungroup 1", "ungroup 2"]);
+  expect((await loadGroupState({ get: async () => ({}), set: async () => {} })).grouped.size).toBe(0);
+});
+
+it("lets go of a tab the user moved into their own group without ungrouping it", async () => {
+  const groups: Record<number, number> = {};
+  const g = fakeGroups(groups);
+  const state = await syncGroup(g.api, true, [1, 2], { grouped: new Set() });
+  groups[2] = 99; // the user dragged tab 2 into their own group
+  await syncGroup(g.api, true, [], state);
+  expect(g.calls.filter(c => c.startsWith("ungroup"))).toEqual(["ungroup 1"]);
+  expect(groups[2]).toBe(99);
+});
+
+it("waits for the first connection before releasing tabs saved by an earlier worker", async () => {
+  const { groupTargets } = await import("../src/background/tab-groups");
+  expect(groupTargets({ connected: false, everConnected: false }, [])).toBeNull();
+  expect(groupTargets({ connected: false, everConnected: true }, [])).toEqual([]);
+  expect(groupTargets({ connected: true, everConnected: true }, [3])).toEqual([3]);
+});

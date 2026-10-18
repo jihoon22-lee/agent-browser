@@ -30,3 +30,8 @@ it("gives an attachment only to the panel request the Bridge says owns the opera
   expect(attachmentFor(r, { requestId: "A" }, "B", "a.png")).toBeUndefined();
   expect(attachmentFor(r, undefined, "A", "a.png")).toBeUndefined();
 });
+it("two attachments with the same name both stay uploadable under distinct names", () => {
+  const r = attachmentRegistry();
+  expect(r.register("A", [file("a.png"), file("a.png"), file("a.png"), file("README"), file("README")]).accepted).toEqual(["a.png", "a (2).png", "a (3).png", "README", "README (2)"]);
+  expect(r.take("A", "a (2).png")).toMatchObject({ name: "a (2).png" });
+});

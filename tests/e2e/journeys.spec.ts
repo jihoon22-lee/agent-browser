@@ -212,7 +212,7 @@ for(const initial of ['existing','created'] as const)test(`J24 ${initial}: nativ
 });
 test('J25 existing tab with several history entries closes, survivor remains usable',async()=>{
  const catalog=await world.open('journey.html'),page=await world.open('journey-detail.html?id=A');await page.goto(url('journey-detail.html?id=B'));
- const operationId=await attach(page);await close(operationId);expect(page.isClosed()).toBe(true);await select(operationId,await world.tabId(catalog));await editAndSave(operationId,'비교 메모','기존 탭 닫기 완료');
+ const operationId=await attach(page);await close(operationId);await expect.poll(()=>page.isClosed()).toBe(true);await select(operationId,await world.tabId(catalog));await editAndSave(operationId,'비교 메모','기존 탭 닫기 완료');
 });
 test('J26 cannot switch to Chrome settings; current task continues without losing its target',async()=>{
  const page=await world.open('journey.html'),operationId=await attach(page),internal=await world.context.newPage();await internal.goto('chrome://settings/');
