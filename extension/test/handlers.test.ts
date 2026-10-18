@@ -771,3 +771,9 @@ it('keeps queryMatched true on a later page of matching elements', async () => {
     const result: any = await h(request('browser.snapshot', { query: 'A-1', elementOffset: 5 }));
     expect(result.queryMatched).toBe(true);
 });
+it('discards a trusted capture of an inactive tab that reloaded the same address meanwhile', async () => {
+    const w = world(); w.tabs.get(1)!.active = false;
+    const h = createHandlers(w.api, memorySessionStore(), { ensure: async () => true, screenshot: async () => { w.frames.set(1, [{ frameId: 0, documentId: 'reloaded', url: 'https://example.test/1' }]); return 'data:image/png;base64,AAAA'; } });
+    await firstRef(h);
+    await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
+});

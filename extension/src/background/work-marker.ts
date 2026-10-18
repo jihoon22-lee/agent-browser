@@ -45,3 +45,9 @@ export async function markedBefore(session: SessionArea, webTabs: () => Promise<
 export function shouldRemark(tabId: number, frameId: number, marked: Set<number> | null): boolean {
   return frameId === 0 && !!marked?.has(tabId);
 }
+
+/** Re-marks a tab after a navigation inside the marker queue, so a pending refresh that removed the
+ * marker (operation ended) runs first and the marker is not put back on a tab that left the operation. */
+export function remarkInQueue(queue: Promise<unknown>, tabId: number, frameId: number, marked: () => Set<number> | null, apply: (tabId: number) => Promise<unknown>): Promise<unknown> {
+  return queue.then(async () => { if (shouldRemark(tabId, frameId, marked())) await apply(tabId); }).catch(() => {});
+}

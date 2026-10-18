@@ -47,3 +47,16 @@ export function chromeGroups(): GroupApi {
     ungroup: tabIds => chrome.tabs.ungroup(tabIds as [number, ...number[]]),
   };
 }
+
+type SessionArea = { get(key: string): Promise<Record<string, unknown>>; set(value: Record<string, unknown>): Promise<void> };
+const GROUP_KEY = "agentGroups";
+/** Which tabs this extension grouped survives a service-worker restart (session storage). */
+export async function loadGroupState(area: SessionArea): Promise<GroupState> {
+  const saved = (await area.get(GROUP_KEY).catch((): Record<string, unknown> => ({})))[GROUP_KEY] as { grouped?: unknown; groups?: unknown } | undefined;
+  const ints = (value: unknown) => Array.isArray(value) ? value.filter((n): n is number => Number.isInteger(n)) : [];
+  const pairs = Array.isArray(saved?.groups) ? saved!.groups.filter((p): p is [number, number] => Array.isArray(p) && p.length === 2 && p.every(Number.isInteger)) : [];
+  return { grouped: new Set(ints(saved?.grouped)), groups: new Map(pairs) };
+}
+export async function saveGroupState(area: SessionArea, state: GroupState): Promise<void> {
+  await area.set({ [GROUP_KEY]: { grouped: [...state.grouped], groups: [...(state.groups ?? new Map())] } });
+}

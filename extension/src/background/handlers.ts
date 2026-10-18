@@ -297,9 +297,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (!tab.active) {
                 // Trusted input can capture a background tab without activating it.
                 if (trusted && await trusted.ensure(tabId).catch(() => false)) {
+                    const topDocument = async () => (await api.listFrames(tabId).catch(() => [])).find(f => f.frameId === 0)?.documentId;
+                    const before = await topDocument();
                     const image = await interruptible(trusted.screenshot(tabId), signal), after = await getTab(api, tabId);
-                    // Like the active-tab path: a page that changed during capture is never returned.
-                    if (after.url !== tab.url || after.pendingUrl || after.windowId !== tab.windowId)
+                    // Like the active-tab path: a page that changed during capture is never returned, even a same-address reload.
+                    if (after.url !== tab.url || after.pendingUrl || after.windowId !== tab.windowId || before === undefined || await topDocument() !== before)
                         throw new ProtocolError('NEEDS_TAB_ACTIVATION', 'The tab changed during capture. The image was discarded.');
                     if (!image.startsWith('data:image/png;base64,')) throw new ProtocolError('INTERNAL', 'Chrome returned an invalid screenshot.');
                     return { mimeType: 'image/png', base64: image.slice('data:image/png;base64,'.length) };
