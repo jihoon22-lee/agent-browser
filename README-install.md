@@ -1,6 +1,6 @@
 # AgentBrowser 설치와 첫 연결
 
-Windows x64용 Chrome 확장과 Browser Bridge를 설치합니다. 관리자 권한이나 Node.js·Rust·Python은 필요하지 않습니다. 기존 OpenCode v1은 별도로 준비되어 있어야 하며, 설치 관리자는 OpenCode·모델·WSL을 내려받거나 기존 설정을 초기화하지 않습니다. 실제 API 계약 기준은 OpenCode **1.18.29**입니다.
+Windows x64용 Chrome 확장과 Browser Bridge를 설치합니다. 관리자 권한이나 Node.js·Rust·Python은 필요하지 않습니다. 기존 OpenCode v1은 별도로 준비되어 있어야 하며, 설치 관리자는 OpenCode·모델·WSL을 내려받거나 기존 설정을 초기화하지 않습니다. 실제 API 계약 기준은 OpenCode **1.18.29**이며, 1.19.3에서도 같은 계약과 동작을 확인했습니다.
 
 처음 설치할 때는 **ZIP 검증 → 설치 → Chrome 확장 로드 → 페어링 → OpenCode 프로필 → 첫 작업** 순서로 진행합니다. 이미 설치했다면 [업데이트](#4-업데이트)부터 확인하세요. 실제 작업은 [사용 안내](docs/user-guide.md), 오류 코드는 [문제 해결](docs/troubleshooting.md)에 있습니다.
 
@@ -9,7 +9,7 @@ Windows x64용 Chrome 확장과 Browser Bridge를 설치합니다. 관리자 권
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 같은 버전의 ZIP과 `SHA256SUMS`를 각각 받습니다. **압축을 풀거나 실행하기 전에** ZIP의 SHA256을 별도로 받은 체크섬의 해당 ZIP 행 또는 GitHub 자산의 SHA256 digest와 비교합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.1.11-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.2.0-windows-x64.zip
 ```
 
 다르면 공식 릴리스에서 다시 받습니다. 현재 exe에는 Authenticode 서명이 없습니다. ZIP 안의 `package-manifest.json`은 파일 누락·변경 확인용이며 다운로드 출처를 증명하지 않습니다.
