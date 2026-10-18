@@ -183,7 +183,18 @@ pub async fn call_tool(state: &ServerState, name: &str, args: Value) -> ToolOutc
     call_tool_as(state, &Caller::default(), name, args).await
 }
 
+/// A null optional argument is an omitted one (free models often send them). Removing it once here
+/// keeps every later `get(..).is_some()` and `as_str()` agreeing; a null required argument stays and fails.
+fn without_null_options(name: &str, mut args: Value) -> Value {
+    let required: Vec<String> = tools::all().into_iter().find(|t| t.name == name)
+        .and_then(|t| t.schema["required"].as_array().map(|r| r.iter().filter_map(Value::as_str).map(str::to_string).collect()))
+        .unwrap_or_default();
+    if let Some(map) = args.as_object_mut() { map.retain(|key, value| !value.is_null() || required.contains(key)); }
+    args
+}
+
 pub async fn call_tool_as(state: &ServerState, caller: &Caller, name: &str, args: Value) -> ToolOutcome {
+    let args = without_null_options(name, args);
     let outcome = run(state, caller, name, &args).await;
     state.timeline.push(TimelineEntry {
         at_ms: now_ms(),
@@ -732,6 +743,27 @@ mod tests {
         let outcome = call_tool_as(&state, &Caller { runtime_id: Some("rid".into()), cwd: Some("/w".into()) }, "browser_snapshot", json!({})).await;
         assert_eq!(outcome.error.as_ref().map(|e| e.code), Some(ErrorCode::OperationRequired));
         assert!(!outcome.created_operation);
+    }
+
+    #[tokio::test]
+    async fn a_null_operation_id_is_a_standalone_new_that_is_still_released_when_cancelled() {
+        use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered, StreamExt};
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("fixture", tx);
+        let (abort, registration) = AbortHandle::new_pair();
+        let mut pending = FuturesUnordered::new();
+        pending.push(Abortable::new(call_tool(&state, "browser_tabs", json!({"action":"new","operationId":null,"url":"https://example.test/"})), registration));
+        assert!(futures_util::poll!(pending.next()).is_pending());
+        let Envelope::Req { id, .. } = parse_envelope(&rx.try_recv().unwrap()).unwrap() else { panic!("expected tabs.create") };
+        state.registry.handle_response(conn, Envelope::ok(id, json!({"tabId":42,"url":"https://example.test/"})));
+        assert!(futures_util::poll!(pending.next()).is_pending(), "new now waits for its snapshot");
+        assert!(state.ops.current().is_some());
+        abort.abort();
+        assert!(matches!(futures_util::poll!(pending.next()), std::task::Poll::Ready(Some(Err(_)))));
+        assert!(state.ops.current().is_none(), "a reservation made for a null operationId must not outlive its call");
     }
 
     #[tokio::test]

@@ -65,11 +65,11 @@ it("does not treat a large parent as a row", () => {
 it("reads each row's text once even for many controls in it", () => {
   document.body.innerHTML = `<ul><li>${Array.from({ length: 300 }, (_, i) => `<a href="#${i}">링크 ${i}</a>`).join(" ")}</li></ul>`;
   const row = document.querySelector("li")!;
-  const read = Object.getOwnPropertyDescriptor(Node.prototype, "textContent")!.get!;
+  const walk = document.createTreeWalker.bind(document);
   let reads = 0;
-  Object.defineProperty(row, "textContent", { configurable: true, get() { reads++; return read.call(this); } });
+  vi.spyOn(document, "createTreeWalker").mockImplementation((root: Node, ...rest: any[]) => { if (root === row) reads++; return walk(root, ...rest); });
   takeSnapshot({ ...opts, query: "링크 299" });
-  expect(reads).toBeLessThanOrEqual(2);
+  expect(reads).toBe(1);
 });
 
 it("reads a row's rendered text: script text does not match, and cells stay separate words", () => {
@@ -77,4 +77,11 @@ it("reads a row's rendered text: script text does not match, and cells stay sepa
     <tr><td>A</td><td>1003</td><td><button>보기</button></td></tr></table>`;
   expect(takeSnapshot({ ...opts, query: "A-1002" }).elements.filter(e => e.role === "button")).toEqual([]);
   expect(takeSnapshot({ ...opts, query: "a 1003" }).elements.filter(e => e.role === "button").map(e => e.name)).toEqual(["보기"]);
+});
+
+it("keeps words split by inline tags together while cells stay apart", () => {
+  document.body.innerHTML = `<table><tr><td><mark>A-10</mark>02</td><td><button>취소</button></td></tr>
+    <tr><td><b>홍길동</b>님</td><td><button>보기</button></td></tr></table>`;
+  expect(takeSnapshot({ ...opts, query: "A-1002" }).elements.filter(e => e.role === "button").map(e => e.name)).toEqual(["취소"]);
+  expect(takeSnapshot({ ...opts, query: "홍길동님" }).elements.filter(e => e.role === "button").map(e => e.name)).toEqual(["보기"]);
 });

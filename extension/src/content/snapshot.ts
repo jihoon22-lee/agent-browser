@@ -74,16 +74,22 @@ const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
 /** The row or item a control belongs to, so "A-1002" finds the button in that row. Each row is read
  * once per snapshot. Without a row element, only a small parent counts: a large one (main, form)
  * would make every control inside it match. */
-/** The words a person sees in a row: no script or style text, and cells kept apart by a space. */
+/** The words a person sees in a row: no script, style or hidden text, cells and blocks kept apart by
+ * a space, and words split by inline tags (<mark>A-10</mark>02) kept together. */
+const SKIP = "script,style,template,noscript,[hidden]";
+const BREAK = "td,th,tr,li,div,p,br,section,article,header,footer,h1,h2,h3,h4,h5,h6,dt,dd,[role=cell],[role=gridcell],[role=row]";
 function renderedText(root: Element): string {
-  const parts: string[] = [];
-  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: node => node.parentElement?.closest("script,style,template,noscript,[hidden]") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  let text = "";
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+    // Rejecting an element skips its whole subtree.
+    acceptNode: node => node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
-  let length = 0;
   // A row longer than this is cut at 300 characters anyway; stop reading early.
-  for (let node = walker.nextNode(); node && length < 600; node = walker.nextNode()) { const value = node.nodeValue ?? ""; parts.push(value); length += value.length + 1; }
-  return parts.join(" ").replace(/\s+/g, " ").trim();
+  for (let node = walker.nextNode(); node && text.length < 600; node = walker.nextNode()) {
+    if (node.nodeType === Node.TEXT_NODE) text += node.nodeValue ?? "";
+    else if ((node as Element).matches(BREAK)) text += " ";
+  }
+  return text.replace(/\s+/g, " ").trim();
 }
 function rowText(el: Element, rows: Map<Element, string>): string {
   const row = el.closest("tr,li,[role=row],[role=listitem],article");
