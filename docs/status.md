@@ -1,3 +1,16 @@
+# v0.2.0 릴리스 준비 — 2026-10-18 KST, 게시 전
+
+[절차](./plans/2026-10-18-release-0.2.0.md). 버전을 0.2.0으로 한 번 올렸다(계획 1~6과 OpenCode 1.19.3 확인 포함). 브랜치 `release/0.2.0`, [PR #30](https://github.com/jihoon22-lee/agent-browser/pull/30).
+
+- **main CI 실패 대응:** PR #29 병합 커밋 `e133531`의 main CI Linux 작업이 `mcp_stdio::starts_serve_when_missing_and_serve_outlives_mcp`에서 `serve.pid` 없음으로 한 번 실패했다. serve가 포트를 연 뒤에 pid 파일을 써서, 요청 처리와 종료 확인이 먼저 끝나면 파일이 아직 없을 수 있었다(`browser-bridge start`의 pid 출력도 같은 경합). pid 파일을 포트를 열기 전에 쓰고, 시작에 실패하면 지우도록 바꿨다. 경합이라 결정적으로 재현하지는 못했다. Linux Rust **220 통과**.
+- **후보 ZIP(pid 수정 전 `2b25801`):** 3,796,699 bytes / 37 files, 실제 Windows에서 `browser-bridge.exe --version` = `browser-bridge 0.2.0`. Linux `package_release_test.py` 통과.
+- **실제 Windows PowerShell 5.1(후보 ZIP):** `package.tests.ps1` **5개 그룹**, `install.tests.ps1` **14/14 + 프로세스 검사**, `runtime-cleanup.tests.ps1` **4 PASS**, `security-review.tests.ps1` **1 PASS**, `diagnostics.tests.ps1` **3 PASS**, `jsonc.tests.ps1` **2 PASS**. 격리 폴더 `%LOCALAPPDATA%\AgentBrowser-dev\release-020`과 전용 TEMP만 썼다.
+- **업데이트(후보 ZIP):** 게시된 v0.1.11(SHA256 `08c30b1e…6760` 확인)을 한글·공백 경로에 격리 설치(별도 Startup·포트·OpenCode 설정) → 새 패키지 `setup.ps1`로 업데이트 → 실행 중인 Bridge가 `app\0.2.0-…\browser-bridge.exe`로 교체, InstallId·InstalledAt·포트·페어링 토큰·사용자 데이터·OpenCode 설정의 주석·다른 MCP·모델 보존, 설치된 exe `doctor --json` 성공 → `uninstall.ps1`이 Bridge 중지, Startup·MCP 항목 제거, 사용자 설정 보존. **3 PASS**. 수동 드라이버이며 저장소 테스트는 아니다.
+- **진행 중 관찰:** WSL→Windows interop이 몇 분씩 `UtilAcceptVsock accept4 failed 110`으로 멈췄다가 돌아왔다. 업데이트 검사는 Windows 쪽에서 분리 실행해 로그로 확인했다.
+- **미검증:** 실제 Chrome 육안 확인(100·125·150% 배율), 설치 GUI 화면 확인, 실제 모델 추론 품질.
+
+---
+
 # 남은 작은 결함 정리(계획 6) — 2026-10-18 KST, 미배포
 
 [계획](./plans/2026-10-18-deferred-minors.md)에 따라 `feat/m9-deferred-minors`에서 계획 3D·4·5가 미룬 결함 18건 가운데 16건을 고쳤다. 버전 변경·배포는 하지 않았다.
