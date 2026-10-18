@@ -355,6 +355,15 @@ describe("pointer modes", () => {
     expect(seen).toEqual(['mouseover', 'mouseenter', 'mousemove']);
     expect(result.verified.mode).toBe('hover');
   });
+  it("hover enters the element's ancestors too, outermost first, as a real pointer would", async () => {
+    document.body.innerHTML = '<nav><div id="menu"><a href="#go">메뉴</a></div></nav>';
+    const link = document.querySelector('a')!;
+    vi.spyOn(link, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);
+    const entered: string[] = [];
+    for (const el of [document.querySelector('nav')!, document.querySelector('#menu')!, link]) el.addEventListener('mouseenter', e => { if (e.target === el) entered.push(el.tagName); });
+    await runAction('click', { ref: refOf('메뉴'), mode: 'hover', generation: 10 });
+    expect(entered).toEqual(['NAV', 'DIV', 'A']);
+  });
   it("double and right clicks send their own event sequences", async () => {
     document.body.innerHTML = '<div role="button" tabindex="0">항목</div>';
     const el = document.querySelector('div')!;

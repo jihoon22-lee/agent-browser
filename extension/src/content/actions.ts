@@ -204,9 +204,13 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const pointer = (type: string, init: Record<string, unknown>) =>
         el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
       if (mode === "hover") {
-        // enter events do not bubble; over/move do.
-        for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"])
-          pointer(type, { buttons: 0, detail: 0, bubbles: !type.endsWith("enter") });
+        // enter events do not bubble: like a pointer arriving from outside, enter each ancestor, outermost first.
+        const chain: Element[] = [];
+        for (let node: Element | null = el; node; node = node.parentElement ?? ((node.getRootNode() as ShadowRoot).host ?? null)) chain.unshift(node);
+        for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"]) {
+          if (!type.endsWith("enter")) { pointer(type, { buttons: 0, detail: 0 }); continue; }
+          for (const node of chain) node.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:0,detail:0,bubbles:false,pointerId:1,pointerType:'mouse',isPrimary:true}));
+        }
         return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
       }
       const button = mode === "right" ? 2 : 0;
