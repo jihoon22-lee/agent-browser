@@ -18,21 +18,22 @@
 | 탭 닫기 | close로 현재 명시 선택한 웹 탭. 기존 탭도 선택 후 닫기 가능 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
 | 링크를 새 탭으로 | browser_click의 newTab=true + 최신 ref. 출발 페이지의 click handler를 실행하지 않고 href를 새 탭으로 엶 | 일반 HTTP(S) anchor만. download 속성, JavaScript 버튼·링크를 추측하지 않음 |
 | back/forward/reload/goto | browser_navigate. history는 정확히 한 항목 이동, 완료 관찰. 결과에 도착 페이지 snapshot 포함 | 이동 전 snapshot 불필요. 링크 클릭으로 인한 이동은 navigated:true로 성공 보고 |
-| 신뢰 입력(설정에서 켬) | 최상위 문서의 클릭·키 입력을 Chrome 디버거로 보냄. alert은 확인·confirm은 취소 후 결과로 알림. 비활성 작업 탭 캡처 | 기본 꺼짐. 하위 frame과 디버거를 쓸 수 없을 때는 일반 입력(`trusted:false`, 이유 포함). 작업이 끝나면 바로 분리 |
+| 신뢰 입력(설정에서 켬) | 최상위 문서의 클릭·더블·오른쪽 클릭·마우스 올리기·끌어다 놓기·키 입력을 Chrome 디버거로 보냄. alert은 확인·confirm은 취소 후 결과로 알림. 비활성 작업 탭 캡처 | 기본 꺼짐. 하위 frame과 디버거를 쓸 수 없을 때는 일반 입력(`trusted:false`, 이유 포함). 작업이 끝나면 바로 분리. Control·Meta·Alt 조합은 전체 선택·실행 취소·다시 실행·굵게·기울임·Enter·Backspace·Home·End·화살표만 디버거로 보내고, 붙여넣기·탭 닫기 같은 그 밖의 조합은 일반 입력으로 보낸다. HTML5 끌어다 놓기 원본(draggable·이미지·링크)은 항상 일반 입력 |
 | 작업 탭 묶음(선택 권한) | 작업 탭을 "AgentBrowser" 탭 그룹으로 묶음 | 사용자가 이미 묶은 탭은 옮기지 않고, 직접 묶은 탭만 해제 |
 | 작업 표시·넘겨받기 | 작업 탭 테두리, 클릭 대상 강조, 아이콘 상태(●·!·‖). 패널의 잠시 넘겨받기/이어서 진행 | 표시는 닫힌 shadow DOM·클릭 통과라 스냅샷·클릭 판정에 나타나지 않는다. 재개 뒤 첫 쓰기 전에는 새 스냅샷이 필요하다 |
 | 스냅샷 검색 | browser_snapshot {query}로 그 말이 들어간 본문 줄, 같은 행에 그 말이 있는 컨트롤, 이름·값·링크가 맞는 요소만 읽는다 | 결과의 ref는 일반 snapshot과 같다. 일치 없으면 `query-no-match`. 비밀번호 값은 검색하지 않는다 |
 | 동작 결과의 스냅샷 | 페이지를 바꾼 클릭·키·이동 결과에 도착 페이지를 붙인다(요소 40개까지). 클릭이나 Enter 제출 후 1초 안에 시작된 스크립트 이동도 포함 | 더 많은 요소는 browser_snapshot의 elementOffset. 버튼을 품은 카드는 그 버튼으로만 나온다 |
 | snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM. 포인터 커서 영역(clickable), 상태(state), 반복 버튼의 행 맥락(context), 아이콘 이름. 페이지를 바꾼 동작의 결과에 자동 포함 | UTF-8 바이트 예산 안에서 잘리며 cursor로 이어 읽음. 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
-| scroll | 문서 또는 ref 컨테이너의 up/down/top/bottom | 수직 기준. 좌표·수평·드래그는 미지원 |
+| 포인터 방식 | browser_click의 mode: double(더블 클릭), right(오른쪽 클릭), hover(마우스 올리기, 누르지 않음), drag(ref를 toRef 위로 끌어다 놓기). drag는 포인터 이벤트와, 원본이 HTML5 끌기 대상이면 dragstart·drop까지 보낸다 | 좌표 지정·긴 누르기·다중 터치 없음. 끌기는 두 ref가 같은 frame이어야 한다 |
+| scroll | 문서 또는 ref 컨테이너의 up/down/top/bottom | 수직 기준. 좌표·수평 스크롤은 미지원 |
 | wait | 텍스트 나타남/사라짐, refGone, URL 부분문자열과 timeout | 범용 network-idle/사이트 readiness 판정 없음. 조건을 단계별로 확인 |
 | input | text 계열 input/textarea 값 교체, contenteditable은 insertText(실패 시 내용 교체)와 input/change 이벤트 | 버튼·체크박스 등 텍스트가 아닌 input과 파일 입력은 거부. 모든 프레임워크/IME를 보장하지 않음 |
 | select | option value/label, checkbox/radio 원하는 상태 | 다중 선택 배열 API는 없음. disabled option과 불가능한 radio 해제는 거부 |
-| keyboard | Enter/Tab/Escape/Space/Backspace/ArrowUp/ArrowDown의 DOM 이벤트 및 구현된 기본 동작 | trusted OS 입력·Ctrl/L·브라우저 단축키·키 조합·IME 미지원 |
+| keyboard | Enter/Tab/Escape/Space/Backspace/Delete/Home/End/PageUp/PageDown/화살표와, modifiers(Control·Shift·Alt·Meta)와 함께 영문·숫자 한 글자. 텍스트 칸에서 Control+A 전체 선택, Delete 삭제, Home/End·좌우 화살표 커서 이동(Shift면 선택 확장), Shift+Tab 이전 칸 | 그 밖의 조합은 수정키가 표시된 키 이벤트만 보내고 사이트가 처리한다(`defaultAction:"event-only"`). 글자 입력은 browser_fill. 브라우저 단축키·IME 미지원 |
 | screenshot | 작업 탭이 활성일 때 visible PNG | 필요하면 사용자가 작업 탭을 활성화. 전체 페이지/백그라운드 캡처와 OS UI 미지원 |
 | 즐겨찾기 | browser_bookmarks list, folderId로 폴더 진입, search query, offset/limit | 아래 선택 bookmarks 권한. 읽기만 제공. URL은 조회만 하고 방문하지 않음 |
 | 다운로드 | 일반 링크 클릭으로 Chrome 자체 다운로드가 발생할 수 있음 | 시작/목록/진행/완료/경로/파일 읽기 도구 없음. downloads 권한 추가하지 않음 |
-| 업로드 | 미지원임을 명시적으로 반환 | OS 파일 선택창·로컬 경로·파일 내용 읽기를 우회하지 않음. 별도 승인된 파일 선택 설계 필요 |
+| 업로드 | browser_upload {ref, file}: 사용자가 이번 패널 요청에 첨부한 파일을 파일 입력(그 입력, label, 또는 파일 입력이 하나인 form의 버튼)에 넣고 input·change를 보낸다. accept와 맞지 않으면 거부 | 그 요청에 첨부한 파일만, 요청이 끝나면 쓸 수 없다. 파일당 10 MiB, 요청당 5개·합계 25 MiB. 다른 사이트의 iframe에는 넣지 않는다. 로컬 경로·OS 파일 선택창은 다루지 않는다 |
 
 새 탭은 background 생성이 기본이며 작업의 currentTab이 새 탭으로 바뀐다. 사용자 전경 탭을 임의로 바꾸지 않는다. 패널 요청 중 단독 new는 현재 requestId를 요구한다. 안전한 기본 탭이 없어도 명시적인 새 탭 생성은 가능하고, 새 operation은 해당 요청에 속한다.
 
