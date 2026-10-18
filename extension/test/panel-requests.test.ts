@@ -242,3 +242,13 @@ it('treats an unreachable runtime as nothing to report', async () => {
   call.mockImplementation(async (method: string) => { if (method === 'runtime.status') throw Error('offline'); return {}; });
   await expect(panelRequests(call).attention()).resolves.toEqual({ waiting: false });
 });
+it('registers the attached files for the request and forgets them when it ends', async () => {
+  const {uploads}=await import('../src/background/uploads');
+  const png={name:'a.png',mime:'image/png',dataUrl:'data:image/png;base64,AAAA'};
+  const requests=panelRequests(call);
+  const prepared=await requests.prepare(lease('one'),null,undefined,[png]);
+  expect(prepared.system).toContain('a.png');
+  expect(uploads.take('one','a.png')).toMatchObject({name:'a.png'});
+  await requests.cancel(lease('one'));
+  expect(uploads.take('one','a.png')).toBeUndefined();
+});

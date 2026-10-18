@@ -706,3 +706,14 @@ it('discards a trusted capture of an inactive tab that navigated meanwhile', asy
     await firstRef(h);
     await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
 });
+it('uploads only a file attached to the current request, without asking the page otherwise', async () => {
+    const w = world();
+    const attachment = vi.fn(async (name: string) => name === 'a.png' ? { name, mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' } : undefined);
+    const h = createHandlers(w.api, memorySessionStore(), undefined, attachment);
+    const ref = await firstRef(h);
+    const before = w.sent.length;
+    await expect(h(request('browser.upload', { ref, file: 'other.png' }))).rejects.toMatchObject({ code: 'INVALID_PARAMS', message: expect.stringContaining('other.png') });
+    expect(w.sent.slice(before).some(s => s.msg.kind === 'cmd')).toBe(false);
+    await h(request('browser.upload', { ref, file: 'a.png' }));
+    expect(w.sent.at(-1)?.msg).toMatchObject({ kind: 'cmd', method: 'upload', params: { ref, name: 'a.png', mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' } });
+});

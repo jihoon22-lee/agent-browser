@@ -48,3 +48,10 @@ it('accepts optional finish in completed v1 responses and rejects explicit nonte
   expect(completedRequest(lease,[{info:{...info,error:{name:'APIError'}}}])).toBe(true);
   expect(completedRequest(lease,[{info:{...info,finish:'tool-calls'}}])).toBe(false);
 });
+it("names the attached files the model may upload, and the ones it may not", () => {
+  const text = requestInstructions("req-1", { tabId: 7, windowId: 1 }, ["a.pdf", "b.png"], ["huge.zip"]);
+  expect(text).toContain("browser_upload");
+  expect(text).toContain("a.pdf, b.png");
+  expect(text).toContain("huge.zip");
+  expect(requestInstructions("req-1", null)).not.toContain("browser_upload");
+});

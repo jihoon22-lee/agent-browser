@@ -11,9 +11,14 @@ export async function captureRequestTarget(): Promise<RequestTarget | null> {
     return {tabId:tab.id,windowId:win.id!};
   } catch { return null; }
 }
-export function requestInstructions(requestId:string,target:RequestTarget|null):string {
+export function requestInstructions(requestId:string,target:RequestTarget|null,files:string[]=[],skipped:string[]=[]):string {
   const start=target?`The captured tab is ${target.tabId}; start with browser_snapshot or browser_tabs attach.`:`No tab was captured: call browser_tabs list, then attach an explicit tabId.`;
-  return `Browser context: this user request is bound to browser tools, so omit requestId and operationId. ${start} An explicit tab named by the user wins. If a tool result asks for ids, use requestId=${requestId} and the returned operationId. Results include a snapshot and openTabs. Close tabs only when asked. Never reuse ids or refs from earlier requests.`;
+  return `Browser context: this user request is bound to browser tools, so omit requestId and operationId. ${start} An explicit tab named by the user wins. If a tool result asks for ids, use requestId=${requestId} and the returned operationId. Results include a snapshot and openTabs. Close tabs only when asked. Never reuse ids or refs from earlier requests.${uploadNote(files,skipped)}`;
+}
+const fileList=(names:string[])=>names.map(name=>name.slice(0,80)).join(', ');
+function uploadNote(files:string[],skipped:string[]) {
+  return (files.length?` Attached files you may upload with browser_upload: ${fileList(files)}.`:'')+
+    (skipped.length?` Too large or too many to upload: ${fileList(skipped)}.`:'');
 }
 export function completedRequest(lease:Pick<RequestLease,'messageId'|'sessionId'>,messages:Array<{info:Record<string,any>;parts?:unknown[]}>):boolean {
   const info=messages.filter(({info})=>info.role==='assistant'&&info.sessionID===lease.sessionId&&info.parentID===lease.messageId).at(-1)?.info;

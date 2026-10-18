@@ -324,11 +324,52 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       return pressKey(p, assertInteractable);
     }
+    case "upload": return upload(p);
     case "scroll": return scroll(p);
     case "wait": return waitFor(p, signal);
     case "extract": return extract(p);
     default: throw new ProtocolError("INVALID_PARAMS", `Unknown action ${method}`);
   }
+}
+
+/** The file input a ref stands for: itself, its label's control, the only one inside it, or the only one in its form. */
+function fileInputFor(el: Element): HTMLInputElement | null {
+  const file = (x: unknown): x is HTMLInputElement => x instanceof HTMLInputElement && x.type === 'file';
+  if (el instanceof HTMLInputElement) return file(el) ? el : null;
+  if (el instanceof HTMLLabelElement) return file(el.control) ? el.control : null;
+  const inside = [...el.querySelectorAll('input[type=file]')];
+  if (inside.length) return inside.length === 1 ? inside[0] as HTMLInputElement : null;
+  const label = el.closest('label');
+  if (label && file(label.control)) return label.control;
+  const form = el.closest('form') ?? ((el as HTMLButtonElement).form ?? null);
+  const inForm = form ? [...form.querySelectorAll('input[type=file]')] : [];
+  return inForm.length === 1 ? inForm[0] as HTMLInputElement : null;
+}
+function accepts(input: HTMLInputElement, name: string, mime: string) {
+  const tokens = input.accept.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+  const lower = name.toLowerCase(), type = mime.toLowerCase();
+  return !tokens.length || tokens.some(t => t.startsWith('.') ? lower.endsWith(t) : t.endsWith('/*') ? type.startsWith(t.slice(0, -1)) : t === type);
+}
+/** Puts one attached file (bytes from the background, never a local path) into the input and fires its events. */
+function upload(p: P) {
+  const el = resolveRef(String(p.ref));
+  assertInteractable(el);
+  const input = fileInputFor(el);
+  if (!input) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'No single file input belongs to this ref. Use the file input, its label, or a button in a form with one file input.');
+  if (input.disabled) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'The file input is disabled.');
+  const name = String(p.name), mime = String(p.mime ?? '');
+  if (!accepts(input, name, mime)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', `This file input accepts ${input.accept.slice(0, 120)}; ${name} does not match.`);
+  const dataUrl = String(p.dataUrl), comma = dataUrl.indexOf(','), body = dataUrl.slice(comma + 1);
+  const bytes = dataUrl.slice(0, comma).endsWith(';base64') ? Uint8Array.from(atob(body), c => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(body));
+  const file = new File([bytes], name, { type: mime });
+  const transfer = new DataTransfer();
+  // A multiple input keeps what it already holds; a single one is replaced.
+  if (input.multiple) for (const kept of Array.from(input.files ?? [])) transfer.items.add(kept);
+  transfer.items.add(file);
+  input.files = transfer.files;
+  input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+  return { executed: true, verified: { files: Array.from(input.files ?? []).map(f => f.name), size: file.size } };
 }
 
 function scroll(p: P) {

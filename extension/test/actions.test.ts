@@ -399,3 +399,36 @@ describe("drag", () => {
     await expect(runAction('click', { ref: card, toRef: target, mode: 'drag', generation: 10 })).rejects.toMatchObject({ code: 'STALE_ELEMENT' });
   });
 });
+
+describe("upload", () => {
+  // jsdom has no DataTransfer and only takes a real FileList; stand in for both.
+  beforeEach(() => {
+    vi.stubGlobal('DataTransfer', class { list: File[] = []; items = { add: (f: File) => { this.list.push(f); } }; get files() { return this.list as unknown as FileList; } });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+  const filesOf = (input: HTMLInputElement) => { let value: unknown = []; Object.defineProperty(input, 'files', { configurable: true, get: () => value, set: v => { value = v; } }); return () => value as File[]; };
+  const png = { name: 'a.png', mime: 'image/png', dataUrl: 'data:image/png;base64,iVBORw==' };
+  it("puts the attachment into the file input behind a label and fires change", async () => {
+    document.body.innerHTML = '<label for="f">파일 선택</label><input id="f" type="file" accept="image/*" hidden>';
+    const input = document.querySelector('input')!, files = filesOf(input), changed = vi.fn(); input.addEventListener('change', changed);
+    const result: any = await runAction('upload', { ref: refOf('파일 선택'), ...png, generation: 10 });
+    expect(files().map(f => f.name)).toEqual(['a.png']);
+    expect(files()[0]!.type).toBe('image/png');
+    expect(files()[0]!.size).toBe(4);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(result.verified).toEqual({ files: ['a.png'], size: 4 });
+  });
+  it("refuses a file the input does not accept and leaves it empty", async () => {
+    document.body.innerHTML = '<label for="f">파일 선택</label><input id="f" type="file" accept="image/*,.gif" hidden>';
+    const input = document.querySelector('input')!, files = filesOf(input);
+    await expect(runAction('upload', { ref: refOf('파일 선택'), name: 'a.pdf', mime: 'application/pdf', dataUrl: 'data:application/pdf;base64,AAAA', generation: 10 })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    expect(files()).toEqual([]);
+  });
+  it("finds the one file input of a button's form, but not when there are two", async () => {
+    document.body.innerHTML = '<form><input type="file" hidden><button type="button">올리기</button></form><form><input type="file" hidden><input type="file" hidden><button type="button">둘</button></form>';
+    const [one] = [...document.querySelectorAll('input')], files = filesOf(one!);
+    await runAction('upload', { ref: refOf('올리기'), ...png, generation: 10 });
+    expect(files().map(f => f.name)).toEqual(['a.png']);
+    await expect(runAction('upload', { ref: refOf('둘'), ...png, generation: 10 })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+  });
+});

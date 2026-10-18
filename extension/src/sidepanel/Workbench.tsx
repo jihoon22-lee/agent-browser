@@ -208,7 +208,9 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         const requestId=crypto.randomUUID();
         attempt.requestId=requestId;
         setRequestHeld(true);
-        const response=await chrome.runtime.sendMessage({kind:'request-prepare',lease:{...scope,messageId:messageID,requestId},target,
+        // The files attached to this message are the only ones browser_upload may use, and only for this request.
+        const files=attachments.filter(a=>a.type==='file'&&typeof a.url==='string'&&a.url.startsWith('data:')).map(a=>({name:a.filename,mime:a.mime,dataUrl:a.url}));
+        const response=await chrome.runtime.sendMessage({kind:'request-prepare',lease:{...scope,messageId:messageID,requestId},target,files,
           ...(operation&&wb.operationOwner(operation.id)===wb.sessionId?{previousOperationId:operation.id}:{})});
         if(!response?.ok)throw Error(response?.error?.message??'요청의 작업 탭을 고정하지 못했습니다.');
         if(!canSubmit()){await discard();throw Error('요청 전송을 취소했습니다.');}

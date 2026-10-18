@@ -7,8 +7,8 @@ import { RefTable, snapshotToken } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
-const WRITE = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
-const CONTENT = new Set(['browser.click', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
+const WRITE = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
+const CONTENT = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
 const SNAPSHOT_RESPONSE_BYTES = 28_000;
 /** How long a click or key press that changed nothing is watched for a script navigation. */
 const LATE_NAVIGATION_MS = 1000;
@@ -27,7 +27,9 @@ type Running = {
 };
 /** Trusted input, when the user enabled it: decides per tab whether clicks and keys go through the debugger. */
 export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string> };
-export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks) {
+/** The file of that name the person attached to the panel request now running, if any. */
+export type AttachmentLookup = (name: string) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
+export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
     /** A link click may still be committing the next document; read the page it produced. Wait for
      * the commit, then give subresources only a short grace: slow ads must not delay a readable DOM. */
@@ -320,6 +322,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             }
         }
         if (CONTENT.has(req.method)) {
+            // Resolve the attachment before touching the page: an unknown name never reaches it.
+            const file = req.method === 'browser.upload' ? await attachment?.(String(p.file ?? '')) : undefined;
+            if (req.method === 'browser.upload' && !file)
+                throw new ProtocolError('INVALID_PARAMS', `This request has no attachment named ${JSON.stringify(String(p.file ?? '').slice(0, 80))}; attach the file in the panel and send the request again.`);
             const ref = typeof p.ref === 'string' ? p.ref : typeof p.refGone === 'string' ? p.refGone : undefined;
             const frameRef=req.method==='browser.wait'&&typeof p.frameRef==='string'?p.frameRef:undefined;
             if(frameRef!==undefined)await frames.bound(tabId,ref,String(p.operationId),frameRef);
@@ -353,7 +359,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // and page readiness are observed by later snapshot/wait calls.
                 return {executed:true,openedTabs:[{...describeTab(created),pendingUrl:created.pendingUrl??(!isWeb(created.url)?url:undefined),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
             }
-            return send(tabId, frame, req.method.slice('browser.'.length), p, run);
+            return send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
         }
         throw new ProtocolError('FORBIDDEN_METHOD', `Unknown browser method ${req.method}.`);
     }

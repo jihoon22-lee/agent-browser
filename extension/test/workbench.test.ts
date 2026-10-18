@@ -805,3 +805,14 @@ it("offers take-over once this browser is paired while the panel is open", async
   await act(async () => { storage.clientId = "local"; for (const f of changes) f({ clientId: { newValue: "local" } }, "local"); await new Promise(r => setTimeout(r, 0)); });
   expect(button("잠시 넘겨받기")).toBeDefined();
 });
+
+it("hands the message's attached files to the request so only they can be uploaded", async () => {
+  (chrome as any).windows = { getLastFocused: vi.fn(async () => ({ id: 4, focused: true, tabs: [{ id: 31, active: true, url: "https://mail.test" }] })) };
+  const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+  runtime.mockImplementation(async (message: any) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+  await render();
+  await act(async () => { const el = host.querySelector<HTMLInputElement>('input[type="file"]')!; Object.defineProperty(el, "files", { configurable: true, value: [new File(["합성"], "a.png", { type: "image/png" })] }); el.dispatchEvent(new Event("change", { bubbles: true })); await new Promise(resolve => setTimeout(resolve, 20)); });
+  await draftValue("올려 줘"); await act(async () => button("보내기").click());
+  const prepare = runtime.mock.calls.map(([m]) => m).find(m => m.kind === "request-prepare");
+  expect(prepare.files).toEqual([{ name: "a.png", mime: "image/png", dataUrl: expect.stringMatching(/^data:image\/png;base64,/) }]);
+});
