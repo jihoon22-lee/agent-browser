@@ -6,7 +6,7 @@ import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
-import { INPUT_TEXT, preparePress, pressKey } from "./keyboard";
+import { INPUT_TEXT, keyOf, preparePress, pressKey } from "./keyboard";
 import { cancellationError, cancelCommands, withCommandCancellation, type CommandScope } from "./cancellation";
 
 export function cancelUpTo(generation: number) { cancelCommands({ generation }); }
@@ -313,9 +313,10 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
         const changes = observeChanges(500, signal);
         void changes.catch(() => {});
-        const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key: String(p.key) });
+        const { key, modifiers } = keyOf(p);
+        const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key, ...(modifiers.length ? { modifiers } : {}) });
         // The browser itself performs the key's default action; nothing is emulated here.
-        if (answer.ok) return { executed: true, verified: { key: String(p.key), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+        if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
         if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted key press reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
         const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };

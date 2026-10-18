@@ -14,6 +14,7 @@ export function acceptTrustedRequest(msg: any, sender: TrustedSender, ctx: Trust
   if (!ctx.enabled || !ctx.attached(tabId) || typeof msg.requestId !== "string") return false;
   if (msg.action === "click") return Number.isFinite(msg.x) && Number.isFinite(msg.y) && [undefined, "click", "double", "right", "hover"].includes(msg.mode) && ctx.running(tabId, msg.requestId, "browser.click");
   if (msg.action === "drag") return [msg.x, msg.y, msg.toX, msg.toY].every(Number.isFinite) && ctx.running(tabId, msg.requestId, "browser.click");
-  if (msg.action === "key") return typeof msg.key === "string" && ctx.running(tabId, msg.requestId, "browser.press");
+  const modifiersOk = msg.modifiers === undefined || (Array.isArray(msg.modifiers) && msg.modifiers.every((m: unknown) => ["Alt", "Control", "Meta", "Shift"].includes(m as string)));
+  if (msg.action === "key") return typeof msg.key === "string" && modifiersOk && ctx.running(tabId, msg.requestId, "browser.press");
   return false;
 }

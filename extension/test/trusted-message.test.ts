@@ -30,3 +30,12 @@ it("accepts a drag only with finite source and target points", () => {
   expect(acceptTrustedRequest({ ...drag, toX: Number.NaN }, top, ctx)).toBe(false);
   expect(acceptTrustedRequest(drag, top, { ...ctx, running: (_t: number, _r: string, method: string) => method === "browser.press" })).toBe(false);
 });
+
+it("accepts key modifiers only from the allowed set", () => {
+  const ctx = { runtimeId: "ext", running: () => true, enabled: true, attached: () => true };
+  const top = { id: "ext", tab: { id: 1 }, frameId: 0 };
+  const key = { kind: "trusted-input", requestId: "r", action: "key", key: "a", modifiers: ["Control", "Shift"] };
+  expect(acceptTrustedRequest(key, top, ctx)).toBe(true);
+  expect(acceptTrustedRequest({ ...key, modifiers: ["Control", "Hyper"] }, top, ctx)).toBe(false);
+  expect(acceptTrustedRequest({ ...key, modifiers: "Control" }, top, ctx)).toBe(false);
+});

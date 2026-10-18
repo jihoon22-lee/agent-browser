@@ -189,3 +189,27 @@ describe("trusted drag", () => {
     await expect(t.drag(1, { x: 1, y: 1 }, { x: 9, y: 9 })).rejects.toMatchObject({ dispatched: true });
   });
 });
+
+describe("trusted key combinations", () => {
+  it("holds the modifiers around a letter", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    await t.key(1, "a", ["Control"]);
+    const keys = d.calls.filter(c => c[2] === "Input.dispatchKeyEvent").map(c => c[3] as any);
+    expect(keys.map(k => `${k.type} ${k.key} ${k.modifiers ?? 0}`)).toEqual(["keyDown Control 2", "keyDown a 2", "keyUp a 2", "keyUp Control 0"]);
+    expect(keys[1]).toMatchObject({ code: "KeyA", windowsVirtualKeyCode: 65 });
+    expect(keys[1].text).toBeUndefined();
+  });
+  it("types the character only when Shift is the sole modifier, and knows the editing keys", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    await t.key(1, "b", ["Shift"]);
+    await t.key(1, "Delete");
+    await t.key(1, "3", ["Control", "Shift"]);
+    const downs = d.calls.filter(c => c[2] === "Input.dispatchKeyEvent").map(c => c[3] as any).filter(k => k.type === "keyDown" && !["Shift", "Control"].includes(k.key));
+    expect(downs[0]).toMatchObject({ key: "B", code: "KeyB", text: "B", modifiers: 8 });
+    expect(downs[1]).toMatchObject({ key: "Delete", windowsVirtualKeyCode: 46 });
+    expect(downs[2]).toMatchObject({ key: "3", code: "Digit3", modifiers: 10 });
+    expect(downs[2].text).toBeUndefined();
+  });
+});

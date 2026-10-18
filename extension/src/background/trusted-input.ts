@@ -18,7 +18,27 @@ const KEYS: Record<string, { key: string; code: string; windowsVirtualKeyCode: n
   ArrowUp: { key: "ArrowUp", code: "ArrowUp", windowsVirtualKeyCode: 38 },
   ArrowDown: { key: "ArrowDown", code: "ArrowDown", windowsVirtualKeyCode: 40 },
   Space: { key: " ", code: "Space", windowsVirtualKeyCode: 32, text: " " },
+  Delete: { key: "Delete", code: "Delete", windowsVirtualKeyCode: 46 },
+  Home: { key: "Home", code: "Home", windowsVirtualKeyCode: 36 },
+  End: { key: "End", code: "End", windowsVirtualKeyCode: 35 },
+  PageUp: { key: "PageUp", code: "PageUp", windowsVirtualKeyCode: 33 },
+  PageDown: { key: "PageDown", code: "PageDown", windowsVirtualKeyCode: 34 },
+  ArrowLeft: { key: "ArrowLeft", code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+  ArrowRight: { key: "ArrowRight", code: "ArrowRight", windowsVirtualKeyCode: 39 },
 };
+/** CDP modifier bits and the key each modifier presses. */
+const MODIFIER_KEYS: Record<string, { bit: number; key: string; code: string; windowsVirtualKeyCode: number }> = {
+  Alt: { bit: 1, key: "Alt", code: "AltLeft", windowsVirtualKeyCode: 18 },
+  Control: { bit: 2, key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17 },
+  Meta: { bit: 4, key: "Meta", code: "MetaLeft", windowsVirtualKeyCode: 91 },
+  Shift: { bit: 8, key: "Shift", code: "ShiftLeft", windowsVirtualKeyCode: 16 },
+};
+function keySpec(key: string, modifiers: string[]) {
+  if (KEYS[key]) return KEYS[key];
+  if (modifiers.length === 0 || !/^[a-zA-Z0-9]$/.test(key)) return undefined;
+  const upper = key.toUpperCase(), shift = modifiers.includes("Shift");
+  return { key: /\d/.test(key) ? key : shift ? upper : key.toLowerCase(), code: /\d/.test(key) ? `Digit${key}` : `Key${upper}`, windowsVirtualKeyCode: upper.charCodeAt(0), text: /\d/.test(key) ? key : shift ? upper : key.toLowerCase() };
+}
 
 /** The input state for this browser: its operation's tabs, none while the person holds the browser. */
 export function trustedTargets(operation: { id?: string; clientId?: string; tabs?: number[]; paused?: boolean } | null, clientId: string | undefined, enabled: boolean): TrustedState & { operationId: string | null } {
@@ -109,14 +129,21 @@ export function trustedInput(api: DebuggerApi) {
       steps.push(mouse({ type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 }));
       return deliver(tabId, steps);
     },
-    key(tabId: number, key: string) {
-      const spec = KEYS[key];
-      if (!spec) return Promise.reject(new Error(`Unsupported key ${key}`));
-      const { text: _text, ...up } = spec;
-      return deliver(tabId, [
-        () => api.send(tabId, "Input.dispatchKeyEvent", { type: "keyDown", ...spec }),
-        () => api.send(tabId, "Input.dispatchKeyEvent", { type: "keyUp", ...up }),
-      ]);
+    key(tabId: number, key: string, modifiers: string[] = []) {
+      const spec = keySpec(key, modifiers);
+      if (!spec || modifiers.some(m => !MODIFIER_KEYS[m])) return Promise.reject(new Error(`Unsupported key ${key}`));
+      const send = (params: object) => () => api.send(tabId, "Input.dispatchKeyEvent", params);
+      const held = modifiers.map(m => MODIFIER_KEYS[m]!);
+      const bits = held.reduce((sum, m) => sum | m.bit, 0);
+      // A key with Control, Alt or Meta is a shortcut, not typing.
+      const { text, ...up } = spec;
+      const typed = modifiers.every(m => m === "Shift") && text !== undefined ? { text } : {};
+      const steps: Array<() => Promise<unknown>> = [];
+      let down = 0;
+      for (const m of held) { down |= m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyDown", ...k, modifiers: down })); }
+      steps.push(send({ type: "keyDown", ...up, ...typed, ...(bits ? { modifiers: bits } : {}) }), send({ type: "keyUp", ...up, ...(bits ? { modifiers: bits } : {}) }));
+      for (const m of [...held].reverse()) { down &= ~m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyUp", ...k, ...(down ? { modifiers: down } : {}) })); }
+      return deliver(tabId, steps);
     },
     async screenshot(tabId: number) {
       const { data } = await api.send<{ data: string }>(tabId, "Page.captureScreenshot", { format: "png" });
