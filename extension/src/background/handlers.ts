@@ -29,6 +29,7 @@ type Running = {
 export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string> };
 /** The file of that name the person attached to the panel request now running, if any. */
 export type AttachmentLookup = (name: string) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
+const origin = (url: string | undefined) => { try { const value = url ? new URL(url).origin : "null"; return value === "null" ? undefined : value; } catch { return undefined; } };
 export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
     /** A link click may still be committing the next document; read the page it produced. Wait for
@@ -348,6 +349,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
+            // The person attached the file for the site they are on, not for an embedded frame from another site.
+            if (file && (!origin(frame.url) || origin(frame.url) !== origin((await getTab(api, tabId)).url)))
+                throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'This file input is in a frame from another site; attachments are only uploaded to the page\'s own site.');
             if (req.method === 'browser.click' && p.newTab === true) {
                 const link = await interruptible(api.sendToFrame(tabId,frame,{kind:'cmd',method:'link',params:{...p,requestId:req.id}}),signal);
                 if (!link?.ok) { const e=link?.error; throw new ProtocolError(e?.code ?? 'ELEMENT_NOT_INTERACTABLE',e?.message ?? 'The ref is not an HTTP(S) anchor.'); }

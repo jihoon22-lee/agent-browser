@@ -717,3 +717,12 @@ it('uploads only a file attached to the current request, without asking the page
     await h(request('browser.upload', { ref, file: 'a.png' }));
     expect(w.sent.at(-1)?.msg).toMatchObject({ kind: 'cmd', method: 'upload', params: { ref, name: 'a.png', mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' } });
 });
+it('never hands an attachment to a frame from another site', async () => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'ad', url: 'https://ads.other.test/slot' });
+    const attachment = vi.fn(async (name: string) => ({ name, mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' }));
+    const h = createHandlers(w.api, memorySessionStore(), undefined, attachment);
+    const snap: any = await h(request('browser.snapshot'));
+    const before = w.sent.length;
+    await expect(h(request('browser.upload', { ref: snap.frames[1].elements[0].ref, file: 'a.png' }))).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    expect(w.sent.slice(before).some(s => s.msg.method === 'upload')).toBe(false);
+});
