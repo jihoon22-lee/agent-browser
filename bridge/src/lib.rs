@@ -59,17 +59,13 @@ pub fn run_serve(port: Option<u16>) -> anyhow::Result<()> {
     let cfg = config::load_or_init(&home)?;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
-        // Lets tests and `mcp` cleanup find the detached process; removed again on a graceful exit.
-        // Written before listening so a client that reaches the port always finds it.
+        // Lets `start`, the installer, and tests find the detached process; removed again on a graceful exit.
         let pid_file = home.join("serve.pid");
-        let _ = std::fs::write(&pid_file, std::process::id().to_string());
-        let handle = match server::start(server::ServeOptions { home: home.clone(), port: port.unwrap_or(cfg.port) }).await {
-            Ok(handle) => handle,
-            Err(error) => { let _ = std::fs::remove_file(&pid_file); return Err(error); }
-        };
+        let handle = server::start_publishing_pid(server::ServeOptions { home: home.clone(), port: port.unwrap_or(cfg.port) }, &pid_file).await?;
         tokio::signal::ctrl_c().await.ok();
+        // Removed while this process still holds the port, so no successor's PID can be in it yet.
+        server::remove_own_pid_file(&pid_file);
         let _ = handle.shutdown.send(());
-        let _ = std::fs::remove_file(&pid_file);
         Ok(())
     })
 }

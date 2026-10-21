@@ -6,7 +6,7 @@ pub mod router;
 pub mod timeline;
 
 use crate::config;
-use std::{path::PathBuf, sync::Arc};
+use std::{path::{Path, PathBuf}, sync::Arc};
 use tokio::net::TcpListener;
 
 pub(crate) fn now_ms() -> u64 {
@@ -33,6 +33,24 @@ pub enum ServeError {
 }
 
 pub async fn start(opts: ServeOptions) -> anyhow::Result<ServeHandle> {
+    start_with(opts, None).await
+}
+
+/// Like [`start`], and publishes this process's PID to `pid_file` once it owns the port but
+/// before it accepts a client. A serve that loses a startup race therefore never touches the
+/// file, and a client that has authenticated always finds the winner's PID there.
+pub async fn start_publishing_pid(opts: ServeOptions, pid_file: &Path) -> anyhow::Result<ServeHandle> {
+    start_with(opts, Some(pid_file)).await
+}
+
+/// Removes `pid_file` only while it still names this process, so a later serve's PID survives.
+pub fn remove_own_pid_file(pid_file: &Path) {
+    if std::fs::read_to_string(pid_file).is_ok_and(|text| text.trim() == std::process::id().to_string()) {
+        let _ = std::fs::remove_file(pid_file);
+    }
+}
+
+async fn start_with(opts: ServeOptions, pid_file: Option<&Path>) -> anyhow::Result<ServeHandle> {
     let listener = match TcpListener::bind(("127.0.0.1", opts.port)).await {
         Ok(l) => l,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
@@ -48,6 +66,11 @@ pub async fn start(opts: ServeOptions) -> anyhow::Result<ServeHandle> {
     // the token, pairing, and browser selection survive a custom-port start.
     let mut cfg = config::load_or_init(&opts.home)?;
     if cfg.port != port { cfg.port = port; config::save(&opts.home,&cfg)?; }
+    if let Some(pid_file) = pid_file
+        && let Err(error) = std::fs::write(pid_file, std::process::id().to_string())
+    {
+        tracing::warn!(%error, "cannot publish serve.pid");
+    }
     let state = Arc::new(conn::ServerState::new_with_port(opts.home, cfg, port));
     let (tx, mut rx) = tokio::sync::oneshot::channel();
     let join = tokio::spawn(async move {
