@@ -259,7 +259,7 @@ Catppuccin 4개 테마 × 320/400/600px, 시스템 테마와 Options 동기화�
 
 ## R01–R11/D01 리뷰 회귀
 
-새 테스트는 기존 Rust/Vitest/Windows runtime harness에 추가했다. 전체 결과와 실제 실패 이력은 [상태](./status.md)의 리뷰 후속 수정에 기록한다.
+새 테스트는 기존 Rust/Vitest/Windows runtime harness에 추가했다. 전체 결과와 실제 실패 이력은 당시 [상태](./status.md) 기록(Git 이력)에 있다.
 
 ```bash
 cargo test --offline --locked -p agent-browser-bridge
@@ -408,7 +408,7 @@ node <isolated-test-directory>/tests/e2e/windows-run.ts -- board-navigation.spec
 
 AB_TEST_BFCACHE는 Playwright의 기본 `--disable-back-forward-cache` 인수를 제외한다. 일반 테스트 실행에서 B07은 명시적으로 skip되며 BFCache 검증으로 집계하지 않는다. opt-in 실행은 `pageshow.persisted === true`를 반드시 assert하고 notRestoredReasons를 기록한다. 설정은 시험 자식 프로필에만 적용하며 OS/운영 브라우저 정책 및 manifest 권한은 변경하지 않는다. B06의 신뢰된 클릭도 합성 시험 페이지에만 수행한다.
 
-회귀 단위 검사는 snapshot 문서 교체 중 재읽기/상한, 연결 노드 identity 변경, pagehide registry 만료, 오래된 complete 경합, close의 operation 경계·request dedupe·편집된 iframe/Shadow DOM 보호를 검사한다. 실행 결과는 status.md의 게시판 절에 기록한다.
+회귀 단위 검사는 snapshot 문서 교체 중 재읽기/상한, 연결 노드 identity 변경, pagehide registry 만료, 오래된 complete 경합, close의 operation 경계·request dedupe·편집된 iframe/Shadow DOM 보호를 검사한다. 실행 결과는 당시 status.md 기록(Git 이력)에 있다.
 
 
 ## 새 탭·창·즐겨찾기 기능 검사
