@@ -1,3 +1,15 @@
+# serve.pid 시작 경합 수정 — 2026-10-22 KST, 미배포
+
+PR #30 리뷰 지적([discussion](https://github.com/jihoon22-lee/agent-browser/pull/30#discussion_r4306856384))을 `fix/serve-pid-race`에서 고쳤다([PR #34](https://github.com/jihoon22-lee/agent-browser/pull/34)). 버전 변경·배포는 하지 않았다.
+
+- **결함:** Bridge가 꺼진 상태에서 같은 home·포트로 `start`·`mcp`가 겹치면, 두 serve가 모두 bind 전에 `serve.pid`를 쓰고 진 쪽이 `AlreadyRunning` 뒤 파일을 무조건 지웠다. `start`가 `pid: null`이나 곧 종료될 PID를 보고해 `Start-OwnedBridge`(`scripts/installer-common.ps1:526-531`)가 실패했고, 마커가 남지 않아 Bridge를 직접 끌 때까지 같은 실패가 반복됐다.
+- **수정:** 포트를 bind한 serve만, accept 전에 PID를 쓴다(`server::start_publishing_pid`). 인증을 마친 클라이언트는 항상 승자의 PID를 읽으므로 v0.2.0에서 고친 "pid 파일 없음" 경합도 다시 생기지 않는다. 정상 종료 때는 포트를 놓기 전에, 자기 PID일 때만 지운다. 리뷰가 제안한 "자기 PID일 때만 삭제"만으로는 진 쪽이 나중에 덮어쓴 경우를 막지 못한다. 쓰는 프로세스가 하나뿐이고 읽는 쪽은 기록 뒤에야 인증되므로 임시 파일+rename은 넣지 않았다.
+- **Linux:** 실패 테스트 2개(`losing_serve_keeps_the_running_servers_pid_file`, `graceful_exit_removes_only_its_own_pid_file`)가 수정 전 실패·수정 후 통과. 회귀 방지 `serve_publishes_its_pid_before_answering_clients` 추가. `serve_port_conflict` 5회 반복 통과, Bridge Rust 전체 **223 통과**, clippy 경고 수 main과 동일(23).
+- **Windows:** 로컬 WSL interop이 `UtilAcceptVsock accept4 failed 110`으로 15분 넘게 멈춰 로컬 실제 Windows 실행은 하지 못했다. [PR #34 CI 39685682677](https://github.com/jihoon22-lee/agent-browser/actions/runs/39685682677) Windows 작업에서 `serve_port_conflict` **4개 통과**(graceful exit 테스트는 Unix 전용), Linux 작업도 성공.
+- **미검증:** 이 exe로 `install.tests.ps1` 재실행, 실제 동시 시작(설치 중 OpenCode의 `mcp` 자동 시작) 재현.
+
+---
+
 # B10 간헐 시간 초과 조사 — 2026-10-18 KST, 미해결
 
 `board-navigation.spec.ts:160` B10(앞서 검사한 iframe이 나중 close 검사 중 수정됨)이 Linux E2E에서 90초 시간 초과로 멈추는 간헐 실패를 조사했다. 원인은 확정하지 못했고 코드는 바꾸지 않았다.
