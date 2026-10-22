@@ -92,12 +92,19 @@ function renderedText(root: Element): string {
   }
   return text.replace(/\s+/g, " ").trim();
 }
-function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,RecordObservation>): string {
+function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,RecordObservation>, query: string): string {
   const row = el.closest("tr,li,[role=row],[role=listitem],article");
   const candidate = row ?? el.parentElement;
   if (!candidate || candidate === el.ownerDocument.body || candidate === el.ownerDocument.documentElement) return "";
   let text = rows.get(candidate);
   if (text === undefined) {
+    // A necessary (not sufficient) match test avoids a tree walk for unrelated cards.
+    // Remove whitespace on both sides because block/cell boundaries insert spaces.
+    // Omitted nodes may join separate words, so their presence disables this shortcut.
+    const compact = (value: string) => value.toLowerCase().replace(/\s/g,'');
+    if (!compact(candidate.textContent ?? '').includes(compact(query)) && !candidate.querySelector(SKIP)) {
+      rows.set(candidate,''); return '';
+    }
     const full = row ? recordObservation(row,records).search : renderedText(candidate);
     text = row || full.length <= 300 ? full.slice(0, 300) : "";
     rows.set(candidate, text);
@@ -145,15 +152,16 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
-    const pointer = !isInteractive(el) && el.tagName !== "TABLE" && isPointerTarget(el);
-    if ((!isInteractive(el) && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
+    const interactive = isInteractive(el);
+    const pointer = !interactive && el.tagName !== "TABLE" && isPointerTarget(el);
+    if ((!interactive && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
     // Match only what a snapshot would show: a password value must not become a search oracle.
     let name: string | undefined;
     if (query) {
       const matches = (field: unknown) => typeof field === "string" && fold(field).includes(query);
       name = accessibleName(el);
       const shownValue = el instanceof HTMLInputElement && el.type === "password" ? "" : (el as HTMLInputElement).value;
-      if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows, records)))) return;
+      if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows, records, query)))) return;
     }
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;

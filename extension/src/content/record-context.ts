@@ -11,6 +11,15 @@ export type RecordObservation = { identity: string; text: string; search: string
 export function recordRoot(el: Element): Element | null {
   for (let node = composedParent(el); node && node !== el.ownerDocument.body; node = composedParent(node))
     if (node.matches(RECORD)) return node;
+  // Many cards have no ARIA/list markup. Bind a small nearby container with text
+  // beyond this control, never an entire page/form or an arbitrary distant ancestor.
+  let depth = 0;
+  for (let node = composedParent(el); node && node !== el.ownerDocument.body && depth++ < 3; node = composedParent(node)) {
+    if (!node.matches('div,section')) break;
+    const text = node.textContent ?? '';
+    if (text.length > 300) break;
+    if (text.trim() && text.trim() !== (el.textContent ?? '').trim()) return node;
+  }
   return null;
 }
 

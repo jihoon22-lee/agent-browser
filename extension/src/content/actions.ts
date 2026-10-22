@@ -60,8 +60,11 @@ function assertInteractable(el: Element): Point | undefined {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
   }
   if (!hasLayout()) return undefined;
-  // "instant" defeats CSS scroll-behavior:smooth, which would leave hit testing at the old position.
-  (el as HTMLElement).scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  // Preserve an already usable position instead of recentering every field/button.
+  for (const point of candidatePoints(el))
+    if (point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight && reaches(topAt(point),el)) return point;
+  // "instant" defeats CSS smooth scrolling, so hit testing uses the new position.
+  (el as HTMLElement).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   const points = candidatePoints(el);
   for (const point of points) if (reaches(topAt(point), el)) return point;
   const top = points[0] ? topAt(points[0]) : null;
@@ -407,11 +410,11 @@ function scroll(p: P) {
   const el = (p.ref ? resolveRef(String(p.ref)) : document.scrollingElement ?? document.documentElement) as HTMLElement;
   const page = el.clientHeight * 0.8;
   switch (p.direction) {
-    case "up": el.scrollBy({ top: -page }); break;
-    case "down": el.scrollBy({ top: page }); break;
-    case "top": el.scrollTo({ top: 0 }); break;
-    case "bottom": el.scrollTo({ top: el.scrollHeight }); break;
+    case "up": el.scrollBy({ top: -page, behavior: 'instant' }); break;
+    case "down": el.scrollBy({ top: page, behavior: 'instant' }); break;
+    case "top": el.scrollTo({ top: 0, behavior: 'instant' }); break;
+    case "bottom": el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }); break;
     default: throw new ProtocolError("INVALID_PARAMS", "direction must be up, down, top or bottom");
   }
-  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } });
+  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1 } });
 }

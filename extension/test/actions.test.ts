@@ -130,7 +130,7 @@ it("scroll moves the page and rejects unknown directions", async () => {
   Object.defineProperty(el, "clientHeight", { configurable: true, value: 1000 });
   const r = await runAction("scroll", { direction: "down", generation: 10 });
   expect(r).toMatchObject({ executed: true });
-  expect(calls).toEqual([{ top: 800 }]);
+  expect(calls).toEqual([{ top: 800, behavior: 'instant' }]);
   await expect(runAction("scroll", { direction: "sideways", generation: 10 })).rejects.toMatchObject({ code: "INVALID_PARAMS" });
 });
 
@@ -227,7 +227,7 @@ it("clicks a visually hidden checkbox through its own styled label", async () =>
   try {
     await runAction("click", { ref, generation: 10 });
     expect(input.checked).toBe(true);
-    expect(input.scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "center", behavior: "instant" });
+    expect(input.scrollIntoView).not.toHaveBeenCalled(); // Its label is already reachable.
   } finally { delete (document as any).elementFromPoint; vi.restoreAllMocks(); }
 });
 

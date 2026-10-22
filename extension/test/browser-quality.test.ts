@@ -76,3 +76,9 @@ it('disabled state crosses an open shadow boundary and is visible in snapshots',
   expect(el.disabled).toBe(true);
   await expect(runAction('click',{ref:el.ref})).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
 });
+it('a small unmarked card also rejects reuse under a different record title',()=>{
+  document.body.innerHTML='<div><span>Order A</span><button>Cancel</button></div>';
+  const item=takeSnapshot(opts).elements[0]!;
+  document.querySelector('span')!.textContent='Order B';
+  expect(()=>resolveRef(item.ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
+});
