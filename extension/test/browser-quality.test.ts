@@ -1,10 +1,18 @@
 import { takeSnapshot } from '../src/content/snapshot';
 import { resetRegistry, resolveRef } from '../src/content/refs';
-import { accessibleName } from '../src/content/dom';
+import { accessibleName, composedParent } from '../src/content/dom';
 import { runAction } from '../src/content/actions';
 
 const opts = { snapshotId: 1, frameId: 0, maxChars: 4000, offset: 0, checkLayout: false };
 beforeEach(() => { document.body.innerHTML = ''; resetRegistry(); });
+
+it('a removed anchor is stale and its URL host is never treated as a shadow host', () => {
+  document.body.innerHTML = '<a href="https://example.test/article">Article</a>';
+  const link = document.querySelector('a')!, ref = takeSnapshot(opts).elements[0]!.ref;
+  link.remove();
+  expect(() => resolveRef(ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
+  expect(composedParent(link)).toBeNull();
+});
 
 it('review: refuses a reused button when its row now denotes another record', () => {
   document.body.innerHTML = '<ul><li><span>A-1001</span><button>취소</button></li><li><span>B-2002</span><button>취소</button></li></ul>';

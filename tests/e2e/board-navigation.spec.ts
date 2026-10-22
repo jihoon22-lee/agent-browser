@@ -74,7 +74,8 @@ test('B02 SPA back with delayed list, same-node sorting and pagination',async()=
   const sorted=await snapshot(operationId);
   expect(sorted.frames[0].elements.find((e:any)=>e.name==='Post 2').href).toContain('post=2');
   await click(operationId,ref(sorted,'Next page'));
-  expect((await world.mcp.call('browser_click',{operationId,ref:ref(sorted,'Post 2')})).error?.code).toBe('STALE_ELEMENT');
+  const stalePage=await world.mcp.call('browser_click',{operationId,ref:ref(sorted,'Post 2')});
+  expect(stalePage.error?.code,JSON.stringify(stalePage)).toBe('STALE_ELEMENT');
   await click(operationId,ref(await snapshot(operationId),'Post 2'));
   await expect(page.getByRole('heading',{name:'Article 2'})).toBeVisible();
 });

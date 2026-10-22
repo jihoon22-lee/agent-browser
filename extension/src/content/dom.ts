@@ -4,7 +4,12 @@ export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick
   (el instanceof HTMLLabelElement && el.control instanceof HTMLInputElement && el.control.type === 'file') ||
   (el.hasAttribute('tabindex') && (el as HTMLElement).tabIndex>=0);
 
-export const composedParent = (el: Element): Element | null => el.parentElement ?? ((el.getRootNode() as ShadowRoot).host ?? null);
+export function composedParent(el: Element): Element | null {
+  if (el.parentElement) return el.parentElement;
+  const root = el.getRootNode();
+  // A detached anchor/area is its own root and has a URL `host` string.
+  return root instanceof ShadowRoot ? root.host : null;
+}
 export function isDisabled(el: Element): boolean {
   if (el.matches(':disabled')) return true;
   for (let node: Element | null = el; node; node = composedParent(node))
@@ -27,7 +32,7 @@ export function isPointerTarget(el: Element): boolean {
 }
 
 export function isRendered(el: Element, opts: { checkLayout: boolean }): boolean {
-  for (let n: Element | null = el; n; n = n.parentElement ?? ((n.getRootNode() as ShadowRoot).host ?? null)) {
+  for (let n: Element | null = el; n; n = composedParent(n)) {
     if ((n as HTMLElement).hidden) return false;
     const cs = getComputedStyle(n);
     if (cs.display === "none" || cs.visibility === "hidden") return false;
