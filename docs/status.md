@@ -4,6 +4,8 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 
 # 브라우저 품질 후속 — 2026-10-22, 드래그 개선·Linux 검증 완료
 
+리뷰 본문의 pointerdown/mousedown 피드백 경로도 수정했다. 포인터 이벤트 뒤에는 원래 컨트롤·부모·레코드 키·href를 확인하고, 주변 안내 텍스트 변화 때문에 실제 click을 누락시키지 않는다. 최초 입력 전 전체 레코드 검사는 유지한다. 수정 전 단위 **2개**·실제 브라우저 **1개** 실패, 수정 후 전체 단위 **599개**·관련 E2E **30개**와 링크 변경 차단 B08 **1개**가 통과했다. 빌드·타입 검사도 통과했다.
+
 추가 프레임 대기 리뷰도 수정했다. standalone `browser_wait(match:all)`의 본문 조건은 원래 documentId에 묶고, 조회 전·응답 후·반환 직전에 교체/제거를 확인해 `STALE_ELEMENT`로 거부한다. 액션 `waitFor`는 계속 도착 문서를 관찰한다. 수정 전 단위 **4개**·실제 브라우저 **1개** 실패를 확인했으며, 수정 후 확장 전체 **597개**, 관련 E2E **29개**, 빌드·타입 검사가 통과했다. 최종 원격 결과·병합은 아래 PR의 checks와 병합 기록에 남긴다.
 
 [PR #37](https://github.com/jihoon22-lee/agent-browser/pull/37)에 push했다. [첫 원격 CI 39776237431](https://github.com/jihoon22-lee/agent-browser/actions/runs/39776237431)은 양쪽 성공: Linux E2E **169 통과/3 제외**, 네이티브 Windows Chrome E2E **170 통과/2 제외**, 각각 5표본 품질 gate **13/13**. Windows는 Node 24.18.0·Chrome 155.0.8059.40·release exe이며 Rust·설치 수명주기·GUI 엔진·패키징 검사도 통과했다. 이 원격 실행은 로컬 WSL interop이나 설치 화면의 육안 검증을 대신하지 않는다. 리뷰 수정 후 최종 커밋의 CI·병합 상태는 PR checks와 병합 이력을 따른다.

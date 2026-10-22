@@ -107,3 +107,19 @@ test('Q08 a frame-bound match-all wait rejects a replacement document',async()=>
     expect(result.error?.code).toBe('STALE_ELEMENT');expect(result.executed).toBe('no');
   } finally {await worker.evaluate(()=>(globalThis as any).__boundWait.restore());}
 });
+test('Q09 pointer feedback does not suppress the subsequent click',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{
+    const card=document.createElement('article');card.innerHTML='<span>Idle</span><button>Feedback submit</button>';
+    const button=card.querySelector('button')!;button.dataset.clicks='0';
+    button.addEventListener('pointerdown',()=>{card.querySelector('span')!.textContent='Pressed';});
+    button.addEventListener('click',()=>{button.dataset.clicks=String(Number(button.dataset.clicks)+1);card.querySelector('span')!.textContent='Completed once';});
+    document.body.prepend(card);
+  });
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const ref=elements(snapshot).find((e:any)=>e.name==='Feedback submit').ref;
+  const result=await world.ok('browser_click',{operationId,ref,waitFor:{text:'Completed once',timeoutMs:1000}});
+  expect(result.verified?.expectationMet).toBe(true);
+  await expect(page.getByRole('button',{name:'Feedback submit'})).toHaveAttribute('data-clicks','1');
+  await expect(page.locator('article span')).toHaveText('Completed once');
+});

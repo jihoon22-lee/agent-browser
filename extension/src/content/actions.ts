@@ -249,8 +249,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       let finalPoint: Point;
       try {
         finalPoint = assertInteractable(el) ?? clickPoint(el);
-        // Pointer handlers can recycle a row or change href synchronously.
-        resolveRef(String(p.ref));
+        // Keep the original control, parent, record key and href after pointer
+        // feedback; ordinary sibling text can change as part of this same click.
+        resolveRef(String(p.ref),false,'target');
       } catch (error) {
         throw new ProtocolError('EXECUTION_UNKNOWN',
           'Pointer events were delivered, but the target changed before click. Inspect the page before continuing.',
