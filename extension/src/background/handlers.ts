@@ -409,8 +409,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         run.controller.signal.addEventListener('abort',cancel,{once:true});
         if(run.controller.signal.aborted)cancel();
         const timer=setTimeout(()=>controller.abort(new ProtocolError('TIMEOUT','The requested page conditions were not met. Inspect the page before another action.',executed?'never':'safe',{executed,expectationMet:false})),expected.timeoutMs);
-        const started=Date.now(),keys=CONDITION_KEYS.filter(k=>expected[k]!==undefined);
-        let injected=original.documentId;
+        const started=Date.now(),keys=CONDITION_KEYS.filter(k=>expected[k]!==undefined),originalDocumentId=original.documentId;
+        const staleWait=()=>new ProtocolError('STALE_ELEMENT','The waited-for document changed. Take a fresh snapshot before waiting again.');
+        let injected=originalDocumentId;
         try {
             return await interruptible((async()=>{
                 while(true){
@@ -427,22 +428,29 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                             // the enclosing document was actually replaced, including same-URL loads.
                             live=run.sourceTopDocument && top && top.documentId!==run.sourceTopDocument
                                 ? top : documents.find(f=>f.frameId===original.frameId);
+                            if(!executed && live?.documentId!==originalDocumentId)throw staleWait();
                             if(live){
                                 if(injected!==live.documentId){await interruptible(frames.inject(tabId,live),signal);injected=live.documentId;}
                                 const reply=await interruptible(api.sendToFrame(tabId,live,{kind:'cmd',method:'conditions',params:{...run.req.params,...expected,requestId:run.req.id+':conditions'}}),signal);
                                 const current=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===live!.frameId);
+                                if(!executed && current?.documentId!==originalDocumentId)throw staleWait();
                                 if(reply?.ok && current?.documentId===live.documentId) {
                                     for(const key of ['text','textGone'])if(typeof reply.result?.conditions?.[key]==='boolean')checks[key]=reply.result.conditions[key];
                                 }
                             }
-                        }catch(error){aborted(signal);if(error instanceof ProtocolError&&!['FRAME_UNAVAILABLE','STALE_ELEMENT'].includes(error.code))throw error;}
+                        }catch(error){aborted(signal);if(error instanceof ProtocolError&&((!executed&&error.code==='STALE_ELEMENT')||!['FRAME_UNAVAILABLE','STALE_ELEMENT'].includes(error.code)))throw error;}
                     }
                     const met=keys.filter(k=>checks[k]===true);
                     if(expected.match==='all'?met.length===keys.length:met.length>0){
                         const current=await interruptible(getTab(api,tabId),signal);
                         if(current.pendingUrl||current.url!==tab.url)continue;
+                        if(live){
+                            const finalFrame=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===live!.frameId);
+                            if(!executed && finalFrame?.documentId!==originalDocumentId)throw staleWait();
+                            if(finalFrame?.documentId!==live.documentId)continue;
+                        }
                         return {...(action??{executed:false}),verified:{...(action?.verified??{}),met:expected.match==='all'?'all':met[0],conditions:met,
-                            ...(executed?{expectationMet:true,urlChanged:action?.verified?.urlChanged===true||(sourceUrl!==undefined&&tab.url!==sourceUrl)||(live!==undefined&&live.documentId!==original.documentId)}:{})},elapsedMs:Date.now()-started};
+                            ...(executed?{expectationMet:true,urlChanged:action?.verified?.urlChanged===true||(sourceUrl!==undefined&&tab.url!==sourceUrl)||(live!==undefined&&live.documentId!==originalDocumentId)}:{})},elapsedMs:Date.now()-started};
                     }
                     await interruptible(new Promise(r=>setTimeout(r,100)),signal);
                 }

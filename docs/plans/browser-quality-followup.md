@@ -10,6 +10,7 @@
 - [x] [PR #37](https://github.com/jihoon22-lee/agent-browser/pull/37)을 만들고 첫 Linux/Windows CI 성공 및 13/13 품질 artifact를 확인했다.
 - [x] 리뷰에서 발견한 반응형 입력 확인·iframe의 최상위 이동 완료 조건을 단위/실제 브라우저 실패 검사부터 수정했다.
 - [x] 추가 리뷰의 workload 지문 누락을 수정했다. 코드·설정·harness 변경과 legacy 해시의 자동 비교를 거부하는 회귀 검사 및 실제 5표본 수집을 통과했다.
+- [x] standalone match-all 대기가 교체된 iframe 문서를 읽는 회귀를 수정했다. 원래 문서 바인딩을 유지하며 액션 완료 조건의 이동 관찰은 보존했다. 수정 전 단위 4개·브라우저 1개 실패, 수정 후 전체 단위 597개·관련 E2E 29개 통과.
 
 최종 커밋 CI와 main 병합 상태는 PR checks·병합 이력을 따른다. B10 원인 수정은 완료로 표시하지 않는다.
 

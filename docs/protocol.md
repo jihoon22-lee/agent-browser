@@ -168,6 +168,8 @@ background는 활성 worker에서 15초 주기, suspended worker에서는 1분 a
 
 조건은 OR이며 URL 조건은 frameRef/refGone 유무와 관계없이 탭의 최상위 URL을 관찰한다. 텍스트·refGone은 명시적 frameRef, 없으면 refGone의 프레임, 둘 다 없으면 최상위 문서를 사용한다. content 문서가 사라져도 URL 관찰은 timeout까지 유지한다. iframe의 문서 간 이동 후에는 새 snapshot을 요청한다. 다른 프레임의 같은 텍스트로 성공을 대신하지 않는다.
 
+`match:"all"`의 본문 조건도 대기를 시작한 문서에 묶인다. 같은 frameId라도 documentId가 교체되거나 프레임이 제거되면 `STALE_ELEMENT`이며, URL 조건과 함께 만족시키기 위해 새 문서의 텍스트를 대신 읽지 않는다. URL-only 대기는 기존처럼 탭 URL을 관찰한다. 액션 뒤 지정하는 `waitFor`는 그 액션의 도착 문서를 관찰하는 별도 흐름이므로 문서 이동을 따라간다.
+
 
 ## 게시판 탐색과 탭 닫기
 

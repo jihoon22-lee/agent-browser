@@ -112,6 +112,27 @@ it('waits in the snapshot-bound child document, rejects navigation and conflicti
     w.frames.get(1)![1]!.documentId='replacement';
     await expect(h(request('browser.wait',{frameRef,text:'body'}))).rejects.toMatchObject({code:'STALE_ELEMENT'});
 });
+it.each(['between-probes','during-probe','final-check','removed'])('match-all wait keeps its original frame document (%s)',async(phase)=>{
+  const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://example.test/child'});
+  const h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
+  const base=w.api.sendToFrame,readTabs=w.api.tabsGet;let probes=0,replaceOnTabRead=false;
+  w.api.tabsGet=async id=>{if(replaceOnTabRead){w.frames.get(1)![1]!.documentId='replacement';replaceOnTabRead=false;}return readTabs(id);};
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='conditions'){
+      probes++;
+      if(probes===1){
+        if(phase==='removed')w.frames.get(1)!.pop();
+        else if(phase==='final-check')replaceOnTabRead=true;
+        else w.frames.get(1)![1]!.documentId='replacement';
+      }
+      return {ok:true,result:{conditions:{text:phase!=='between-probes'||probes>1}}};
+    }
+    return base(tab,frame,msg);
+  };
+  await expect(h(request('browser.wait',{frameRef:snap.frames[1].frameRef,text:'Ready',urlIncludes:'/1',match:'all',timeoutMs:300})))
+    .rejects.toMatchObject({code:'STALE_ELEMENT'});
+  expect(probes).toBe(1);
+});
 it('lists tabs with attachability and returns flat tab metadata', async () => {
     const w = world(), h = createHandlers(w.api, memorySessionStore());
     expect(await h(request('browser.tabs.list'))).toMatchObject({ tabs: [{ tabId: 1, attachable: true }, { tabId: 2, attachable: true }, { tabId: 3, attachable: false }] });

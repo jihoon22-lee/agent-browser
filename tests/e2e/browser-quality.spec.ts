@@ -87,3 +87,23 @@ test('Q07 iframe input observes text in the destination top document',async()=>{
   await expect(page.locator('#title')).toHaveText('상세 iframe');
   expect(world.relay.commands.slice(start).filter(c=>c.method==='browser.click')).toHaveLength(1);
 });
+test('Q08 a frame-bound match-all wait rejects a replacement document',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{const frame=document.createElement('iframe');frame.id='waiting-frame';frame.src='frame-child.html';document.body.prepend(frame);});
+  await expect(page.frameLocator('#waiting-frame').locator('#child')).toBeVisible();
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const frameRef=snapshot.frames.find((f:any)=>f.url.endsWith('/frame-child.html')).frameRef;
+  const worker=world.context.serviceWorkers()[0];
+  await worker.evaluate(()=>{
+    const api=(globalThis as any).chrome,original=api.tabs.sendMessage.bind(api.tabs);
+    const state={reads:0,restore:()=>{api.tabs.sendMessage=original;}};(globalThis as any).__boundWait=state;
+    api.tabs.sendMessage=async(...args:any[])=>{const reply=await original(...args);if(args[1]?.method==='conditions')state.reads++;return reply;};
+  });
+  try {
+    const waiting=world.mcp.call('browser_wait',{operationId,frameRef,text:'에이전트 브라우저',urlIncludes:'/quality.html',match:'all',timeoutMs:3000});
+    await expect.poll(()=>worker.evaluate(()=>(globalThis as any).__boundWait.reads)).toBeGreaterThan(0);
+    await page.locator('#waiting-frame').evaluate((frame:HTMLIFrameElement)=>{frame.src='detail.html?id=wait-replacement';});
+    const result=await waiting;
+    expect(result.error?.code).toBe('STALE_ELEMENT');expect(result.executed).toBe('no');
+  } finally {await worker.evaluate(()=>(globalThis as any).__boundWait.restore());}
+});

@@ -1443,5 +1443,12 @@
       "qualityPassed": 13,
       "qualityTotal": 13
     }
+  },
+  "standaloneWaitFix": {
+    "unitFailuresBefore": 4,
+    "e2eFailuresBefore": 1,
+    "extensionUnitPassedAfter": 597,
+    "focusedE2EPassedAfter": 29,
+    "behavior": "Standalone match-all text conditions stay bound to the original document; replacement/removal returns STALE_ELEMENT. Action waitFor still follows destination documents."
   }
 }
