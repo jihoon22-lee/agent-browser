@@ -6,6 +6,10 @@ pub struct ToolDef { pub name: &'static str, pub description: &'static str, pub 
 /// Field descriptions repeated in every schema cost the most; the tool descriptions say where ids come from.
 fn op() -> Value { json!({"type":"string"}) }
 fn r#ref() -> Value { json!({"type":"string"}) }
+fn wait_for() -> Value { json!({"type":"object","properties":{
+    "text":{"type":"string","minLength":1,"maxLength":2000},"textGone":{"type":"string","minLength":1,"maxLength":2000},
+    "urlIncludes":{"type":"string","minLength":1,"maxLength":2000},"match":{"type":"string","enum":["all","any"]},
+    "timeoutMs":{"type":"integer","minimum":100,"maximum":30000}},"additionalProperties":false}) }
 
 pub fn all() -> Vec<ToolDef> {
     vec![
@@ -26,7 +30,7 @@ pub fn all() -> Vec<ToolDef> {
                 "offset":{"type":"integer","minimum":0},"limit":{"type":"integer","minimum":1,"maximum":50}},
                 "additionalProperties":false}) },
         ToolDef { name: "browser_snapshot", description:
-            "Re-read page text and elements with refs (DOM-based); actions already return one. query keeps only matching lines, rows and elements. Continue with offset/elementOffset/frameOffset.",
+            "Read page text and refs (DOM-based). Navigation, press and page-changing clicks already include one. query keeps matching lines, rows and elements. Continue with offset/elementOffset/frameOffset.",
             schema: json!({"type":"object","properties":{"operationId":op(),
                 "query":{"type":"string","maxLength":80},
                 "maxChars":{"type":"integer","minimum":200,"maximum":20000},
@@ -38,24 +42,25 @@ pub fn all() -> Vec<ToolDef> {
             schema: json!({"type":"object","properties":{"operationId":op(),
                 "action":{"type":"string","enum":["goto","back","forward","reload"]},
                 "url":{"type":"string"}},"additionalProperties":false}) },
-        ToolDef { name: "browser_click", description: "Click a ref (mode double, right, hover, or drag onto toRef); returns a snapshot if the page changed. newTab opens a link in a new operation tab.",
+        ToolDef { name: "browser_click", description: "Click a ref; double/right/hover/drag (toRef). For a known outcome, use waitFor text/textGone/urlIncludes in this tab (default all, 5s): waits then returns a snapshot, without replaying the click. newTab opens a link; cannot use waitFor.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean"},
-                "mode":{"type":"string","enum":["click","double","right","hover","drag"]},"toRef":{"type":"string"}},"required":["ref"],"additionalProperties":false}) },
+                "mode":{"type":"string","enum":["click","double","right","hover","drag"]},"toRef":{"type":"string"},"waitFor":wait_for()},"required":["ref"],"additionalProperties":false}) },
         ToolDef { name: "browser_fill", description: "Replace the text of an input, textarea or editable area.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"text":{"type":"string"}},"required":["ref","text"],"additionalProperties":false}) },
         ToolDef { name: "browser_select", description: "Choose a select option by value or label, or set checked on a checkbox/radio.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"option":{"type":"string"},"checked":{"type":"boolean"}},"required":["ref"],"additionalProperties":false}) },
-        ToolDef { name: "browser_press", description: "Press Enter, Tab, Escape, Space, Backspace, Delete, Home, End, PageUp, PageDown, an arrow, or with modifiers a letter/digit, on ref or the focused element; returns a snapshot.",
+        ToolDef { name: "browser_press", description: "Press Enter/Tab/Escape/Space/Backspace/Delete/Home/End/PageUp/PageDown/arrows, or a modified letter/digit, on ref or focus; returns a snapshot. Optional waitFor works like click (default all, 5s).",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "key":{"type":"string","maxLength":10},
-                "modifiers":{"type":"array","items":{"enum":["Control","Shift","Alt","Meta"]},"maxItems":4}},
+                "modifiers":{"type":"array","items":{"enum":["Control","Shift","Alt","Meta"]},"maxItems":4},"waitFor":wait_for()},
                 "required":["key"],"additionalProperties":false}) },
         ToolDef { name: "browser_scroll", description: "Scroll the page or a ref container.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["direction"],"additionalProperties":false}) },
-        ToolDef { name: "browser_wait", description: "Wait until any of text, textGone, refGone or urlIncludes holds, or timeout.",
+        ToolDef { name: "browser_wait", description: "Wait for text/textGone/refGone/urlIncludes. Default any; match=all combines text and URL conditions (without refGone).",
             schema: json!({"type":"object","properties":{"operationId":op(),"text":{"type":"string"},"textGone":{"type":"string"},
                 "refGone":{"type":"string"},"urlIncludes":{"type":"string"},"frameRef":{"type":"string"},
+                "match":{"type":"string","enum":["any","all"]},
                 "timeoutMs":{"type":"integer","minimum":100,"maximum":30000}},
                 "additionalProperties":false}) },
         ToolDef { name: "browser_extract", description: "Extract text, selection or a table (ref, else the first table); continue with nextOffset.",
@@ -97,7 +102,7 @@ mod tests {
     #[test]
     fn total_schema_size_stays_small_for_free_models() {
         let size: usize = super::all().iter().map(|t| t.description.len() + t.schema.to_string().len()).sum();
-        assert!(size < 4800, "tool definitions grew to {size} chars");
+        assert!(size < 6000, "tool definitions grew to {size} chars");
     }
 
     #[test]

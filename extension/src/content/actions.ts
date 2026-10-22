@@ -3,7 +3,7 @@ import { partlyDelivered, requestTrusted, trustedFrame } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
-import { waitFor } from "./wait";
+import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
 import { INPUT_TEXT, keyOf, preparePress, pressKey } from "./keyboard";
@@ -210,7 +210,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const modeNote = mode === "click" ? {} : { mode };
       const point = assertInteractable(el) ?? clickPoint(el);
       const unmark = highlight(el);
-      const changes = observeChanges(500, signal);
+      const changes = observeChanges(p.waitFor ? 0 : 500, signal);
       void changes.then(unmark, unmark);
       let trustedReason: string | undefined;
       if (p.trusted === true && trustedFrame()) {
@@ -341,7 +341,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         // The same checks as a DOM key press run first: a real key must not reach another element.
         const target = preparePress(p, assertInteractable);
         if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
-        const changes = observeChanges(500, signal);
+        const changes = observeChanges(p.waitFor ? 0 : 500, signal);
         void changes.catch(() => {});
         const { key, modifiers } = keyOf(p);
         const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key, ...(modifiers.length ? { modifiers } : {}) });
@@ -357,6 +357,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     case "upload": return upload(p, signal);
     case "scroll": return scroll(p);
     case "wait": return waitFor(p, signal);
+    case "conditions": return {conditions:textConditions(p)};
     case "extract": return extract(p);
     default: throw new ProtocolError("INVALID_PARAMS", `Unknown action ${method}`);
   }

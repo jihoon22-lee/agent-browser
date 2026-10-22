@@ -35,6 +35,41 @@ async function firstRef(h: ReturnType<typeof createHandlers>, tabId = 1) {
     const result: any = await h(request('browser.snapshot', { tabId }));
     return result.frames[0].elements[0].ref as string;
 }
+it('waitFor follows the destination document without redispatching its click',async()=>{
+  const w=world();let clicks=0,reads=0;
+  const base=w.api.sendToFrame;
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){clicks++;return {ok:true,result:{executed:true,verified:{domChanged:true,urlChanged:false}}};}
+    if(msg.method==='conditions'){
+      reads++;
+      if(reads===1){w.frames.get(1)![0]!.documentId='next';w.tabs.get(1)!.url='https://example.test/next';return {ok:true,result:{conditions:{text:false}}};}
+      return {ok:true,result:{conditions:{text:true}}};
+    }
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  const result:any=await h(request('browser.click',{ref,waitFor:{text:'Ready',urlIncludes:'/next',timeoutMs:1000}}));
+  expect(result.verified).toMatchObject({expectationMet:true,urlChanged:true});
+  expect(clicks).toBe(1);expect(reads).toBeGreaterThanOrEqual(2);
+});
+it('an unmet postcondition reports the action as executed and never repeats it',async()=>{
+  const w=world();let clicks=0;const base=w.api.sendToFrame;
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){clicks++;return {ok:true,result:{executed:true,verified:{domChanged:true,urlChanged:false}}};}
+    if(msg.method==='conditions')return {ok:true,result:{conditions:{text:false}}};
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  await expect(h(request('browser.click',{ref,waitFor:{text:'Never',timeoutMs:100}}))).rejects.toMatchObject({code:'TIMEOUT',retry:'never',details:{executed:true}});
+  expect(clicks).toBe(1);
+});
+it('rejects an empty or malformed waitFor before any input is sent',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  for(const waitFor of [{}, {text:''}, {text:'Ready',match:'invalid'}, {text:'Ready',timeoutMs:-1}]){
+    await expect(h(request('browser.click',{ref,waitFor}))).rejects.toMatchObject({code:'INVALID_PARAMS'});
+  }
+  expect(w.sent.some(s=>s.msg.method==='click')).toBe(false);
+});
 it('waits in the snapshot-bound child document, rejects navigation and conflicting refs',async()=>{
     const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://other.test/mail'});
     const h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));

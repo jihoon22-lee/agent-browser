@@ -7,6 +7,7 @@ import { RefTable, snapshotToken } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
+import { pageConditions, CONDITION_KEYS, type PageConditions } from '../protocol/conditions';
 const WRITE = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
 const SNAPSHOT_RESPONSE_BYTES = 28_000;
@@ -125,11 +126,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             }
             const confirmed = {...result,...children};
             if (tracksTabs) run.confirmed = confirmed;
-            return lateNavigation(tabId, startUrl, confirmed, run.controller.signal);
+            return run.req.params.waitFor ? confirmed : lateNavigation(tabId, startUrl, confirmed, run.controller.signal);
         }
         // Only a click or key press is final once its frame replies; a snapshot still has frames to read.
         if (tracksTabs) run.confirmed = response.result;
-        return lateNavigation(tabId, startUrl, response.result, run.controller.signal);
+        return run.req.params.waitFor ? response.result : lateNavigation(tabId, startUrl, response.result, run.controller.signal);
     }
     /** A script may navigate a moment after the click's own observation window closed. Only a
      * reply that saw no change at all is checked, and only for this observable tab condition. */
@@ -153,6 +154,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     async function dispatch(run: Running, snapshotAttempt = 0, snapshotDeadline = Date.now()+2000): Promise<unknown> {
         const { req, controller } = run, p = req.params, signal = controller.signal;
         await check(req, signal);
+        const expected = p.waitFor == null ? undefined : pageConditions(p.waitFor);
+        if(expected && (!['browser.click','browser.press'].includes(req.method)||p.newTab===true))
+            throw new ProtocolError('INVALID_PARAMS','waitFor is for click/press in the same tab; newTab does not support it.');
+        if(req.method==='browser.wait'&&p.match==='all'&&p.refGone!==undefined)
+            throw new ProtocolError('INVALID_PARAMS','match=all supports text, textGone and urlIncludes. Wait for refGone separately.');
         if (req.method === 'browser.bookmarks') return readBookmarks(api.bookmarks,p);
         if (req.method === 'browser.tabs.list')
             return { tabs: (await api.tabsQuery(typeof p.windowId === 'number' ? {windowId:p.windowId} : {})).map(describeTab) };
@@ -350,6 +356,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 await check(req, signal);
                 return frame;
             };
+            if(req.method==='browser.wait'&&p.match==='all') {
+                const frame=await prepare();
+                return waitForConditions(tabId,frame,pageConditions(Object.fromEntries([...CONDITION_KEYS,'match','timeoutMs'].filter(k=>p[k]!==undefined).map(k=>[k,p[k]]))),run);
+            }
             if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
@@ -377,9 +387,60 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // and page readiness are observed by later snapshot/wait calls.
                 return {executed:true,openedTabs:[{...describeTab(created),pendingUrl:created.pendingUrl??(!isWeb(created.url)?url:undefined),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
             }
-            return send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, panelRequestId: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
+            const result = await send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, panelRequestId: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
+            if(expected)run.confirmed=result;
+            return expected ? waitForConditions(tabId,frame,expected,run,result,tab.url) : result;
         }
         throw new ProtocolError('FORBIDDEN_METHOD', `Unknown browser method ${req.method}.`);
+    }
+    /** Re-read conditions in the current document; navigation retries only these read-only probes.
+     * The click/key is never resent, and the whole waiter (including Chrome API calls) is bounded. */
+    async function waitForConditions(tabId:number, original:FrameInfo, expected:PageConditions, run:Running, action?:any, sourceUrl?:string) {
+        const executed=action!==undefined;
+        if(action?.openedTabs?.length)throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','The action opened another tab. Inspect its snapshot before waiting there.','never',{executed:true});
+        const controller=new AbortController(),signal=controller.signal;
+        const cancel=()=>controller.abort(run.controller.signal.reason??cancelled());
+        run.controller.signal.addEventListener('abort',cancel,{once:true});
+        if(run.controller.signal.aborted)cancel();
+        const timer=setTimeout(()=>controller.abort(new ProtocolError('TIMEOUT','The requested page conditions were not met. Inspect the page before another action.',executed?'never':'safe',{executed,expectationMet:false})),expected.timeoutMs);
+        const started=Date.now(),keys=CONDITION_KEYS.filter(k=>expected[k]!==undefined);
+        let injected=original.documentId;
+        try {
+            return await interruptible((async()=>{
+                while(true){
+                    aborted(signal);
+                    const tab=await interruptible(getTab(api,tabId),signal);
+                    requireWeb(tab.url);
+                    const checks:Record<string,boolean>={};
+                    if(expected.urlIncludes!==undefined)checks.urlIncludes=!tab.pendingUrl&&!!tab.url?.includes(expected.urlIncludes);
+                    let live:FrameInfo|undefined;
+                    if(!tab.pendingUrl && (expected.text!==undefined||expected.textGone!==undefined)){
+                        try{
+                            live=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===original.frameId);
+                            if(live){
+                                if(injected!==live.documentId){await interruptible(frames.inject(tabId,live),signal);injected=live.documentId;}
+                                const reply=await interruptible(api.sendToFrame(tabId,live,{kind:'cmd',method:'conditions',params:{...run.req.params,...expected,requestId:run.req.id+':conditions'}}),signal);
+                                const current=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===live!.frameId);
+                                if(reply?.ok && current?.documentId===live.documentId) {
+                                    for(const key of ['text','textGone'])if(typeof reply.result?.conditions?.[key]==='boolean')checks[key]=reply.result.conditions[key];
+                                }
+                            }
+                        }catch(error){aborted(signal);if(error instanceof ProtocolError&&!['FRAME_UNAVAILABLE','STALE_ELEMENT'].includes(error.code))throw error;}
+                    }
+                    const met=keys.filter(k=>checks[k]===true);
+                    if(expected.match==='all'?met.length===keys.length:met.length>0){
+                        const current=await interruptible(getTab(api,tabId),signal);
+                        if(current.pendingUrl||current.url!==tab.url)continue;
+                        return {...(action??{executed:false}),verified:{...(action?.verified??{}),met:expected.match==='all'?'all':met[0],conditions:met,
+                            ...(executed?{expectationMet:true,urlChanged:action?.verified?.urlChanged===true||(sourceUrl!==undefined&&tab.url!==sourceUrl)||(live!==undefined&&live.documentId!==original.documentId)}:{})},elapsedMs:Date.now()-started};
+                    }
+                    await interruptible(new Promise(r=>setTimeout(r,100)),signal);
+                }
+            })(),signal);
+        }catch(error){
+            if(executed && error instanceof ProtocolError)throw new ProtocolError(error.code,error.message,'never',{...(error.details&&typeof error.details==='object'?error.details:{}),executed:true,expectationMet:false});
+            throw error;
+        }finally{clearTimeout(timer);controller.abort(cancelled());run.controller.signal.removeEventListener('abort',cancel);}
     }
     async function urlWait(tabId: number, p: Record<string, unknown>, run: Running, prepare: () => Promise<FrameInfo>) {
         const signal = run.controller.signal;
@@ -438,8 +499,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             let error = asError(e);
             // Cancelled while only watching for a late navigation: the action ran and was confirmed.
             if (error.code === 'CANCELLED' && run.confirmed !== undefined) {
-                if (claimed) await store.saveResult(req.id, { ok: true, result: run.confirmed });
-                return run.confirmed;
+                if(req.params.waitFor)error=new ProtocolError('CANCELLED','Stopped after the action, before its expected page state was confirmed.','never',{executed:true,expectationMet:false});
+                else {
+                    if (claimed) await store.saveResult(req.id, { ok: true, result: run.confirmed });
+                    return run.confirmed;
+                }
             }
             if (run.started && error.code === 'INTERNAL')
                 error = new ProtocolError('EXECUTION_UNKNOWN', 'The action was dispatched but its outcome could not be confirmed. Inspect the page before retrying.', 'unsafe');

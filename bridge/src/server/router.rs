@@ -125,6 +125,29 @@ fn check_url(url: &str) -> Result<(), RpcError> {
 
 /// Checks that depend on which action was asked for.
 fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
+    if let Some(wait) = args.get("waitFor").filter(|v| !v.is_null()) {
+        if !matches!(name,"browser_click"|"browser_press") || args["newTab"]==true {
+            return Err(invalid("waitFor is only for click/press in the same tab, without newTab"));
+        }
+        let fields=wait.as_object().ok_or_else(||invalid("waitFor must be an object"))?;
+        if fields.keys().any(|k| !["text","textGone","urlIncludes","match","timeoutMs"].contains(&k.as_str())) {
+            return Err(invalid("Unknown waitFor condition"));
+        }
+        let mut count=0;
+        for key in ["text","textGone","urlIncludes"] {
+            if let Some(value)=fields.get(key).filter(|v|!v.is_null()) {
+                let text=value.as_str().ok_or_else(||invalid("waitFor conditions must be text"))?;
+                if text.trim().is_empty()||text.encode_utf16().count()>2000 {return Err(invalid("waitFor conditions need 1..2000 characters"));}
+                count+=1;
+            }
+        }
+        if count==0 {return Err(invalid("waitFor needs text, textGone or urlIncludes"));}
+        if fields.get("match").is_some_and(|v|!v.is_null() && !matches!(v.as_str(),Some("all"|"any"))) {return Err(invalid("waitFor match must be all or any"));}
+        if fields.get("timeoutMs").is_some_and(|v|!v.is_null() && !v.as_u64().is_some_and(|ms|(100..=30000).contains(&ms))) {return Err(invalid("waitFor timeoutMs must be 100..30000"));}
+    }
+    if name=="browser_wait" && args["match"]=="all" && args.get("refGone").is_some_and(|v|!v.is_null()) {
+        return Err(invalid("match=all combines text and URL conditions; wait for refGone separately"));
+    }
     match name {
         "browser_tabs" => match args["action"].as_str() {
             Some("new") if args["url"].as_str().is_some_and(|url| url != "about:blank") => check_url(args["url"].as_str().unwrap()),
@@ -145,6 +168,9 @@ fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
 }
 
 fn timeout_for(name: &str, args: &Value) -> Duration {
+    if matches!(name,"browser_click"|"browser_press") && args.get("waitFor").is_some_and(|v|!v.is_null()) {
+        return DEFAULT_TIMEOUT+Duration::from_millis(args["waitFor"]["timeoutMs"].as_u64().unwrap_or(5000))+Duration::from_secs(3);
+    }
     match name {
         "browser_wait" => Duration::from_millis(args["timeoutMs"].as_u64().unwrap_or(5000)) + Duration::from_secs(3),
         "browser_navigate" => NAVIGATE_TIMEOUT,
@@ -445,7 +471,7 @@ async fn add_open_tabs(state: &ServerState, args: &Value, outcome: &mut ToolOutc
 /// Unchanged pages keep their refs, so an unchanged click returns none and saves context.
 fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
     match name {
-        "browser_click" | "browser_upload" => outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
+        "browser_click" | "browser_upload" => outcome.verified["expectationMet"] == true || outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
         "browser_press" | "browser_navigate" => true,
         "browser_tabs" => match args["action"].as_str() {
             Some("attach" | "switch") => true,
@@ -807,6 +833,23 @@ mod tests {
     fn follow_up_reads_fit_inside_the_mcp_reply_window() {
         // A new tab (NAVIGATE_TIMEOUT) plus its snapshot and tab list must answer before the MCP client gives up.
         assert!(NAVIGATE_TIMEOUT + FOLLOW_UP_TIMEOUT * 2 < crate::mcp::client::REPLY_WAIT);
+    }
+
+    #[test]
+    fn completion_conditions_are_validated_before_dispatch() {
+        for conditions in [json!({}),json!({"text":""}),json!({"text":"Ready","timeoutMs":-1}),json!({"text":"Ready","match":"wrong"}),json!({"text":"Ready","selector":"body"}),json!(true)] {
+            assert!(validate_action("browser_click",&json!({"ref":"s1f0e1","waitFor":conditions})).is_err(),"{conditions}");
+        }
+        assert!(validate_action("browser_click",&json!({"ref":"s1f0e1","newTab":true,"waitFor":{"text":"Ready"}})).is_err());
+        assert!(validate_action("browser_click",&json!({"ref":"s1f0e1","waitFor":{"text":"Ready","urlIncludes":"/next","timeoutMs":30000}})).is_ok());
+    }
+    #[test]
+    fn completion_wait_gets_its_own_time_budget_and_an_attached_snapshot() {
+        let args=json!({"waitFor":{"text":"Ready","timeoutMs":30000}});
+        assert!(timeout_for("browser_click",&args)>Duration::from_secs(30));
+        assert!(timeout_for("browser_click",&args)+FOLLOW_UP_TIMEOUT<crate::mcp::client::REPLY_WAIT);
+        let outcome=ToolOutcome::success("browser_click",Some("op"),true,Executed::Yes,json!({"expectationMet":true}),json!({}));
+        assert!(wants_snapshot("browser_click",&args,&outcome));
     }
 
     #[tokio::test]
