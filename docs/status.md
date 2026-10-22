@@ -2,6 +2,17 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+# 브라우저 성능·정확도 검토 — 2026-10-22, 구현 미착수
+
+main `e576472`의 브라우저 제어 경로를 검토했다. [상세 검토와 개선 순서](./review-browser-performance-2026-10-22.md), [합성 측정 결과](./reference/browser-performance-2026-10-22.json).
+
+- **실행:** 관련 기존 Vitest 72개 통과. 임시 개선 조건 probe 6개는 모두 실패하여 행 재사용 ref, 이름 우선순위/ShadowRoot 레이블, aria-disabled, 입력 원복 검증, 검색 후 행 문맥 누락을 확인했다. 제품 수정은 하지 않았으며 임시 테스트 파일은 제거했다.
+- **격리 Linux 실측:** 현재 소스의 확장 빌드·Linux debug Bridge 빌드 후 Chromium 156.0.8078.4 headless에서 MCP→Bridge→확장 경로로 측정/재현 시나리오 2개 실행. 예열 1회+7회 중앙값: 변화 없는 클릭 1,622.2ms, DOM 변화 클릭+snapshot 671.3ms, 5,000행 일반 snapshot 145.0ms, 일치 없는 query 892.1ms. 소표본이고 relay를 포함하므로 Windows 성능/SLA가 아니다.
+- **실제 Chromium 재현:** A-1001 행의 버튼 노드를 C-3003에 재사용하면 이전 ref가 C-3003을 클릭함. fill 결과는 matches=true인데 실제 값은 microtask에서 원복됨. smooth scroll은 0을 반환한 뒤 실제로 이동. 중간 DOM 변경 뒤 1초 지연 이동은 663.8ms에 출발 페이지 snapshot을 반환함.
+- **미실행:** 이번 실제 Windows·실제 모델 호출·B10 원인 재현. 기존 사용자 WSL 실사용 확인과 별도로 정량 모델 성공률/속도 비교는 하지 않았다. 제품 코드·전역 설정·사용자 Chrome 프로필 변경 없음.
+
+---
+
 # v0.2.1 Windows preview — 게시 완료 (2026-10-22)
 
 [v0.2.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.2.1)(prerelease)을 **2026-10-22 00:13:00 UTC / 09:13:00 KST**에 게시했다. 주석 태그 `v0.2.1` → main `786fee5316464569d10c5b4cc5b571231cb70873`([PR #35](https://github.com/jihoon22-lee/agent-browser/pull/35) 병합 커밋). v0.2.0 뒤의 변경은 serve.pid 시작 경합 수정 하나다.
