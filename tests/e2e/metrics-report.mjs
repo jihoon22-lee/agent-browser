@@ -10,7 +10,7 @@ export function distribution(values) {
   const sorted = [...values].sort((a,b)=>a-b), at = p => sorted[Math.max(0,Math.ceil(p*sorted.length)-1)];
   return {n:sorted.length,p50:round(at(.5)),p95:round(at(.95)),min:round(sorted[0]),max:round(sorted.at(-1))};
 }
-const sum = (items,key) => items.reduce((n,item)=>n+(Number.isFinite(item[key]) ? item[key] : 0),0);
+const sum = (items,key) => items.length&&items.every(item=>Number.isFinite(item[key])) ? items.reduce((n,item)=>n+item[key],0) : null;
 const measured = (items,key) => distribution(items.map(x=>x[key]).filter(Number.isFinite));
 export function summarize(run) {
   if(run.schemaVersion !== 1) throw new Error('Unsupported metrics schema');
@@ -22,7 +22,7 @@ export function summarize(run) {
     outcomeBytes:measured(calls,'outcomeBytes'),browserMs:measured(calls,'browserMs'),snapshotMs:measured(calls,'snapshotMs'),
     longTaskMaxMs:measured(calls,'longTaskMaxMs'),longTaskCount:sum(calls,'longTaskCount'),
   }));
-  const oracles=(run.oracles??[]).map(o=>({scenario:o.scenario,passed:o.passed===true,...Object.fromEntries(['wrongTarget','falseSuccess','duplicateWrites','postCancelWrites'].map(k=>[k,Number.isFinite(o[k])?o[k]:0]))}));
+  const oracles=(run.oracles??[]).map(o=>({scenario:o.scenario,passed:o.passed===true,...Object.fromEntries(['wrongTarget','falseSuccess','duplicateWrites','postCancelWrites'].map(k=>[k,Number.isFinite(o[k])?o[k]:null]))}));
   const quality=oracles.length?{n:oracles.length,passed:oracles.filter(o=>o.passed).length,...Object.fromEntries(['wrongTarget','falseSuccess','duplicateWrites','postCancelWrites'].map(k=>[k,sum(oracles,k)]))}:null;
   return {schemaVersion:1,label:run.label,createdAt:run.createdAt??null,complete:run.complete===true,
     environment:Object.fromEntries([...dimensions,'nodeVersion','sourceRevision','extensionSha256','bridgeSha256'].map(k=>[k,run.environment[k]??null])),

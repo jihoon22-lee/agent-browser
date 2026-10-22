@@ -32,8 +32,8 @@ test('collect browser timing and actual-state quality metrics',async()=>{
     const page=await world.open('quality.html');
     let operationId=await world.attach(page);
     const monitor=async()=>page.evaluate(()=>{
-      const w=window as any;w.qualityLongTasks=[];
-      if(PerformanceObserver.supportedEntryTypes.includes('longtask'))new PerformanceObserver(list=>{for(const e of list.getEntries())w.qualityLongTasks.push({start:e.startTime,duration:e.duration});}).observe({type:'longtask',buffered:true});
+      const w=window as any,supported=PerformanceObserver.supportedEntryTypes.includes('longtask');w.qualityLongTasks=supported?[]:null;
+      if(supported)new PerformanceObserver(list=>{for(const e of list.getEntries())w.qualityLongTasks.push({start:e.startTime,duration:e.duration});}).observe({type:'longtask',buffered:true});
     });
     await monitor();
     const ref=(s:any,name:string)=>s.frames.flatMap((f:any)=>f.elements).find((e:any)=>e.name===name)?.ref;

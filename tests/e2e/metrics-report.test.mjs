@@ -18,6 +18,8 @@ test('empty measurements are missing, not perfect zero scores',()=>{
   assert.equal(distribution([]),null);
   assert.throws(()=>distribution([NaN]),/finite/);
   assert.equal(summarize({...run(),oracles:[]}).quality,null);
+  assert.equal(summarize(run([{...sample(10),longTaskCount:null}])).timings[0].longTaskCount,null);
+  assert.equal(summarize({...run(),oracles:[{scenario:'partial',passed:false}]}).quality.wrongTarget,null);
 });
 test('comparison refuses unlike environments and missing scenarios',()=>{
   const before=run([sample(100)]),after=run([sample(50)]);
