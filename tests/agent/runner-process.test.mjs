@@ -48,16 +48,18 @@ else if(argv[0]==='run'){
   const exe = join(root, 'browser-bridge.exe');
   await writeFile(exe, `#!/usr/bin/env node
 const { createInterface } = require('node:readline');
+let tabLists=0;
 createInterface({input:process.stdin}).on('line',line=>{
  const q=JSON.parse(line);if(!q.id)return;
  let result;
  if(q.method==='initialize')result={serverInfo:{name:'agent-browser'}};
  else if(q.method==='tools/list')result={tools:${JSON.stringify(TOOL_NAMES.map(name => ({ name })))}};
- else result={content:[{type:'text',text:JSON.stringify({ok:true,tool:'browser_tabs',delivered:true,data:{tabs:[{tabId:1,url:${JSON.stringify(fixtureUrl + '/search.html')}}]}})}]};
+ else {const tabs=[{tabId:1,url:${JSON.stringify(fixtureUrl + '/search.html')}}];if(++tabLists>1)tabs.push({tabId:2,url:${JSON.stringify(fixtureUrl + '/detail.html?id=1')}});result={content:[{type:'text',text:JSON.stringify({ok:true,tool:'browser_tabs',delivered:true,data:{tabs}})}]};}
  console.log(JSON.stringify({jsonrpc:'2.0',id:q.id,result}));
 });
 `, { mode: 0o755 });
-  const { stdout } = await exec(process.execPath, ['tests/agent/run-agent.mjs', 'opencode/synthetic-free', '1', '--opencode', opencode, '--exe', exe, '--bridge-home', 'C:\\Synthetic Agent Test\\home', '--bridge-port', '4317', '--fixture-url', fixtureUrl, '--price-source', 'refresh'], { timeout: 20000 });
+  for(const mode of ['guided','goal']){
+  const { stdout } = await exec(process.execPath, ['tests/agent/run-agent.mjs', 'opencode/synthetic-free', '1', '--opencode', opencode, '--exe', exe, '--bridge-home', 'C:\\Synthetic Agent Test\\home', '--bridge-port', '4317', '--fixture-url', fixtureUrl, '--price-source', 'refresh','--task-mode',mode], { timeout: 20000 });
   const resultDir = stdout.match(/^Evidence directory: (.+)$/m)?.[1];
   assert.ok(resultDir);
   t.after(() => rm(resultDir, { recursive: true, force: true }));
@@ -69,4 +71,9 @@ createInterface({input:process.stdin}).on('line',line=>{
   assert.deepEqual(summary.runs[0].sessionIds, ['synthetic-session']);
   assert.ok((await readFile(join(resultDir, 'run-1.jsonl'), 'utf8')).includes('synthetic-session'));
   assert.equal(JSON.parse(await readFile(join(resultDir, 'run-1-fixture.json'), 'utf8')).events.length, 1);
+  const metrics=JSON.parse(await readFile(join(resultDir,'metrics.json'),'utf8'));
+  assert.equal(metrics.taskMode,mode);assert.equal(metrics.runs[0].metrics.toolCalls,5);
+  assert.equal(metrics.runs[0].metrics.tokens,null);
+  assert((await readFile(join(resultDir,'report.html'),'utf8')).includes('미측정'));
+  }
 });

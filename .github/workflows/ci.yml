@@ -79,12 +79,27 @@ jobs:
         run: |
           node --test tests/fixtures/server.test.mjs tests/fixtures/opencode.test.mjs \
             tests/agent/runner.test.mjs tests/agent/runner-process.test.mjs \
+            tests/agent/metrics.test.mjs tests/e2e/metrics-report.test.mjs \
             tests/e2e/interop-check.test.mjs tests/e2e/runtime.test.ts \
             tests/install/wsl-probe.test.mjs
       - name: Install locked Playwright Chromium and system libraries
         run: pnpm --filter agent-browser-e2e exec playwright install --with-deps chromium
       - name: Linux Chromium extension E2E with synthetic APIs
         run: pnpm --filter agent-browser-e2e exec playwright test
+      - name: Collect synthetic browser quality metrics (Linux)
+        env:
+          AB_METRICS_RUN: ci-linux
+          AB_METRICS_SAMPLES: '5'
+          AB_METRICS_REQUIRE_QUALITY: '1'
+        run: pnpm bench:browser
+      - name: Upload numeric browser metrics and HTML report (Linux)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-browser-metrics-${{ github.run_id }}
+          path: tests/agent/results/browser-metrics/ci-linux/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload synthetic E2E failure evidence
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -141,6 +156,20 @@ jobs:
         env:
           AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe
         run: node tests/e2e/request-target.windows.mjs
+      - name: Collect synthetic browser quality metrics (Windows)
+        env:
+          AB_METRICS_RUN: ci-windows
+          AB_METRICS_SAMPLES: '5'
+          AB_METRICS_REQUIRE_QUALITY: '1'
+        run: node tests/e2e/windows-run.ts -- --config metrics.config.ts
+      - name: Upload numeric browser metrics and HTML report (Windows)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-browser-metrics-${{ github.run_id }}
+          path: tests/agent/results/browser-metrics/ci-windows/
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Native Windows synthetic bookmark permission fixture
         env:
           AB_TEST_BOOKMARKS: '1'

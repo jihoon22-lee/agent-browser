@@ -27,7 +27,8 @@ for(const [source,target] of [[testPkg,'@playwright/test'],[playwrightPkg,'playw
 cpSync(join(root,'tests/e2e'),join(dest,'tests/e2e'),{recursive:true,filter:p=>!/(?:^|\/)(?:node_modules|\.artifacts|test-results)(?:\/|$)/.test(p)});
 cpSync(join(root,'tests/fixtures'),join(dest,'tests/fixtures'),{recursive:true});
 mkdirSync(join(dest,'tests/agent/workspace'),{recursive:true});
-cpSync(join(root,'tests/agent/runner-lib.mjs'),join(dest,'tests/agent/runner-lib.mjs'));
+for(const name of ['runner-lib.mjs','run-agent.mjs','mcp-probe.mjs','metrics.mjs','pricing.mjs','prompt.md','goal-prompt.md'])
+ cpSync(join(root,'tests/agent',name),join(dest,'tests/agent',name));
 cpSync(join(root,'tests/agent/workspace/opencode.json.template'),join(dest,'tests/agent/workspace/opencode.json.template'));
 mkdirSync(join(dest,'docs/reference'),{recursive:true});
 cpSync(join(root,'docs/reference/opencode-1.18.29-openapi.json'),join(dest,'docs/reference/opencode-1.18.29-openapi.json'));
