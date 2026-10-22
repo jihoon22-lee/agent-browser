@@ -2,9 +2,16 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
-# v0.2.1 릴리스 준비 — 2026-10-22 KST, 미게시
+# v0.2.1 Windows preview — 게시 완료 (2026-10-22)
 
-브랜치 `release/0.2.1`. v0.2.0 뒤의 변경은 serve.pid 시작 경합 수정 하나다. Bridge·Extension 버전을 0.2.1로 올리고 CHANGELOG·설치 문서를 갱신했다. 완료된 계획 문서(`docs/plans/`)를 정리하고 이 문서를 현재 상태만 남기도록 줄였다.
+[v0.2.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.2.1)(prerelease)을 **2026-10-22 00:13:00 UTC / 09:13:00 KST**에 게시했다. 주석 태그 `v0.2.1` → main `786fee5316464569d10c5b4cc5b571231cb70873`([PR #35](https://github.com/jihoon22-lee/agent-browser/pull/35) 병합 커밋). v0.2.0 뒤의 변경은 serve.pid 시작 경합 수정 하나다.
+
+- **배포 ZIP:** 3,846,920 bytes / 37 files, SHA256 **`aaab927825e3cc98d347e41ff4d4f21a98ad5e6b71b97da76205425b467cb3c5`**(GitHub asset digest 일치), `SHA256SUMS` 별도 자산.
+- **빌드 경로(이번만 다름):** WSL interop이 `UtilAcceptVsock accept4 failed 110`으로 2시간 넘게 멈춰 `build-release-wsl.sh`(Windows에서 `--version` 확인 필요)를 실행하지 못했다. WSL 재시작은 할 수 없었다. 대신 태그 커밋의 [main CI 39693158602](https://github.com/jihoon22-lee/agent-browser/actions/runs/39693158602) Windows 작업이 `build-release.ps1`로 만든 artifact `windows-x64-package-786fee5…`를 게시했다. 그 작업이 Windows에서 `--version`을 확인했다. 받은 ZIP의 package-manifest 해시 36개가 모두 일치했고, 스크립트·문서 15개는 `786fee5`와 바이트 단위로 같았다.
+- **CI(같은 Windows 작업, 이 exe·ZIP):** PowerShell 5.1 설치 수명주기 14개 + 프로세스 검사, 런타임 정리 4개, 패키징·보안·진단·JSONC, GUI 엔진 설치·업데이트·롤백·제거와 설치 마법사 회귀, Windows Chrome E2E 163개 통과. Linux 작업도 성공.
+- **게시본 재다운로드:** `sha256sum -c` 통과, CI artifact와 ZIP·SHA256SUMS 바이트 일치.
+- **실행하지 않음:** 로컬 실제 Windows 검사(설치 테스트, 게시된 v0.2.0 → 0.2.1 격리 업데이트). interop 장애 때문이다.
+- **정리:** 완료된 계획 문서(`docs/plans/`)를 지우고 이 문서를 현재 상태만 남기도록 줄였다(PR #35).
 
 ---
 
