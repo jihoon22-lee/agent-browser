@@ -25,8 +25,9 @@
 | 동작 결과의 스냅샷 | 페이지를 바꾼 클릭·키·이동 결과에 도착 페이지를 붙인다(요소 40개까지). 클릭이나 Enter 제출 후 1초 안에 시작된 스크립트 이동도 포함 | 더 많은 요소는 browser_snapshot의 elementOffset. 버튼을 품은 카드는 그 버튼으로만 나온다 |
 | snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM. 포인터 커서 영역(clickable), 상태(state), 반복 버튼의 행 맥락(context), 아이콘 이름. 페이지를 바꾼 동작의 결과에 자동 포함 | UTF-8 바이트 예산 안에서 잘리며 cursor로 이어 읽음. 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
 | 포인터 방식 | browser_click의 mode: double(더블 클릭), right(오른쪽 클릭), hover(마우스 올리기, 누르지 않음), drag(ref를 toRef 위로 끌어다 놓기). drag는 포인터 이벤트와, 원본이 HTML5 끌기 대상이면 dragstart·drop까지 보낸다 | 좌표 지정·긴 누르기·다중 터치 없음. 끌기는 두 ref가 같은 frame이어야 한다 |
-| scroll | 문서 또는 ref 컨테이너의 up/down/top/bottom | 수직 기준. 좌표·수평 스크롤은 미지원 |
-| wait | 텍스트 나타남/사라짐, refGone, URL 부분문자열과 timeout | 범용 network-idle/사이트 readiness 판정 없음. 조건을 단계별로 확인 |
+| scroll | 문서 또는 ref 컨테이너의 up/down/top/bottom. smooth CSS를 기다리지 않는 즉시 이동 후 위치와 atStart/atEnd 반환 | 수직 기준. 좌표·수평 스크롤은 미지원 |
+| wait | 텍스트 나타남/사라짐, refGone, URL 부분문자열과 timeout. 기본 any, text/textGone/urlIncludes는 match:all 가능 | all과 refGone 조합은 거부. 범용 network-idle/사이트 readiness 판정 없음 |
+| 클릭·키의 완료 조건 | browser_click/browser_press의 waitFor에 text/textGone/urlIncludes 지정. 기본 all·5초, 100ms~30초. 조건 충족 후 snapshot 반환 | 같은 탭에서 검사. newTab과 함께 지정 불가. 입력 후 timeout도 executed:yes이며 자동 재실행하지 않음 |
 | input | text 계열 input/textarea 값 교체, contenteditable은 insertText(실패 시 내용 교체)와 input/change 이벤트 | 버튼·체크박스 등 텍스트가 아닌 input과 파일 입력은 거부. 모든 프레임워크/IME를 보장하지 않음 |
 | select | option value/label, checkbox/radio 원하는 상태 | 다중 선택 배열 API는 없음. disabled option과 불가능한 radio 해제는 거부 |
 | keyboard | Enter/Tab/Escape/Space/Backspace/Delete/Home/End/PageUp/PageDown/화살표와, modifiers(Control·Shift·Alt·Meta)와 함께 영문·숫자 한 글자. 텍스트 칸에서 Control+A 전체 선택, Delete 삭제, Home/End·좌우 화살표 커서 이동(Shift면 선택 확장), Shift+Tab 이전 칸 | 그 밖의 조합은 수정키가 표시된 키 이벤트만 보내고 사이트가 처리한다(`defaultAction:"event-only"`). 글자 입력은 browser_fill. 브라우저 단축키·IME 미지원 |
@@ -37,7 +38,9 @@
 
 새 탭은 background 생성이 기본이며 작업의 currentTab이 새 탭으로 바뀐다. 사용자 전경 탭을 임의로 바꾸지 않는다. 패널 요청 중 단독 new는 현재 requestId를 요구한다. 안전한 기본 탭이 없어도 명시적인 새 탭 생성은 가능하고, 새 operation은 해당 요청에 속한다.
 
-명시적 새 탭 열기는 생성 직후 작업에 포함한다. 페이지의 하위 리소스가 계속 로딩돼도 읽을 수 있는 DOM은 snapshot으로 반환하지만, 새 문서로 이동 중이면 이전 DOM을 반환하지 않는다. wait의 URL 조건은 최상위 탭 주소이며 요소 조건과 함께 지정하면 어느 하나가 충족될 때 끝난다. iframe 내부 주소를 최상위 탭 주소로 취급하지 않는다.
+명시적 새 탭 열기는 생성 직후 작업에 포함한다. 페이지의 하위 리소스가 계속 로딩돼도 읽을 수 있는 DOM은 snapshot으로 반환하지만, 새 문서로 이동 중이면 이전 DOM을 반환하지 않는다. wait의 URL 조건은 최상위 탭 주소이며 요소 조건과 함께 지정하면 기본적으로 어느 하나가 충족될 때 끝난다. `match:"all"`이면 지정한 텍스트·URL 조건을 모두 기다린다. iframe 내부 주소를 최상위 탭 주소로 취급하지 않는다.
+
+fill/select는 입력 이벤트 뒤 다음 작업·렌더 시점까지 짧게 기다리고 실제 값과 ref를 다시 확인한다. 앱이 값을 되돌리면 `verified.matches:false`, 대상이 바뀌면 불확실한 실행으로 보고한다. 서버 저장 성공까지 확인하는 것은 아니다. 행의 정적 텍스트·ID·링크가 바뀐 재사용 요소는 옛 ref로 실행할 수 없고, query가 버튼 하나만 반환해도 행 문맥을 유지한다.
 
 뒤로·앞으로 이동은 같은 URL의 방문 기록도 구분한다. 기록의 끝에서 이동이 관찰되지 않으면 약 1.5초 뒤 미실행 오류를 반환한다. 실제 이동이 시작됐지만 끝나지 않은 경우는 별도의 로딩 제한시간을 따른다. 문서 교체로 사전 확인이 실패하면 새 snapshot을 읽고 다시 판단한다.
 

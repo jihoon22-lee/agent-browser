@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { startWorld, type World } from "./harness";
 import { startOpenCodeFixture } from "../fixtures/opencode.mjs";
+import { distribution } from './metrics-report.mjs';
 
 let world: World, api: Awaited<ReturnType<typeof startOpenCodeFixture>>, lease: string | undefined;
 const all = (snapshot: any): Array<{ ref: string; name: string }> => snapshot.frames.flatMap((frame: any) => frame.elements);
@@ -58,6 +59,33 @@ for (const trusted of [false, true]) {
       const next = await fresh(operationId);
       await world.ok("browser_click", { operationId, ref: refIn(next, "카드"), toRef: refIn(next, "드롭 영역"), mode: "drag" });
       await expect(page.locator("#dropped")).toHaveText("카드 놓임");
+    });
+
+    test(`P06 ${label}: explicit drag completion verifies each effect once`, async () => {
+      const samples=Number(process.env.AB_ACTION_SAMPLES??1);
+      if(!Number.isInteger(samples)||samples<1||samples>50)throw new Error('AB_ACTION_SAMPLES must be 1..50');
+      if(samples>1)test.setTimeout(120_000);
+      const {page,operationId}=await attach(),pointerMs:number[]=[],html5Ms:number[]=[];
+      for(let i=0;i<=samples;i++){
+        if(i)await page.reload();
+        await page.evaluate(()=>{
+          const counts=(window as any).__dragCounts={pointer:0,drop:0};
+          document.addEventListener('mouseup',e=>{if((e.target as Element).closest('.item'))counts.pointer++;});
+          document.addEventListener('drop',()=>counts.drop++);
+        });
+        let s=await fresh(operationId),start=performance.now();
+        const pointer=await world.ok('browser_click',{operationId,ref:refIn(s,'항목 A'),toRef:refIn(s,'항목 C'),mode:'drag',waitFor:{text:'B,A,C',timeoutMs:2000}});
+        if(i)pointerMs.push(performance.now()-start);
+        expect(pointer.verified).toMatchObject({expectationMet:true,mode:'drag',...(trusted?{trusted:true}:{})});
+        await expect(page.locator('#order')).toHaveText('B,A,C');
+        s=await fresh(operationId);start=performance.now();
+        const html5=await world.ok('browser_click',{operationId,ref:refIn(s,'카드'),toRef:refIn(s,'드롭 영역'),mode:'drag',waitFor:{text:'카드 놓임',timeoutMs:2000}});
+        if(i)html5Ms.push(performance.now()-start);
+        expect(html5.verified).toMatchObject({expectationMet:true,mode:'drag',dropped:true});
+        await expect(page.locator('#dropped')).toHaveText('카드 놓임');
+        expect(await page.evaluate(()=>(window as any).__dragCounts)).toEqual({pointer:1,drop:1});
+      }
+      console.log('DRAG METRICS '+JSON.stringify({label,platform:world.runtime.platform,browserVersion:world.runtime.browserVersion,nodeVersion:world.runtime.nodeVersion,pointer:distribution(pointerMs),html5:distribution(html5Ms),pointerMs,html5Ms}));
     });
 
     test(`P04 ${label}: Control+A then Delete empties a field and Control+Enter reaches the site`, async () => {

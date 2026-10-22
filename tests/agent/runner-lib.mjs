@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-export const TOOL_NAMES = ['browser_tabs', 'browser_snapshot', 'browser_navigate', 'browser_click', 'browser_fill', 'browser_select', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_extract', 'browser_screenshot'];
+export const TOOL_NAMES = ['browser_tabs', 'browser_bookmarks', 'browser_snapshot', 'browser_navigate', 'browser_click', 'browser_fill', 'browser_select', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_extract', 'browser_screenshot', 'browser_upload'];
 export const EXPECTED_VALUES = ['에이전트 브라우저', '12,000원', 'a | b, c'];
 const builtins = ['build', 'plan', 'general', 'explore', 'title', 'summary', 'compaction'];
 
@@ -88,7 +88,7 @@ export function verifyFreeModel(model, records) {
   return entry;
 }
 
-function parseOutcome(output) {
+export function parseOutcome(output) {
   try {
     const parsed = typeof output === 'string' ? JSON.parse(output) : output;
     if (parsed?.content) {

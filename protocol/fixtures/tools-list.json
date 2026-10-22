@@ -75,7 +75,7 @@
     "name": "browser_bookmarks"
   },
   {
-    "description": "Re-read page text and elements with refs (DOM-based); actions already return one. query keeps only matching lines, rows and elements. Continue with offset/elementOffset/frameOffset.",
+    "description": "Read page text and refs (DOM-based). Navigation, press and page-changing clicks already include one. query keeps matching lines, rows and elements. Continue with offset/elementOffset/frameOffset.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -134,7 +134,7 @@
     "name": "browser_navigate"
   },
   {
-    "description": "Click a ref (mode double, right, hover, or drag onto toRef); returns a snapshot if the page changed. newTab opens a link in a new operation tab.",
+    "description": "Click a ref; double/right/hover/drag (toRef). For a known outcome, use waitFor text/textGone/urlIncludes in this tab (default all, 5s): waits then returns a snapshot, without replaying the click. newTab opens a link; cannot use waitFor.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -159,6 +159,39 @@
         },
         "toRef": {
           "type": "string"
+        },
+        "waitFor": {
+          "additionalProperties": false,
+          "properties": {
+            "match": {
+              "enum": [
+                "all",
+                "any"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "textGone": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "timeoutMs": {
+              "maximum": 30000,
+              "minimum": 100,
+              "type": "integer"
+            },
+            "urlIncludes": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -217,7 +250,7 @@
     "name": "browser_select"
   },
   {
-    "description": "Press Enter, Tab, Escape, Space, Backspace, Delete, Home, End, PageUp, PageDown, an arrow, or with modifiers a letter/digit, on ref or the focused element; returns a snapshot.",
+    "description": "Press Enter/Tab/Escape/Space/Backspace/Delete/Home/End/PageUp/PageDown/arrows, or a modified letter/digit, on ref or focus; returns a snapshot. Optional waitFor works like click (default all, 5s).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -242,6 +275,39 @@
         },
         "ref": {
           "type": "string"
+        },
+        "waitFor": {
+          "additionalProperties": false,
+          "properties": {
+            "match": {
+              "enum": [
+                "all",
+                "any"
+              ],
+              "type": "string"
+            },
+            "text": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "textGone": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "timeoutMs": {
+              "maximum": 30000,
+              "minimum": 100,
+              "type": "integer"
+            },
+            "urlIncludes": {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
         }
       },
       "required": [
@@ -280,11 +346,18 @@
     "name": "browser_scroll"
   },
   {
-    "description": "Wait until any of text, textGone, refGone or urlIncludes holds, or timeout.",
+    "description": "Wait for text/textGone/refGone/urlIncludes. Default any; match=all combines text and URL conditions (without refGone).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
         "frameRef": {
+          "type": "string"
+        },
+        "match": {
+          "enum": [
+            "any",
+            "all"
+          ],
           "type": "string"
         },
         "operationId": {

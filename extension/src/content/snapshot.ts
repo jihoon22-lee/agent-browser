@@ -1,5 +1,6 @@
-import { accessibleName, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep } from "./dom";
+import { accessibleName, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
 import { newTable } from "./refs";
+import { recordText, recordObservation, type RecordObservation } from './record-context';
 
 export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean; state?: string[]; context?: string };
 export type TextSlice = { content: string; totalChars: number; offset: number; returnedChars: number; truncated: boolean; nextOffset: number | null };
@@ -91,13 +92,20 @@ function renderedText(root: Element): string {
   }
   return text.replace(/\s+/g, " ").trim();
 }
-function rowText(el: Element, rows: Map<Element, string>): string {
+function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,RecordObservation>, query: string): string {
   const row = el.closest("tr,li,[role=row],[role=listitem],article");
   const candidate = row ?? el.parentElement;
   if (!candidate || candidate === el.ownerDocument.body || candidate === el.ownerDocument.documentElement) return "";
   let text = rows.get(candidate);
   if (text === undefined) {
-    const full = renderedText(candidate);
+    // A necessary (not sufficient) match test avoids a tree walk for unrelated cards.
+    // Remove whitespace on both sides because block/cell boundaries insert spaces.
+    // Omitted nodes may join separate words, so their presence disables this shortcut.
+    const compact = (value: string) => value.toLowerCase().replace(/\s/g,'');
+    if (!compact(candidate.textContent ?? '').includes(compact(query)) && !candidate.querySelector(SKIP)) {
+      rows.set(candidate,''); return '';
+    }
+    const full = row ? recordObservation(row,records).search : renderedText(candidate);
     text = row || full.length <= 300 ? full.slice(0, 300) : "";
     rows.set(candidate, text);
   }
@@ -115,6 +123,8 @@ function aroundMatch(line: string, query: string): string {
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number; query?: string }): FrameSnapshot {
   const query = o.query ? fold(o.query).slice(0, 80) : "";
   const rows = new Map<Element, string>();
+  const records = new Map<Element, RecordObservation>();
+  const names: NameCache = new WeakMap();
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
   const offset = Math.max(0, Math.floor(o.elementOffset ?? 0));
   const table = newTable(o.snapshotId, o.frameId);
@@ -143,19 +153,20 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
-    const pointer = !isInteractive(el) && el.tagName !== "TABLE" && isPointerTarget(el);
-    if ((!isInteractive(el) && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
+    const interactive = isInteractive(el);
+    const pointer = !interactive && el.tagName !== "TABLE" && isPointerTarget(el);
+    if ((!interactive && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
     // Match only what a snapshot would show: a password value must not become a search oracle.
     let name: string | undefined;
     if (query) {
       const matches = (field: unknown) => typeof field === "string" && fold(field).includes(query);
-      name = accessibleName(el);
+      name = accessibleName(el,false,80,names);
       const shownValue = el instanceof HTMLInputElement && el.type === "password" ? "" : (el as HTMLInputElement).value;
-      if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows)))) return;
+      if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows, records, query)))) return;
     }
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;
-    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: name ?? accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
+    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: name ?? accessibleName(el,false,80,names), tag: clip(el.tagName.toLowerCase(), 80) };
     if (inShadow) e.inShadow = true;
     if (el instanceof HTMLInputElement) {
       if (el.type === "checkbox" || el.type === "radio") e.checked = el.checked;
@@ -176,7 +187,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     }
     const state = stateOf(el);
     if (state.length) e.state = state;
-    if (el.matches(":disabled")) e.disabled = true;
+    if (isDisabled(el)) e.disabled = true;
     if (el instanceof HTMLAnchorElement) e.href = clip(el.href, 2048);
     // Reserve space for refs, pagination numbers and limit flags before admitting
     // another item. The cursor stays on that item when the aggregate budget fills.
@@ -187,7 +198,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
       budgetFull = true; limits.add("snapshot-size-limited"); return;
     }
     usedChars += encoded.length + 24; usedBytes += itemBytes;
-    e.ref = table.add(el);
+    e.ref = table.add(el, records, names);
     elements.push(e); nodes.push(el);
   });
   // Repeated controls ("취소" per row) are indistinguishable without their row or card.
@@ -196,8 +207,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   elements.forEach((e, i) => groups.set(key(e), [...(groups.get(key(e)) ?? []), nodes[i]!]));
   elements.forEach((e, i) => {
     const group = groups.get(key(e))!;
-    if (group.length < 2) return;
-    const context = contextOf(nodes[i]!, group);
+    const context = recordText(nodes[i]!,records) || (group.length > 1 ? contextOf(nodes[i]!, group) : '');
     if (context && context !== e.name) e.context = clip(context, 80);
   });
   if (query) { result.query = query; if (!result.elementsTotal && !fullText) limits.add("query-no-match"); }

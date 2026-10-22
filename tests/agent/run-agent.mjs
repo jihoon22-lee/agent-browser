@@ -5,8 +5,10 @@ import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildConfig, isolatedEnvironment, assertResolvedConfig, parseModelCatalog, verifyFreeModel, scoreRun, stopReason, verifyOfficialPricing } from './runner-lib.mjs';
+import { buildConfig, isolatedEnvironment, assertResolvedConfig, parseModelCatalog, verifyFreeModel, scoreRun, stopReason, verifyOfficialPricing, parseOutcome } from './runner-lib.mjs';
 import { McpProbe } from './mcp-probe.mjs';
+import { collectModelMetrics, scoreGoalRun, renderModelHtml } from './metrics.mjs';
+import { fetchOfficialPricing } from './pricing.mjs';
 
 const exec = promisify(execFile);
 const usage = `Usage: run-agent.sh opencode/<model> <runs> --exe <Windows exe interop path> --bridge-home <isolated Windows home> --bridge-port <port>
@@ -14,6 +16,7 @@ const usage = `Usage: run-agent.sh opencode/<model> <runs> --exe <Windows exe in
   --opencode <installed executable>  --timeout-ms 300000
   --fixture-via-windows-node [--windows-node <interop path>]
   --price-source official|refresh (default: official pricing + live model list + installed metadata)
+  --task-mode guided|goal (goal gives the objective without a prescribed tool sequence)
   --check-only   Verify isolated config and free-model evidence; do not start MCP or call an LLM.
 Results and generated config are saved only under ignored tests/agent/results/.`;
 
@@ -25,6 +28,7 @@ function argumentsForRun() {
     'timeout-ms': { type: 'string', default: '300000' }, 'check-only': { type: 'boolean', default: false },
     'fixture-via-windows-node': { type: 'boolean', default: false }, 'windows-node': { type: 'string', default: '/mnt/c/Program Files/nodejs/node.exe' },
     'price-source': { type: 'string', default: 'official' },
+    'task-mode': { type:'string', default:'guided' },
     help: { type: 'boolean', default: false },
   } });
   if (values.help) { console.log(usage); process.exit(0); }
@@ -32,6 +36,8 @@ function argumentsForRun() {
   const [model, count] = positionals;
   const options = { model, runs: Number(count), exe: values.exe, bridgeHome: values['bridge-home'], bridgePort: Number(values['bridge-port']), opencode: values.opencode, timeoutMs: Number(values['timeout-ms']), checkOnly: values['check-only'], tabId: values['tab-id'] === undefined ? undefined : Number(values['tab-id']), windowsNode: values['windows-node'], fixtureViaWindows: values['fixture-via-windows-node'] };
   options.priceSource = values['price-source'];
+  options.taskMode=values['task-mode'];
+  if(!['guided','goal'].includes(options.taskMode))throw new Error('task-mode must be guided or goal');
   if (!['official', 'refresh'].includes(options.priceSource)) throw new Error('price-source must be official or refresh');
   buildConfig(options);
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 20) throw new Error('Runs must be an integer from 1 through 20');
@@ -72,6 +78,7 @@ function fixtureTab(preflight, options) {
 
 function executeAgent(options, args, env, cwd) {
   return new Promise((resolveRun, reject) => {
+    const started=performance.now();
     const child = spawn(options.opencode, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
     let stdout = '', stderr = '', buffer = '', stopped = null, killTimer;
     const events = [];
@@ -99,7 +106,7 @@ function executeAgent(options, args, env, cwd) {
     child.on('close', (exitCode, signal) => {
       clearTimeout(timeout); clearTimeout(killTimer);
       if (buffer.trim()) { try { events.push(JSON.parse(buffer)); } catch { stopped ??= 'OpenCode JSON output ended with an incomplete event'; } }
-      resolveRun({ stdout, stderr, events, exitCode, signal, stopReason: stopped ?? stopReason(events, stderr) });
+      resolveRun({ stdout, stderr, events, exitCode, signal, elapsedMs:performance.now()-started, stopReason: stopped ?? stopReason(events, stderr) });
     });
   });
 }
@@ -118,7 +125,7 @@ async function main() {
   const env = isolatedEnvironment(process.env, runtime, configPath);
   for (const key of ['OPENCODE_CONFIG_DIR', 'OPENCODE_TEST_HOME', 'OPENCODE_TEST_MANAGED_CONFIG_DIR']) await mkdir(env[key], { recursive: true, mode: 0o700 });
   const version = (await cli(options, ['--version'], env, workspace)).stdout.trim();
-  if (version !== '1.18.29') throw new Error('This runner was verified against installed OpenCode 1.18.29; found ' + version);
+  if (!['1.18.29','1.19.3'].includes(version)) throw new Error('This runner requires a locally verified OpenCode v1 version (1.18.29 or 1.19.3); found ' + version);
   const resolved = JSON.parse((await cli(options, ['debug', 'config', '--pure'], env, workspace)).stdout);
   assertResolvedConfig(resolved, options);
   const verifyModel = async () => {
@@ -131,7 +138,7 @@ async function main() {
     if (options.priceSource === 'official') {
       const pricingUrl = 'https://opencode.ai/docs/zen/';
       const modelsUrl = 'https://opencode.ai/zen/v1/models';
-      const [pricingResponse, modelsResponse] = await Promise.all([pricingUrl, modelsUrl].map(url => fetch(url, { signal: AbortSignal.timeout(15000), redirect: 'error' })));
+      const [pricingResponse, modelsResponse] = await Promise.all([fetchOfficialPricing(), fetch(modelsUrl,{signal:AbortSignal.timeout(15000),redirect:'error'})]);
       if (!pricingResponse.ok || !modelsResponse.ok) throw new Error('Live official Zen pricing or availability could not be verified');
       source = { kind: 'official-live-plus-installed-metadata', pricingUrl, modelsUrl, ...verifyOfficialPricing(options.model, await pricingResponse.text(), await modelsResponse.json()) };
     } else source = { kind: 'successful-installed-catalogue-refresh', command: 'opencode models opencode --verbose --refresh --pure' };
@@ -144,14 +151,19 @@ async function main() {
   if (options.checkOnly) { console.log('Check only; no MCP or LLM process was started. ' + resultDir); return; }
   await access(options.exe);
   const mcpEnv = { ...env, ...config.mcp.browser.environment };
-  const template = await readFile(new URL('./prompt.md', import.meta.url), 'utf8');
-  const summary = { startedAt: new Date().toISOString(), model: options.model, opencodeVersion: version, requestedRuns: options.runs, runs: [] };
+  const template = await readFile(new URL(options.taskMode==='goal'?'./goal-prompt.md':'./prompt.md', import.meta.url), 'utf8');
+  const summary = { startedAt: new Date().toISOString(), model: options.model, taskMode:options.taskMode, opencodeVersion: version, requestedRuns: options.runs, runs: [] };
+  const saveMetrics=async()=>{
+    const report={model:options.model,taskMode:options.taskMode,opencodeVersion:version,runs:summary.runs.map(r=>({index:r.index,success:r.scores.model.success,checks:r.scores.model.checks??null,metrics:r.metrics??null}))};
+    await jsonFile(join(resultDir,'metrics.json'),report);
+    await writeFile(join(resultDir,'report.html'),renderModelHtml(report));
+  };
   for (let index = 1; index <= options.runs; index++) {
     if (index > 1) await verifyModel();
     const probe = new McpProbe(options.exe, mcpEnv);
-    let run;
+    let run, preflight;
     try {
-      const preflight = await probe.initialize();
+      preflight = await probe.initialize();
       if (!preflight.browserConnected) throw new Error('MCP initialized, but Windows Chrome is not connected');
       const tabId = fixtureTab(preflight, options);
       await fixtureRequest(options, '/__reset', 'POST');
@@ -163,15 +175,16 @@ async function main() {
       await writeFile(join(resultDir, 'run-' + index + '.jsonl'), run.stdout, { mode: 0o600 });
       await writeFile(join(resultDir, 'run-' + index + '.stderr.log'), run.stderr, { mode: 0o600 });
       const fixtureLog = await fixtureRequest(options, '/__log');
-      const scores = scoreRun({ events: run.events, fixtureLog, preflight, exitCode: run.exitCode, query, category, fixtureUrl: options.fixtureUrl });
+      const finalTabs=options.taskMode==='goal'?await probe.call('browser_tabs',{action:'list'}):undefined;
+      const scores = (options.taskMode==='goal'?scoreGoalRun:scoreRun)({ events: run.events, fixtureLog, preflight, exitCode: run.exitCode, query, category, fixtureUrl: options.fixtureUrl,initialTabId:tabId,finalTabs });
       const sessionIds = [...new Set(run.events.map(event => event.sessionID ?? event.part?.sessionID).filter(Boolean))];
-      const record = { index, exitCode: run.exitCode, signal: run.signal, stopReason: run.stopReason, sessionIds, scores };
+      const record = { index, exitCode: run.exitCode, signal: run.signal, stopReason: run.stopReason, sessionIds, scores,metrics:collectModelMetrics(run.events,run.elapsedMs) };
       // Cleanup is runner work and never changes the model's scores.
       const activeOperations = new Set();
       for (const event of run.events.filter(event => event.type === 'tool_use')) {
         try {
-          const outcome = JSON.parse(event.part?.state?.output);
-          if (outcome.ok && outcome.tool === 'browser_tabs' && event.part.state.input?.action === 'attach' && outcome.operationId) activeOperations.add(outcome.operationId);
+          const outcome = parseOutcome(event.part?.state?.output);
+          if (outcome.ok && outcome.operationId && !outcome.data?.released) activeOperations.add(outcome.operationId);
           if (outcome.ok && outcome.data?.released) activeOperations.delete(outcome.operationId);
         } catch {}
       }
@@ -190,14 +203,17 @@ async function main() {
       await jsonFile(join(resultDir, 'run-' + index + '.json'), record);
       summary.runs.push(record);
       await jsonFile(join(resultDir, 'summary.json'), summary);
+      await saveMetrics();
       console.log(JSON.stringify({ run: index, communication: scores.communication.success, tools: scores.tools, model: scores.model.success }));
       if (record.stopReason || run.exitCode !== 0 || run.events.some(event => event.type === 'error')) break;
     } catch (error) {
-      const failed = { index, exitCode: run?.exitCode ?? null, stopReason: error.message,
-        scores: { communication: { success: false }, tools: { success: false, passed: 0, total: 0 }, model: { success: false } } };
+      const metrics=run?collectModelMetrics(run.events,run.elapsedMs):null;
+      const failed = { index, exitCode: run?.exitCode ?? null, stopReason: error.message,metrics,
+        scores: { communication: { success: preflight?.browserConnected===true }, tools: { success: false, passed: metrics?metrics.toolCalls-metrics.failedTools:0, total: metrics?.toolCalls??0 }, model: { success: false } } };
       await jsonFile(join(resultDir, 'run-' + index + '.json'), failed);
       summary.runs.push(failed);
       await jsonFile(join(resultDir, 'summary.json'), summary);
+      await saveMetrics();
       console.error('Run ' + index + ' stopped: ' + error.message);
       break;
     } finally {

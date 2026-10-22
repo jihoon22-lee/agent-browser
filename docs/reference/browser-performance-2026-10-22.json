@@ -1,0 +1,143 @@
+{
+  "date": "2026-10-22",
+  "sourceCommit": "e576472b12365cfc457144c372753bb8f9409f46",
+  "scope": "Synthetic local review; no product fixes, Windows run, or LLM calls",
+  "method": {
+    "bridge": "0.2.1 Linux debug",
+    "extension": "production bundle from reviewed source",
+    "transport": "MCP stdio + localhost WebSocket including existing E2E relay",
+    "samplesPerTiming": 7,
+    "warmupsPerTiming": 1,
+    "duration": "MCP tool call start to result received",
+    "largePage": "main containing N divs, each with span Record N and button Action N",
+    "query": "missing-record",
+    "statistic": "Median and range only; not p95 or Windows SLA"
+  },
+  "checks": {
+    "existingVitestPassed": 72,
+    "newDesiredBehaviorProbesFailed": 6,
+    "chromiumMeasurementAndReproductionScenariosCompleted": 2,
+    "windowsExecuted": false,
+    "llmCalls": 0
+  },
+  "samples": [
+    {
+      "label": "list",
+      "n": 7,
+      "medianMs": 47.2,
+      "minMs": 42.9,
+      "maxMs": 48.6,
+      "meanBytes": 767
+    },
+    {
+      "label": "fill",
+      "n": 7,
+      "medianMs": 52.1,
+      "minMs": 49.8,
+      "maxMs": 54.1,
+      "meanBytes": 165
+    },
+    {
+      "label": "click-no-change",
+      "n": 7,
+      "medianMs": 1622.2,
+      "minMs": 1620.3,
+      "maxMs": 1629,
+      "meanBytes": 172
+    },
+    {
+      "label": "click-dom-change",
+      "n": 7,
+      "medianMs": 671.3,
+      "minMs": 667.5,
+      "maxMs": 673
+    },
+    {
+      "label": "snapshot-100-rows",
+      "n": 7,
+      "medianMs": 60.1,
+      "minMs": 57.3,
+      "maxMs": 65.1,
+      "meanBytes": 10358
+    },
+    {
+      "label": "query-miss-100-rows",
+      "n": 7,
+      "medianMs": 63.3,
+      "minMs": 58.7,
+      "maxMs": 66.2,
+      "meanBytes": 1153
+    },
+    {
+      "label": "snapshot-1000-rows",
+      "n": 7,
+      "medianMs": 59.8,
+      "minMs": 49.1,
+      "maxMs": 62.8,
+      "meanBytes": 16329
+    },
+    {
+      "label": "query-miss-1000-rows",
+      "n": 7,
+      "medianMs": 96.4,
+      "minMs": 92,
+      "maxMs": 110.9,
+      "meanBytes": 1153
+    },
+    {
+      "label": "snapshot-5000-rows",
+      "n": 7,
+      "medianMs": 145,
+      "minMs": 120.4,
+      "maxMs": 163.8,
+      "meanBytes": 16330
+    },
+    {
+      "label": "query-miss-5000-rows",
+      "n": 7,
+      "medianMs": 892.1,
+      "minMs": 809.5,
+      "maxMs": 1033.7,
+      "meanBytes": 1153
+    }
+  ],
+  "cases": {
+    "recycledRow": {
+      "beforeContext": "A-1001Cancel",
+      "ok": true,
+      "executed": "yes",
+      "actualRecord": "C-3003"
+    },
+    "fillRollback": {
+      "verified": {
+        "matches": true,
+        "value": "after"
+      },
+      "actualValue": "before"
+    },
+    "smoothScroll": {
+      "verified": {
+        "scrollHeight": 10016,
+        "scrollTop": 0
+      },
+      "actualScrollTopLater": 318
+    },
+    "intermediateDomNavigation": {
+      "elapsedMs": 663.8,
+      "verified": {
+        "domChanged": true,
+        "urlChanged": false
+      },
+      "returnedSnapshotUrl": "/index.html",
+      "returnedText": "Continue\n\nLoading next page",
+      "finalUrl": "/detail.html"
+    }
+  },
+  "runtime": {
+    "platform": "linux",
+    "nodeVersion": "v24.18.0",
+    "browserVersion": "156.0.8078.4",
+    "browserProduct": "Chrome/156.0.8078.4",
+    "headless": true
+  }
+}

@@ -3,6 +3,8 @@
 요구사항 원장은 [handoff.md](./handoff.md) §17, 최신 실행 결과는 [status.md](./status.md)다.
 Linux 테스트 통과, Windows용 빌드 성공, 실제 Windows 프로세스 실행, 실제 에이전트 판단 성공은 서로 다른 검증이다.
 
+브라우저 지연·정확도·모델 호출 지표와 HTML 비교 보고서는 [브라우저 품질 측정](./browser-quality-metrics.md)을 따른다.
+
 ## 계층과 실행
 
 ```bash

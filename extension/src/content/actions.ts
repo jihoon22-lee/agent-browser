@@ -1,9 +1,9 @@
 import { highlight } from "./highlight";
 import { partlyDelivered, requestTrusted, trustedFrame } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isRendered, walkDeep } from "./dom";
+import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
-import { waitFor } from "./wait";
+import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
 import { INPUT_TEXT, keyOf, preparePress, pressKey } from "./keyboard";
@@ -56,12 +56,15 @@ function reaches(top: Element | null, el: Element): boolean {
 }
 
 function assertInteractable(el: Element): Point | undefined {
-  if (!isRendered(el, { checkLayout: hasLayout() }) || el.matches(":disabled") || el.closest("[inert]")) {
+  if (!isRendered(el, { checkLayout: hasLayout() }) || isDisabled(el)) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
   }
   if (!hasLayout()) return undefined;
-  // "instant" defeats CSS scroll-behavior:smooth, which would leave hit testing at the old position.
-  (el as HTMLElement).scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+  // Preserve an already usable position instead of recentering every field/button.
+  for (const point of candidatePoints(el))
+    if (point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight && reaches(topAt(point),el)) return point;
+  // "instant" defeats CSS smooth scrolling, so hit testing uses the new position.
+  (el as HTMLElement).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   const points = candidatePoints(el);
   for (const point of points) if (reaches(topAt(point), el)) return point;
   const top = points[0] ? topAt(points[0]) : null;
@@ -94,6 +97,25 @@ function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElemen
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
 }
 
+/** Let queued application updates and a visible render run before confirming a value. A hidden
+ * tab must not depend on rAF firing. This is a bounded value observation, not server acknowledgement. */
+async function afterInput(ref: string, signal: AbortSignal) {
+  await new Promise<void>((resolve,reject) => {
+    let frame = 0;
+    const done = () => { clearTimeout(timer); if(frame)cancelAnimationFrame(frame); signal.removeEventListener('abort',abort); resolve(); };
+    const abort = () => { clearTimeout(timer); if(frame)cancelAnimationFrame(frame); signal.removeEventListener('abort',abort); reject(cancellationError(true)); };
+    const visible = hasLayout() && document.visibilityState === 'visible' && typeof requestAnimationFrame === 'function';
+    const timer = setTimeout(done,visible ? 40 : 0);
+    if(visible)frame=requestAnimationFrame(()=>setTimeout(done,0));
+    signal.addEventListener('abort',abort,{once:true}); if(signal.aborted)abort();
+  });
+  // Handlers can update ordinary validation/price text in the same record. The
+  // dispatched control must remain connected with the same identity and record key,
+  // but this post-input value check does not authorize a new write through an old ref.
+  try { resolveRef(ref,false,'target'); }
+  catch { throw new ProtocolError('EXECUTION_UNKNOWN','The input was delivered, but its target changed before the value could be confirmed. Inspect the page before continuing.','unsafe'); }
+}
+
 export async function runAction(method: string, p: P, signal?: AbortSignal): Promise<Record<string, unknown>> {
   return withCommandCancellation(p, (activeSignal) => executeAction(method, p, activeSignal), signal);
 }
@@ -107,7 +129,7 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
   const source = el.closest('[draggable=true], a[href]:not([draggable=false]), img:not([draggable=false])');
   const html5 = source !== null;
   const unmark = highlight(el);
-  const changes = observeChanges(500, signal);
+  const changes = observeChanges(p.waitFor ? 0 : 500, signal);
   void changes.then(unmark, unmark);
   void changes.catch(() => {});
   let trustedReason: string | undefined;
@@ -191,7 +213,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const modeNote = mode === "click" ? {} : { mode };
       const point = assertInteractable(el) ?? clickPoint(el);
       const unmark = highlight(el);
-      const changes = observeChanges(500, signal);
+      const changes = observeChanges(p.waitFor ? 0 : 500, signal);
       void changes.then(unmark, unmark);
       let trustedReason: string | undefined;
       if (p.trusted === true && trustedFrame()) {
@@ -227,8 +249,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       let finalPoint: Point;
       try {
         finalPoint = assertInteractable(el) ?? clickPoint(el);
-        // Pointer handlers can recycle a row or change href synchronously.
-        resolveRef(String(p.ref));
+        // Keep the original control, parent, record key and href after pointer
+        // feedback; ordinary sibling text can change as part of this same click.
+        resolveRef(String(p.ref),false,'target');
       } catch (error) {
         throw new ProtocolError('EXECUTION_UNKNOWN',
           'Pointer events were delivered, but the target changed before click. Inspect the page before continuing.',
@@ -260,6 +283,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         nativeSet(el, text);
         el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
+        await afterInput(String(p.ref),signal);
         const value = el.value;
         const isPassword = el instanceof HTMLInputElement && el.type === "password";
         return { executed: true, verified: isPassword ? { matches: value === text } : { ...verificationValue(value), matches: value === text } };
@@ -275,6 +299,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
           host.textContent = text;
           host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         }
+        await afterInput(String(p.ref),signal);
         const value = host.textContent ?? "";
         return { executed: true, verified: { ...verificationValue(value), matches: value === text, method: inserted ? "insertText" : "replace" } };
       }
@@ -299,8 +324,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         nativeSet(el, opt.value);
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
+        await afterInput(String(p.ref),signal);
         const label = el.selectedOptions[0]?.text.trim() ?? "";
-        return { executed: true, verified: { ...verificationValue(el.value), label: label.slice(0, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
+        return { executed: true, verified: { ...verificationValue(el.value), matches: el.value === opt.value, label: label.slice(0, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
@@ -308,6 +334,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (el.type === "radio" && el.checked && !want) throw new ProtocolError("INVALID_PARAMS", "A selected radio cannot be cleared by clicking it. Select another radio in the group.");
         const changed = el.checked !== want;
         if (changed) el.click();
+        if (changed) await afterInput(String(p.ref),signal);
         if (el.checked !== want) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The page did not accept the requested checked state.", "never", { executed: changed, checked: el.checked });
         return { executed: changed, verified: { checked: el.checked, matches: true } };
       }
@@ -318,7 +345,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         // The same checks as a DOM key press run first: a real key must not reach another element.
         const target = preparePress(p, assertInteractable);
         if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
-        const changes = observeChanges(500, signal);
+        const changes = observeChanges(p.waitFor ? 0 : 500, signal);
         void changes.catch(() => {});
         const { key, modifiers } = keyOf(p);
         const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key, ...(modifiers.length ? { modifiers } : {}) });
@@ -334,6 +361,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     case "upload": return upload(p, signal);
     case "scroll": return scroll(p);
     case "wait": return waitFor(p, signal);
+    case "conditions": return {conditions:textConditions(p)};
     case "extract": return extract(p);
     default: throw new ProtocolError("INVALID_PARAMS", `Unknown action ${method}`);
   }
@@ -387,11 +415,11 @@ function scroll(p: P) {
   const el = (p.ref ? resolveRef(String(p.ref)) : document.scrollingElement ?? document.documentElement) as HTMLElement;
   const page = el.clientHeight * 0.8;
   switch (p.direction) {
-    case "up": el.scrollBy({ top: -page }); break;
-    case "down": el.scrollBy({ top: page }); break;
-    case "top": el.scrollTo({ top: 0 }); break;
-    case "bottom": el.scrollTo({ top: el.scrollHeight }); break;
+    case "up": el.scrollBy({ top: -page, behavior: 'instant' }); break;
+    case "down": el.scrollBy({ top: page, behavior: 'instant' }); break;
+    case "top": el.scrollTo({ top: 0, behavior: 'instant' }); break;
+    case "bottom": el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }); break;
     default: throw new ProtocolError("INVALID_PARAMS", "direction must be up, down, top or bottom");
   }
-  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight } });
+  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1 } });
 }

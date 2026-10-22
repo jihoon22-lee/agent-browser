@@ -1,0 +1,151 @@
+import { test, expect } from '@playwright/test';
+import { startWorld, type World } from './harness';
+let world:World;
+test.beforeAll(async()=>{world=await startWorld();console.log('QUALITY runtime '+JSON.stringify(world.runtime));});
+test.afterEach(async()=>{
+  const status=await world.admin('status.get');
+  if(status.operation)await world.mcp.call('browser_tabs',{action:'release',operationId:status.operation.id});
+  for(const page of world.context.pages())if(page!==world.adminPage)await page.close();
+});
+test.afterAll(async()=>world?.stop());
+const elements=(snapshot:any)=>snapshot.frames.flatMap((f:any)=>f.elements);
+async function setup(){
+  const page=await world.open('quality.html'),attached=await world.ok('browser_tabs',{action:'attach',tabId:await world.tabId(page)});
+  const operationId=attached.operationId!,snapshot=attached.data.snapshot;
+  const ref=(name:string)=>elements(snapshot).find((e:any)=>e.name===name)!.ref;
+  return {page,operationId,snapshot,ref};
+}
+test('Q01 recycled rows never dispatch to the replacement record; queries retain context',async()=>{
+  const {page,operationId}=await setup();
+  const s=(await world.ok('browser_snapshot',{operationId,query:'A-1001'})).data;
+  const cancel=elements(s).find((e:any)=>e.name==='Cancel');expect(cancel.context).toContain('A-1001');
+  await page.locator('#rows span').first().evaluate(e=>{e.textContent='C-3003';});
+  const result=await world.mcp.call('browser_click',{operationId,ref:cancel.ref});
+  expect(result.error?.code).toBe('STALE_ELEMENT');expect(result.executed).toBe('no');
+  expect(await page.evaluate(()=>(window as any).quality.record)).toBeNull();
+});
+test('Q02 app rollback, disabled controls and shadow labels are accurately observed',async()=>{
+  const {page,operationId,snapshot,ref}=await setup();
+  expect(elements(snapshot).some((e:any)=>e.name==='Order A-1001 action')).toBe(true);
+  expect(elements(snapshot).some((e:any)=>e.name==='Shadow query')).toBe(true);
+  const result=await world.ok('browser_fill',{operationId,ref:ref('Rollback'),text:'after'});
+  expect(result.verified?.matches).toBe(false);await expect(page.locator('#rollback')).toHaveValue('before');
+  const disabled=await world.mcp.call('browser_click',{operationId,ref:ref('Unavailable')});
+  expect(disabled.executed).toBe('no');expect(disabled.error?.code).toBe('ELEMENT_NOT_INTERACTABLE');
+  expect(await page.evaluate(()=>(window as any).quality.counts.disabled??0)).toBe(0);
+});
+test('Q03 explicit completion observes a delayed navigation after intermediate DOM changes',async()=>{
+  const {page,operationId,ref}=await setup();
+  const result=await world.ok('browser_click',{operationId,ref:ref('Delayed navigation'),waitFor:{urlIncludes:'/detail.html',timeoutMs:4000}});
+  expect(result.verified?.expectationMet).toBe(true);
+  expect(result.data.snapshot.url).toContain('/detail.html');expect(page.url()).toContain('/detail.html');
+});
+test('Q04 an unmet completion condition leaves the single submitted action executed',async()=>{
+  const {page,operationId,ref}=await setup();
+  const result=await world.mcp.call('browser_click',{operationId,ref:ref('Submit once'),waitFor:{text:'Never appears',timeoutMs:100}});
+  expect(result.ok).toBe(false);expect(result.error?.code).toBe('TIMEOUT');expect(result.executed).toBe('yes');
+  expect(result.error?.retry).toBe('never');expect(await page.evaluate(()=>(window as any).quality.counts.submit)).toBe(1);
+});
+test('Q05 all conditions wait for both text and URL, and smooth CSS does not outlive a scroll result',async()=>{
+  const {page,operationId,ref}=await setup();
+  const scrolled=await world.ok('browser_scroll',{operationId,ref:ref('Scroll region'),direction:'down'});
+  const actual=await page.locator('.scroll').evaluate(e=>e.scrollTop);
+  expect(actual).toBeGreaterThan(0);expect(scrolled.verified?.scrollTop).toBe(actual);
+  await page.evaluate(()=>{setTimeout(()=>{history.pushState({},'','?ready');},100);setTimeout(()=>{document.querySelector('#result')!.textContent='Ready result';},250);});
+  const result=await world.ok('browser_wait',{operationId,text:'Ready result',urlIncludes:'?ready',match:'all',timeoutMs:2000});
+  expect(result.verified?.met).toBe('all');await expect(page.locator('#result')).toHaveText('Ready result');
+});
+test('Q06 reactive sibling text does not invalidate the value just applied to a control',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{
+    const card=document.createElement('article');
+    card.innerHTML='<input aria-label="Reactive name"><select aria-label="Reactive choice"><option value="a">A</option><option value="b">B</option></select><span>Pending</span>';
+    for(const control of card.querySelectorAll('input,select'))control.addEventListener('change',()=>queueMicrotask(()=>{card.querySelector('span')!.textContent='Valid '+(control as HTMLInputElement).value;}));
+    document.body.prepend(card);
+  });
+  let snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const filled=await world.ok('browser_fill',{operationId,ref:elements(snapshot).find((e:any)=>e.name==='Reactive name').ref,text:'Alice'});
+  expect(filled.verified).toMatchObject({matches:true,value:'Alice'});
+  await expect(page.locator('article span')).toHaveText('Valid Alice');
+  snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const selected=await world.ok('browser_select',{operationId,ref:elements(snapshot).find((e:any)=>e.name==='Reactive choice').ref,option:'b'});
+  expect(selected.verified).toMatchObject({matches:true,value:'b'});
+  await expect(page.locator('article span')).toHaveText('Valid b');
+});
+test('Q07 iframe input observes text in the destination top document',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{const frame=document.createElement('iframe');frame.id='source';frame.src='frame-child.html';document.body.prepend(frame);});
+  const child=page.frameLocator('#source');
+  await expect(child.locator('#child')).toBeVisible();
+  await child.locator('body').evaluate(body=>{body.innerHTML='<a href="detail.html?id=iframe" target="_top">Open full detail</a>';});
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const ref=elements(snapshot).find((e:any)=>e.name==='Open full detail').ref;
+  const start=world.relay.commands.length;
+  const result=await world.ok('browser_click',{operationId,ref,waitFor:{text:'에이전트 브라우저',urlIncludes:'detail.html?id=iframe',timeoutMs:3000}});
+  expect(result.verified).toMatchObject({expectationMet:true,urlChanged:true});
+  expect(result.data.snapshot.url).toContain('detail.html?id=iframe');
+  await expect(page.locator('#title')).toHaveText('상세 iframe');
+  expect(world.relay.commands.slice(start).filter(c=>c.method==='browser.click')).toHaveLength(1);
+});
+test('Q08 a frame-bound match-all wait rejects a replacement document',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{const frame=document.createElement('iframe');frame.id='waiting-frame';frame.src='frame-child.html';document.body.prepend(frame);});
+  await expect(page.frameLocator('#waiting-frame').locator('#child')).toBeVisible();
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const frameRef=snapshot.frames.find((f:any)=>f.url.endsWith('/frame-child.html')).frameRef;
+  const worker=world.context.serviceWorkers()[0];
+  await worker.evaluate(()=>{
+    const api=(globalThis as any).chrome,original=api.tabs.sendMessage.bind(api.tabs);
+    const state={reads:0,restore:()=>{api.tabs.sendMessage=original;}};(globalThis as any).__boundWait=state;
+    api.tabs.sendMessage=async(...args:any[])=>{const reply=await original(...args);if(args[1]?.method==='conditions')state.reads++;return reply;};
+  });
+  try {
+    const waiting=world.mcp.call('browser_wait',{operationId,frameRef,text:'에이전트 브라우저',urlIncludes:'/quality.html',match:'all',timeoutMs:3000});
+    await expect.poll(()=>worker.evaluate(()=>(globalThis as any).__boundWait.reads)).toBeGreaterThan(0);
+    await page.locator('#waiting-frame').evaluate((frame:HTMLIFrameElement)=>{frame.src='detail.html?id=wait-replacement';});
+    const result=await waiting;
+    expect(result.error?.code).toBe('STALE_ELEMENT');expect(result.executed).toBe('no');
+  } finally {await worker.evaluate(()=>(globalThis as any).__boundWait.restore());}
+});
+test('Q09 pointer feedback does not suppress the subsequent click',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{
+    const card=document.createElement('article');card.innerHTML='<span>Idle</span><button>Feedback submit</button>';
+    const button=card.querySelector('button')!;button.dataset.clicks='0';
+    button.addEventListener('pointerdown',()=>{card.querySelector('span')!.textContent='Pressed';});
+    button.addEventListener('click',()=>{button.dataset.clicks=String(Number(button.dataset.clicks)+1);card.querySelector('span')!.textContent='Completed once';});
+    document.body.prepend(card);
+  });
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const ref=elements(snapshot).find((e:any)=>e.name==='Feedback submit').ref;
+  const result=await world.ok('browser_click',{operationId,ref,waitFor:{text:'Completed once',timeoutMs:1000}});
+  expect(result.verified?.expectationMet).toBe(true);
+  await expect(page.getByRole('button',{name:'Feedback submit'})).toHaveAttribute('data-clicks','1');
+  await expect(page.locator('article span')).toHaveText('Completed once');
+});
+test('Q10 a pointer card remains available beside its ARIA-disabled action',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{
+    const card=document.createElement('div');card.style.cssText='cursor:pointer;padding:24px';card.setAttribute('aria-label','Order card');
+    card.innerHTML='<span>Order ready</span><button aria-disabled="true">Unavailable action</button>';
+    card.addEventListener('click',()=>{card.querySelector('span')!.textContent='Order opened';});document.body.prepend(card);
+  });
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const card=elements(snapshot).find((e:any)=>e.name==='Order card');expect(card).toBeDefined();
+  expect(elements(snapshot).find((e:any)=>e.name==='Unavailable action').disabled).toBe(true);
+  const result=await world.ok('browser_click',{operationId,ref:card.ref,waitFor:{text:'Order opened'}});
+  expect(result.verified?.expectationMet).toBe(true);await expect(page.getByText('Order opened',{exact:true})).toBeVisible();
+});
+test('Q11 URL-only match-all does not depend on a content frame',async()=>{
+  const {operationId}=await setup();
+  const worker=world.context.serviceWorkers()[0];
+  await worker.evaluate(()=>{
+    const api=(globalThis as any).chrome,original=api.webNavigation.getAllFrames.bind(api.webNavigation);
+    (globalThis as any).__restoreFrameList=()=>{api.webNavigation.getAllFrames=original;};
+    api.webNavigation.getAllFrames=async()=>[];
+  });
+  try {
+    const result=await world.ok('browser_wait',{operationId,urlIncludes:'/quality.html',match:'all',timeoutMs:1000});
+    expect(result.verified).toMatchObject({met:'all',conditions:['urlIncludes']});expect(result.executed).toBe('no');
+  } finally {await worker.evaluate(()=>(globalThis as any).__restoreFrameList());}
+});

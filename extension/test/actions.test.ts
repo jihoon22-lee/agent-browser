@@ -130,7 +130,7 @@ it("scroll moves the page and rejects unknown directions", async () => {
   Object.defineProperty(el, "clientHeight", { configurable: true, value: 1000 });
   const r = await runAction("scroll", { direction: "down", generation: 10 });
   expect(r).toMatchObject({ executed: true });
-  expect(calls).toEqual([{ top: 800 }]);
+  expect(calls).toEqual([{ top: 800, behavior: 'instant' }]);
   await expect(runAction("scroll", { direction: "sideways", generation: 10 })).rejects.toMatchObject({ code: "INVALID_PARAMS" });
 });
 
@@ -227,7 +227,7 @@ it("clicks a visually hidden checkbox through its own styled label", async () =>
   try {
     await runAction("click", { ref, generation: 10 });
     expect(input.checked).toBe(true);
-    expect(input.scrollIntoView).toHaveBeenCalledWith({ block: "center", inline: "center", behavior: "instant" });
+    expect(input.scrollIntoView).not.toHaveBeenCalled(); // Its label is already reachable.
   } finally { delete (document as any).elementFromPoint; vi.restoreAllMocks(); }
 });
 
@@ -379,6 +379,22 @@ describe("pointer modes", () => {
 
 describe("drag", () => {
   const box = (el: Element, left: number) => vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ left, top: 10, width: 80, height: 20, right: left + 80, bottom: 30 } as DOMRect);
+  it('lets an explicit drag postcondition observe completion without a preceding fixed delay', async () => {
+    document.body.innerHTML='<div draggable="true">Card</div><div tabindex="0">Target</div>';
+    const target=document.querySelectorAll('div')[1]!;let drops=0;
+    target.addEventListener('dragover',e=>e.preventDefault());
+    target.addEventListener('drop',()=>{drops++;target.textContent='Done';});
+    const params={ref:refOf('Card'),toRef:refOf('Target'),mode:'drag',generation:10,waitFor:{text:'Done'}};
+    vi.useFakeTimers();
+    try{
+      let finished=false;
+      const work=runAction('click',params).then(value=>{finished=true;return value;});
+      await vi.advanceTimersByTimeAsync(20);
+      expect(drops).toBe(1);
+      expect(finished).toBe(true);
+      await expect(work).resolves.toMatchObject({executed:true,verified:{mode:'drag',dropped:true}});
+    }finally{await vi.runOnlyPendingTimersAsync();vi.useRealTimers();}
+  });
   it("drag delivers pointer moves and an HTML5 drop on the target", async () => {
     document.body.innerHTML = '<div draggable="true">카드</div><div role="listitem" tabindex="0">완료</div>';
     const [card, done] = [...document.querySelectorAll('div')];

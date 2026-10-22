@@ -1,7 +1,7 @@
 import { takeSnapshot } from "../src/content/snapshot";
 import { resetRegistry } from "../src/content/refs";
 const opts = { snapshotId: 1, frameId: 0, maxChars: 4000, offset: 0, checkLayout: false };
-beforeEach(() => { document.body.innerHTML = ""; resetRegistry(); });
+beforeEach(() => { vi.restoreAllMocks(); document.body.innerHTML = ""; resetRegistry(); });
 
 const orders = `<h1>주문 목록</h1><p>배송 안내 문단입니다.</p><table>
   <tr><td>A-1001</td><td>무선 마우스</td><td><button>취소</button></td></tr>
@@ -84,4 +84,16 @@ it("keeps words split by inline tags together while cells stay apart", () => {
     <tr><td><b>홍길동</b>님</td><td><button>보기</button></td></tr></table>`;
   expect(takeSnapshot({ ...opts, query: "A-1002" }).elements.filter(e => e.role === "button").map(e => e.name)).toEqual(["취소"]);
   expect(takeSnapshot({ ...opts, query: "홍길동님" }).elements.filter(e => e.role === "button").map(e => e.name)).toEqual(["보기"]);
+});
+
+it('does not walk the text of unrelated plain cards for a missing query',()=>{
+  document.body.innerHTML=Array.from({length:500},(_,i)=>`<div><span>Record ${i}</span><button>Action ${i}</button></div>`).join('');
+  const walk=document.createTreeWalker.bind(document);let cardReads=0;
+  vi.spyOn(document,'createTreeWalker').mockImplementation((root:Node,...rest:any[])=>{if(root instanceof Element&&root.tagName==='DIV'&&(rest[0]&NodeFilter.SHOW_TEXT))cardReads++;return walk(root,...rest);});
+  expect(takeSnapshot({...opts,query:'missing-record'}).elements).toEqual([]);
+  expect(cardReads).toBe(0);
+});
+it('a cheap query prefilter never hides text joined around omitted script nodes',()=>{
+  document.body.innerHTML='<div>A<script>noise</script>B<button>View</button></div>';
+  expect(takeSnapshot({...opts,query:'AB'}).elements.some(e=>e.name==='View')).toBe(true);
 });

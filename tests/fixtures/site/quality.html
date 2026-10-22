@@ -1,0 +1,26 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Browser quality fixture</title>
+<style>body{font:16px system-ui;margin:24px}button,input{margin:4px;padding:6px}.scroll{height:160px;width:300px;overflow:auto;scroll-behavior:smooth}.scroll>div{height:2000px}</style>
+<main id="main"><h1>Browser quality</h1>
+<button id="noop">No change</button><button id="change">Change</button><output id="changed">Initial</output>
+<label>Name <input id="name"></label><label>Rollback <input id="rollback" value="before"></label>
+<ul id="rows"><li><span>A-1001</span><button>Cancel</button></li><li><span>B-2002</span><button>Cancel</button></li></ul>
+<span id="specific">Order A-1001 action</span><button id="labelled" aria-label="Action" aria-labelledby="specific"></button>
+<div role="button" tabindex="0" aria-disabled="true" id="disabled">Unavailable</div><div id="shadow"></div>
+<button id="submit">Submit once</button><output id="submitted"></output>
+<button id="delayed">Delayed result</button><output id="result"></output>
+<button id="late">Delayed navigation</button><output id="loading"></output>
+<div class="scroll" tabindex="0" aria-label="Scroll region"><div>Scrollable content</div></div>
+</main>
+<script>
+window.quality={counts:{},record:null};
+const count=name=>{quality.counts[name]=(quality.counts[name]||0)+1;};
+document.querySelector('#noop').onclick=()=>count('noop');
+document.querySelector('#change').onclick=()=>{count('change');document.querySelector('#changed').textContent='Changed '+quality.counts.change;};
+document.querySelector('#rollback').oninput=()=>queueMicrotask(()=>{document.querySelector('#rollback').value='before';});
+for(const button of document.querySelectorAll('#rows button'))button.onclick=()=>{count('row');quality.record=button.closest('li').querySelector('span').textContent;};
+document.querySelector('#disabled').onclick=()=>count('disabled');
+document.querySelector('#submit').onclick=()=>{count('submit');document.querySelector('#submitted').textContent='Saved '+quality.counts.submit;};
+document.querySelector('#delayed').onclick=()=>{count('delayed');setTimeout(()=>{document.querySelector('#result').textContent='Ready result';},180);};
+document.querySelector('#late').onclick=()=>{count('late');document.querySelector('#loading').textContent='Loading next page';setTimeout(()=>{location.href='detail.html';},1000);};
+document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<span id="shadow-label">Shadow query</span><input aria-labelledby="shadow-label">';
+</script></html>

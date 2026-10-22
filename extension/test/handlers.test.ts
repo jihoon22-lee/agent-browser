@@ -35,6 +35,71 @@ async function firstRef(h: ReturnType<typeof createHandlers>, tabId = 1) {
     const result: any = await h(request('browser.snapshot', { tabId }));
     return result.frames[0].elements[0].ref as string;
 }
+it('waitFor follows the destination document without redispatching its click',async()=>{
+  const w=world();let clicks=0,reads=0;
+  const base=w.api.sendToFrame;
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){clicks++;return {ok:true,result:{executed:true,verified:{domChanged:true,urlChanged:false}}};}
+    if(msg.method==='conditions'){
+      reads++;
+      if(reads===1){w.frames.get(1)![0]!.documentId='next';w.tabs.get(1)!.url='https://example.test/next';return {ok:true,result:{conditions:{text:false}}};}
+      return {ok:true,result:{conditions:{text:true}}};
+    }
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  const result:any=await h(request('browser.click',{ref,waitFor:{text:'Ready',urlIncludes:'/next',timeoutMs:1000}}));
+  expect(result.verified).toMatchObject({expectationMet:true,urlChanged:true});
+  expect(clicks).toBe(1);expect(reads).toBeGreaterThanOrEqual(2);
+});
+it('an unmet postcondition reports the action as executed and never repeats it',async()=>{
+  const w=world();let clicks=0;const base=w.api.sendToFrame;
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){clicks++;return {ok:true,result:{executed:true,verified:{domChanged:true,urlChanged:false}}};}
+    if(msg.method==='conditions')return {ok:true,result:{conditions:{text:false}}};
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  await expect(h(request('browser.click',{ref,waitFor:{text:'Never',timeoutMs:100}}))).rejects.toMatchObject({code:'TIMEOUT',retry:'never',details:{executed:true}});
+  expect(clicks).toBe(1);
+});
+it.each(['reply','port-closed','same-url'])('follows a replaced top document after child-frame input (%s)',async(mode)=>{
+  const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://example.test/child'});
+  const base=w.api.sendToFrame;let clicks=0;const probes:number[]=[];
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){
+      clicks++;const url=mode==='same-url'?'https://example.test/1':'https://example.test/landing';
+      w.frames.set(1,[{frameId:0,documentId:'landing',url}]);w.tabs.get(1)!.url=url;
+      if(mode==='port-closed')throw Error('The message port closed before a response was received.');
+      return {ok:true,result:{executed:true,verified:{domChanged:true}}};
+    }
+    if(msg.method==='conditions'){probes.push(frame.frameId);return {ok:true,result:{conditions:{text:true}}};}
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),snapshot:any=await h(request('browser.snapshot'));
+  const result:any=await h(request('browser.click',{ref:snapshot.frames[1].elements[0].ref,waitFor:{text:'Ready',timeoutMs:100}}));
+  expect(result.verified).toMatchObject({expectationMet:true,urlChanged:true});
+  expect(clicks).toBe(1);expect(probes).toEqual([0]);
+});
+it('never substitutes top-page text when only the source iframe disappears',async()=>{
+  const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://example.test/child'});
+  const base=w.api.sendToFrame;let clicks=0,probes=0;
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){clicks++;w.frames.get(1)!.pop();return {ok:true,result:{executed:true,verified:{domChanged:true}}};}
+    if(msg.method==='conditions'){probes++;return {ok:true,result:{conditions:{text:true}}};}
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),snapshot:any=await h(request('browser.snapshot'));
+  await expect(h(request('browser.click',{ref:snapshot.frames[1].elements[0].ref,waitFor:{text:'Ready',timeoutMs:100}}))).rejects.toMatchObject({code:'TIMEOUT',details:{executed:true}});
+  expect(clicks).toBe(1);expect(probes).toBe(0);
+});
+it('rejects an empty or malformed waitFor before any input is sent',async()=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
+  for(const waitFor of [{}, {text:''}, {text:'Ready',match:'invalid'}, {text:'Ready',timeoutMs:-1}]){
+    await expect(h(request('browser.click',{ref,waitFor}))).rejects.toMatchObject({code:'INVALID_PARAMS'});
+  }
+  expect(w.sent.some(s=>s.msg.method==='click')).toBe(false);
+});
 it('waits in the snapshot-bound child document, rejects navigation and conflicting refs',async()=>{
     const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://other.test/mail'});
     const h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
@@ -46,6 +111,27 @@ it('waits in the snapshot-bound child document, rejects navigation and conflicti
     await expect(h(request('browser.wait',{frameRef,refGone:snap.frames[0].elements[0].ref}))).rejects.toMatchObject({code:'INVALID_PARAMS'});
     w.frames.get(1)![1]!.documentId='replacement';
     await expect(h(request('browser.wait',{frameRef,text:'body'}))).rejects.toMatchObject({code:'STALE_ELEMENT'});
+});
+it.each(['between-probes','during-probe','final-check','removed'])('match-all wait keeps its original frame document (%s)',async(phase)=>{
+  const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://example.test/child'});
+  const h=createHandlers(w.api,memorySessionStore()),snap:any=await h(request('browser.snapshot'));
+  const base=w.api.sendToFrame,readTabs=w.api.tabsGet;let probes=0,replaceOnTabRead=false;
+  w.api.tabsGet=async id=>{if(replaceOnTabRead){w.frames.get(1)![1]!.documentId='replacement';replaceOnTabRead=false;}return readTabs(id);};
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='conditions'){
+      probes++;
+      if(probes===1){
+        if(phase==='removed')w.frames.get(1)!.pop();
+        else if(phase==='final-check')replaceOnTabRead=true;
+        else w.frames.get(1)![1]!.documentId='replacement';
+      }
+      return {ok:true,result:{conditions:{text:phase!=='between-probes'||probes>1}}};
+    }
+    return base(tab,frame,msg);
+  };
+  await expect(h(request('browser.wait',{frameRef:snap.frames[1].frameRef,text:'Ready',urlIncludes:'/1',match:'all',timeoutMs:300})))
+    .rejects.toMatchObject({code:'STALE_ELEMENT'});
+  expect(probes).toBe(1);
 });
 it('lists tabs with attachability and returns flat tab metadata', async () => {
     const w = world(), h = createHandlers(w.api, memorySessionStore());
@@ -218,6 +304,14 @@ it('URL-only wait works while the old document cannot be injected',async()=>{
  await new Promise(r=>setTimeout(r,10));
  for(const f of w.updates)f(1,{url:'https://example.test/ready'},{...w.tabs.get(1)!,url:'https://example.test/ready'});
  await outcome;
+});
+it.each(['missing-frame','injection-fails'])('URL-only match-all waits without content access (%s)',async(mode)=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());
+  w.tabs.get(1)!.url='https://example.test/ready';
+  if(mode==='missing-frame')w.frames.set(1,[]);
+  const inject=vi.fn(async()=>{throw Error('document unavailable');});w.api.inject=inject;
+  await expect(h(request('browser.wait',{urlIncludes:'/ready',match:'all',timeoutMs:100}))).resolves.toMatchObject({executed:false,verified:{met:'all',conditions:['urlIncludes']}});
+  expect(inject).not.toHaveBeenCalled();expect(w.sent).toHaveLength(0);
 });
 it('cancelling a navigation with an unresolved Chrome API call removes its listeners',async()=>{
  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);let called=false;

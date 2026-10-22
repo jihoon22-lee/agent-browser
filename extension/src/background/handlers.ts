@@ -7,6 +7,7 @@ import { RefTable, snapshotToken } from '../content/refs';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
+import { pageConditions, CONDITION_KEYS, type PageConditions } from '../protocol/conditions';
 const WRITE = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
 const SNAPSHOT_RESPONSE_BYTES = 28_000;
@@ -24,6 +25,8 @@ type Running = {
     promise: Promise<unknown>;
     /** The action's confirmed result while only the late-navigation watch is still running. */
     confirmed?: unknown;
+    /** Top document before child-frame input, to distinguish navigation from iframe removal. */
+    sourceTopDocument?: string;
 };
 /** Trusted input, when the user enabled it: decides per tab whether clicks and keys go through the debugger. */
 export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string> };
@@ -49,15 +52,17 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     }
     /** Hard navigation destroys the document before it can reply. A replaced document right after
      * a dispatched click or key press is that navigation, not an unknown outcome. */
-    async function navigatedAway(tabId: number, frame: FrameInfo) {
+    async function navigatedAway(tabId: number, frame: FrameInfo, sourceTopDocument?: string) {
         const deadline = Date.now() + 1000;
         while (Date.now() < deadline) {
             const tab = await api.tabsGet(tabId).catch(() => undefined);
             if (!tab) return false;
-            const live = (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).find(f => f.frameId === frame.frameId);
+            const documents = await api.listFrames(tabId).catch(() => [] as FrameInfo[]);
+            const live = documents.find(f => f.frameId === frame.frameId), top = documents.find(f => f.frameId === 0);
             // A subframe can vanish for unrelated reasons (rerender, closed ad slot); only a replaced
             // document, a missing top frame mid-commit, or a pending tab URL is evidence of navigation.
-            if (tab.pendingUrl || (live ? live.documentId !== frame.documentId : frame.frameId === 0)) return true;
+            if (tab.pendingUrl || (sourceTopDocument && top && top.documentId !== sourceTopDocument)
+                || (live ? live.documentId !== frame.documentId : frame.frameId === 0)) return true;
             await new Promise(r => setTimeout(r, 100));
         }
         return false;
@@ -80,6 +85,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         };
         const inputBefore = tracksTabs ? await inputState() : null;
         const startUrl = tracksTabs ? (await api.tabsGet(tabId).catch(() => undefined))?.url : undefined;
+        if(tracksTabs && frame.frameId!==0 && run.req.params.waitFor)
+            run.sourceTopDocument=(await interruptible(frames.list(tabId),run.controller.signal)).find(f=>f.frameId===0)?.documentId;
         // Off by default: only an enabled, attached debugger turns the content command into trusted input.
         if (tracksTabs && frame.frameId === 0 && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true };
         await check(run.req, run.controller.signal);
@@ -95,7 +102,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (e instanceof ProtocolError)
                 throw e;
             // An upload's change handler may submit or navigate too.
-            if ((tracksTabs || run.req.method === 'browser.upload') && await navigatedAway(tabId, frame))
+            if ((tracksTabs || run.req.method === 'browser.upload') && await navigatedAway(tabId, frame, run.sourceTopDocument))
                 return { executed: true, verified: { navigated: true, urlChanged: true } };
             if (WRITE.has(run.req.method))
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'The document stopped replying after the command was sent. Take a snapshot before retrying.', 'unsafe');
@@ -125,11 +132,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             }
             const confirmed = {...result,...children};
             if (tracksTabs) run.confirmed = confirmed;
-            return lateNavigation(tabId, startUrl, confirmed, run.controller.signal);
+            return run.req.params.waitFor ? confirmed : lateNavigation(tabId, startUrl, confirmed, run.controller.signal);
         }
         // Only a click or key press is final once its frame replies; a snapshot still has frames to read.
         if (tracksTabs) run.confirmed = response.result;
-        return lateNavigation(tabId, startUrl, response.result, run.controller.signal);
+        return run.req.params.waitFor ? response.result : lateNavigation(tabId, startUrl, response.result, run.controller.signal);
     }
     /** A script may navigate a moment after the click's own observation window closed. Only a
      * reply that saw no change at all is checked, and only for this observable tab condition. */
@@ -153,6 +160,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     async function dispatch(run: Running, snapshotAttempt = 0, snapshotDeadline = Date.now()+2000): Promise<unknown> {
         const { req, controller } = run, p = req.params, signal = controller.signal;
         await check(req, signal);
+        const expected = p.waitFor == null ? undefined : pageConditions(p.waitFor);
+        if(expected && (!['browser.click','browser.press'].includes(req.method)||p.newTab===true))
+            throw new ProtocolError('INVALID_PARAMS','waitFor is for click/press in the same tab; newTab does not support it.');
+        if(req.method==='browser.wait'&&p.match==='all'&&p.refGone!==undefined)
+            throw new ProtocolError('INVALID_PARAMS','match=all supports text, textGone and urlIncludes. Wait for refGone separately.');
         if (req.method === 'browser.bookmarks') return readBookmarks(api.bookmarks,p);
         if (req.method === 'browser.tabs.list')
             return { tabs: (await api.tabsQuery(typeof p.windowId === 'number' ? {windowId:p.windowId} : {})).map(describeTab) };
@@ -350,6 +362,15 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 await check(req, signal);
                 return frame;
             };
+            if(req.method==='browser.wait'&&p.match==='all') {
+                const conditions=pageConditions(Object.fromEntries([...CONDITION_KEYS,'match','timeoutMs'].filter(k=>p[k]!==undefined).map(k=>[k,p[k]])));
+                if(conditions.text===undefined && conditions.textGone===undefined){
+                    const result:any=await urlWait(tabId,{urlIncludes:conditions.urlIncludes,timeoutMs:conditions.timeoutMs},run,prepare);
+                    return {...result,verified:{...result.verified,met:'all',conditions:['urlIncludes']}};
+                }
+                const frame=await prepare();
+                return waitForConditions(tabId,frame,conditions,run);
+            }
             if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
                 return urlWait(tabId, p, run, prepare);
             const frame = await prepare();
@@ -377,9 +398,72 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // and page readiness are observed by later snapshot/wait calls.
                 return {executed:true,openedTabs:[{...describeTab(created),pendingUrl:created.pendingUrl??(!isWeb(created.url)?url:undefined),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
             }
-            return send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, panelRequestId: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
+            const result = await send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, panelRequestId: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
+            if(expected)run.confirmed=result;
+            return expected ? waitForConditions(tabId,frame,expected,run,result,tab.url) : result;
         }
         throw new ProtocolError('FORBIDDEN_METHOD', `Unknown browser method ${req.method}.`);
+    }
+    /** Re-read conditions in the current document; navigation retries only these read-only probes.
+     * The click/key is never resent, and the whole waiter (including Chrome API calls) is bounded. */
+    async function waitForConditions(tabId:number, original:FrameInfo, expected:PageConditions, run:Running, action?:any, sourceUrl?:string) {
+        const executed=action!==undefined;
+        if(action?.openedTabs?.length)throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','The action opened another tab. Inspect its snapshot before waiting there.','never',{executed:true});
+        const controller=new AbortController(),signal=controller.signal;
+        const cancel=()=>controller.abort(run.controller.signal.reason??cancelled());
+        run.controller.signal.addEventListener('abort',cancel,{once:true});
+        if(run.controller.signal.aborted)cancel();
+        const timer=setTimeout(()=>controller.abort(new ProtocolError('TIMEOUT','The requested page conditions were not met. Inspect the page before another action.',executed?'never':'safe',{executed,expectationMet:false})),expected.timeoutMs);
+        const started=Date.now(),keys=CONDITION_KEYS.filter(k=>expected[k]!==undefined),originalDocumentId=original.documentId;
+        const staleWait=()=>new ProtocolError('STALE_ELEMENT','The waited-for document changed. Take a fresh snapshot before waiting again.');
+        let injected=originalDocumentId;
+        try {
+            return await interruptible((async()=>{
+                while(true){
+                    aborted(signal);
+                    const tab=await interruptible(getTab(api,tabId),signal);
+                    requireWeb(tab.url);
+                    const checks:Record<string,boolean>={};
+                    if(expected.urlIncludes!==undefined)checks.urlIncludes=!tab.pendingUrl&&!!tab.url?.includes(expected.urlIncludes);
+                    let live:FrameInfo|undefined;
+                    if(!tab.pendingUrl && (expected.text!==undefined||expected.textGone!==undefined)){
+                        try{
+                            const documents=await interruptible(frames.list(tabId),signal),top=documents.find(f=>f.frameId===0);
+                            // A child can disappear without navigation. Follow frame 0 only after
+                            // the enclosing document was actually replaced, including same-URL loads.
+                            live=run.sourceTopDocument && top && top.documentId!==run.sourceTopDocument
+                                ? top : documents.find(f=>f.frameId===original.frameId);
+                            if(!executed && live?.documentId!==originalDocumentId)throw staleWait();
+                            if(live){
+                                if(injected!==live.documentId){await interruptible(frames.inject(tabId,live),signal);injected=live.documentId;}
+                                const reply=await interruptible(api.sendToFrame(tabId,live,{kind:'cmd',method:'conditions',params:{...run.req.params,...expected,requestId:run.req.id+':conditions'}}),signal);
+                                const current=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===live!.frameId);
+                                if(!executed && current?.documentId!==originalDocumentId)throw staleWait();
+                                if(reply?.ok && current?.documentId===live.documentId) {
+                                    for(const key of ['text','textGone'])if(typeof reply.result?.conditions?.[key]==='boolean')checks[key]=reply.result.conditions[key];
+                                }
+                            }
+                        }catch(error){aborted(signal);if(error instanceof ProtocolError&&((!executed&&error.code==='STALE_ELEMENT')||!['FRAME_UNAVAILABLE','STALE_ELEMENT'].includes(error.code)))throw error;}
+                    }
+                    const met=keys.filter(k=>checks[k]===true);
+                    if(expected.match==='all'?met.length===keys.length:met.length>0){
+                        const current=await interruptible(getTab(api,tabId),signal);
+                        if(current.pendingUrl||current.url!==tab.url)continue;
+                        if(live){
+                            const finalFrame=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===live!.frameId);
+                            if(!executed && finalFrame?.documentId!==originalDocumentId)throw staleWait();
+                            if(finalFrame?.documentId!==live.documentId)continue;
+                        }
+                        return {...(action??{executed:false}),verified:{...(action?.verified??{}),met:expected.match==='all'?'all':met[0],conditions:met,
+                            ...(executed?{expectationMet:true,urlChanged:action?.verified?.urlChanged===true||(sourceUrl!==undefined&&tab.url!==sourceUrl)||(live!==undefined&&live.documentId!==originalDocumentId)}:{})},elapsedMs:Date.now()-started};
+                    }
+                    await interruptible(new Promise(r=>setTimeout(r,100)),signal);
+                }
+            })(),signal);
+        }catch(error){
+            if(executed && error instanceof ProtocolError)throw new ProtocolError(error.code,error.message,'never',{...(error.details&&typeof error.details==='object'?error.details:{}),executed:true,expectationMet:false});
+            throw error;
+        }finally{clearTimeout(timer);controller.abort(cancelled());run.controller.signal.removeEventListener('abort',cancel);}
     }
     async function urlWait(tabId: number, p: Record<string, unknown>, run: Running, prepare: () => Promise<FrameInfo>) {
         const signal = run.controller.signal;
@@ -438,8 +522,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             let error = asError(e);
             // Cancelled while only watching for a late navigation: the action ran and was confirmed.
             if (error.code === 'CANCELLED' && run.confirmed !== undefined) {
-                if (claimed) await store.saveResult(req.id, { ok: true, result: run.confirmed });
-                return run.confirmed;
+                if(req.params.waitFor)error=new ProtocolError('CANCELLED','Stopped after the action, before its expected page state was confirmed.','never',{executed:true,expectationMet:false});
+                else {
+                    if (claimed) await store.saveResult(req.id, { ok: true, result: run.confirmed });
+                    return run.confirmed;
+                }
             }
             if (run.started && error.code === 'INTERNAL')
                 error = new ProtocolError('EXECUTION_UNKNOWN', 'The action was dispatched but its outcome could not be confirmed. Inspect the page before retrying.', 'unsafe');

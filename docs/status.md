@@ -2,6 +2,75 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+# 브라우저 품질 후속 — 2026-10-22, 드래그 개선·Linux 검증 완료
+
+URL-only `browser_wait(match:all)`은 본문 frame을 resolve/inject하지 않고 탭 URL만 관찰하도록 수정했다. 포인터 카드의 자식이 사용 가능한지도 공통 `isDisabled`로 판단하므로 ARIA-disabled 자식 때문에 카드 ref가 누락되지 않는다. 수정 전 단위 **3개**·실제 브라우저 **2개** 실패를 확인했으며, 수정 후 전체 단위 **602개**, 관련 E2E **32개**, 빌드·타입 검사가 통과했다. 중단 후 재개 과정에서 URL-only 기존 빌드 실패도 다시 확인했다. 최신 로그는 ignored `tests/agent/results/pr37-review-final/`에 남겼다.
+
+리뷰 본문의 pointerdown/mousedown 피드백 경로도 수정했다. 포인터 이벤트 뒤에는 원래 컨트롤·부모·레코드 키·href를 확인하고, 주변 안내 텍스트 변화 때문에 실제 click을 누락시키지 않는다. 최초 입력 전 전체 레코드 검사는 유지한다. 수정 전 단위 **2개**·실제 브라우저 **1개** 실패, 수정 후 전체 단위 **599개**·관련 E2E **30개**와 링크 변경 차단 B08 **1개**가 통과했다. 빌드·타입 검사도 통과했다.
+
+추가 프레임 대기 리뷰도 수정했다. standalone `browser_wait(match:all)`의 본문 조건은 원래 documentId에 묶고, 조회 전·응답 후·반환 직전에 교체/제거를 확인해 `STALE_ELEMENT`로 거부한다. 액션 `waitFor`는 계속 도착 문서를 관찰한다. 수정 전 단위 **4개**·실제 브라우저 **1개** 실패를 확인했으며, 수정 후 확장 전체 **597개**, 관련 E2E **29개**, 빌드·타입 검사가 통과했다. 최종 원격 결과·병합은 아래 PR의 checks와 병합 기록에 남긴다.
+
+[PR #37](https://github.com/jihoon22-lee/agent-browser/pull/37)에 push했다. [첫 원격 CI 39776237431](https://github.com/jihoon22-lee/agent-browser/actions/runs/39776237431)은 양쪽 성공: Linux E2E **169 통과/3 제외**, 네이티브 Windows Chrome E2E **170 통과/2 제외**, 각각 5표본 품질 gate **13/13**. Windows는 Node 24.18.0·Chrome 155.0.8059.40·release exe이며 Rust·설치 수명주기·GUI 엔진·패키징 검사도 통과했다. 이 원격 실행은 로컬 WSL interop이나 설치 화면의 육안 검증을 대신하지 않는다. 리뷰 수정 후 최종 커밋의 CI·병합 상태는 PR checks와 병합 이력을 따른다.
+
+제품 리뷰 수정 뒤 [CI 39779033152](https://github.com/jihoon22-lee/agent-browser/actions/runs/39779033152)도 양쪽 성공했다. 확장 **593 통과**, Linux E2E **171 통과/3 제외**, Windows E2E **172 통과/2 제외**, 품질 gate 양쪽 **13/13**이다. Linux 의존성 설치가 지연됐지만 실패·재실행 없이 끝났다.
+
+추가 리뷰에서 fixture만 비교하던 해시를 전체 workload 지문으로 고쳤다. benchmark·설정·수집기·harness·runtime·MCP driver·테스트 의존성 명세·fixture 서버·사용 페이지를 해시하며, 옛 fixture-only 기록은 자동 비교를 거부한다. 실패 검사부터 수정 후 수집기 **6개**, 타입 검사, 5표본 smoke의 **13/13** 품질 검사가 통과했다. 과거 `54b04e7..e631b53` 측정 소스를 대조한 결과, 실제 호출·fixture·harness·설정·runtime은 같고 long-task 미측정값 처리만 달랐다. 아래 관측 수치는 보존하되 당시 해시가 전체 workload를 검증했다고 해석하지 않는다. 새 비교기로 기존 자료를 읽은 결과는 로컬 `comparison-pr37-legacy-guard/report.html`에 있다.
+
+리뷰 지적 두 건도 실패 검사부터 고쳤다. 입력 후 검증은 같은 컨트롤의 연결·직접 부모·요소 식별·원래 레코드 키를 확인하되 일반 검증/가격 문구 변화는 허용한다. 입력 **전**의 전체 레코드 검사는 유지한다. iframe 입력이 최상위 문서를 교체하면 완료 조건은 도착한 frame 0에서 읽는다. iframe만 제거된 경우에는 top 문구로 성공을 대신하지 않는다. 수정 전 단위 실패 13개와 실제 브라우저 실패 2개를 확인했으며, 수정 후 전체 확장 **593개**, 관련 E2E **28개**가 통과했다.
+
+리뷰 수정 `e631b53` 빌드를 같은 Linux 환경에서 다시 50회씩 측정했다(동시 로컬 시험 없음). 실제 상태 **13/13**, 오대상·잘못된 성공·중복 쓰기·중단 후 쓰기 모두 **0**. 5,000행 query p50/p95 **144.2/181.6ms**, snapshot **119.0/151.9ms**로 초기 기준선 대비 p50은 각각 **90.7%·47.2% 감소**했다. fill **62.0/64.4ms**, 무변화 클릭 **1,631.7/1,635.6ms**다. 아래 표는 앞선 측정 이력이고, 최신 결과는 후속 JSON의 `postReviewMetrics` 및 로컬 `comparison-pr37-final/report.html`이다.
+
+리뷰 회귀 중 게시판을 포함한 별도 실행은 **36 통과/1 실패/1 제외**였다. 기존 B10이 `first-frame-visible`에서 90초 timeout으로 다시 재현됐다. 당시 새 탭 snapshot에는 자식 frame 두 개의 요소가 있었고, relay 완료는 3.6~54.3ms, heartbeat는 0.48~0.62ms, 연결 끊김은 0이었다. 따라서 이 실행의 멈춤 위치는 Playwright의 첫 iframe 표시 확인까지 좁혔지만 최초 원인은 아직 미확인이다. 아래 50회 무재현 실험과 구분해 보존한다.
+
+명시 `waitFor` 조건이 있는 드래그에도 남아 있던 고정 500ms 관찰을 제거했다. 드래그 입력은 한 번만 보내고 지정 조건을 확인한다. 명시 조건 없는 일반 클릭의 기존 지연 이동 관찰은 유지한다. [후속 수치·환경·반복 기록](./reference/browser-quality-followup-2026-10-22.json), [미해결 조사 계획](./plans/browser-quality-followup.md).
+
+| DOM 드래그 + 완료 조건 | 수정 전 p50 / p95 | 수정 후 p50 / p95 |
+|---|---:|---:|
+| 포인터 정렬 | 699.8 / 745.8ms | **207.1 / 248.3ms** |
+| HTML5 drop | 697.1 / 739.7ms | **210.2 / 245.6ms** |
+
+Linux Chromium 156.0.8078.4 headless·Node 24.18.0·debug Bridge에서 각 1회 예열+50회 측정했다. 매번 실제 정렬/drop 결과와 이벤트 1회 실행을 확인했다. p50은 각각 70.4%·69.8% 감소했다. 호스트 부하는 완전히 통제하지 않았고, 수정 전 측정 일부는 단위 검사와 겹쳤다. 신뢰 입력은 기능 E2E로 확인했으며 이 반복 성능 수치에 합치지 않았다.
+
+- **검증:** 먼저 실패한 드래그 대기 회귀 검사 수정 후 확장 **54파일/575개 통과**, 집중 E2E **16개 통과**, 최종 전체 Linux E2E **169개 통과/선택 실행 3개 제외**(4.7분). 확장 빌드와 E2E 타입 검사 통과. 이번 후속에서 Rust 제품 코드는 바뀌지 않았다.
+- **B10 미해결:** 기본 6회, 2 CPU 제한 12회, 25ms heartbeat·Bridge 재시작 6회, 새 탭 결과 진단 20회, Chrome 프로토콜 메타데이터 수집 6회의 완료된 게시판 반복은 **450개 통과/50개 제외**였지만 기존 멈춤을 재현하지 못했다. 초기 수집기 오류로 중단한 반복은 이 합계에서 제외했다. 실패 시 시험 단계·새 탭 snapshot 오류·frame 상태·relay 왕복을 남기도록 보강했다. timeout·재시도로 실패를 숨기지 않았다.
+- **관찰 경계:** 설치본 Playwright 1.64의 첫 `expect` 조회에는 `nullProgress` 경로가 있다([상류 이슈](https://github.com/microsoft/playwright/issues/42880)). assertion의 10초 설정을 넘어 시험 90초까지 멈춘 현상을 설명할 수 있지만, 최초 renderer/관찰 정지 원인은 아직 확인하지 못했다. 의존성은 바꾸지 않았다.
+- **결과:** ignored `tests/agent/results/browser-metrics/drag-{before-linux,after-linux,comparison-linux}/`에 원시 수치와 비교 HTML을 보존했다. 로컬 Windows·모델 호출은 추가 실행하지 않았다. 사용자 요청에 따라 이 변경과 앞선 품질 개선을 함께 push·PR·원격 CI·merge로 마무리한다. 원격 검증 결과는 해당 PR에도 기록한다.
+
+---
+
+# 브라우저 품질 측정·개선 — 2026-10-22, Linux 검증 완료
+
+`feat/m1-browser-quality`에서 [초기 검토](./review-browser-performance-2026-10-22.md)의 결함을 실패 테스트부터 수정하고, 전후 benchmark와 실제 모델용 수집기를 구성했다. [실행·보고서 사용법](./browser-quality-metrics.md), [환경·전체 수치·검증 기록 JSON](./reference/browser-quality-2026-10-22.json).
+
+- **정확도:** 행의 정적 텍스트·ID·링크가 바뀐 재사용 ref 거부, 접근 이름 우선순위와 ShadowRoot 레이블, aria-disabled/inert, query 뒤 행 문맥, 입력 이벤트 뒤 값/대상 재확인을 보강했다. 제거된 링크의 URL host를 ShadowRoot host로 오인한 회귀도 단위 실패 테스트와 실제 B02 재현 뒤 고쳤다.
+- **완료·움직임:** click/press의 `waitFor`에 text/textGone/urlIncludes를 지정하면 조건을 관찰하고 도착 snapshot을 반환한다. default all·5초이며 최대 30초다. 입력 후 timeout/취소가 재입력으로 이어지지 않는다. `browser_wait`도 match:all을 지원한다(refGone 조합 제외). 스크롤은 smooth CSS에 영향받지 않는 즉시 이동 후 위치·경계를 반환한다. 클릭은 이미 도달 가능한 대상을 불필요하게 스크롤하지 않는다.
+- **비용:** query에 맞지 않는 행을 먼저 걸러 읽고, mutation 때 추가 subtree만 스캔한다. 한 snapshot 안에서 native labels 연관을 한 번 구성해 수천 버튼의 반복 조회 비용을 줄였다. snapshot 사이의 장기 캐시나 TCP 설정 변경은 넣지 않았다.
+- **수집:** 합성 benchmark는 숫자 JSON·HTML·Markdown, 실제 상태 정답·오대상·잘못된 성공·중복/중단 후 쓰기·왕복/heartbeat/복구·반환량을 기록한다. 모델 runner는 목표만 주는 평가와 호출/step/토큰/시간을 추가했다. 누락은 미측정으로 보존한다. CI에 Linux/Windows 5표본 정확도 gate와 artifact 업로드를 구성했으나 원격 CI는 실행하지 않았다.
+
+최종 Linux: Node 24.18.0, Chromium **156.0.8078.4 headless**, DOM 입력, debug Bridge. 같은 fixture/workload, 각 1회 예열 + **50회**. 중간에 WSL 재시작이 있었고 호스트 부하는 통제하지 않았으므로 이 합성 workload의 관측 결과이며 Windows/일반 사이트 SLA가 아니다.
+
+| 지표 | 수정 전 | 수정 후 |
+|---|---:|---:|
+| 5,000행 일치 없는 query p50 / p95 | 1,555.3 / 3,694.1ms | **121.3 / 150.4ms** |
+| 5,000행 snapshot p50 / p95 | 225.4 / 293.7ms | **110.8 / 155.7ms** |
+| 1,000행 query p50 / p95 | 188.7 / 225.7ms | 68.6 / 90.9ms |
+| fill p50 / p95 | 53.0 / 67.6ms | 62.7 / 64.0ms |
+| 변화 없는 click p50 / p95 | 1,642.4 / 1,663.4ms | 1,632.5 / 1,638.3ms |
+| DOM 변경 click p50 / p95 | 724.1 / 768.3ms | 702.7 / 728.6ms |
+| 실제 상태 검사(각 1회, 총 13개) | 5/13 | **13/13** |
+| 오대상 / 잘못된 성공 | 2 / 5 | **0 / 0** |
+| 중복 쓰기 / 중단 후 쓰기 | 0 / 0 | **0 / 0** |
+
+5,000행 query p50은 92.2%, snapshot은 50.8% 감소했다. fill은 실제 값 재확인 비용이 더해져 중앙값이 9.7ms 늘었다. 명시 조건 없는 무변화 클릭의 기존 관찰 대기 약 1.6초는 개선되지 않았다. 13개 정답은 결함 회귀 검사 수이며 모델 성공률 표본은 아니다. 최종 510개 측정 호출 동안 의도적 worker 종료 전 연결 끊김은 0, heartbeat p50/p95 0.5/0.6ms(8회), 강제 worker 종료 후 복구는 257.9ms(1회)였다.
+
+- **검증:** 확장 **54파일/574개**, Rust **225개 통과 + Windows 실행용 helper 1개 ignored**, 합성 Node **36개**, 최종 기본 Linux E2E **167개 통과/3개 선택 실행 제외**. 새 품질·게시판 집중 E2E **14개 통과/1개 제외**. 확장·Linux Bridge 빌드, MSVC release cross-build, E2E 타입, actionlint·shell 구문 통과. clippy 종료 0(기존 경고 줄 23개). 측정·모델 수집기 통계/누락/격리/대체 경로 회귀도 통과했다.
+- **실패 이력:** 첫 전체 E2E는 B02만 실패(166 통과/3 제외)했고 위 detached link 수정 뒤 전체 통과했다. 별도 게시판 3회 반복 도중에는 B02 재현 2회와 기존 B10 90초 timeout 1회가 나왔다. B02 원인 확인 후 반복을 중단했으며 중단된 B06과 미실행 13개를 통과로 세지 않았다. B10은 최종 전체 실행에서는 통과했지만 아래 미해결 항목을 유지한다.
+- **Windows:** 수정 전 기준선만 실제 Windows Node 24.18.1 + Chrome **155.0.8059.85** + release exe로 50표본 수집했다(동일 결함 5/13, query 5,000행 p50/p95 1,109.7/1,327.1ms). 수정 후에는 WSL interop `accept4 failed 110`/Windows 프로세스 무응답이 재발했다. 사용자가 **이번에는 Linux 결과까지**로 범위를 정했으므로 수정 후 Windows 실행·GUI 검증은 하지 않았다. cross-build 성공을 실제 Windows 통과로 취급하지 않는다.
+- **실제 모델:** OpenCode **1.19.3**, 공식 무료 가격·가용성·격리 preflight 확인 후 `opencode/big-pickle` 목표 평가를 1회 시도했다. Zen **HTTP 403 FreeTierError**로 도구 호출 전에 중단됐다(CLI 4,720.8ms, 도구 0, step/usage 미측정). 모델 성공률·토큰 절감은 측정하지 못했다. 유료 fallback·전역 설정 변경 없음.
+- **로컬 결과:** ignored `tests/agent/results/browser-metrics/{before-linux,before-windows,after-linux-verified,comparison-linux-verified}/`, 모델 `tests/agent/results/2026-10-22T10-52-59-479Z-305025/`. 원시 수치와 HTML은 로컬에 보존하고 위 JSON에는 합성 수치만 커밋한다. 기존 사용자 설치·Chrome 프로필은 건드리지 않았다. 로컬 과제별 커밋만 만들었으며 push/PR/Release는 하지 않았다.
+
+---
+
 # v0.2.1 Windows preview — 게시 완료 (2026-10-22)
 
 [v0.2.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.2.1)(prerelease)을 **2026-10-22 00:13:00 UTC / 09:13:00 KST**에 게시했다. 주석 태그 `v0.2.1` → main `786fee5316464569d10c5b4cc5b571231cb70873`([PR #35](https://github.com/jihoon22-lee/agent-browser/pull/35) 병합 커밋). v0.2.0 뒤의 변경은 serve.pid 시작 경합 수정 하나다.

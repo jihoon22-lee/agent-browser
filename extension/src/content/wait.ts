@@ -4,6 +4,14 @@ import { resolveRef } from "./refs";
 import { cancellationError } from "./cancellation";
 import { observePage } from "./observe";
 
+/** Internal read-only probe used across document replacements by the background waiter. */
+export function textConditions(p: Record<string,unknown>): Record<string,boolean> {
+  const text=pageText(document),result:Record<string,boolean>={};
+  if(typeof p.text==='string')result.text=text.includes(p.text);
+  if(typeof p.textGone==='string')result.textGone=!text.includes(p.textGone);
+  return result;
+}
+
 export function waitFor(p: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   if (signal?.aborted) return Promise.reject(cancellationError());
   const conds: [string, () => boolean][] = [];
@@ -22,8 +30,8 @@ export function waitFor(p: Record<string, unknown>, signal?: AbortSignal): Promi
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const check = () => {
-      const met = conds.find(([, f]) => f());
-      if (met) { done(); resolve({ executed: false, verified: { met: met[0] }, elapsedMs: Date.now() - start }); return true; }
+      const met = p.match==='all' ? (conds.every(([,f])=>f()) ? 'all' : undefined) : conds.find(([,f])=>f())?.[0];
+      if (met) { done(); resolve({ executed: false, verified: { met }, elapsedMs: Date.now() - start }); return true; }
       return false;
     };
     const mo = observePage(() => check());

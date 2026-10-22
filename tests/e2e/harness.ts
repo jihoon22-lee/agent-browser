@@ -48,6 +48,10 @@ export class ExtensionRelay {
   private held = new Map<string, Envelope>();
   private heldRoutes = new Map<string, WebSocket>();
   readonly commands: Envelope[] = [];
+  /** Numeric test-only transport observations. No arguments or page content are copied here. */
+  readonly commandTimings: Array<{method:string;durationMs:number}> = [];
+  readonly heartbeatTimings: number[] = [];
+  disconnects = 0;
   port = 0;
 
   constructor(private bridgePort: number) {}
@@ -56,6 +60,8 @@ export class ExtensionRelay {
     await once(this.server, "listening");
     this.port = (this.server.address() as { port: number }).port;
     this.server.on("connection", (client, request) => {
+      const started = new Map<string,{method:string;at:number}>(), heartbeats = new Map<string,number>();
+      let closed = false;
       this.latest = client;
       const upstream = new WebSocket(`ws://127.0.0.1:${this.bridgePort}/extension`, {
         headers: { origin: request.headers.origin ?? "" },
@@ -65,6 +71,11 @@ export class ExtensionRelay {
       client.on("message", (data) => {
         const text = data.toString();
         const message: Envelope = JSON.parse(text);
+        if(message.type==='req' && message.method==='heartbeat' && message.id)heartbeats.set(message.id,performance.now());
+        if(message.type==='res' && message.id && started.has(message.id)) {
+          const timing=started.get(message.id)!;started.delete(message.id);
+          this.commandTimings.push({method:timing.method,durationMs:performance.now()-timing.at});
+        }
         const method = message.id && this.methods.get(message.id);
         if (message.type === "res" && method && this.heldMethods.has(method)) {
           this.held.set(message.id!, message);
@@ -80,13 +91,17 @@ export class ExtensionRelay {
       upstream.on("message", (data) => {
         const text = data.toString();
         const message: Envelope = JSON.parse(text);
+        if(message.type==='res' && message.id && heartbeats.has(message.id)) {
+          this.heartbeatTimings.push(performance.now()-heartbeats.get(message.id)!);heartbeats.delete(message.id);
+        }
         if (message.type === "req" && message.id && message.method) {
+          started.set(message.id,{method:message.method,at:performance.now()});
           this.commands.push(message); this.methods.set(message.id, message.method);
           this.events.emit("command", message);
         }
         if (client.readyState === WebSocket.OPEN) client.send(text);
       });
-      const closeBoth = () => { client.terminate(); upstream.terminate(); this.sockets.delete(client); this.sockets.delete(upstream); };
+      const closeBoth = () => { if(!closed){closed=true;this.disconnects++;} client.terminate(); upstream.terminate(); this.sockets.delete(client); this.sockets.delete(upstream); };
       client.on("close", closeBoth); upstream.on("close", closeBoth);
       client.on("error", () => {}); upstream.on("error", closeBoth);
     });
