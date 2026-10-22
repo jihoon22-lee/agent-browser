@@ -5,6 +5,8 @@
   "scripts": {
     "test:ext": "pnpm --filter agent-browser-extension test",
     "build:ext": "pnpm --filter agent-browser-extension build",
-    "test:fixtures": "node --test tests/fixtures/server.test.mjs"
+    "test:fixtures": "node --test tests/fixtures/server.test.mjs",
+    "test:metrics": "node --test tests/e2e/metrics-report.test.mjs",
+    "bench:browser": "pnpm --filter agent-browser-e2e exec playwright test --config metrics.config.ts"
   }
 }
