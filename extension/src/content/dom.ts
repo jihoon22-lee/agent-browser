@@ -4,6 +4,14 @@ export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick
   (el instanceof HTMLLabelElement && el.control instanceof HTMLInputElement && el.control.type === 'file') ||
   (el.hasAttribute('tabindex') && (el as HTMLElement).tabIndex>=0);
 
+export const composedParent = (el: Element): Element | null => el.parentElement ?? ((el.getRootNode() as ShadowRoot).host ?? null);
+export function isDisabled(el: Element): boolean {
+  if (el.matches(':disabled')) return true;
+  for (let node: Element | null = el; node; node = composedParent(node))
+    if (node.hasAttribute('inert') || node.getAttribute('aria-disabled') === 'true') return true;
+  return false;
+}
+
 /** Frameworks attach click handlers at the root, so a pointer cursor is often the only DOM
  * signal. Count only the outermost pointer region outside an existing control. */
 export function isPointerTarget(el: Element): boolean {
@@ -44,7 +52,7 @@ export function roleOf(el: Element): string {
   return (el as HTMLElement).isContentEditable ? "textbox" : tag;
 }
 
-const clean = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+const clean = (s: string | null | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
 
 /** Icon controls often carry their only name on a nested image, SVG title or labelled icon. */
 function nestedLabel(el: Element): string {
@@ -57,14 +65,23 @@ function nestedLabel(el: Element): string {
   return "";
 }
 
-export function accessibleName(el: Element, excludeEditableValue = false): string {
+export function accessibleName(el: Element, excludeEditableValue = false, maxLength = 80): string {
+  return nameOf(el, excludeEditableValue, new Set()).slice(0, maxLength);
+}
+function nameOf(el: Element, excludeEditableValue: boolean, visiting: Set<Element>): string {
+  const by = el.getAttribute('aria-labelledby');
+  if (by && !visiting.has(el)) {
+    const path = new Set(visiting); path.add(el);
+    // IDs in a shadow tree are local to that tree. Do not bind a same-named document element.
+    const root = el.getRootNode() as Document | ShadowRoot;
+    const text = clean(by.split(/\s+/).map(id => {
+      const target = root.getElementById?.(id);
+      return target ? nameOf(target, excludeEditableValue, path) : '';
+    }).join(' '));
+    if (text) return text;
+  }
   const aria = clean(el.getAttribute("aria-label"));
   if (aria) return aria;
-  const by = el.getAttribute("aria-labelledby");
-  if (by) {
-    const t = clean(by.split(/\s+/).map((id) => el.ownerDocument.getElementById(id)?.textContent).join(" "));
-    if (t) return t;
-  }
   if ("labels" in el) {
     const labels = (el as HTMLInputElement).labels;
     if (labels && labels.length) {

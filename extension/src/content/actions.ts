@@ -1,7 +1,7 @@
 import { highlight } from "./highlight";
 import { partlyDelivered, requestTrusted, trustedFrame } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isRendered, walkDeep } from "./dom";
+import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor } from "./wait";
 import { extract } from "./extract";
@@ -56,7 +56,7 @@ function reaches(top: Element | null, el: Element): boolean {
 }
 
 function assertInteractable(el: Element): Point | undefined {
-  if (!isRendered(el, { checkLayout: hasLayout() }) || el.matches(":disabled") || el.closest("[inert]")) {
+  if (!isRendered(el, { checkLayout: hasLayout() }) || isDisabled(el)) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
   }
   if (!hasLayout()) return undefined;
@@ -92,6 +92,22 @@ function verificationValue(value: string) {
 function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+}
+
+/** Let queued application updates and a visible render run before confirming a value. A hidden
+ * tab must not depend on rAF firing. This is a bounded value observation, not server acknowledgement. */
+async function afterInput(ref: string, signal: AbortSignal) {
+  await new Promise<void>((resolve,reject) => {
+    let frame = 0;
+    const done = () => { clearTimeout(timer); if(frame)cancelAnimationFrame(frame); signal.removeEventListener('abort',abort); resolve(); };
+    const abort = () => { clearTimeout(timer); if(frame)cancelAnimationFrame(frame); signal.removeEventListener('abort',abort); reject(cancellationError(true)); };
+    const visible = hasLayout() && document.visibilityState === 'visible' && typeof requestAnimationFrame === 'function';
+    const timer = setTimeout(done,visible ? 40 : 0);
+    if(visible)frame=requestAnimationFrame(()=>setTimeout(done,0));
+    signal.addEventListener('abort',abort,{once:true}); if(signal.aborted)abort();
+  });
+  try { resolveRef(ref); }
+  catch { throw new ProtocolError('EXECUTION_UNKNOWN','The input was delivered, but its target changed before the value could be confirmed. Inspect the page before continuing.','unsafe'); }
 }
 
 export async function runAction(method: string, p: P, signal?: AbortSignal): Promise<Record<string, unknown>> {
@@ -260,6 +276,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         nativeSet(el, text);
         el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
+        await afterInput(String(p.ref),signal);
         const value = el.value;
         const isPassword = el instanceof HTMLInputElement && el.type === "password";
         return { executed: true, verified: isPassword ? { matches: value === text } : { ...verificationValue(value), matches: value === text } };
@@ -275,6 +292,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
           host.textContent = text;
           host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         }
+        await afterInput(String(p.ref),signal);
         const value = host.textContent ?? "";
         return { executed: true, verified: { ...verificationValue(value), matches: value === text, method: inserted ? "insertText" : "replace" } };
       }
@@ -299,8 +317,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         nativeSet(el, opt.value);
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
+        await afterInput(String(p.ref),signal);
         const label = el.selectedOptions[0]?.text.trim() ?? "";
-        return { executed: true, verified: { ...verificationValue(el.value), label: label.slice(0, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
+        return { executed: true, verified: { ...verificationValue(el.value), matches: el.value === opt.value, label: label.slice(0, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
@@ -308,6 +327,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (el.type === "radio" && el.checked && !want) throw new ProtocolError("INVALID_PARAMS", "A selected radio cannot be cleared by clicking it. Select another radio in the group.");
         const changed = el.checked !== want;
         if (changed) el.click();
+        if (changed) await afterInput(String(p.ref),signal);
         if (el.checked !== want) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The page did not accept the requested checked state.", "never", { executed: changed, checked: el.checked });
         return { executed: changed, verified: { checked: el.checked, matches: true } };
       }
