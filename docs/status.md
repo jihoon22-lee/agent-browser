@@ -6,6 +6,10 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 
 [PR #37](https://github.com/jihoon22-lee/agent-browser/pull/37)에 push했다. [첫 원격 CI 39776237431](https://github.com/jihoon22-lee/agent-browser/actions/runs/39776237431)은 양쪽 성공: Linux E2E **169 통과/3 제외**, 네이티브 Windows Chrome E2E **170 통과/2 제외**, 각각 5표본 품질 gate **13/13**. Windows는 Node 24.18.0·Chrome 155.0.8059.40·release exe이며 Rust·설치 수명주기·GUI 엔진·패키징 검사도 통과했다. 이 원격 실행은 로컬 WSL interop이나 설치 화면의 육안 검증을 대신하지 않는다. 리뷰 수정 후 최종 커밋의 CI·병합 상태는 PR checks와 병합 이력을 따른다.
 
+제품 리뷰 수정 뒤 [CI 39779033152](https://github.com/jihoon22-lee/agent-browser/actions/runs/39779033152)도 양쪽 성공했다. 확장 **593 통과**, Linux E2E **171 통과/3 제외**, Windows E2E **172 통과/2 제외**, 품질 gate 양쪽 **13/13**이다. Linux 의존성 설치가 지연됐지만 실패·재실행 없이 끝났다.
+
+추가 리뷰에서 fixture만 비교하던 해시를 전체 workload 지문으로 고쳤다. benchmark·설정·수집기·harness·runtime·MCP driver·테스트 의존성 명세·fixture 서버·사용 페이지를 해시하며, 옛 fixture-only 기록은 자동 비교를 거부한다. 실패 검사부터 수정 후 수집기 **6개**, 타입 검사, 5표본 smoke의 **13/13** 품질 검사가 통과했다. 과거 `54b04e7..e631b53` 측정 소스를 대조한 결과, 실제 호출·fixture·harness·설정·runtime은 같고 long-task 미측정값 처리만 달랐다. 아래 관측 수치는 보존하되 당시 해시가 전체 workload를 검증했다고 해석하지 않는다. 새 비교기로 기존 자료를 읽은 결과는 로컬 `comparison-pr37-legacy-guard/report.html`에 있다.
+
 리뷰 지적 두 건도 실패 검사부터 고쳤다. 입력 후 검증은 같은 컨트롤의 연결·직접 부모·요소 식별·원래 레코드 키를 확인하되 일반 검증/가격 문구 변화는 허용한다. 입력 **전**의 전체 레코드 검사는 유지한다. iframe 입력이 최상위 문서를 교체하면 완료 조건은 도착한 frame 0에서 읽는다. iframe만 제거된 경우에는 top 문구로 성공을 대신하지 않는다. 수정 전 단위 실패 13개와 실제 브라우저 실패 2개를 확인했으며, 수정 후 전체 확장 **593개**, 관련 E2E **28개**가 통과했다.
 
 리뷰 수정 `e631b53` 빌드를 같은 Linux 환경에서 다시 50회씩 측정했다(동시 로컬 시험 없음). 실제 상태 **13/13**, 오대상·잘못된 성공·중복 쓰기·중단 후 쓰기 모두 **0**. 5,000행 query p50/p95 **144.2/181.6ms**, snapshot **119.0/151.9ms**로 초기 기준선 대비 p50은 각각 **90.7%·47.2% 감소**했다. fill **62.0/64.4ms**, 무변화 클릭 **1,631.7/1,635.6ms**다. 아래 표는 앞선 측정 이력이고, 최신 결과는 후속 JSON의 `postReviewMetrics` 및 로컬 `comparison-pr37-final/report.html`이다.

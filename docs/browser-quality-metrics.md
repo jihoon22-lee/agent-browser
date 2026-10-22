@@ -30,10 +30,12 @@ node tests/e2e/windows-run.ts --exe 'C:\<test-directory>\browser-bridge.exe' --e
 - **지연:** 탭 목록, fill, 변화 없는 클릭, DOM 변경 클릭, 100/1,000/5,000행 snapshot과 일치 없는 query. 각 workload는 1회 예열 후 기본 50회 측정한다. 실패한 호출도 지연 통계에 포함한다. p95는 nearest-rank 방식이다.
 - **정확도:** 합성 페이지의 실제 상태를 독립적으로 확인하는 13개 검사. 입력 유지/원복, 행 재사용, 레이블, disabled, 검색 문맥, 스크롤, 동일 요청 재전송, 중단 후 쓰기, 명시 완료 조건/이동, worker 복구를 검사한다. 도구의 `ok`만으로 성공을 판단하지 않는다. 실행 전 거부가 정답인 시험의 도구 오류는 정확도 실패가 아니다.
 - **부가 수치:** 반환 bytes, relay가 관찰한 브라우저 명령·snapshot 왕복 시간, 50ms 이상 long task, heartbeat 왕복, 강제로 종료한 worker의 재연결 시간. 이 값은 DOM 내부 단계별 CPU 프로파일이나 패널 렌더 시간은 아니다. long task는 콜백 전달 시점 때문에 누락될 수 있다.
-- **비교 조건:** platform/arch, 브라우저 버전, headless, 입력 방식, Bridge debug/release, fixture 해시가 같고 양쪽 수집이 완료돼야 변화율을 계산한다. 이 조건만으로 OS 부하·열 상태까지 통제되지는 않는다. 별도 환경과 단일 표본의 품질 검사를 성능 SLA로 해석하지 않는다.
+- **비교 조건:** platform/arch, 브라우저 버전, headless, 입력 방식, Bridge debug/release, 전체 workload 해시가 같고 양쪽 수집이 완료돼야 변화율을 계산한다. 해시는 benchmark 코드·설정·보고서 수집기·harness·runtime·MCP driver·테스트 의존성 명세·fixture 서버·사용 fixture를 함께 포함한다(`BENCHMARK_SUITE_FILES`). 제품 소스 변경은 비교 대상이므로 이 해시에 포함하지 않는다. 이 조건만으로 OS 부하·열 상태까지 통제되지는 않는다. 별도 환경과 단일 표본의 품질 검사를 성능 SLA로 해석하지 않는다.
 - **신뢰 입력:** `AB_METRICS_TRUSTED=1`로 별도 측정한다. DOM 입력 결과와 합치지 않는다. 이번 기록의 반복 benchmark는 DOM 입력이다.
 
 CI는 Linux/Windows 각각 5회 표본과 정확도 gate를 실행하고 숫자·HTML artifact를 14일 보존하도록 구성했다. 5회 p95는 빠른 회귀 탐색용이다. 현재 원격 CI 실행 여부는 status에 따로 기록한다.
+
+PR #37의 해시 수정 전 기록은 fixture만 해시했다. 기존 HTML·JSON은 당시 측정 이력으로 남기지만, 새 비교기는 `workload-v1:` 해시가 없는 기록의 자동 변화율 계산을 거부한다. 앞으로 전후 비교는 같은 최신 수집기로 기준선부터 다시 수집한다. `sourceRevision`만 같게 맞추거나 예전 해시를 복사해 비교 검사를 우회하지 않는다.
 
 ## 드래그 완료 조건 반복 측정
 

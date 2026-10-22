@@ -424,7 +424,23 @@
     "changes": [
       "Verify the original input target and record key after reactive sibling updates, retaining strict whole-record checks before dispatch.",
       "Follow the destination top frame only when the top document was replaced after child-frame input."
-    ]
+    ],
+    "remoteCI": {
+      "runId": 39779033152,
+      "headSha": "1c0532edd5e3b626a0599d8b06ce087db4823eec",
+      "url": "https://github.com/jihoon22-lee/agent-browser/actions/runs/39779033152",
+      "conclusion": "success",
+      "linuxE2E": {
+        "passed": 171,
+        "skipped": 3
+      },
+      "windowsE2E": {
+        "passed": 172,
+        "skipped": 2
+      },
+      "extensionUnitPassed": 593,
+      "note": "Product fixes verified on both platforms before the collector fingerprint correction."
+    }
   },
   "postReviewMetrics": {
     "schemaVersion": 1,
@@ -1415,5 +1431,17 @@
       "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
       "Quality counts use fixture state, not tool ok. Null means not measured."
     ]
+  },
+  "fingerprintAudit": {
+    "legacyRecords": "Earlier records hash only the fixture; the current comparator rejects their automatic comparability. Original timing observations are preserved.",
+    "inspectedRange": "54b04e7..e631b53",
+    "workloadDifference": "Only the unsupported-longtask representation changed in the benchmark; timing calls, fixtures, harness, configuration and runtime source were unchanged.",
+    "fixedScope": "workload-v1 includes benchmark, configuration, collector, harness, runtime, MCP driver, test dependencies, fixture server and used pages.",
+    "collectorTestsPassed": 6,
+    "smoke": {
+      "samples": 5,
+      "qualityPassed": 13,
+      "qualityTotal": 13
+    }
   }
 }

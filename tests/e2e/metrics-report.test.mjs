@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { distribution, summarize, compareRuns, renderHtml } from './metrics-report.mjs';
+import { distribution, summarize, compareRuns, renderHtml, benchmarkSuiteHash, BENCHMARK_SUITE_FILES } from './metrics-report.mjs';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 
-const environment = { platform:'linux', arch:'x64', browserVersion:'156', headless:true, inputMode:'dom', bridgeBuild:'debug', suiteHash:'fixture-v1' };
+const environment = { platform:'linux', arch:'x64', browserVersion:'156', headless:true, inputMode:'dom', bridgeBuild:'debug', suiteHash:'workload-v1:synthetic' };
 const sample = (ms, ok=true) => ({scenario:'query',tool:'browser_snapshot',durationMs:ms,outcomeBytes:100,ok,errorCode:ok?null:'TIMEOUT',executed:'no',browserMs:ms-1,snapshotMs:ms-1,longTaskMaxMs:0,longTaskCount:0});
 const run = (calls=[]) => ({schemaVersion:1,environment,label:'synthetic',calls,oracles:[{scenario:'row',passed:false,wrongTarget:1,falseSuccess:1,duplicateWrites:0,postCancelWrites:0}],connection:{disconnects:0,heartbeatMs:[],recoveryMs:null},model:null,complete:true});
 
@@ -35,4 +38,31 @@ test('summary admits only numeric metrics and escapes HTML labels',()=>{
   assert(!JSON.stringify(summary).includes('PRIVATE_'));
   assert(!html.includes('<script>'));
   assert(html.includes('&lt;script&gt;'));
+});
+test('workload changes prevent a speed comparison even when the fixture is unchanged',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'agent-browser-suite-'));
+  try {
+    for(const path of BENCHMARK_SUITE_FILES){await mkdir(dirname(join(root,path)),{recursive:true});await writeFile(join(root,path),'original');}
+    for(const required of ['tests/e2e/browser-metrics.spec.ts','tests/e2e/metrics.config.ts','tests/e2e/harness.ts','tests/fixtures/site/quality.html'])assert(BENCHMARK_SUITE_FILES.includes(required));
+    const beforeHash=await benchmarkSuiteHash(root);
+    const before={...run([sample(100)]),environment:{...environment,suiteHash:beforeHash}};
+    for(const path of BENCHMARK_SUITE_FILES){
+      await writeFile(join(root,path),'changed');
+      const afterHash=await benchmarkSuiteHash(root);assert.notEqual(afterHash,beforeHash,path);
+      const result=compareRuns(before,{...run([sample(50)]),environment:{...environment,suiteHash:afterHash}});
+      assert.equal(result.comparable,false,path);assert.equal(result.timings[0].p50ChangePercent,null,path);
+      await writeFile(join(root,path),'original');
+    }
+    // A product change is what the benchmark measures, not a different workload.
+    await mkdir(join(root,'extension'),{recursive:true});await writeFile(join(root,'extension/content.js'),'new product');
+    assert.equal(await benchmarkSuiteHash(root),beforeHash);
+    await rm(join(root,'tests/e2e/metrics.config.ts'));
+    await assert.rejects(benchmarkSuiteHash(root),{code:'ENOENT'});
+  } finally {await rm(root,{recursive:true,force:true});}
+});
+test('legacy fixture-only hashes cannot certify an equivalent workload',()=>{
+  const old={...run([sample(100)]),environment:{...environment,suiteHash:'old-fixture-digest'}};
+  const comparison=compareRuns(old,old);
+  assert.equal(comparison.comparable,false);assert(comparison.mismatches.includes('unverified-workload-hash'));
+  assert.equal(comparison.timings[0].p50ChangePercent,null);
 });

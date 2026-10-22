@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { startWorld, ROOT, type World } from './harness';
-import { summarize, writeReports } from './metrics-report.mjs';
+import { summarize, writeReports, benchmarkSuiteHash } from './metrics-report.mjs';
 import type { ToolOutcome } from './mcp-driver';
 
 const digest=(text:Uint8Array|string)=>createHash('sha256').update(text).digest('hex');
@@ -28,7 +28,7 @@ test('collect browser timing and actual-state quality metrics',async()=>{
     let revision=process.env.AB_SOURCE_REVISION??'unknown';
     try{revision=execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{}
     run.environment={platform:process.platform,arch:process.arch,nodeVersion:process.version,browserVersion:world.runtime.browserVersion,headless:world.runtime.headless,inputMode:process.env.AB_METRICS_TRUSTED==='1'?'trusted':'dom',bridgeBuild:process.env.AB_BRIDGE_BUILD??(process.platform==='win32'?'release':'debug'),sourceRevision:revision,
-      suiteHash:digest(await readFile(join(ROOT,'tests/fixtures/site/quality.html'))),extensionSha256:digest(await readFile(join(world.config.extensionDir,'content.js'))),bridgeSha256:digest(await readFile(world.config.bridgeExe))};
+      suiteHash:await benchmarkSuiteHash(ROOT),extensionSha256:digest(await readFile(join(world.config.extensionDir,'content.js'))),bridgeSha256:digest(await readFile(world.config.bridgeExe))};
     const page=await world.open('quality.html');
     let operationId=await world.attach(page);
     const monitor=async()=>page.evaluate(()=>{

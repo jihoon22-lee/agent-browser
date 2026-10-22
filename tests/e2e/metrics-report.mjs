@@ -1,6 +1,18 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+
+export const BENCHMARK_SUITE_FILES = Object.freeze([
+  'tests/e2e/browser-metrics.spec.ts','tests/e2e/metrics.config.ts','tests/e2e/metrics-report.mjs',
+  'tests/e2e/harness.ts','tests/e2e/runtime.ts','tests/e2e/mcp-driver.ts','tests/e2e/package.json',
+  'tests/fixtures/server.mjs','tests/fixtures/site/quality.html','tests/fixtures/site/detail.html',
+]);
+export async function benchmarkSuiteHash(root) {
+  const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+  const files = await Promise.all(BENCHMARK_SUITE_FILES.map(async path=>[path,digest(await readFile(join(root,path)))]));
+  return 'workload-v1:'+digest(JSON.stringify(files));
+}
 
 const round = n => Math.round(n * 10) / 10;
 const dimensions = ['platform','arch','browserVersion','headless','inputMode','bridgeBuild','suiteHash'];
@@ -39,6 +51,7 @@ export function summarize(run) {
 export function compareRuns(beforeRun,afterRun) {
   const before=summarize(beforeRun),after=summarize(afterRun);
   const mismatches=dimensions.filter(k=>before.environment[k]===null || before.environment[k]!==after.environment[k]);
+  if(![before,after].every(r=>r.environment.suiteHash?.startsWith('workload-v1:')))mismatches.push('unverified-workload-hash');
   if(!before.complete||!after.complete)mismatches.push('incomplete-run');
   const comparable=!mismatches.length;
   const key=t=>t.scenario+'\0'+t.tool, keys=new Set([...before.timings,...after.timings].map(key));

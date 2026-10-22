@@ -9,6 +9,7 @@
 - [x] B10 실패 시 새 탭 snapshot 오류, 시험 단계, frame 상태, relay timing을 남기고 빠른 heartbeat 실험 옵션을 추가했다. 완료된 50회 게시판 반복은 450 통과/50 제외였으나 원인은 확인하지 못했다.
 - [x] [PR #37](https://github.com/jihoon22-lee/agent-browser/pull/37)을 만들고 첫 Linux/Windows CI 성공 및 13/13 품질 artifact를 확인했다.
 - [x] 리뷰에서 발견한 반응형 입력 확인·iframe의 최상위 이동 완료 조건을 단위/실제 브라우저 실패 검사부터 수정했다.
+- [x] 추가 리뷰의 workload 지문 누락을 수정했다. 코드·설정·harness 변경과 legacy 해시의 자동 비교를 거부하는 회귀 검사 및 실제 5표본 수집을 통과했다.
 
 최종 커밋 CI와 main 병합 상태는 PR checks·병합 이력을 따른다. B10 원인 수정은 완료로 표시하지 않는다.
 
