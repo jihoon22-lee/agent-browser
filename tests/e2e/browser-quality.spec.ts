@@ -123,3 +123,29 @@ test('Q09 pointer feedback does not suppress the subsequent click',async()=>{
   await expect(page.getByRole('button',{name:'Feedback submit'})).toHaveAttribute('data-clicks','1');
   await expect(page.locator('article span')).toHaveText('Completed once');
 });
+test('Q10 a pointer card remains available beside its ARIA-disabled action',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{
+    const card=document.createElement('div');card.style.cssText='cursor:pointer;padding:24px';card.setAttribute('aria-label','Order card');
+    card.innerHTML='<span>Order ready</span><button aria-disabled="true">Unavailable action</button>';
+    card.addEventListener('click',()=>{card.querySelector('span')!.textContent='Order opened';});document.body.prepend(card);
+  });
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const card=elements(snapshot).find((e:any)=>e.name==='Order card');expect(card).toBeDefined();
+  expect(elements(snapshot).find((e:any)=>e.name==='Unavailable action').disabled).toBe(true);
+  const result=await world.ok('browser_click',{operationId,ref:card.ref,waitFor:{text:'Order opened'}});
+  expect(result.verified?.expectationMet).toBe(true);await expect(page.getByText('Order opened',{exact:true})).toBeVisible();
+});
+test('Q11 URL-only match-all does not depend on a content frame',async()=>{
+  const {operationId}=await setup();
+  const worker=world.context.serviceWorkers()[0];
+  await worker.evaluate(()=>{
+    const api=(globalThis as any).chrome,original=api.webNavigation.getAllFrames.bind(api.webNavigation);
+    (globalThis as any).__restoreFrameList=()=>{api.webNavigation.getAllFrames=original;};
+    api.webNavigation.getAllFrames=async()=>[];
+  });
+  try {
+    const result=await world.ok('browser_wait',{operationId,urlIncludes:'/quality.html',match:'all',timeoutMs:1000});
+    expect(result.verified).toMatchObject({met:'all',conditions:['urlIncludes']});expect(result.executed).toBe('no');
+  } finally {await worker.evaluate(()=>(globalThis as any).__restoreFrameList());}
+});

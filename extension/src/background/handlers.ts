@@ -363,8 +363,13 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 return frame;
             };
             if(req.method==='browser.wait'&&p.match==='all') {
+                const conditions=pageConditions(Object.fromEntries([...CONDITION_KEYS,'match','timeoutMs'].filter(k=>p[k]!==undefined).map(k=>[k,p[k]])));
+                if(conditions.text===undefined && conditions.textGone===undefined){
+                    const result:any=await urlWait(tabId,{urlIncludes:conditions.urlIncludes,timeoutMs:conditions.timeoutMs},run,prepare);
+                    return {...result,verified:{...result.verified,met:'all',conditions:['urlIncludes']}};
+                }
                 const frame=await prepare();
-                return waitForConditions(tabId,frame,pageConditions(Object.fromEntries([...CONDITION_KEYS,'match','timeoutMs'].filter(k=>p[k]!==undefined).map(k=>[k,p[k]]))),run);
+                return waitForConditions(tabId,frame,conditions,run);
             }
             if (req.method === 'browser.wait' && typeof p.urlIncludes === 'string')
                 return urlWait(tabId, p, run, prepare);

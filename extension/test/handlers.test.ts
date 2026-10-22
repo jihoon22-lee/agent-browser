@@ -305,6 +305,14 @@ it('URL-only wait works while the old document cannot be injected',async()=>{
  for(const f of w.updates)f(1,{url:'https://example.test/ready'},{...w.tabs.get(1)!,url:'https://example.test/ready'});
  await outcome;
 });
+it.each(['missing-frame','injection-fails'])('URL-only match-all waits without content access (%s)',async(mode)=>{
+  const w=world(),h=createHandlers(w.api,memorySessionStore());
+  w.tabs.get(1)!.url='https://example.test/ready';
+  if(mode==='missing-frame')w.frames.set(1,[]);
+  const inject=vi.fn(async()=>{throw Error('document unavailable');});w.api.inject=inject;
+  await expect(h(request('browser.wait',{urlIncludes:'/ready',match:'all',timeoutMs:100}))).resolves.toMatchObject({executed:false,verified:{met:'all',conditions:['urlIncludes']}});
+  expect(inject).not.toHaveBeenCalled();expect(w.sent).toHaveLength(0);
+});
 it('cancelling a navigation with an unresolved Chrome API call removes its listeners',async()=>{
  const w=world(),h=createHandlers(w.api,memorySessionStore());await firstRef(h);let called=false;
  w.api.tabsUpdate=async()=>{called=true;return new Promise(()=>{});};

@@ -27,7 +27,7 @@ export function isPointerTarget(el: Element): boolean {
   if (parent && getComputedStyle(parent).cursor === "pointer") return false;
   // A card that holds its own button or link is acted on through that control.
   // Hidden or disabled controls cannot stand in for the card, so it stays listed then.
-  if ([...el.querySelectorAll(INTERACTIVE)].some(control => !control.matches(":disabled") && isRendered(control, { checkLayout: false }))) return false;
+  if ([...el.querySelectorAll(INTERACTIVE)].some(control => !isDisabled(control) && isRendered(control, { checkLayout: false }))) return false;
   return !parent?.closest(INTERACTIVE);
 }
 

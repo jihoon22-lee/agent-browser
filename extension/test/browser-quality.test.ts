@@ -133,3 +133,12 @@ it.each(['pointerdown','mousedown'])('dispatches one click after %s updates ordi
   expect(clicks).toBe(1);
   expect(()=>resolveRef(ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
 });
+it('keeps a clickable pointer card when its only child control is ARIA-disabled',async()=>{
+  document.body.innerHTML='<div style="cursor:pointer" aria-label="Order card"><span>Open order</span><button aria-disabled="true">Unavailable action</button></div>';
+  const card=document.querySelector('div')!;let clicks=0;card.addEventListener('click',()=>clicks++);
+  const snapshot=takeSnapshot(opts),item=snapshot.elements.find(e=>e.name==='Order card');
+  expect(item).toBeDefined();
+  expect(snapshot.elements.find(e=>e.name==='Unavailable action')?.disabled).toBe(true);
+  await runAction('click',{ref:item!.ref,waitFor:{text:'Open order'}});
+  expect(clicks).toBe(1);
+});

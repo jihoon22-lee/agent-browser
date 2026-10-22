@@ -1458,5 +1458,15 @@
     "focusedE2EPassedAfter": 30,
     "linkRetargetE2EPassedAfter": 1,
     "behavior": "Pointer feedback can update ordinary sibling text before click; original control, parent, record key and href remain checked. Initial dispatch still requires strict record identity."
+  },
+  "urlAndDisabledCardFix": {
+    "unitFailuresBefore": 3,
+    "e2eFailuresBefore": 2,
+    "extensionUnitPassedAfter": 602,
+    "focusedE2EPassedAfter": 32,
+    "behavior": [
+      "URL-only match-all waits observe the tab URL without accessing a content frame.",
+      "ARIA-disabled child controls do not suppress an otherwise clickable pointer card."
+    ]
   }
 }
