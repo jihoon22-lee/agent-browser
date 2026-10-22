@@ -63,6 +63,36 @@ it('an unmet postcondition reports the action as executed and never repeats it',
   await expect(h(request('browser.click',{ref,waitFor:{text:'Never',timeoutMs:100}}))).rejects.toMatchObject({code:'TIMEOUT',retry:'never',details:{executed:true}});
   expect(clicks).toBe(1);
 });
+it.each(['reply','port-closed','same-url'])('follows a replaced top document after child-frame input (%s)',async(mode)=>{
+  const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://example.test/child'});
+  const base=w.api.sendToFrame;let clicks=0;const probes:number[]=[];
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){
+      clicks++;const url=mode==='same-url'?'https://example.test/1':'https://example.test/landing';
+      w.frames.set(1,[{frameId:0,documentId:'landing',url}]);w.tabs.get(1)!.url=url;
+      if(mode==='port-closed')throw Error('The message port closed before a response was received.');
+      return {ok:true,result:{executed:true,verified:{domChanged:true}}};
+    }
+    if(msg.method==='conditions'){probes.push(frame.frameId);return {ok:true,result:{conditions:{text:true}}};}
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),snapshot:any=await h(request('browser.snapshot'));
+  const result:any=await h(request('browser.click',{ref:snapshot.frames[1].elements[0].ref,waitFor:{text:'Ready',timeoutMs:100}}));
+  expect(result.verified).toMatchObject({expectationMet:true,urlChanged:true});
+  expect(clicks).toBe(1);expect(probes).toEqual([0]);
+});
+it('never substitutes top-page text when only the source iframe disappears',async()=>{
+  const w=world();w.frames.get(1)!.push({frameId:7,documentId:'child',url:'https://example.test/child'});
+  const base=w.api.sendToFrame;let clicks=0,probes=0;
+  w.api.sendToFrame=async(tab,frame,msg:any)=>{
+    if(msg.method==='click'){clicks++;w.frames.get(1)!.pop();return {ok:true,result:{executed:true,verified:{domChanged:true}}};}
+    if(msg.method==='conditions'){probes++;return {ok:true,result:{conditions:{text:true}}};}
+    return base(tab,frame,msg);
+  };
+  const h=createHandlers(w.api,memorySessionStore()),snapshot:any=await h(request('browser.snapshot'));
+  await expect(h(request('browser.click',{ref:snapshot.frames[1].elements[0].ref,waitFor:{text:'Ready',timeoutMs:100}}))).rejects.toMatchObject({code:'TIMEOUT',details:{executed:true}});
+  expect(clicks).toBe(1);expect(probes).toBe(0);
+});
 it('rejects an empty or malformed waitFor before any input is sent',async()=>{
   const w=world(),h=createHandlers(w.api,memorySessionStore()),ref=await firstRef(h);
   for(const waitFor of [{}, {text:''}, {text:'Ready',match:'invalid'}, {text:'Ready',timeoutMs:-1}]){

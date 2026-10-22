@@ -109,7 +109,10 @@ async function afterInput(ref: string, signal: AbortSignal) {
     if(visible)frame=requestAnimationFrame(()=>setTimeout(done,0));
     signal.addEventListener('abort',abort,{once:true}); if(signal.aborted)abort();
   });
-  try { resolveRef(ref); }
+  // Handlers can update ordinary validation/price text in the same record. The
+  // dispatched control must remain connected with the same identity and record key,
+  // but this post-input value check does not authorize a new write through an old ref.
+  try { resolveRef(ref,false,'target'); }
   catch { throw new ProtocolError('EXECUTION_UNKNOWN','The input was delivered, but its target changed before the value could be confirmed. Inspect the page before continuing.','unsafe'); }
 }
 

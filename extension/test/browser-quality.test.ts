@@ -90,3 +90,36 @@ it('a small unmarked card also rejects reuse under a different record title',()=
   document.querySelector('span')!.textContent='Order B';
   expect(()=>resolveRef(item.ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
 });
+
+it.each(['li','article','div','tr'].flatMap(tag=>['fill','select'].map(method=>({tag,method}))))('confirms $method while an ordinary sibling updates inside $tag',async({tag,method})=>{
+    const control=method==='fill'?'<input aria-label="Field">':'<select aria-label="Field"><option value="before">Before</option><option value="after">After</option></select>';
+    const contents=control+'<span>Pending</span>';
+    document.body.innerHTML=tag==='tr'?`<table><tr><td>${contents}</td></tr></table>`:`<${tag}>${contents}</${tag}>`;
+    resetRegistry();
+    const el=document.querySelector('input,select') as HTMLInputElement|HTMLSelectElement;
+    el.addEventListener(method==='fill'?'input':'change',()=>queueMicrotask(()=>{document.querySelector('span')!.textContent='Valid';}));
+    const ref=takeSnapshot(opts).elements.find(e=>e.name==='Field')!.ref;
+    const result=await runAction(method,{ref,...(method==='fill'?{text:'after'}:{option:'after'})});
+    expect(el.value).toBe('after');expect(result.verified).toMatchObject({matches:true});
+    // The old snapshot still cannot authorize another write after its record changes.
+    expect(()=>resolveRef(ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
+});
+it.each(['detached','renamed','moved','record-key'])('does not confirm an input whose target is %s after its handler',async(change)=>{
+  document.body.innerHTML='<ul><li data-id="A"><input aria-label="Field"></li><li data-id="B"></li></ul>';
+  const el=document.querySelector('input')!;
+  el.addEventListener('input',()=>queueMicrotask(()=>{
+    if(change==='detached')el.replaceWith(el.cloneNode());
+    if(change==='renamed')el.setAttribute('aria-label','Other');
+    if(change==='moved')document.querySelectorAll('li')[1]!.append(el);
+    if(change==='record-key')document.querySelector('li')!.setAttribute('data-id','B');
+  }));
+  const ref=takeSnapshot(opts).elements[0]!.ref;
+  await expect(runAction('fill',{ref,text:'after'})).rejects.toMatchObject({code:'EXECUTION_UNKNOWN',retry:'unsafe'});
+});
+it.each(['','x'.repeat(300)])('confirms input when sibling text changes the small-card classification (%s)',async(before)=>{
+  document.body.innerHTML='<div><input aria-label="Field"><span></span></div>';
+  const el=document.querySelector('input')!,message=document.querySelector('span')!;message.textContent=before;
+  el.addEventListener('input',()=>queueMicrotask(()=>{message.textContent=before?'Long '.repeat(80):'Valid';}));
+  const ref=takeSnapshot(opts).elements[0]!.ref;
+  await expect(runAction('fill',{ref,text:'after'})).resolves.toMatchObject({verified:{matches:true,value:'after'}});
+});

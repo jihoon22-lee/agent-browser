@@ -25,6 +25,8 @@ type Running = {
     promise: Promise<unknown>;
     /** The action's confirmed result while only the late-navigation watch is still running. */
     confirmed?: unknown;
+    /** Top document before child-frame input, to distinguish navigation from iframe removal. */
+    sourceTopDocument?: string;
 };
 /** Trusted input, when the user enabled it: decides per tab whether clicks and keys go through the debugger. */
 export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string> };
@@ -50,15 +52,17 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     }
     /** Hard navigation destroys the document before it can reply. A replaced document right after
      * a dispatched click or key press is that navigation, not an unknown outcome. */
-    async function navigatedAway(tabId: number, frame: FrameInfo) {
+    async function navigatedAway(tabId: number, frame: FrameInfo, sourceTopDocument?: string) {
         const deadline = Date.now() + 1000;
         while (Date.now() < deadline) {
             const tab = await api.tabsGet(tabId).catch(() => undefined);
             if (!tab) return false;
-            const live = (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).find(f => f.frameId === frame.frameId);
+            const documents = await api.listFrames(tabId).catch(() => [] as FrameInfo[]);
+            const live = documents.find(f => f.frameId === frame.frameId), top = documents.find(f => f.frameId === 0);
             // A subframe can vanish for unrelated reasons (rerender, closed ad slot); only a replaced
             // document, a missing top frame mid-commit, or a pending tab URL is evidence of navigation.
-            if (tab.pendingUrl || (live ? live.documentId !== frame.documentId : frame.frameId === 0)) return true;
+            if (tab.pendingUrl || (sourceTopDocument && top && top.documentId !== sourceTopDocument)
+                || (live ? live.documentId !== frame.documentId : frame.frameId === 0)) return true;
             await new Promise(r => setTimeout(r, 100));
         }
         return false;
@@ -81,6 +85,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         };
         const inputBefore = tracksTabs ? await inputState() : null;
         const startUrl = tracksTabs ? (await api.tabsGet(tabId).catch(() => undefined))?.url : undefined;
+        if(tracksTabs && frame.frameId!==0 && run.req.params.waitFor)
+            run.sourceTopDocument=(await interruptible(frames.list(tabId),run.controller.signal)).find(f=>f.frameId===0)?.documentId;
         // Off by default: only an enabled, attached debugger turns the content command into trusted input.
         if (tracksTabs && frame.frameId === 0 && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true };
         await check(run.req, run.controller.signal);
@@ -96,7 +102,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (e instanceof ProtocolError)
                 throw e;
             // An upload's change handler may submit or navigate too.
-            if ((tracksTabs || run.req.method === 'browser.upload') && await navigatedAway(tabId, frame))
+            if ((tracksTabs || run.req.method === 'browser.upload') && await navigatedAway(tabId, frame, run.sourceTopDocument))
                 return { executed: true, verified: { navigated: true, urlChanged: true } };
             if (WRITE.has(run.req.method))
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'The document stopped replying after the command was sent. Take a snapshot before retrying.', 'unsafe');
@@ -416,7 +422,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                     let live:FrameInfo|undefined;
                     if(!tab.pendingUrl && (expected.text!==undefined||expected.textGone!==undefined)){
                         try{
-                            live=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===original.frameId);
+                            const documents=await interruptible(frames.list(tabId),signal),top=documents.find(f=>f.frameId===0);
+                            // A child can disappear without navigation. Follow frame 0 only after
+                            // the enclosing document was actually replaced, including same-URL loads.
+                            live=run.sourceTopDocument && top && top.documentId!==run.sourceTopDocument
+                                ? top : documents.find(f=>f.frameId===original.frameId);
                             if(live){
                                 if(injected!==live.documentId){await interruptible(frames.inject(tabId,live),signal);injected=live.documentId;}
                                 const reply=await interruptible(api.sendToFrame(tabId,live,{kind:'cmd',method:'conditions',params:{...run.req.params,...expected,requestId:run.req.id+':conditions'}}),signal);

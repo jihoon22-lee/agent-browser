@@ -55,3 +55,35 @@ test('Q05 all conditions wait for both text and URL, and smooth CSS does not out
   const result=await world.ok('browser_wait',{operationId,text:'Ready result',urlIncludes:'?ready',match:'all',timeoutMs:2000});
   expect(result.verified?.met).toBe('all');await expect(page.locator('#result')).toHaveText('Ready result');
 });
+test('Q06 reactive sibling text does not invalidate the value just applied to a control',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{
+    const card=document.createElement('article');
+    card.innerHTML='<input aria-label="Reactive name"><select aria-label="Reactive choice"><option value="a">A</option><option value="b">B</option></select><span>Pending</span>';
+    for(const control of card.querySelectorAll('input,select'))control.addEventListener('change',()=>queueMicrotask(()=>{card.querySelector('span')!.textContent='Valid '+(control as HTMLInputElement).value;}));
+    document.body.prepend(card);
+  });
+  let snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const filled=await world.ok('browser_fill',{operationId,ref:elements(snapshot).find((e:any)=>e.name==='Reactive name').ref,text:'Alice'});
+  expect(filled.verified).toMatchObject({matches:true,value:'Alice'});
+  await expect(page.locator('article span')).toHaveText('Valid Alice');
+  snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const selected=await world.ok('browser_select',{operationId,ref:elements(snapshot).find((e:any)=>e.name==='Reactive choice').ref,option:'b'});
+  expect(selected.verified).toMatchObject({matches:true,value:'b'});
+  await expect(page.locator('article span')).toHaveText('Valid b');
+});
+test('Q07 iframe input observes text in the destination top document',async()=>{
+  const {page,operationId}=await setup();
+  await page.evaluate(()=>{const frame=document.createElement('iframe');frame.id='source';frame.src='frame-child.html';document.body.prepend(frame);});
+  const child=page.frameLocator('#source');
+  await expect(child.locator('#child')).toBeVisible();
+  await child.locator('body').evaluate(body=>{body.innerHTML='<a href="detail.html?id=iframe" target="_top">Open full detail</a>';});
+  const snapshot=(await world.ok('browser_snapshot',{operationId})).data;
+  const ref=elements(snapshot).find((e:any)=>e.name==='Open full detail').ref;
+  const start=world.relay.commands.length;
+  const result=await world.ok('browser_click',{operationId,ref,waitFor:{text:'에이전트 브라우저',urlIncludes:'detail.html?id=iframe',timeoutMs:3000}});
+  expect(result.verified).toMatchObject({expectationMet:true,urlChanged:true});
+  expect(result.data.snapshot.url).toContain('detail.html?id=iframe');
+  await expect(page.locator('#title')).toHaveText('상세 iframe');
+  expect(world.relay.commands.slice(start).filter(c=>c.method==='browser.click')).toHaveLength(1);
+});
