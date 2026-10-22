@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { startWorld, type World } from './harness';
 let world: World;
+let closePhase='idle';
+let closeNewTab:unknown=null;
 const ref = (snap: any, name: string) => {
   const found = snap.frames.flatMap((f: any) => f.elements).filter((e: any) => e.name === name);
   expect(found).toHaveLength(1); return found[0].ref;
@@ -18,9 +20,25 @@ async function click(operationId: string, target: string) {
 }
 test.beforeAll(async ({}, info) => {
   world=await startWorld(); console.log('BOARD runtime '+JSON.stringify(world.runtime));
+  if(process.env.AB_FAST_HEARTBEAT==='1'){
+    // Diagnostic only: force transport activity to overlap page/frame work.
+    // Production's 20s interval and 10s response deadline stay unchanged.
+    await world.context.serviceWorkers()[0].evaluate(()=>{
+      const timer=globalThis.setTimeout.bind(globalThis);
+      globalThis.setTimeout=((fn:TimerHandler,ms?:number,...args:any[])=>timer(fn,ms===20_000?25:ms,...args)) as typeof setTimeout;
+    });
+    await world.restartBridge();
+  }
   await info.attach('runtime',{body:JSON.stringify(world.runtime),contentType:'application/json'});
 });
-test.afterEach(async () => {
+test.afterEach(async ({},info) => {
+  if(info.status!==info.expectedStatus){
+    const diagnostics={phase:closePhase,newTab:closeNewTab,disconnects:world.relay.disconnects,heartbeats:world.relay.heartbeatTimings,
+      commands:world.relay.commands.slice(-10).map(c=>c.method),completed:world.relay.commandTimings.slice(-10),
+      pages:world.context.pages().map(p=>({url:p.url(),frames:p.frames().map(f=>f.url())}))};
+    console.log('BOARD FAILURE '+JSON.stringify(diagnostics));
+    await info.attach('board-failure-metadata',{body:JSON.stringify(diagnostics),contentType:'application/json'});
+  }
   const status=await world.admin('status.get');
   if(status.operation) await world.mcp.call('browser_tabs',{action:'release',operationId:status.operation.id});
   for(const page of world.context.pages()) if(page!==world.adminPage) await page.close();
@@ -159,13 +177,21 @@ test('B08 pointer handler cannot redirect a snapshot link to another article',as
 });
 
 test('B10 rechecks an earlier iframe edited during a later close check',async()=>{
+  closeNewTab=null;
+  closePhase='setup';
   const {operationId}=await setup();
-  await world.ok('browser_tabs',{operationId,action:'new',url:world.fixture.base+'/close-race.html'});
+  closePhase='new-tab';
+  const created=await world.ok('browser_tabs',{operationId,action:'new',url:world.fixture.base+'/close-race.html'});
+  closeNewTab={snapshotError:created.data?.snapshotError??null,frames:created.data?.snapshot?.frames?.map((f:any)=>({frameId:f.frameId,elements:f.elements?.length,error:f.error}))??null};
   const owned=world.context.pages().find(p=>p.url().endsWith('/close-race.html'))!;
+  closePhase='first-frame-visible';
   await expect(owned.frameLocator('iframe').first().locator('input').first()).toBeVisible();
+  closePhase='last-frame-visible';
   await expect(owned.frameLocator('iframe').last().locator('input').first()).toBeVisible();
+  closePhase='snapshot';
   const before=await snapshot(operationId),tabId=await world.tabId(owned);
   const worker=world.context.serviceWorkers()[0];
+  closePhase='install-close-race';
   await worker.evaluate(({tabId,early,late})=>{
     const api=(globalThis as any).chrome;
     const original=api.tabs.sendMessage.bind(api.tabs);
@@ -187,6 +213,7 @@ test('B10 rechecks an earlier iframe edited during a later close check',async()=
   },{tabId,early:before.frames.find((f:any)=>f.url.includes('earlier=1')).documentId,
     late:before.frames.find((f:any)=>f.url.includes('later=1')).documentId});
   try {
+    closePhase='dirty-close';
     const result=await world.mcp.call('browser_tabs',{operationId,action:'close'});
     const evidence=await worker.evaluate(()=>(globalThis as any).__closeRace.state);
     console.log('CLOSE same-document edit '+JSON.stringify({result,evidence,closed:owned.isClosed()}));
@@ -196,13 +223,18 @@ test('B10 rechecks an earlier iframe edited during a later close check',async()=
     expect(evidence.methods).not.toContain('close');
     expect(owned.isClosed()).toBe(false);
     await expect(owned.frameLocator('iframe').first().locator('input').first()).toHaveValue('Unsaved during preflight');
+    closePhase='snapshot-after-dirty-close';
     const after=await snapshot(operationId);
     expect(after.frames.map((f:any)=>f.documentId)).toEqual(before.frames.map((f:any)=>f.documentId));
     // An unchanged clean multi-frame page still closes in one bounded attempt.
     await owned.frameLocator('iframe').first().locator('input').first().evaluate((el:HTMLInputElement)=>{el.value=el.defaultValue;});
+    closePhase='clean-close';
     await world.ok('browser_tabs',{operationId,action:'close'});
     expect(owned.isClosed()).toBe(true);
   } finally {
+    closePhase='restore';
     await worker.evaluate(()=>(globalThis as any).__closeRace.restore());
   }
+  closePhase='done';
+  if(process.env.AB_FAST_HEARTBEAT==='1')console.log('B10 HEARTBEAT '+JSON.stringify({samples:world.relay.heartbeatTimings.length,maxMs:Math.max(0,...world.relay.heartbeatTimings),disconnects:world.relay.disconnects}));
 });
