@@ -1,4 +1,4 @@
-import { accessibleName, roleOf } from "./dom";
+import { accessibleName, roleOf, type NameCache } from "./dom";
 import { ProtocolError } from "../protocol/errors";
 import { recordRoot, observeRecord, recordObservation, type RecordObservation } from './record-context';
 
@@ -10,8 +10,8 @@ export class RefTable {
   private els: { node: WeakRef<Element>; identity: string; record: WeakRef<Element> | null; recordIdentity: string }[] = [];
   // Identity, not array position, protects recycled list rows. Editable values are
   // deliberately excluded so fill/select do not invalidate their own controls.
-  private identity(el: Element): string {
-    return JSON.stringify([roleOf(el), accessibleName(el, true, Infinity),
+  private identity(el: Element, names?: NameCache): string {
+    return JSON.stringify([roleOf(el), accessibleName(el, true, Infinity, names),
       // Native fill changes value, not authored default text. A changed default
       // signals that a reused textarea now belongs to another record.
       el instanceof HTMLTextAreaElement ? el.defaultValue : null,
@@ -19,10 +19,10 @@ export class RefTable {
       el.getAttribute('target'), el.getAttribute('type'), el.getAttribute('formaction')]);
   }
   constructor(public snapshotId: number, public frameId: number) {}
-  add(el: Element, records = new Map<Element,RecordObservation>()): string {
+  add(el: Element, records = new Map<Element,RecordObservation>(), names?: NameCache): string {
     const root = recordRoot(el);
     const identity = root ? recordObservation(root,records).identity : '';
-    this.els.push({ node: new WeakRef(el), identity: this.identity(el), record: root ? new WeakRef(root) : null, recordIdentity: identity ?? '' });
+    this.els.push({ node: new WeakRef(el), identity: this.identity(el,names), record: root ? new WeakRef(root) : null, recordIdentity: identity ?? '' });
     return `s${snapshotToken(this.snapshotId)}f${this.frameId}e${this.els.length}`;
   }
   get(index: number, allowChanged = false): Element | undefined {

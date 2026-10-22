@@ -1,4 +1,4 @@
-import { accessibleName, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep } from "./dom";
+import { accessibleName, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
 import { newTable } from "./refs";
 import { recordText, recordObservation, type RecordObservation } from './record-context';
 
@@ -124,6 +124,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   const query = o.query ? fold(o.query).slice(0, 80) : "";
   const rows = new Map<Element, string>();
   const records = new Map<Element, RecordObservation>();
+  const names: NameCache = new WeakMap();
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
   const offset = Math.max(0, Math.floor(o.elementOffset ?? 0));
   const table = newTable(o.snapshotId, o.frameId);
@@ -159,13 +160,13 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     let name: string | undefined;
     if (query) {
       const matches = (field: unknown) => typeof field === "string" && fold(field).includes(query);
-      name = accessibleName(el);
+      name = accessibleName(el,false,80,names);
       const shownValue = el instanceof HTMLInputElement && el.type === "password" ? "" : (el as HTMLInputElement).value;
       if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows, records, query)))) return;
     }
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;
-    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: name ?? accessibleName(el), tag: clip(el.tagName.toLowerCase(), 80) };
+    const e: SnapElement = { ref: "", role: clip(pointer ? "clickable" : roleOf(el), 80), name: name ?? accessibleName(el,false,80,names), tag: clip(el.tagName.toLowerCase(), 80) };
     if (inShadow) e.inShadow = true;
     if (el instanceof HTMLInputElement) {
       if (el.type === "checkbox" || el.type === "radio") e.checked = el.checked;
@@ -197,7 +198,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
       budgetFull = true; limits.add("snapshot-size-limited"); return;
     }
     usedChars += encoded.length + 24; usedBytes += itemBytes;
-    e.ref = table.add(el, records);
+    e.ref = table.add(el, records, names);
     elements.push(e); nodes.push(el);
   });
   // Repeated controls ("취소" per row) are indistinguishable without their row or card.

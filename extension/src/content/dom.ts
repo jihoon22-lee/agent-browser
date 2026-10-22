@@ -65,10 +65,11 @@ function nestedLabel(el: Element): string {
   return "";
 }
 
-export function accessibleName(el: Element, excludeEditableValue = false, maxLength = 80): string {
-  return nameOf(el, excludeEditableValue, new Set()).slice(0, maxLength);
+export type NameCache = WeakMap<Node,Map<Element,string>>;
+export function accessibleName(el: Element, excludeEditableValue = false, maxLength = 80, labels?: NameCache): string {
+  return nameOf(el, excludeEditableValue, new Set(), labels).slice(0, maxLength);
 }
-function nameOf(el: Element, excludeEditableValue: boolean, visiting: Set<Element>): string {
+function nameOf(el: Element, excludeEditableValue: boolean, visiting: Set<Element>, cache?: NameCache): string {
   const by = el.getAttribute('aria-labelledby');
   if (by && !visiting.has(el)) {
     const path = new Set(visiting); path.add(el);
@@ -76,17 +77,32 @@ function nameOf(el: Element, excludeEditableValue: boolean, visiting: Set<Elemen
     const root = el.getRootNode() as Document | ShadowRoot;
     const text = clean(by.split(/\s+/).map(id => {
       const target = root.getElementById?.(id);
-      return target ? nameOf(target, excludeEditableValue, path) : '';
+      return target ? nameOf(target, excludeEditableValue, path, cache) : '';
     }).join(' '));
     if (text) return text;
   }
   const aria = clean(el.getAttribute("aria-label"));
   if (aria) return aria;
   if ("labels" in el) {
-    const labels = (el as HTMLInputElement).labels;
-    if (labels && labels.length) {
-      const t = clean([...labels].map((l) => l.textContent).join(" "));
-      if (t) return t;
+    if(cache) {
+      // Chrome's native labels getter can scan the tree for each control. Build
+      // associations once for this synchronous snapshot, separately in each root.
+      const root=el.getRootNode() as Document|ShadowRoot;
+      let names=cache.get(root);
+      if(!names){
+        names=new Map();cache.set(root,names);
+        for(const label of root.querySelectorAll('label')){
+          const control=label.control;
+          if(control)names.set(control,clean((names.get(control)??'')+' '+label.textContent));
+        }
+      }
+      const name=names.get(el);if(name)return name;
+    }else{
+      const labels = (el as HTMLInputElement).labels;
+      if (labels && labels.length) {
+        const t = clean([...labels].map((l) => l.textContent).join(" "));
+        if (t) return t;
+      }
     }
   }
   const ph = clean(el.getAttribute("placeholder"));
