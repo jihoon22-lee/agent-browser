@@ -379,6 +379,22 @@ describe("pointer modes", () => {
 
 describe("drag", () => {
   const box = (el: Element, left: number) => vi.spyOn(el, 'getBoundingClientRect').mockReturnValue({ left, top: 10, width: 80, height: 20, right: left + 80, bottom: 30 } as DOMRect);
+  it('lets an explicit drag postcondition observe completion without a preceding fixed delay', async () => {
+    document.body.innerHTML='<div draggable="true">Card</div><div tabindex="0">Target</div>';
+    const target=document.querySelectorAll('div')[1]!;let drops=0;
+    target.addEventListener('dragover',e=>e.preventDefault());
+    target.addEventListener('drop',()=>{drops++;target.textContent='Done';});
+    const params={ref:refOf('Card'),toRef:refOf('Target'),mode:'drag',generation:10,waitFor:{text:'Done'}};
+    vi.useFakeTimers();
+    try{
+      let finished=false;
+      const work=runAction('click',params).then(value=>{finished=true;return value;});
+      await vi.advanceTimersByTimeAsync(20);
+      expect(drops).toBe(1);
+      expect(finished).toBe(true);
+      await expect(work).resolves.toMatchObject({executed:true,verified:{mode:'drag',dropped:true}});
+    }finally{await vi.runOnlyPendingTimersAsync();vi.useRealTimers();}
+  });
   it("drag delivers pointer moves and an HTML5 drop on the target", async () => {
     document.body.innerHTML = '<div draggable="true">카드</div><div role="listitem" tabindex="0">완료</div>';
     const [card, done] = [...document.querySelectorAll('div')];

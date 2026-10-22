@@ -126,7 +126,7 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
   const source = el.closest('[draggable=true], a[href]:not([draggable=false]), img:not([draggable=false])');
   const html5 = source !== null;
   const unmark = highlight(el);
-  const changes = observeChanges(500, signal);
+  const changes = observeChanges(p.waitFor ? 0 : 500, signal);
   void changes.then(unmark, unmark);
   void changes.catch(() => {});
   let trustedReason: string | undefined;
