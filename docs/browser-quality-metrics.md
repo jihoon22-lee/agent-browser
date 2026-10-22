@@ -35,6 +35,17 @@ node tests/e2e/windows-run.ts --exe 'C:\<test-directory>\browser-bridge.exe' --e
 
 CI는 Linux/Windows 각각 5회 표본과 정확도 gate를 실행하고 숫자·HTML artifact를 14일 보존하도록 구성했다. 5회 p95는 빠른 회귀 탐색용이다. 현재 원격 CI 실행 여부는 status에 따로 기록한다.
 
+## 드래그 완료 조건 반복 측정
+
+빌드 후 `AB_ACTION_SAMPLES`로 P06의 포인터 정렬·HTML5 drop 반복 수를 지정한다(1~50, 기본 1). 각 입력 방식은 독립된 시험이며 한 번 예열한 뒤 측정한다.
+
+```bash
+AB_ACTION_SAMPLES=50 pnpm --filter agent-browser-e2e exec playwright test pointer-keys-upload.spec.ts --grep 'P06 DOM'
+AB_ACTION_SAMPLES=50 pnpm --filter agent-browser-e2e exec playwright test pointer-keys-upload.spec.ts --grep 'P06 trusted'
+```
+
+표준 출력의 `DRAG METRICS` JSON에 개별 시간·p50/p95·브라우저/Node 버전이 남는다. 매 반복에서 실제 순서/drop 결과와 이벤트 1회 실행을 검사한다. 이 시험은 위 benchmark의 자동 보고서 디렉터리를 생성하지 않는다. [2026-10-22 후속 기록](./reference/browser-quality-followup-2026-10-22.json)은 이 출력에서 수집한 DOM 입력 전후 50표본을 보존한다.
+
 ## 실제 모델 업무 평가
 
 기존 [OpenCode runner](../tests/agent/run-agent.mjs)에 `--task-mode goal`을 추가했다. 모델에 검색·첫 결과 새 탭 열기·표 요약·원래 탭 복귀·제어 해제라는 목표만 주며, 특정 도구 순서를 요구하지 않는다. 기존 순서 지정 검사는 `--task-mode guided`(기본값)로 유지한다.

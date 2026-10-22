@@ -2,6 +2,24 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+# 브라우저 품질 후속 — 2026-10-22, 드래그 개선·Linux 검증 완료
+
+명시 `waitFor` 조건이 있는 드래그에도 남아 있던 고정 500ms 관찰을 제거했다. 드래그 입력은 한 번만 보내고 지정 조건을 확인한다. 명시 조건 없는 일반 클릭의 기존 지연 이동 관찰은 유지한다. [후속 수치·환경·반복 기록](./reference/browser-quality-followup-2026-10-22.json), [미해결 조사 계획](./plans/browser-quality-followup.md).
+
+| DOM 드래그 + 완료 조건 | 수정 전 p50 / p95 | 수정 후 p50 / p95 |
+|---|---:|---:|
+| 포인터 정렬 | 699.8 / 745.8ms | **207.1 / 248.3ms** |
+| HTML5 drop | 697.1 / 739.7ms | **210.2 / 245.6ms** |
+
+Linux Chromium 156.0.8078.4 headless·Node 24.18.0·debug Bridge에서 각 1회 예열+50회 측정했다. 매번 실제 정렬/drop 결과와 이벤트 1회 실행을 확인했다. p50은 각각 70.4%·69.8% 감소했다. 호스트 부하는 완전히 통제하지 않았고, 수정 전 측정 일부는 단위 검사와 겹쳤다. 신뢰 입력은 기능 E2E로 확인했으며 이 반복 성능 수치에 합치지 않았다.
+
+- **검증:** 먼저 실패한 드래그 대기 회귀 검사 수정 후 확장 **54파일/575개 통과**, 집중 E2E **16개 통과**, 최종 전체 Linux E2E **169개 통과/선택 실행 3개 제외**(4.7분). 확장 빌드와 E2E 타입 검사 통과. 이번 후속에서 Rust 제품 코드는 바뀌지 않았다.
+- **B10 미해결:** 기본 6회, 2 CPU 제한 12회, 25ms heartbeat·Bridge 재시작 6회, 새 탭 결과 진단 20회, Chrome 프로토콜 메타데이터 수집 6회의 완료된 게시판 반복은 **450개 통과/50개 제외**였지만 기존 멈춤을 재현하지 못했다. 초기 수집기 오류로 중단한 반복은 이 합계에서 제외했다. 실패 시 시험 단계·새 탭 snapshot 오류·frame 상태·relay 왕복을 남기도록 보강했다. timeout·재시도로 실패를 숨기지 않았다.
+- **관찰 경계:** 설치본 Playwright 1.64의 첫 `expect` 조회에는 `nullProgress` 경로가 있다([상류 이슈](https://github.com/microsoft/playwright/issues/42880)). assertion의 10초 설정을 넘어 시험 90초까지 멈춘 현상을 설명할 수 있지만, 최초 renderer/관찰 정지 원인은 아직 확인하지 못했다. 의존성은 바꾸지 않았다.
+- **결과:** ignored `tests/agent/results/browser-metrics/drag-{before-linux,after-linux,comparison-linux}/`에 원시 수치와 비교 HTML을 보존했다. 로컬 Windows·모델 호출은 추가 실행하지 않았다. 사용자 요청에 따라 이 변경과 앞선 품질 개선을 함께 push·PR·원격 CI·merge로 마무리한다. 원격 검증 결과는 해당 PR에도 기록한다.
+
+---
+
 # 브라우저 품질 측정·개선 — 2026-10-22, Linux 검증 완료
 
 `feat/m1-browser-quality`에서 [초기 검토](./review-browser-performance-2026-10-22.md)의 결함을 실패 테스트부터 수정하고, 전후 benchmark와 실제 모델용 수집기를 구성했다. [실행·보고서 사용법](./browser-quality-metrics.md), [환경·전체 수치·검증 기록 JSON](./reference/browser-quality-2026-10-22.json).

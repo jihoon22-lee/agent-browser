@@ -1,0 +1,323 @@
+{
+  "recordedOn": "2026-10-22",
+  "scope": "Linux synthetic fixture, DOM input, explicit drag waitFor. One warm-up plus 50 samples per scenario; host load was not fully controlled.",
+  "comparison": {
+    "schemaVersion": 1,
+    "kind": "comparison",
+    "comparable": true,
+    "mismatches": [],
+    "before": {
+      "schemaVersion": 1,
+      "label": "drag-before-linux",
+      "createdAt": "2026-10-22T12:01:19.407Z",
+      "complete": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "dom",
+        "bridgeBuild": "debug",
+        "suiteHash": "40734a23bf2f84516040c35b4e263e28eaffbb8b19347d7d46901130c6236a83",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "d1f3f86",
+        "extensionSha256": "1836d9ef3cecff02a374d413d029c318eeaa5165c8a133f992a52f4a77adbbcb",
+        "bridgeSha256": "f3da24ff417d9734040ac8f9f16046d6cda33fa1ecf04de576aa9774c0395fd2"
+      },
+      "timings": [
+        {
+          "scenario": "pointer-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 699.8,
+            "p95": 745.8,
+            "min": 670,
+            "max": 751.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        {
+          "scenario": "html5-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 697.1,
+            "p95": 739.7,
+            "min": 669.3,
+            "max": 749.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        }
+      ],
+      "quality": {
+        "n": 2,
+        "passed": 2,
+        "wrongTarget": null,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": null
+      },
+      "oracles": [
+        {
+          "scenario": "pointer-completion",
+          "passed": true,
+          "wrongTarget": null,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": null
+        },
+        {
+          "scenario": "html5-completion",
+          "passed": true,
+          "wrongTarget": null,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": null
+        }
+      ],
+      "toolCalls": 100,
+      "explicitSnapshots": 0,
+      "recoveryErrors": 0,
+      "connection": {
+        "disconnects": null,
+        "heartbeat": null,
+        "recoveryMs": null
+      },
+      "model": null,
+      "notes": [
+        "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+        "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+        "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+        "Quality counts use fixture state, not tool ok. Null means not measured."
+      ]
+    },
+    "after": {
+      "schemaVersion": 1,
+      "label": "drag-after-linux",
+      "createdAt": "2026-10-22T12:01:19.407Z",
+      "complete": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "dom",
+        "bridgeBuild": "debug",
+        "suiteHash": "40734a23bf2f84516040c35b4e263e28eaffbb8b19347d7d46901130c6236a83",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "b5c6ab5a411b75012a91749941d65c861c0243d3",
+        "extensionSha256": "f0c2fc4fd043b135c05fe1219445c353dda233228c1117ea70a4e3b1c5dd74e4",
+        "bridgeSha256": "f3da24ff417d9734040ac8f9f16046d6cda33fa1ecf04de576aa9774c0395fd2"
+      },
+      "timings": [
+        {
+          "scenario": "pointer-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 207.1,
+            "p95": 248.3,
+            "min": 164.2,
+            "max": 274.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        {
+          "scenario": "html5-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 210.2,
+            "p95": 245.6,
+            "min": 165.8,
+            "max": 255.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        }
+      ],
+      "quality": {
+        "n": 2,
+        "passed": 2,
+        "wrongTarget": null,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": null
+      },
+      "oracles": [
+        {
+          "scenario": "pointer-completion",
+          "passed": true,
+          "wrongTarget": null,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": null
+        },
+        {
+          "scenario": "html5-completion",
+          "passed": true,
+          "wrongTarget": null,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": null
+        }
+      ],
+      "toolCalls": 100,
+      "explicitSnapshots": 0,
+      "recoveryErrors": 0,
+      "connection": {
+        "disconnects": null,
+        "heartbeat": null,
+        "recoveryMs": null
+      },
+      "model": null,
+      "notes": [
+        "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+        "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+        "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+        "Quality counts use fixture state, not tool ok. Null means not measured."
+      ]
+    },
+    "timings": [
+      {
+        "scenario": "pointer-drag-waitFor",
+        "tool": "browser_click",
+        "before": {
+          "scenario": "pointer-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 699.8,
+            "p95": 745.8,
+            "min": 670,
+            "max": 751.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        "after": {
+          "scenario": "pointer-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 207.1,
+            "p95": 248.3,
+            "min": 164.2,
+            "max": 274.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        "p50ChangePercent": -70.4
+      },
+      {
+        "scenario": "html5-drag-waitFor",
+        "tool": "browser_click",
+        "before": {
+          "scenario": "html5-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 697.1,
+            "p95": 739.7,
+            "min": 669.3,
+            "max": 749.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        "after": {
+          "scenario": "html5-drag-waitFor",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 210.2,
+            "p95": 245.6,
+            "min": 165.8,
+            "max": 255.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": null,
+          "browserMs": null,
+          "snapshotMs": null,
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        "p50ChangePercent": -69.8
+      }
+    ]
+  },
+  "b10": {
+    "rootCause": "unconfirmed",
+    "reproducedInCompletedFollowupExperiments": false,
+    "defaultRounds": 6,
+    "cpuTwoCoreRounds": 12,
+    "fastHeartbeatTwoCoreRounds": 6,
+    "newTabMetadataRounds": 20,
+    "protocolMetadataRounds": 6,
+    "passed": 450,
+    "skipped": 50,
+    "notes": [
+      "Each round is 9 executed board cases plus 1 BFCache opt-in skip. No claim that B10 is fixed.",
+      "The 25ms heartbeat experiment includes one intentional Bridge restart per round.",
+      "An initial protocol collector recorded no usable metadata and was interrupted; its partial results are excluded.",
+      "Playwright 1.64 one-shot expect uses nullProgress; this can explain the longer assertion hang but is not evidence of the initial B10 trigger."
+    ]
+  },
+  "validation": {
+    "extensionUnit": {
+      "passed": 575,
+      "files": 54
+    },
+    "focusedE2E": {
+      "passed": 16
+    },
+    "fullE2E": {
+      "passed": 169,
+      "skipped": 3,
+      "durationMinutes": 4.7
+    },
+    "nativeWindows": "not-run",
+    "remoteCI": "not-run"
+  }
+}
