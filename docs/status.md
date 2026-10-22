@@ -4,6 +4,14 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 
 # 브라우저 품질 후속 — 2026-10-22, 드래그 개선·Linux 검증 완료
 
+[PR #37](https://github.com/jihoon22-lee/agent-browser/pull/37)에 push했다. [첫 원격 CI 39776237431](https://github.com/jihoon22-lee/agent-browser/actions/runs/39776237431)은 양쪽 성공: Linux E2E **169 통과/3 제외**, 네이티브 Windows Chrome E2E **170 통과/2 제외**, 각각 5표본 품질 gate **13/13**. Windows는 Node 24.18.0·Chrome 155.0.8059.40·release exe이며 Rust·설치 수명주기·GUI 엔진·패키징 검사도 통과했다. 이 원격 실행은 로컬 WSL interop이나 설치 화면의 육안 검증을 대신하지 않는다. 리뷰 수정 후 최종 커밋의 CI·병합 상태는 PR checks와 병합 이력을 따른다.
+
+리뷰 지적 두 건도 실패 검사부터 고쳤다. 입력 후 검증은 같은 컨트롤의 연결·직접 부모·요소 식별·원래 레코드 키를 확인하되 일반 검증/가격 문구 변화는 허용한다. 입력 **전**의 전체 레코드 검사는 유지한다. iframe 입력이 최상위 문서를 교체하면 완료 조건은 도착한 frame 0에서 읽는다. iframe만 제거된 경우에는 top 문구로 성공을 대신하지 않는다. 수정 전 단위 실패 13개와 실제 브라우저 실패 2개를 확인했으며, 수정 후 전체 확장 **593개**, 관련 E2E **28개**가 통과했다.
+
+리뷰 수정 `e631b53` 빌드를 같은 Linux 환경에서 다시 50회씩 측정했다(동시 로컬 시험 없음). 실제 상태 **13/13**, 오대상·잘못된 성공·중복 쓰기·중단 후 쓰기 모두 **0**. 5,000행 query p50/p95 **144.2/181.6ms**, snapshot **119.0/151.9ms**로 초기 기준선 대비 p50은 각각 **90.7%·47.2% 감소**했다. fill **62.0/64.4ms**, 무변화 클릭 **1,631.7/1,635.6ms**다. 아래 표는 앞선 측정 이력이고, 최신 결과는 후속 JSON의 `postReviewMetrics` 및 로컬 `comparison-pr37-final/report.html`이다.
+
+리뷰 회귀 중 게시판을 포함한 별도 실행은 **36 통과/1 실패/1 제외**였다. 기존 B10이 `first-frame-visible`에서 90초 timeout으로 다시 재현됐다. 당시 새 탭 snapshot에는 자식 frame 두 개의 요소가 있었고, relay 완료는 3.6~54.3ms, heartbeat는 0.48~0.62ms, 연결 끊김은 0이었다. 따라서 이 실행의 멈춤 위치는 Playwright의 첫 iframe 표시 확인까지 좁혔지만 최초 원인은 아직 미확인이다. 아래 50회 무재현 실험과 구분해 보존한다.
+
 명시 `waitFor` 조건이 있는 드래그에도 남아 있던 고정 500ms 관찰을 제거했다. 드래그 입력은 한 번만 보내고 지정 조건을 확인한다. 명시 조건 없는 일반 클릭의 기존 지연 이동 관찰은 유지한다. [후속 수치·환경·반복 기록](./reference/browser-quality-followup-2026-10-22.json), [미해결 조사 계획](./plans/browser-quality-followup.md).
 
 | DOM 드래그 + 완료 조건 | 수정 전 p50 / p95 | 수정 후 p50 / p95 |

@@ -302,7 +302,35 @@
       "The 25ms heartbeat experiment includes one intentional Bridge restart per round.",
       "An initial protocol collector recorded no usable metadata and was interrupted; its partial results are excluded.",
       "Playwright 1.64 one-shot expect uses nullProgress; this can explain the longer assertion hang but is not evidence of the initial B10 trigger."
-    ]
+    ],
+    "reviewRegression": {
+      "passed": 36,
+      "failed": 1,
+      "skipped": 1,
+      "phase": "first-frame-visible",
+      "timeoutMs": 90000,
+      "disconnects": 0,
+      "heartbeatMs": [
+        0.5037069999998494,
+        0.6170360000032815,
+        0.5827290000015637,
+        0.539493999996921,
+        0.4849239999894053
+      ],
+      "relayDurationMs": [
+        31.187544000000344,
+        32.50406499999917,
+        28.676902999999584,
+        3.6258920000000217,
+        38.73725999999988,
+        4.295342999999775,
+        30.33998900000006,
+        54.33188700000028,
+        42.9491109999999,
+        4.990653999999267
+      ],
+      "note": "Reproduced after the earlier 50 completed rounds. Root cause remains unconfirmed; not included in their 450-pass count."
+    }
   },
   "validation": {
     "extensionUnit": {
@@ -318,6 +346,1074 @@
       "durationMinutes": 4.7
     },
     "nativeWindows": "not-run",
-    "remoteCI": "not-run"
+    "remoteCI": {
+      "pullRequest": 37,
+      "runId": 39776237431,
+      "headSha": "3455422c3aadf866f481beb67867a13fc674f946",
+      "url": "https://github.com/jihoon22-lee/agent-browser/actions/runs/39776237431",
+      "conclusion": "success",
+      "note": "Pre-review-fix CI. Final head checks and merge status are recorded in PR #37.",
+      "linux": {
+        "e2ePassed": 169,
+        "e2eSkipped": 3,
+        "metrics": {
+          "environment": {
+            "platform": "linux",
+            "arch": "x64",
+            "browserVersion": "156.0.8078.4",
+            "headless": true,
+            "inputMode": "dom",
+            "bridgeBuild": "debug",
+            "suiteHash": "b02e208c89a8cf4f5cdd1a22a781b6301c3452dbc4244659d331cd87f05b95db",
+            "nodeVersion": "v24.18.0",
+            "sourceRevision": "6dc2353372af19c9162144be739c683c98b41309",
+            "extensionSha256": "f0c2fc4fd043b135c05fe1219445c353dda233228c1117ea70a4e3b1c5dd74e4",
+            "bridgeSha256": "bbb0aa7e564f45e2886c5431913374e367c2c4ac779e5be6378d9fc3fd4907d4"
+          },
+          "quality": {
+            "n": 13,
+            "passed": 13,
+            "wrongTarget": 0,
+            "falseSuccess": 0,
+            "duplicateWrites": 0,
+            "postCancelWrites": 0
+          },
+          "toolCalls": 60,
+          "complete": true
+        }
+      },
+      "windows": {
+        "e2ePassed": 170,
+        "e2eSkipped": 2,
+        "localWslInterop": "not-validated",
+        "guiVisualInspection": "not-performed",
+        "metrics": {
+          "environment": {
+            "platform": "win32",
+            "arch": "x64",
+            "browserVersion": "155.0.8059.40",
+            "headless": true,
+            "inputMode": "dom",
+            "bridgeBuild": "release",
+            "suiteHash": "b02e208c89a8cf4f5cdd1a22a781b6301c3452dbc4244659d331cd87f05b95db",
+            "nodeVersion": "v24.18.0",
+            "sourceRevision": "6dc2353372af19c9162144be739c683c98b41309",
+            "extensionSha256": "f0c2fc4fd043b135c05fe1219445c353dda233228c1117ea70a4e3b1c5dd74e4",
+            "bridgeSha256": "ff12100da01f9745390990fbd3b218242b80d11e846c5ee792c0780990a07ade"
+          },
+          "quality": {
+            "n": 13,
+            "passed": 13,
+            "wrongTarget": 0,
+            "falseSuccess": 0,
+            "duplicateWrites": 0,
+            "postCancelWrites": 0
+          },
+          "toolCalls": 60,
+          "complete": true
+        }
+      }
+    }
+  },
+  "reviewFixes": {
+    "commit": "e631b53",
+    "unitFailuresBefore": 13,
+    "e2eFailuresBefore": 2,
+    "extensionUnitPassedAfter": 593,
+    "focusedE2EPassedAfter": 28,
+    "changes": [
+      "Verify the original input target and record key after reactive sibling updates, retaining strict whole-record checks before dispatch.",
+      "Follow the destination top frame only when the top document was replaced after child-frame input."
+    ]
+  },
+  "postReviewMetrics": {
+    "schemaVersion": 1,
+    "label": "after-pr37-review",
+    "createdAt": "2026-10-22T12:27:33.790Z",
+    "complete": true,
+    "environment": {
+      "platform": "linux",
+      "arch": "x64",
+      "browserVersion": "156.0.8078.4",
+      "headless": true,
+      "inputMode": "dom",
+      "bridgeBuild": "debug",
+      "suiteHash": "b02e208c89a8cf4f5cdd1a22a781b6301c3452dbc4244659d331cd87f05b95db",
+      "nodeVersion": "v24.18.0",
+      "sourceRevision": "e631b532aef87e335992d84069ceca8dd5e03473",
+      "extensionSha256": "247602a6b49643f3c07b3624366da1c9d998e45ecd937e2d273237638d51d1b4",
+      "bridgeSha256": "f3da24ff417d9734040ac8f9f16046d6cda33fa1ecf04de576aa9774c0395fd2"
+    },
+    "timings": [
+      {
+        "scenario": "tabs",
+        "tool": "browser_tabs",
+        "duration": {
+          "n": 50,
+          "p50": 40.4,
+          "p95": 45.1,
+          "min": 36.9,
+          "max": 47.2
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 758,
+          "p95": 758,
+          "min": 758,
+          "max": 758
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 1.9,
+          "p95": 2.3,
+          "min": 1.6,
+          "max": 5.4
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "fill",
+        "tool": "browser_fill",
+        "duration": {
+          "n": 50,
+          "p50": 62,
+          "p95": 64.4,
+          "min": 47.2,
+          "max": 65.6
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 165,
+          "p95": 165,
+          "min": 165,
+          "max": 165
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 20.7,
+          "p95": 25.6,
+          "min": 9.3,
+          "max": 26.5
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "click-no-change",
+        "tool": "browser_click",
+        "duration": {
+          "n": 50,
+          "p50": 1631.7,
+          "p95": 1635.6,
+          "min": 1626.4,
+          "max": 1636.7
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 172,
+          "p95": 172,
+          "min": 172,
+          "max": 172
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 1627.6,
+          "p95": 1631.8,
+          "min": 1623.3,
+          "max": 1632.4
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "click-dom-change",
+        "tool": "browser_click",
+        "duration": {
+          "n": 50,
+          "p50": 704.1,
+          "p95": 729.6,
+          "min": 681.9,
+          "max": 735.6
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 2464,
+          "p95": 2464,
+          "min": 2463,
+          "max": 2464
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 663.5,
+          "p95": 689.8,
+          "min": 643.4,
+          "max": 707
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 29.5,
+          "p95": 45,
+          "min": 18.1,
+          "max": 46.5
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "snapshot-100",
+        "tool": "browser_snapshot",
+        "duration": {
+          "n": 50,
+          "p50": 50.4,
+          "p95": 58.3,
+          "min": 45,
+          "max": 67.3
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 12571,
+          "p95": 12571,
+          "min": 12571,
+          "max": 12571
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 42.4,
+          "p95": 49.8,
+          "min": 37.3,
+          "max": 55.8
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 42.4,
+          "p95": 49.8,
+          "min": 37.3,
+          "max": 55.8
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "query-miss-100",
+        "tool": "browser_snapshot",
+        "duration": {
+          "n": 50,
+          "p50": 51.1,
+          "p95": 62,
+          "min": 42.3,
+          "max": 84.8
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 1176,
+          "p95": 1176,
+          "min": 1176,
+          "max": 1176
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 46.3,
+          "p95": 54.4,
+          "min": 38,
+          "max": 61.7
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 46.3,
+          "p95": 54.4,
+          "min": 38,
+          "max": 61.7
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "snapshot-1000",
+        "tool": "browser_snapshot",
+        "duration": {
+          "n": 50,
+          "p50": 71.3,
+          "p95": 92.5,
+          "min": 63.3,
+          "max": 93.8
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 19692,
+          "p95": 19692,
+          "min": 19692,
+          "max": 19692
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 60.6,
+          "p95": 80.2,
+          "min": 53.7,
+          "max": 82.5
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 60.6,
+          "p95": 80.2,
+          "min": 53.7,
+          "max": 82.5
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "query-miss-1000",
+        "tool": "browser_snapshot",
+        "duration": {
+          "n": 50,
+          "p50": 66.5,
+          "p95": 78.2,
+          "min": 58.5,
+          "max": 85.5
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 1176,
+          "p95": 1176,
+          "min": 1176,
+          "max": 1176
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 61.4,
+          "p95": 73.6,
+          "min": 54.3,
+          "max": 80.8
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 61.4,
+          "p95": 73.6,
+          "min": 54.3,
+          "max": 80.8
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "snapshot-5000",
+        "tool": "browser_snapshot",
+        "duration": {
+          "n": 50,
+          "p50": 119,
+          "p95": 151.9,
+          "min": 101.9,
+          "max": 188.2
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 19693,
+          "p95": 19693,
+          "min": 19693,
+          "max": 19693
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 108.9,
+          "p95": 140.7,
+          "min": 92,
+          "max": 175.9
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 108.9,
+          "p95": 140.7,
+          "min": 92,
+          "max": 175.9
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "query-miss-5000",
+        "tool": "browser_snapshot",
+        "duration": {
+          "n": 50,
+          "p50": 144.2,
+          "p95": 181.6,
+          "min": 114.8,
+          "max": 244.3
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 50,
+          "p50": 1176,
+          "p95": 1176,
+          "min": 1176,
+          "max": 1176
+        },
+        "browserMs": {
+          "n": 50,
+          "p50": 139.1,
+          "p95": 176.4,
+          "min": 110.2,
+          "max": 237.3
+        },
+        "snapshotMs": {
+          "n": 50,
+          "p50": 139.1,
+          "p95": 176.4,
+          "min": 110.2,
+          "max": 237.3
+        },
+        "longTaskMaxMs": {
+          "n": 50,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "recycled-row",
+        "tool": "browser_click",
+        "duration": {
+          "n": 1,
+          "p50": 108.7,
+          "p95": 108.7,
+          "min": 108.7,
+          "max": 108.7
+        },
+        "failed": 1,
+        "errors": {
+          "STALE_ELEMENT": 1
+        },
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 2557,
+          "p95": 2557,
+          "min": 2557,
+          "max": 2557
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 102.1,
+          "p95": 102.1,
+          "min": 102.1,
+          "max": 102.1
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 46.7,
+          "p95": 46.7,
+          "min": 46.7,
+          "max": 46.7
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "fill-rollback",
+        "tool": "browser_fill",
+        "duration": {
+          "n": 1,
+          "p50": 66,
+          "p95": 66,
+          "min": 66,
+          "max": 66
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 166,
+          "p95": 166,
+          "min": 166,
+          "max": 166
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 61.8,
+          "p95": 61.8,
+          "min": 61.8,
+          "max": 61.8
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "aria-disabled",
+        "tool": "browser_click",
+        "duration": {
+          "n": 1,
+          "p50": 55,
+          "p95": 55,
+          "min": 55,
+          "max": 55
+        },
+        "failed": 1,
+        "errors": {
+          "ELEMENT_NOT_INTERACTABLE": 1
+        },
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 231,
+          "p95": 231,
+          "min": 231,
+          "max": 231
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 50.9,
+          "p95": 50.9,
+          "min": 50.9,
+          "max": 50.9
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "query-context",
+        "tool": "browser_snapshot",
+        "duration": {
+          "n": 1,
+          "p50": 57.9,
+          "p95": 57.9,
+          "min": 57.9,
+          "max": 57.9
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 1885,
+          "p95": 1885,
+          "min": 1885,
+          "max": 1885
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 53.5,
+          "p95": 53.5,
+          "min": 53.5,
+          "max": 53.5
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 53.5,
+          "p95": 53.5,
+          "min": 53.5,
+          "max": 53.5
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "scroll-completion",
+        "tool": "browser_scroll",
+        "duration": {
+          "n": 1,
+          "p50": 57.2,
+          "p95": 57.2,
+          "min": 57.2,
+          "max": 57.2
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 201,
+          "p95": 201,
+          "min": 201,
+          "max": 201
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 52.8,
+          "p95": 52.8,
+          "min": 52.8,
+          "max": 52.8
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "submit-once",
+        "tool": "browser_click",
+        "duration": {
+          "n": 1,
+          "p50": 712.4,
+          "p95": 712.4,
+          "min": 712.4,
+          "max": 712.4
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 2442,
+          "p95": 2442,
+          "min": 2442,
+          "max": 2442
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 707.2,
+          "p95": 707.2,
+          "min": 707.2,
+          "max": 707.2
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 49.7,
+          "p95": 49.7,
+          "min": 49.7,
+          "max": 49.7
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "post-cancel",
+        "tool": "browser_click",
+        "duration": {
+          "n": 1,
+          "p50": 3.7,
+          "p95": 3.7,
+          "min": 3.7,
+          "max": 3.7
+        },
+        "failed": 1,
+        "errors": {
+          "CANCELLED": 1
+        },
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 288,
+          "p95": 288,
+          "min": 288,
+          "max": 288
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 21.2,
+          "p95": 21.2,
+          "min": 21.2,
+          "max": 21.2
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "expected-result",
+        "tool": "browser_click",
+        "duration": {
+          "n": 1,
+          "p50": 340,
+          "p95": 340,
+          "min": 340,
+          "max": 340
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 2520,
+          "p95": 2520,
+          "min": 2520,
+          "max": 2520
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 333.9,
+          "p95": 333.9,
+          "min": 333.9,
+          "max": 333.9
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 52.4,
+          "p95": 52.4,
+          "min": 52.4,
+          "max": 52.4
+        },
+        "longTaskMaxMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskCount": 0
+      },
+      {
+        "scenario": "expected-navigation",
+        "tool": "browser_click",
+        "duration": {
+          "n": 1,
+          "p50": 1236.7,
+          "p95": 1236.7,
+          "min": 1236.7,
+          "max": 1236.7
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 1452,
+          "p95": 1452,
+          "min": 1452,
+          "max": 1452
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 1231.3,
+          "p95": 1231.3,
+          "min": 1231.3,
+          "max": 1231.3
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 44.8,
+          "p95": 44.8,
+          "min": 44.8,
+          "max": 44.8
+        },
+        "longTaskMaxMs": null,
+        "longTaskCount": null
+      },
+      {
+        "scenario": "worker-recovery",
+        "tool": "browser_tabs",
+        "duration": {
+          "n": 1,
+          "p50": 12.2,
+          "p95": 12.2,
+          "min": 12.2,
+          "max": 12.2
+        },
+        "failed": 0,
+        "errors": {},
+        "outcomeBytes": {
+          "n": 1,
+          "p50": 740,
+          "p95": 740,
+          "min": 740,
+          "max": 740
+        },
+        "browserMs": {
+          "n": 1,
+          "p50": 8.5,
+          "p95": 8.5,
+          "min": 8.5,
+          "max": 8.5
+        },
+        "snapshotMs": {
+          "n": 1,
+          "p50": 0,
+          "p95": 0,
+          "min": 0,
+          "max": 0
+        },
+        "longTaskMaxMs": null,
+        "longTaskCount": null
+      }
+    ],
+    "quality": {
+      "n": 13,
+      "passed": 13,
+      "wrongTarget": 0,
+      "falseSuccess": 0,
+      "duplicateWrites": 0,
+      "postCancelWrites": 0
+    },
+    "oracles": [
+      {
+        "scenario": "fill-retained",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "recycled-row",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "fill-rollback",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "label-priority",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "shadow-label",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "aria-disabled",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "query-context",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "scroll-completion",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "duplicate-request",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "post-cancel",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "expected-result",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "expected-navigation",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      {
+        "scenario": "worker-recovery",
+        "passed": true,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      }
+    ],
+    "toolCalls": 510,
+    "explicitSnapshots": 301,
+    "recoveryErrors": 1,
+    "connection": {
+      "disconnects": 0,
+      "heartbeat": {
+        "n": 8,
+        "p50": 0.5,
+        "p95": 1.2,
+        "min": 0.5,
+        "max": 1.2
+      },
+      "recoveryMs": 249.88635200000135
+    },
+    "model": null,
+    "notes": [
+      "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+      "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+      "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+      "Quality counts use fixture state, not tool ok. Null means not measured."
+    ]
   }
 }
