@@ -37,14 +37,13 @@ test('F6 registers a newTab click immediately and permits switching to its loadi
 test('F7 waits on refGone OR the tab URL during form navigation',async()=>{
   const page=await world.open('board.html');
   await page.evaluate(()=>{
-    document.body.innerHTML='<form action="/board.html"><input type="hidden" name="arrived" value="1"><button>Submit later</button></form>';
+    document.body.innerHTML='<form action="/board.html?arrived=1"><input type="hidden" name="arrived" value="1"><button>Submit later</button></form>';
     document.querySelector('button')!.addEventListener('click',event=>{event.preventDefault();setTimeout(()=>document.querySelector('form')!.submit(),800);});
   });
   const operationId=await world.attach(page),snap=await world.ok('browser_snapshot',{operationId});
   const ref=snap.data.frames[0].elements.find((el:any)=>el.name==='Submit later').ref;
-  // Different destination makes the tab URL condition observable.
-  await page.locator('form').evaluate(el=>(el as HTMLFormElement).action='/board.html?arrived=1');
-  await world.mcp.call('browser_click',{operationId,ref});
+  // Observe the final destination: changing a form after observation invalidates its controls.
+  await world.ok('browser_click',{operationId,ref});
   const waited=await world.ok('browser_wait',{operationId,refGone:ref,urlIncludes:'arrived=1',timeoutMs:5000});
   expect(['refGone','urlIncludes']).toContain(waited.verified?.met);
 });
