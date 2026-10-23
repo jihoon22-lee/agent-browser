@@ -28,7 +28,8 @@ if ($state.Mcp -and (Test-Path -LiteralPath $state.Mcp.Path)) {
     $original = Read-Utf8Text $state.Mcp.Path
     $edit = Edit-BrowserMcp -Text $original -Remove -ExpectedEntryHash $state.Mcp.EntryHash -RemoveEmptyMcp:([bool]$state.Mcp.CreatedMcp)
     $removeFile = $false
-    if ($state.Mcp.CreatedFile -and (Get-JsonMinified $edit.Text) -eq '{}') { $removeFile = $true }
+    # Comments are user content too; remove only a whitespace-only empty object.
+    if ($state.Mcp.CreatedFile -and [regex]::IsMatch($edit.Text, '^\s*\{\s*\}\s*$')) { $removeFile = $true }
     $mcpPlan = [pscustomobject]@{ Path=$state.Mcp.Path; OriginalHash=$originalHash; Edit=$edit; RemoveFile=$removeFile }
 }
 if ($RemoveData -and (Test-Path -LiteralPath $state.DataDir)) {

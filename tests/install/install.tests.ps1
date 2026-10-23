@@ -171,6 +171,42 @@ try {
         Remove-Item -LiteralPath (Join-Path $modified 'README-install.md')
         $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $modified -RemoveData -Quiet
     }
+    Case 'uninstall preserves user comments in installer-created settings files' {
+        $lost = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($kind in @('root-line','root-block','browser','mcp','trailing','other','empty','preexisting')) {
+            $caseInstall=Join-Path $testRoot ('comment-install-' + $kind)
+            $caseSettings=Join-Path $testRoot ('comment-settings-' + $kind + '.jsonc')
+            $activeInstalls.Add($caseInstall)
+            if($kind -eq 'preexisting'){Write-Utf8Atomic $caseSettings '{}'}
+            $null=& (Join-Path $package1 'setup.ps1') -InstallDir $caseInstall -NoStartup -NoStart -OpenCodeConfig $caseSettings -Quiet
+            $text=Read-Utf8Text $caseSettings
+            $note='Synthetic user note to preserve'
+            switch($kind) {
+                'root-line' {$text=$text.Insert(1,"`r`n// " + $note + "`r`n")}
+                'root-block' {$text=$text.Insert(1,'/* ' + $note + ' */')}
+                'browser' {$text=$text.Insert($text.IndexOf('{',$text.IndexOf('"browser"'))+1,"`r`n// " + $note + "`r`n")}
+                'mcp' {$text=$text.Insert($text.IndexOf('{',$text.IndexOf('"mcp"'))+1,"`r`n// " + $note + "`r`n")}
+                'trailing' {$text += "`r`n// " + $note + "`r`n"}
+                'other' {$text=$text.Insert(1,'"model":"synthetic/kept",')}
+            }
+            Write-Utf8Atomic $caseSettings $text
+            $result=& (Join-Path $package1 'uninstall.ps1') -InstallDir $caseInstall -RemoveData -Quiet
+            Assert $result.Removed ('Uninstall failed for ' + $kind)
+            $exists=Test-Path -LiteralPath $caseSettings
+            if($kind -eq 'empty'){Assert (-not $exists) 'An untouched generated empty config was retained'}
+            elseif(-not $exists){$lost.Add($kind)}
+            else {
+                $remaining=Read-Utf8Text $caseSettings
+                $config=ConvertFrom-Json (Get-JsonMinified $remaining)
+                Assert ($null -eq $config.mcp.browser) ('Owned browser entry remained for ' + $kind)
+                if($kind -eq 'other'){Assert ($config.model -eq 'synthetic/kept') 'Another setting was lost'}
+                elseif($kind -ne 'preexisting'){Assert ($remaining.Contains($note)) ('Comment content was lost for ' + $kind)}
+            }
+            $again=& (Join-Path $package1 'uninstall.ps1') -InstallDir $caseInstall -Quiet
+            Assert $again.AlreadyRemoved ('Repeated uninstall changed the result for ' + $kind)
+        }
+        Assert ($lost.Count -eq 0) ('User-authored config content was deleted: ' + ($lost -join ', '))
+    }
     Case 'junction path cannot redirect installation outside its root' {
         $outside=Join-Path $testRoot 'outside'; $null=New-Item -ItemType Directory -Path $outside
         $link=Join-Path $testRoot 'linked install'
