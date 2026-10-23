@@ -2,6 +2,27 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+# 5단계 교차 코드리뷰 — 2026-10-23, 수정 전 결함 7건 확인
+
+대상은 `main` **`8aa7ced`**다. 요구사항/미완료 계획/저장된 v1 API 계약 대조 → content/background/MCP 및 런타임·설치·패널 흐름 추적 → 대상 변경·취소·응답 유실 조건 구성 → 단위/실제 브라우저 재현 → 기존 정상 동작과 반증·증거 범위 확인 순서로 리뷰했다. 제품 코드는 수정하지 않았다.
+
+| ID | 우선순위 | 위치 | 재현과 영향 |
+|---|---|---|---|
+| R5 | P1 | `extension/src/content/actions.ts:220` | 신뢰 입력 응답 대기 중 취소한 뒤 `not-allowed`가 도착하면 취소 상태를 다시 검사하지 않고 DOM fallback을 실행한다. 작업 중단과 content 취소를 확인한 **뒤** 합성 클릭 1회가 발생했다. MCP는 `EXECUTION_UNKNOWN`을 반환했다. |
+| R6 | P1 | `extension/src/content/trusted.ts:10` | `sendMessage` 예외를 실행 전 실패와 동일한 `unavailable`로 처리한다. 실제 CDP 클릭 뒤 응답 유실을 주입하면 신뢰 클릭 1회에 DOM 클릭 1회가 더해지고 `ok:true`를 반환한다. 실행 여부가 불명확한 전송 실패는 자동 재입력하면 안 된다. |
+| R1 | P1 | `extension/src/content/record-context.ts:29` | 레코드 root는 ShadowRoot 밖까지 찾지만 identity의 TreeWalker는 shadow 내부를 읽지 않는다. `li > host`의 open shadow 안에서 주문 A를 B로 바꿔도 기존 취소 버튼 ref가 유효하며 B의 handler가 실행된다. |
+| R3 | P1 | `extension/src/content/refs.ts:35`, `actions.ts:254` | pointerdown 이후 `scope:'target'` 검사는 레코드 텍스트를 제외한다. `data-id/data-key`가 없는 행의 주문명이 A→B로 바뀌어도 같은 버튼의 click이 B에 전달된다. 일반 피드백 변화 허용과 업무 대상 식별을 구분해야 한다. |
+| R2 | P1 | `extension/src/content/actions.ts:282` | `focus()` handler가 행의 `data-id`를 A→B로 바꿔도 바로 native setter와 input/change를 실행한다. 뒤의 `afterInput`이 오류를 반환할 때는 B의 input handler가 이미 실행된 뒤다. 포커스 후 실제 쓰기 전에 대상 재검증이 필요하다. |
+| R4 | P1 | `extension/src/content/keyboard.ts:109` | keydown/keypress 뒤 연결 여부·native disabled만 확인하고 기본 동작을 흉내 낸다. keydown에서 링크를 `/order-A`→`/order-B`로 바꾸면 Enter의 `target.click()`이 B를 실행하고 성공을 반환한다. 키 이벤트 뒤 기본 쓰기 동작 전에 ref를 다시 확인해야 한다. |
+| R7 | P2 | `scripts/uninstall.ps1:31` | 설치기가 만든 설정 파일에 사용자가 주석을 추가한 뒤 제거하면 `Get-JsonMinified`가 주석을 버려 빈 객체로 판정하고 설정 파일을 삭제한다. Windows PowerShell 실제 합성 설치 상태에서 `Removed:true`, `UserSettingsFilePreserved:false`를 확인했다. 백업 1개는 남아 복구 가능하지만 원본의 사용자 편집 보존 요구를 어긴다. GUI의 공백-only 빈 객체 검사와도 다르다. |
+
+- **결함 재현:** 새 단위 probe **6개**, Linux 전체 MCP 경로 **6개**, 실제 Windows 전체 MCP 경로 **6개**, Windows PowerShell 제거 probe **1개**가 의도한 안전 조건에서 실패했다. 이는 결함 확인이며 수정 완료/제품 회귀 통과라는 뜻이 아니다. R5/R6은 응답 지연·유실을 통제해서 주입했다. 실제 worker crash의 발생 빈도나 자연 발생 재현을 측정하지 않았다.
+- **기존 검사:** 직접 관련된 확장 **429개**, Rust **76개**, 네이티브 Windows Chrome `browser-quality`/`trusted-input` E2E **15개**가 통과했다. Windows `jsonc.tests.ps1`도 두 PASS 묶음 모두 통과했다. 따라서 기존 검사의 정상 결과와 위 누락된 경계 조건은 함께 존재한다.
+- **빌드·환경:** 확장 타입/production 빌드, Linux debug Bridge, `cargo xwin` MSVC release 빌드 통과. Linux Node **24.18.0**/Chromium **156.0.8078.4**, Windows 네이티브 Node **24.18.1**/Chrome **155.0.8059.86**/PowerShell **5.1.26100.9711**. 브라우저는 각각 임시 headless 프로필이며 Windows에서는 복사한 실제 `.exe`를 실행했다.
+- **보존·범위:** 합성 probe 원본과 관측 요약은 ignored `tests/agent/results/review-2026-10-23/`에 보존했다. 일반 test 디렉터리의 임시 probe는 제거했다. 전체 마일스톤 검사, 설치 GUI 육안/배율 확인, 실제 모델 호출은 실행하지 않았다. B10의 원인과 기존 알려진 제한은 이번에 해결됐다고 표시하지 않는다. 전역 OpenCode 설정·사용자 Chrome 프로필·실제 설치는 변경하지 않았으며 commit/push/PR/Release도 하지 않았다.
+
+---
+
 # 브라우저 품질 후속 — 2026-10-22, 드래그 개선·Linux 검증 완료
 
 URL-only `browser_wait(match:all)`은 본문 frame을 resolve/inject하지 않고 탭 URL만 관찰하도록 수정했다. 포인터 카드의 자식이 사용 가능한지도 공통 `isDisabled`로 판단하므로 ARIA-disabled 자식 때문에 카드 ref가 누락되지 않는다. 수정 전 단위 **3개**·실제 브라우저 **2개** 실패를 확인했으며, 수정 후 전체 단위 **602개**, 관련 E2E **32개**, 빌드·타입 검사가 통과했다. 중단 후 재개 과정에서 URL-only 기존 빌드 실패도 다시 확인했다. 최신 로그는 ignored `tests/agent/results/pr37-review-final/`에 남겼다.
