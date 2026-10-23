@@ -59,8 +59,12 @@ export function trustedTargets(operation: { id?: string; clientId?: string; tabs
   return { enabled, operationTabs: mine && !mine.paused ? mine.tabs ?? [] : [], operationId: mine?.id ?? null };
 }
 
-/** An input that already reached the page must never be sent again as DOM events. */
+/** An attempted input may have reached the page even if its first callback failed. */
 export class PartlyDelivered extends Error { readonly dispatched = true; }
+class InputNotDelivered extends Error {
+  readonly dispatched = false;
+  constructor(message: string, readonly cancelled = false) { super(message); }
+}
 
 export function trustedInput(api: DebuggerApi) {
   const attached = new Set<number>();
@@ -95,13 +99,22 @@ export function trustedInput(api: DebuggerApi) {
     attached.delete(tabId); dialogs.delete(tabId); inputUntil.delete(tabId);
     await api.detach(tabId).catch(() => {});
   }
-  /** Runs one agent input; a failure after the first event reached the page is marked as partly delivered. */
-  async function deliver(tabId: number, steps: Array<() => Promise<unknown>>) {
+  /** Each await is an opportunity for the operation/request to end. A failed CDP
+   * callback cannot prove its event was not delivered, including the first one. */
+  async function deliver(tabId: number, steps: Array<() => Promise<unknown>>, active: () => boolean) {
+    const startedOperation = operationId;
     inputUntil.set(tabId, Number.POSITIVE_INFINITY);
-    let sent = 0;
-    try { for (const step of steps) { await step(); sent++; } }
-    catch (error) { if (sent > 0) throw new PartlyDelivered(error instanceof Error ? error.message : String(error)); throw error; }
-    finally { inputUntil.set(tabId, Date.now() + 1500); }
+    let attempted = false;
+    try {
+      for (const step of steps) {
+        if (!active() || startedOperation !== operationId || !current.enabled || !current.operationTabs.includes(tabId) || !attached.has(tabId) || isCancelled())
+          throw new InputNotDelivered('The input request is no longer active.', true);
+        attempted = true;
+        await step();
+      }
+    }
+    catch (error) { if (attempted) throw new PartlyDelivered(error instanceof Error ? error.message : String(error)); throw error; }
+    finally { if (attempted) inputUntil.set(tabId, Date.now() + 1500); else inputUntil.delete(tabId); }
     return takeDialog(tabId);
   }
 
@@ -127,24 +140,24 @@ export function trustedInput(api: DebuggerApi) {
         for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !state.operationTabs.includes(tabId)) await release(tabId);
       });
     },
-    click(tabId: number, x: number, y: number, mode: ClickMode = "click") {
+    click(tabId: number, x: number, y: number, mode: ClickMode = "click", active = () => true) {
       const mouse = (params: object) => () => api.send(tabId, "Input.dispatchMouseEvent", params);
       const button = mode === "right" ? "right" as const : "left" as const;
       const steps = [mouse({ type: "mouseMoved", x, y })];
       if (mode !== "hover") for (const clickCount of mode === "double" ? [1, 2] : [1])
         steps.push(mouse({ type: "mousePressed", x, y, button, clickCount }), mouse({ type: "mouseReleased", x, y, button, clickCount }));
-      return deliver(tabId, steps);
+      return deliver(tabId, steps, active);
     },
-    drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }) {
+    drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }, active = () => true) {
       const mouse = (params: object) => () => api.send(tabId, "Input.dispatchMouseEvent", params);
       const steps = [mouse({ type: "mouseMoved", ...from }), mouse({ type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 })];
       for (const f of [0.25, 0.5, 0.75, 1]) steps.push(mouse({ type: "mouseMoved", x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f, button: "left", buttons: 1 }));
       steps.push(mouse({ type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 }));
-      return deliver(tabId, steps);
+      return deliver(tabId, steps, active);
     },
-    key(tabId: number, key: string, modifiers: string[] = []) {
+    key(tabId: number, key: string, modifiers: string[] = [], active = () => true) {
       const spec = keySpec(key, modifiers);
-      if (!spec || modifiers.some(m => !MODIFIER_KEYS[m]) || !trustedShortcut(key, modifiers)) return Promise.reject(new Error(`Unsupported key ${key}`));
+      if (!spec || modifiers.some(m => !MODIFIER_KEYS[m]) || !trustedShortcut(key, modifiers)) return Promise.reject(new InputNotDelivered(`Unsupported key ${key}`));
       const send = (params: object) => () => api.send(tabId, "Input.dispatchKeyEvent", params);
       const held = modifiers.map(m => MODIFIER_KEYS[m]!);
       const bits = held.reduce((sum, m) => sum | m.bit, 0);
@@ -156,7 +169,7 @@ export function trustedInput(api: DebuggerApi) {
       for (const m of held) { down |= m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyDown", ...k, modifiers: down })); }
       steps.push(send({ type: "keyDown", ...up, ...typed, ...(bits ? { modifiers: bits } : {}) }), send({ type: "keyUp", ...up, ...(bits ? { modifiers: bits } : {}) }));
       for (const m of [...held].reverse()) { down &= ~m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyUp", ...k, ...(down ? { modifiers: down } : {}) })); }
-      return deliver(tabId, steps);
+      return deliver(tabId, steps, active);
     },
     async screenshot(tabId: number) {
       const { data } = await api.send<{ data: string }>(tabId, "Page.captureScreenshot", { format: "png" });

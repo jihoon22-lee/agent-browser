@@ -107,11 +107,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // The one content-script request: trusted input for the click or key it is executing right now.
   if (msg?.kind === "trusted-input") {
+    const active = () => handleBridgeRequest.isRunning(sender.tab?.id ?? -1, msg.requestId, msg.action === 'key' ? 'browser.press' : 'browser.click');
     const ok = acceptTrustedRequest(msg, sender, { runtimeId: chrome.runtime.id, running: handleBridgeRequest.isRunning, enabled: trustedEnabled, attached: tabId => trusted.isAttached(tabId) });
-    if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed" }); return; }
+    if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed", dispatched: false, cancelled: !active() }); return; }
     const tabId = sender.tab!.id!;
-    (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y, msg.mode) : msg.action === "drag" ? trusted.drag(tabId, { x: msg.x, y: msg.y }, { x: msg.toX, y: msg.toY }) : trusted.key(tabId, msg.key, msg.modifiers))
-      .then(result => sendResponse({ ok: true, ...result }), error => sendResponse({ ok: false, reason: trusted.cancelledReason(tabId) ?? "debugger-error", ...(error?.dispatched ? { dispatched: true } : {}) }));
+    (msg.action === "click" ? trusted.click(tabId, msg.x, msg.y, msg.mode, active) : msg.action === "drag" ? trusted.drag(tabId, { x: msg.x, y: msg.y }, { x: msg.toX, y: msg.toY }, active) : trusted.key(tabId, msg.key, msg.modifiers, active))
+      .then(result => sendResponse({ ok: true, ...result }), error => sendResponse({ ok: false, reason: trusted.cancelledReason(tabId) ?? "debugger-error", dispatched: error?.dispatched !== false, cancelled: error?.cancelled === true }));
     return true;
   }
   // Extension pages only; a content script must never be able to reach the bridge or read its status.

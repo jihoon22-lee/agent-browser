@@ -298,7 +298,7 @@ describe("trusted input", () => {
     expect(result.verified.trusted).toBe(true);
   });
   it("falls back to synthetic events and says why when trusted input is refused", async () => {
-    vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: false, reason: 'canceled_by_user' })) } });
+    vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: false, reason: 'canceled_by_user', dispatched: false })) } });
     document.body.innerHTML = '<button>대체</button>';
     const button = document.querySelector('button')!;
     vi.spyOn(button, 'getBoundingClientRect').mockReturnValue({ left: 10, top: 10, width: 80, height: 20, right: 90, bottom: 30 } as DOMRect);

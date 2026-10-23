@@ -24,7 +24,7 @@
 | 스냅샷 검색 | browser_snapshot {query}로 그 말이 들어간 본문 줄, 같은 행에 그 말이 있는 컨트롤, 이름·값·링크가 맞는 요소만 읽는다 | 결과의 ref는 일반 snapshot과 같다. 일치 없으면 `query-no-match`. 비밀번호 값은 검색하지 않는다 |
 | 동작 결과의 스냅샷 | 페이지를 바꾼 클릭·키·이동 결과에 도착 페이지를 붙인다(요소 40개까지). 클릭이나 Enter 제출 후 1초 안에 시작된 스크립트 이동도 포함 | 더 많은 요소는 browser_snapshot의 elementOffset. 버튼을 품은 카드는 그 버튼으로만 나온다 |
 | snapshot/read/extract | DOM 텍스트·요소·표, 문자/요소/frame cursor. iframe과 open Shadow DOM. 포인터 커서 영역(clickable), 상태(state), 반복 버튼의 행 맥락(context), 아이콘 이름. 페이지를 바꾼 동작의 결과에 자동 포함 | UTF-8 바이트 예산 안에서 잘리며 cursor로 이어 읽음. 접근 불가 frame은 부분 오류. closed Shadow DOM/canvas/브라우저 내부 UI 불가 |
-| 포인터 방식 | browser_click의 mode: double(더블 클릭), right(오른쪽 클릭), hover(마우스 올리기, 누르지 않음), drag(ref를 toRef 위로 끌어다 놓기). drag는 포인터 이벤트와, 원본이 HTML5 끌기 대상이면 dragstart·drop까지 보낸다 | 좌표 지정·긴 누르기·다중 터치 없음. 끌기는 두 ref가 같은 frame이어야 한다 |
+| 포인터 방식 | browser_click의 mode: double(더블 클릭), right(오른쪽 클릭), hover(마우스 올리기, 누르지 않음), drag(ref를 toRef 위로 끌어다 놓기). drag는 포인터 이벤트와, 원본이 HTML5 끌기 대상이면 dragstart·drop까지 보낸다 | 좌표 지정·긴 누르기·다중 터치 없음. 끌기는 두 ref가 같은 frame이어야 한다. 일반 DOM click/double/right 도중 레코드 키가 없는 주변 텍스트가 바뀌면 대상 교체인지 확인할 수 없어 추가 클릭을 중단한다. 새 스냅샷으로 결과를 확인하며 자동 재입력하지 않는다 |
 | scroll | 문서 또는 ref 컨테이너의 up/down/top/bottom. smooth CSS를 기다리지 않는 즉시 이동 후 위치와 atStart/atEnd 반환 | 수직 기준. 좌표·수평 스크롤은 미지원 |
 | wait | 텍스트 나타남/사라짐, refGone, URL 부분문자열과 timeout. 기본 any, text/textGone/urlIncludes는 match:all 가능 | all과 refGone 조합은 거부. 범용 network-idle/사이트 readiness 판정 없음 |
 | 클릭·키의 완료 조건 | browser_click/browser_press의 waitFor에 text/textGone/urlIncludes 지정. 기본 all·5초, 100ms~30초. 조건 충족 후 snapshot 반환 | 같은 탭에서 검사. newTab과 함께 지정 불가. 입력 후 timeout도 executed:yes이며 자동 재실행하지 않음 |

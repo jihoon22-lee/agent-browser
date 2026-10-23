@@ -1,5 +1,5 @@
 import { highlight } from "./highlight";
-import { partlyDelivered, requestTrusted, trustedFrame } from "./trusted";
+import { assertTrustedFallback, requestTrusted, trustedFrame } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
@@ -7,7 +7,7 @@ import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
 import { INPUT_TEXT, keyOf, preparePress, pressKey } from "./keyboard";
-import { cancellationError, cancelCommands, withCommandCancellation, type CommandScope } from "./cancellation";
+import { cancellationError, cancelCommands, checkCancelled, withCommandCancellation, type CommandScope } from "./cancellation";
 
 export function cancelUpTo(generation: number) { cancelCommands({ generation }); }
 
@@ -97,6 +97,15 @@ function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElemen
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
 }
 
+function focusForFill(el: HTMLElement, p: P, signal: AbortSignal) {
+  el.focus();
+  checkCancelled(p, signal);
+  // Focus handlers can recycle a record or make the field unavailable before
+  // the value setter runs. Post-input verification would be too late.
+  resolveRef(String(p.ref), false, 'dispatch');
+  assertInteractable(el);
+}
+
 /** Let queued application updates and a visible render run before confirming a value. A hidden
  * tab must not depend on rAF firing. This is a bounded value observation, not server acknowledgement. */
 async function afterInput(ref: string, signal: AbortSignal) {
@@ -136,9 +145,10 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
   if (p.trusted === true && trustedFrame() && !html5) {
     const answer = await requestTrusted(String(p.requestId ?? ""), "drag", { x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
     if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
-    if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted drag reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+    assertTrustedFallback(answer, p, signal);
     trustedReason = answer.reason;
   }
+  checkCancelled(p, signal);
   const pointer = (on: Element, type: string, at: Point, down: boolean) =>
     on.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {
       ...at, bubbles: true, cancelable: true, composed: true, button: 0, buttons: down ? 1 : 0, detail: type.endsWith("move") ? 0 : 1,
@@ -219,9 +229,12 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       if (p.trusted === true && trustedFrame()) {
         const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY, ...modeNote });
         if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
-        if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted click reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+        assertTrustedFallback(answer, p, signal);
         if (!answer.ok) trustedReason = answer.reason;
       }
+      // Cancellation may arrive while the background decides whether it can
+      // deliver trusted input. Never revive that command as synthetic input.
+      checkCancelled(p, signal);
       const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
@@ -239,24 +252,25 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
       }
       const button = mode === "right" ? 2 : 0;
+      const checkTarget = (): Point => {
+        try {
+          resolveRef(String(p.ref), false, 'dispatch');
+          return assertInteractable(el) ?? clickPoint(el);
+        } catch (error) {
+          throw new ProtocolError('EXECUTION_UNKNOWN',
+            'Pointer events were delivered, but the target changed before the next event. Inspect the page before continuing.',
+            'unsafe', { cause: error instanceof ProtocolError ? error.code : 'INTERNAL' });
+        }
+      };
       const press = (detail: number) => {
         for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
           const down=type.endsWith('down');
           pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+          checkTarget();
         }
       };
       press(1);
-      let finalPoint: Point;
-      try {
-        finalPoint = assertInteractable(el) ?? clickPoint(el);
-        // Keep the original control, parent, record key and href after pointer
-        // feedback; ordinary sibling text can change as part of this same click.
-        resolveRef(String(p.ref),false,'target');
-      } catch (error) {
-        throw new ProtocolError('EXECUTION_UNKNOWN',
-          'Pointer events were delivered, but the target changed before click. Inspect the page before continuing.',
-          'unsafe', { cause: error instanceof ProtocolError ? error.code : 'INTERNAL' });
-      }
+      const finalPoint = checkTarget();
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
       if (mode === "right") {
@@ -264,9 +278,10 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       } else {
         el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
         if (mode === "double") {
+          checkTarget();
           press(2);
-          el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0,detail:2}));
-          el.dispatchEvent(new MouseEvent('dblclick',{...base,...finalPoint,buttons:0,detail:2}));
+          el.dispatchEvent(new MouseEvent('click',{...base,...checkTarget(),buttons:0,detail:2}));
+          el.dispatchEvent(new MouseEvent('dblclick',{...base,...checkTarget(),buttons:0,detail:2}));
         }
       }
       return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
@@ -279,7 +294,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (el instanceof HTMLInputElement && el.type === 'file') throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','File upload is not supported by browser_fill; it cannot read a local path or choose a file.');
         if (el instanceof HTMLInputElement && !INPUT_TEXT.has(el.type)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', el.type === 'checkbox' || el.type === 'radio' ? 'browser_fill only replaces text. Use browser_select with checked for this control.' : 'browser_fill only replaces text. Use browser_click for buttons.');
         if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field is read-only.");
-        el.focus();
+        focusForFill(el, p, signal);
+        if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field became read-only during focus.");
         nativeSet(el, text);
         el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -290,7 +306,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       if ((el as HTMLElement).isContentEditable) {
         const host = el as HTMLElement, doc = host.ownerDocument;
-        host.focus();
+        focusForFill(host, p, signal);
+        if (!host.isContentEditable) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'The editor became read-only during focus.');
         const range = doc.createRange(); range.selectNodeContents(host);
         const selection = doc.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
         // Editors such as ProseMirror, Draft or Slate update their own model from insertText.
@@ -352,7 +369,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         // The browser itself performs the key's default action; nothing is emulated here.
         if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
-        if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted key press reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+        assertTrustedFallback(answer, p, signal);
         const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
         return { ...fallback, verified: { ...fallback.verified, trusted: false, trustedReason: answer.ok ? "" : answer.reason } };
       }

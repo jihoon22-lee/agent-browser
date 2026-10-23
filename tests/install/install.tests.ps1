@@ -63,11 +63,20 @@ try {
         $sid=New-Object Security.Principal.SecurityIdentifier('S-1-1-0')
         $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'Write','ContainerInherit,ObjectInherit','InheritOnly','Allow')))
         [IO.Directory]::SetAccessControl($parent,$acl)
-        $privateInstall=Join-Path $parent 'private-install';$activeInstalls.Add($privateInstall)
-        $null=& (Join-Path $package1 'setup.ps1') -InstallDir $privateInstall -NoStartup -NoStart -Quiet
+        $parentAcl=[IO.Directory]::GetAccessControl($parent).GetSecurityDescriptorSddlForm('Access,Owner,Group')
+        $privateInstall=Join-Path $parent 'private-install';$activeInstalls.Add($privateInstall);$managedPort=Free-Port
+        $managed=& (Join-Path $package1 'setup.ps1') -InstallDir $privateInstall -Port $managedPort -NoStartup -NoStart:$SkipProcessTests -Quiet
         Assert (-not [IO.Directory]::GetAccessControl($privateInstall).AreAccessRulesProtected) 'New installation discarded managed directory inheritance'
+        $installedAcl=[IO.Directory]::GetAccessControl($privateInstall).GetSecurityDescriptorSddlForm('Access,Owner,Group')
+        $managedId=(Read-InstallState $privateInstall).InstallId
+        $repeatManaged=& (Join-Path $package1 'setup.ps1') -InstallDir $privateInstall -Port $managedPort -NoStartup -NoStart:$SkipProcessTests -Quiet
+        Assert ((Read-InstallState $privateInstall).InstallId -eq $managedId) 'Managed path reinstall changed identity'
+        Assert ([IO.Directory]::GetAccessControl($privateInstall).GetSecurityDescriptorSddlForm('Access,Owner,Group') -eq $installedAcl) 'Managed path reinstall changed directory policy'
+        if(-not $SkipProcessTests){Assert ($managed.Running.running -and $repeatManaged.Running.pid -eq $managed.Running.pid -and $repeatManaged.Running.reused) 'Managed path start or process reuse failed'}
         $null=Assert-InstallRoot $privateInstall
         $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $privateInstall -RemoveData -Quiet
+        Assert ([IO.Directory]::GetAccessControl($parent).GetSecurityDescriptorSddlForm('Access,Owner,Group') -eq $parentAcl) 'Managed path lifecycle changed parent directory policy'
+        if(-not $SkipProcessTests){Assert (-not (Get-Process -Id ([int]$managed.Running.pid) -ErrorAction SilentlyContinue)) 'Managed path uninstall left its Bridge running'}
     }
     $install = Join-Path $testRoot '사용자 설치 & 공백'
     # Include a character outside legacy Windows ANSI code pages on every locale.
@@ -170,6 +179,42 @@ try {
         Assert-Throws { & (Join-Path $package1 'uninstall.ps1') -InstallDir $modified -Quiet } 'Modified product file was deleted'
         Remove-Item -LiteralPath (Join-Path $modified 'README-install.md')
         $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $modified -RemoveData -Quiet
+    }
+    Case 'uninstall preserves user comments in installer-created settings files' {
+        $lost = New-Object 'System.Collections.Generic.List[string]'
+        foreach ($kind in @('root-line','root-block','browser','mcp','trailing','other','empty','preexisting')) {
+            $caseInstall=Join-Path $testRoot ('comment-install-' + $kind)
+            $caseSettings=Join-Path $testRoot ('comment-settings-' + $kind + '.jsonc')
+            $activeInstalls.Add($caseInstall)
+            if($kind -eq 'preexisting'){Write-Utf8Atomic $caseSettings '{}'}
+            $null=& (Join-Path $package1 'setup.ps1') -InstallDir $caseInstall -NoStartup -NoStart -OpenCodeConfig $caseSettings -Quiet
+            $text=Read-Utf8Text $caseSettings
+            $note='Synthetic user note to preserve'
+            switch($kind) {
+                'root-line' {$text=$text.Insert(1,"`r`n// " + $note + "`r`n")}
+                'root-block' {$text=$text.Insert(1,'/* ' + $note + ' */')}
+                'browser' {$text=$text.Insert($text.IndexOf('{',$text.IndexOf('"browser"'))+1,"`r`n// " + $note + "`r`n")}
+                'mcp' {$text=$text.Insert($text.IndexOf('{',$text.IndexOf('"mcp"'))+1,"`r`n// " + $note + "`r`n")}
+                'trailing' {$text += "`r`n// " + $note + "`r`n"}
+                'other' {$text=$text.Insert(1,'"model":"synthetic/kept",')}
+            }
+            Write-Utf8Atomic $caseSettings $text
+            $result=& (Join-Path $package1 'uninstall.ps1') -InstallDir $caseInstall -RemoveData -Quiet
+            Assert $result.Removed ('Uninstall failed for ' + $kind)
+            $exists=Test-Path -LiteralPath $caseSettings
+            if($kind -eq 'empty'){Assert (-not $exists) 'An untouched generated empty config was retained'}
+            elseif(-not $exists){$lost.Add($kind)}
+            else {
+                $remaining=Read-Utf8Text $caseSettings
+                $config=ConvertFrom-Json (Get-JsonMinified $remaining)
+                Assert ($null -eq $config.mcp.browser) ('Owned browser entry remained for ' + $kind)
+                if($kind -eq 'other'){Assert ($config.model -eq 'synthetic/kept') 'Another setting was lost'}
+                elseif($kind -ne 'preexisting'){Assert ($remaining.Contains($note)) ('Comment content was lost for ' + $kind)}
+            }
+            $again=& (Join-Path $package1 'uninstall.ps1') -InstallDir $caseInstall -Quiet
+            Assert $again.AlreadyRemoved ('Repeated uninstall changed the result for ' + $kind)
+        }
+        Assert ($lost.Count -eq 0) ('User-authored config content was deleted: ' + ($lost -join ', '))
     }
     Case 'junction path cannot redirect installation outside its root' {
         $outside=Join-Path $testRoot 'outside'; $null=New-Item -ItemType Directory -Path $outside

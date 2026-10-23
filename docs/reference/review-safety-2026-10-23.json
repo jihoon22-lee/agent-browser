@@ -1,0 +1,496 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-23",
+  "scope": "Synthetic regression and browser cost checks for the seven input/configuration safety fixes. No model calls.",
+  "linuxComparison": {
+    "comparable": true,
+    "mismatches": [],
+    "before": {
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "dom",
+        "bridgeBuild": "debug",
+        "suiteHash": "workload-v1:3d3d3aaec142720d862345d205fda982964c0e05e6396e22e91b40869417a6ad",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "8aa7cede45d473ac7bbc26d271cac85bd8935116",
+        "extensionSha256": "f5f2e0781fbf8b2c3600275828b6f01c671741ac93b351ee12d52e1a3dad4a4a",
+        "bridgeSha256": "10d2ffc4c89868d0ae4748ff5a855c0334e9fda9b5922ca1b7843690dededb04"
+      },
+      "quality": {
+        "n": 13,
+        "passed": 13,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      "connection": {
+        "disconnects": 0,
+        "heartbeat": {
+          "n": 9,
+          "p50": 0.8,
+          "p95": 1.5,
+          "min": 0.5,
+          "max": 1.5
+        },
+        "recoveryMs": 271.0318949999928
+      }
+    },
+    "after": {
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "dom",
+        "bridgeBuild": "debug",
+        "suiteHash": "workload-v1:3d3d3aaec142720d862345d205fda982964c0e05e6396e22e91b40869417a6ad",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "830a34d1779d8c5ec3e407f59808004cb3edb3e8",
+        "extensionSha256": "fec429e70e2f894e3dbc173a9560c4daa3f7fad72e6e749cb3be8334627bdac9",
+        "bridgeSha256": "c76feecf022fec1d52ce5a5f7af94cc1cffc5a4ed28ffd62814210d6c807f026"
+      },
+      "quality": {
+        "n": 13,
+        "passed": 13,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      "connection": {
+        "disconnects": 0,
+        "heartbeat": {
+          "n": 9,
+          "p50": 0.6,
+          "p95": 0.8,
+          "min": 0.5,
+          "max": 0.8
+        },
+        "recoveryMs": 278.21641100000124
+      }
+    },
+    "timings": [
+      {
+        "scenario": "tabs",
+        "before": {
+          "n": 50,
+          "p50": 31.7,
+          "p95": 76.6,
+          "min": 8.1,
+          "max": 124.5
+        },
+        "after": {
+          "n": 50,
+          "p50": 40.1,
+          "p95": 46.7,
+          "min": 37.4,
+          "max": 46.8
+        },
+        "p50ChangePercent": 26.5
+      },
+      {
+        "scenario": "fill",
+        "before": {
+          "n": 50,
+          "p50": 66.4,
+          "p95": 108.8,
+          "min": 27.5,
+          "max": 161.4
+        },
+        "after": {
+          "n": 50,
+          "p50": 62.2,
+          "p95": 64.1,
+          "min": 47.5,
+          "max": 66.4
+        },
+        "p50ChangePercent": -6.3
+      },
+      {
+        "scenario": "click-no-change",
+        "before": {
+          "n": 50,
+          "p50": 1693.7,
+          "p95": 1785,
+          "min": 1652.3,
+          "max": 1797.8
+        },
+        "after": {
+          "n": 50,
+          "p50": 1643.5,
+          "p95": 1694.7,
+          "min": 1629.6,
+          "max": 1696.6
+        },
+        "p50ChangePercent": -3
+      },
+      {
+        "scenario": "click-dom-change",
+        "before": {
+          "n": 50,
+          "p50": 743.5,
+          "p95": 827.7,
+          "min": 701.6,
+          "max": 861.3
+        },
+        "after": {
+          "n": 50,
+          "p50": 705.3,
+          "p95": 745.3,
+          "min": 685.9,
+          "max": 751.7
+        },
+        "p50ChangePercent": -5.1
+      },
+      {
+        "scenario": "snapshot-100",
+        "before": {
+          "n": 50,
+          "p50": 72.3,
+          "p95": 90.5,
+          "min": 57.4,
+          "max": 138.3
+        },
+        "after": {
+          "n": 50,
+          "p50": 123,
+          "p95": 155.4,
+          "min": 75,
+          "max": 175
+        },
+        "p50ChangePercent": 70.1
+      },
+      {
+        "scenario": "query-miss-100",
+        "before": {
+          "n": 50,
+          "p50": 164.2,
+          "p95": 222.9,
+          "min": 85,
+          "max": 333.9
+        },
+        "after": {
+          "n": 50,
+          "p50": 86,
+          "p95": 109.1,
+          "min": 58.4,
+          "max": 120.5
+        },
+        "p50ChangePercent": -47.6
+      },
+      {
+        "scenario": "snapshot-1000",
+        "before": {
+          "n": 50,
+          "p50": 175.3,
+          "p95": 235.9,
+          "min": 123.2,
+          "max": 291.5
+        },
+        "after": {
+          "n": 50,
+          "p50": 126.2,
+          "p95": 170.2,
+          "min": 101.5,
+          "max": 192.2
+        },
+        "p50ChangePercent": -28
+      },
+      {
+        "scenario": "query-miss-1000",
+        "before": {
+          "n": 50,
+          "p50": 151.5,
+          "p95": 247.5,
+          "min": 94.5,
+          "max": 260.4
+        },
+        "after": {
+          "n": 50,
+          "p50": 107.7,
+          "p95": 154,
+          "min": 82.2,
+          "max": 178.6
+        },
+        "p50ChangePercent": -28.9
+      },
+      {
+        "scenario": "snapshot-5000",
+        "before": {
+          "n": 50,
+          "p50": 167.6,
+          "p95": 221.6,
+          "min": 136.9,
+          "max": 254
+        },
+        "after": {
+          "n": 50,
+          "p50": 185.5,
+          "p95": 237.6,
+          "min": 144.8,
+          "max": 251.4
+        },
+        "p50ChangePercent": 10.7
+      },
+      {
+        "scenario": "query-miss-5000",
+        "before": {
+          "n": 50,
+          "p50": 177.1,
+          "p95": 251.4,
+          "min": 146.9,
+          "max": 262.3
+        },
+        "after": {
+          "n": 50,
+          "p50": 283.1,
+          "p95": 340.6,
+          "min": 199.7,
+          "max": 365.4
+        },
+        "p50ChangePercent": 59.9
+      }
+    ]
+  },
+  "windows": {
+    "environment": {
+      "platform": "win32",
+      "arch": "x64",
+      "browserVersion": "155.0.8059.86",
+      "headless": true,
+      "inputMode": "dom",
+      "bridgeBuild": "release",
+      "suiteHash": "workload-v1:3d3d3aaec142720d862345d205fda982964c0e05e6396e22e91b40869417a6ad",
+      "nodeVersion": "v24.18.1",
+      "sourceRevision": "830a34d",
+      "extensionSha256": "fec429e70e2f894e3dbc173a9560c4daa3f7fad72e6e749cb3be8334627bdac9",
+      "bridgeSha256": "80c786bbd33b31f300b6637d51f67a18205b10b785d88da435762e5056ee3633"
+    },
+    "quality": {
+      "n": 13,
+      "passed": 13,
+      "wrongTarget": 0,
+      "falseSuccess": 0,
+      "duplicateWrites": 0,
+      "postCancelWrites": 0
+    },
+    "connection": {
+      "disconnects": 0,
+      "heartbeat": {
+        "n": 1,
+        "p50": 0.6,
+        "p95": 0.6,
+        "min": 0.6,
+        "max": 0.6
+      },
+      "recoveryMs": 304.0337999999974
+    },
+    "timings": [
+      {
+        "scenario": "tabs",
+        "duration": {
+          "n": 5,
+          "p50": 16,
+          "p95": 98.4,
+          "min": 3.2,
+          "max": 98.4
+        }
+      },
+      {
+        "scenario": "fill",
+        "duration": {
+          "n": 5,
+          "p50": 28.2,
+          "p95": 56.4,
+          "min": 24.2,
+          "max": 56.4
+        }
+      },
+      {
+        "scenario": "click-no-change",
+        "duration": {
+          "n": 5,
+          "p50": 1715.2,
+          "p95": 1741.9,
+          "min": 1701.9,
+          "max": 1741.9
+        }
+      },
+      {
+        "scenario": "click-dom-change",
+        "duration": {
+          "n": 5,
+          "p50": 655.4,
+          "p95": 706.7,
+          "min": 639.5,
+          "max": 706.7
+        }
+      },
+      {
+        "scenario": "snapshot-100",
+        "duration": {
+          "n": 5,
+          "p50": 26.2,
+          "p95": 35,
+          "min": 24.6,
+          "max": 35
+        }
+      },
+      {
+        "scenario": "query-miss-100",
+        "duration": {
+          "n": 5,
+          "p50": 27,
+          "p95": 35.9,
+          "min": 22.3,
+          "max": 35.9
+        }
+      },
+      {
+        "scenario": "snapshot-1000",
+        "duration": {
+          "n": 5,
+          "p50": 147,
+          "p95": 285.2,
+          "min": 90.2,
+          "max": 285.2
+        }
+      },
+      {
+        "scenario": "query-miss-1000",
+        "duration": {
+          "n": 5,
+          "p50": 88.5,
+          "p95": 146.8,
+          "min": 70.9,
+          "max": 146.8
+        }
+      },
+      {
+        "scenario": "snapshot-5000",
+        "duration": {
+          "n": 5,
+          "p50": 243.7,
+          "p95": 264.7,
+          "min": 213.7,
+          "max": 264.7
+        }
+      },
+      {
+        "scenario": "query-miss-5000",
+        "duration": {
+          "n": 5,
+          "p50": 242.2,
+          "p95": 452.6,
+          "min": 226.2,
+          "max": 452.6
+        }
+      }
+    ]
+  },
+  "focusedLargePage": {
+    "method": "Same quality fixture with 5000 plain records. Five warmups, then 50 snapshots and 50 missing queries, interleaved. Separate processes ran before/after/after/before. This is a different workload from the full comparison.",
+    "workloadSha256": "88d2c3b45955f46edfa0b293766da18d0326afc976aa1cfb4171090cd2d12d08",
+    "runs": [
+      {
+        "label": "before-1",
+        "stats": {
+          "snapshot": {
+            "n": 50,
+            "p50": 74.99927700000035,
+            "p95": 91.48691700000018,
+            "min": 66.3591349999997,
+            "max": 103.91722300000038
+          },
+          "query": {
+            "n": 50,
+            "p50": 80.84699100000034,
+            "p95": 108.93450200000007,
+            "min": 74.18883999999889,
+            "max": 135.34343500000023
+          }
+        }
+      },
+      {
+        "label": "after-1",
+        "stats": {
+          "snapshot": {
+            "n": 50,
+            "p50": 78.08863599999995,
+            "p95": 93.04551599999922,
+            "min": 61.268245000000206,
+            "max": 108.55024400000002
+          },
+          "query": {
+            "n": 50,
+            "p50": 91.86589300000014,
+            "p95": 116.93712099999902,
+            "min": 77.17434300000014,
+            "max": 122.38297299999977
+          }
+        }
+      },
+      {
+        "label": "after-2",
+        "stats": {
+          "snapshot": {
+            "n": 50,
+            "p50": 87.91591299999982,
+            "p95": 121.66425699999945,
+            "min": 63.59022899999991,
+            "max": 128.48859600000014
+          },
+          "query": {
+            "n": 50,
+            "p50": 100.07291199999963,
+            "p95": 147.21927899999991,
+            "min": 83.08007200000065,
+            "max": 154.64910000000054
+          }
+        }
+      },
+      {
+        "label": "before-2",
+        "stats": {
+          "snapshot": {
+            "n": 50,
+            "p50": 78.46293699999933,
+            "p95": 104.71164200000021,
+            "min": 66.31251900000007,
+            "max": 107.80024700000104
+          },
+          "query": {
+            "n": 50,
+            "p50": 93.06293499999992,
+            "p95": 114.99337299999934,
+            "min": 75.44257199999993,
+            "max": 128.00870299999997
+          }
+        }
+      }
+    ]
+  },
+  "recordTraversal": {
+    "method": "Within one native Chromium page, 5000 ordinary records; one warmup then 50 rounds alternate old/new observeRecord. These are direct traversal times, not MCP timings.",
+    "before": {
+      "n": 50,
+      "p50": 31.2,
+      "p95": 43
+    },
+    "after": {
+      "n": 50,
+      "p50": 28.7,
+      "p95": 38.2
+    }
+  },
+  "limits": [
+    "Full benchmark overlapped native Windows installer checks; host load was not controlled. Both the initial slowdown and focused follow-up are retained.",
+    "The focused workload is not comparable to the full benchmark as a before/after optimization claim. No performance code was changed after the seven fixes.",
+    "Windows has only five samples per scenario; its p95 is exploratory.",
+    "Quality oracles use synthetic page state. These counts are not model success rates."
+  ]
+}
