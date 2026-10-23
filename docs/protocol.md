@@ -223,7 +223,7 @@ switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTT
 - **신뢰 입력(설정 `trustedInput`, 기본 꺼짐):**
   - **동작:** 켜져 있고 이 브라우저의 작업 탭이면 background가 디버거(CDP 1.3)를 붙인다. 최상위 문서의 click·press를 content가 판정·관찰하고, 실제 입력만 디버거로 보낸다. content의 입력 요청(`trusted-input`)은 같은 탭·최상위 frame·지금 실행 중인 그 명령의 requestId일 때만 수행한다.
   - **결과:** `verified.trusted:true`이고, 대화상자가 떴으면 `verified.dialog {type, message}`가 붙는다. alert은 확인하고, 그 밖은 취소한다.
-  - **대체:** 쓸 수 없으면 일반 DOM 입력으로 하고 `trusted:false, trustedReason`을 붙인다. 사용자가 디버깅 표시줄에서 취소하면 그 작업 동안 다시 붙이지 않는다.
+  - **대체:** 입력을 시도하지 않았다는 background 응답(`dispatched:false`)이 있고 요청이 아직 유효할 때만 일반 DOM 입력으로 전환해 `trusted:false, trustedReason`을 붙인다. 응답 유실·잘못된 응답·CDP 호출 실패는 첫 입력부터 실행 여부가 불명확하므로 unsafe `EXECUTION_UNKNOWN`이며 재입력하지 않는다. 각 CDP 이벤트 사이에도 현재 작업/요청을 확인한다. 사용자가 디버깅 표시줄에서 취소하면 그 작업 동안 다시 붙이지 않는다.
   - **분리:** 작업이 끝나거나 탭이 빠지면 분리한다.
   - **캡처:** 비활성 작업 탭의 `browser_screenshot`은 디버거 캡처로 처리하고, 캡처 중 탭이 바뀌면 버린다.
 - **포인터 방식(`browser_click.mode`):** `click`(기본)·`double`·`right`·`hover`·`drag`. `toRef`는 `drag`에만 쓰고 `drag`에는 필수다. `newTab:true`는 mode 없이(또는 `click`)만 쓴다(Bridge와 background가 실행 전에 검사). background는 `toRef`도 `ref`처럼 이 operation·탭의 스냅샷 바인딩으로 확인하고, 다른 frame이면 INVALID_PARAMS, 옛 문서면 STALE_ELEMENT다. DOM 경로는 double이 click 두 번 뒤 dblclick(detail 2), right가 button 2 누름·뗌 뒤 contextmenu, hover가 pointerover·mouseover(대상)와 pointerenter·mouseenter(바깥 조상부터 대상까지), pointermove·mousemove를 보낸다. drag는 원본에서 누르고 중간·대상에서 움직여 대상에서 뗀다. 원본이 draggable·img·`a[href]`면 같은 DataTransfer로 dragstart·dragenter·dragover를 보내고, dragstart가 취소되지 않고 dragover가 취소된 경우에만 drop, 마지막에 dragend를 보낸다. 신뢰 입력은 mouseMoved/Pressed/Released(clickCount 1·2, button right)와 drag의 중간 이동 4번이다. HTML5 원본은 신뢰 입력을 쓰지 않는다. 결과 `verified.mode`.

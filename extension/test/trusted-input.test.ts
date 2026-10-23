@@ -95,6 +95,32 @@ it("sends a full mouse click and key strokes", async () => {
 });
 
 describe("review fixes", () => {
+  it('marks a failure of the first CDP input call as possibly dispatched', async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    d.api.send = async () => { throw new Error('Input callback lost'); };
+    await expect(t.key(1, 'Enter')).rejects.toMatchObject({ dispatched: true });
+  });
+  it('does not send another CDP step after its operation ends during a pending call', async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    let release!: () => void, inputs = 0;
+    d.api.send = async () => { inputs++; if (inputs === 1) await new Promise<void>(resolve => { release = resolve; }); return {} as any; };
+    const pending = t.click(1, 1, 1), rejected = expect(pending).rejects.toMatchObject({ dispatched: true });
+    await t.sync({ enabled: true, operationTabs: [], operationId: null });
+    release();
+    await rejected;
+    expect(inputs).toBe(1);
+  });
+  it('does not send another CDP step for a cancelled request in a still-active operation', async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, on([1]));
+    let release!: () => void, inputs = 0, active = true;
+    d.api.send = async () => { inputs++; if (inputs === 1) await new Promise<void>(resolve => { release = resolve; }); return {} as any; };
+    const pending = t.key(1, 'Enter', [], () => active), rejected = expect(pending).rejects.toMatchObject({ dispatched: true });
+    active = false; release(); await rejected;
+    expect(inputs).toBe(1);
+  });
   it("detaches when enabling page events fails", async () => {
     const d = fakeDebugger(), t = trustedInput(d.api);
     d.api.send = async (_tab, method) => { if (method === "Page.enable") throw new Error("boom"); return {} as any; };

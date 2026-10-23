@@ -39,7 +39,7 @@ test('S01 cancellation during a trusted request never revives it as a DOM click'
       chrome.runtime.sendMessage = (message: any, ...rest: any[]) => {
         if (message.kind !== 'trusted-input') return send(message, ...rest);
         document.documentElement.dataset.trustedWaiting = 'yes';
-        return new Promise(resolve => { (globalThis as any).finishTrusted = () => resolve({ ok: false, reason: 'not-allowed' }); });
+        return new Promise(resolve => { (globalThis as any).finishTrusted = () => resolve({ ok: false, reason: 'not-allowed', dispatched: false }); });
       };
     } });
   }, tabId);
@@ -59,4 +59,24 @@ test('S01 cancellation during a trusted request never revives it as a DOM click'
   expect(result.ok).toBe(false);
   expect(['CANCELLED', 'EXECUTION_UNKNOWN']).toContain(result.error?.code);
   expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([]);
+});
+
+test('S02 a lost trusted response never repeats an actual CDP click', async () => {
+  const { page, tabId, operationId, ref } = await submitFixture();
+  await world.adminPage.evaluate(async tabId => {
+    const chrome = (globalThis as any).chrome;
+    await chrome.storage.local.set({ trustedInput: true });
+    await chrome.scripting.executeScript({ target: { tabId }, func: () => {
+      const chrome = (globalThis as any).chrome, send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = async (message: any, ...rest: any[]) => {
+        const result = await send(message, ...rest);
+        // The native input really ran. Inject only loss of its reply.
+        if (message.kind === 'trusted-input' && result?.ok) throw new Error('Injected trusted response loss');
+        return result;
+      };
+    } });
+  }, tabId);
+  const result = await world.mcp.call('browser_click', { operationId, ref });
+  expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([{ trusted: true }]);
+  expect(result).toMatchObject({ ok: false, error: { code: 'EXECUTION_UNKNOWN', retry: 'unsafe' } });
 });

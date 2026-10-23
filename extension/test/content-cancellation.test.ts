@@ -74,7 +74,7 @@ it.each(['click','double','right','hover','drag','key'])('never sends %s DOM fal
   const pending = runAction(mode === 'key' ? 'press' : 'click', params, controller.signal);
   const rejected = expect(pending).rejects.toMatchObject({ code: 'CANCELLED', details: { executed: false } });
   controller.abort();
-  reply({ ok: false, reason: 'not-allowed' });
+  reply({ ok: false, reason: 'not-allowed', dispatched: false });
   await rejected;
   await vi.advanceTimersByTimeAsync(0); // Flush the focus task queued by jsdom for key preparation.
   expect(delivered).toEqual([]);

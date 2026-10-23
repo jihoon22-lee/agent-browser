@@ -1,5 +1,5 @@
 import { highlight } from "./highlight";
-import { partlyDelivered, requestTrusted, trustedFrame } from "./trusted";
+import { assertTrustedFallback, requestTrusted, trustedFrame } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
@@ -136,7 +136,7 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
   if (p.trusted === true && trustedFrame() && !html5) {
     const answer = await requestTrusted(String(p.requestId ?? ""), "drag", { x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
     if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
-    if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted drag reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+    assertTrustedFallback(answer, p, signal);
     trustedReason = answer.reason;
   }
   checkCancelled(p, signal);
@@ -220,7 +220,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       if (p.trusted === true && trustedFrame()) {
         const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY, ...modeNote });
         if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
-        if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted click reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+        assertTrustedFallback(answer, p, signal);
         if (!answer.ok) trustedReason = answer.reason;
       }
       // Cancellation may arrive while the background decides whether it can
@@ -356,8 +356,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         // The browser itself performs the key's default action; nothing is emulated here.
         if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
-        if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted key press reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
-        checkCancelled(p, signal);
+        assertTrustedFallback(answer, p, signal);
         const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
         return { ...fallback, verified: { ...fallback.verified, trusted: false, trustedReason: answer.ok ? "" : answer.reason } };
       }

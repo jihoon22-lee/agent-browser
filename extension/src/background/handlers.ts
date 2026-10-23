@@ -569,7 +569,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     /** Whether a click or key press with this request id is executing on this tab right now. */
     const isRunning = (tabId: number, requestId: string, method: string) => {
         const run = running.get(requestId);
-        return !!run && run.req.method === method && Number(run.req.params.tabId) === tabId;
+        return !!run && !run.controller.signal.aborted && run.req.method === method && Number(run.req.params.tabId) === tabId;
     };
     return Object.assign(handle, { disconnect, isRunning });
 }
