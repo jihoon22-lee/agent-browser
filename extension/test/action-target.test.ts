@@ -105,3 +105,61 @@ it('permits focus feedback when a stable record key keeps the field bound', asyn
   field.addEventListener('focus', () => { document.querySelector('span')!.textContent = 'Focused'; });
   await expect(runAction('fill', { ref, text: '100' })).resolves.toMatchObject({ verified: { matches: true, value: '100' } });
 });
+
+it.each(['keydown', 'keypress'].flatMap(event => [true, false].map(withRef => ({ event, withRef }))))('does not activate a link changed by $event (ref=$withRef)', async ({ event, withRef }) => {
+  document.body.innerHTML = '<a href="/order-A">Open order</a>';
+  const link = document.querySelector('a')!, ref = refOf('Open order'), clicked = vi.fn((event: Event) => event.preventDefault());
+  link.focus(); link.addEventListener(event, () => { link.href = '/order-B'; }); link.addEventListener('click', clicked);
+  const error = await runAction('press', { ...(withRef ? { ref } : {}), key: 'Enter' }).then(() => null, error => error);
+  expect(clicked).not.toHaveBeenCalled();
+  expect(error).toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe' });
+});
+
+it('does not click a record replaced by the Space keyup handler', async () => {
+  document.body.innerHTML = '<li data-id="A"><button>Cancel order</button></li>';
+  const button = document.querySelector('button')!, ref = refOf('Cancel order'), clicked = vi.fn();
+  button.addEventListener('keyup', () => { document.querySelector('li')!.setAttribute('data-id', 'B'); }); button.addEventListener('click', clicked);
+  const error = await runAction('press', { ref, key: 'Space' }).then(() => null, error => error);
+  expect(clicked).not.toHaveBeenCalled(); expect(error).toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+});
+
+it('does not edit a record replaced by beforeinput', async () => {
+  document.body.innerHTML = '<li data-id="A"><input aria-label="Amount" value="before"></li>';
+  const field = document.querySelector('input')!, ref = refOf('Amount'), input = vi.fn();
+  field.setSelectionRange(0, field.value.length);
+  field.addEventListener('beforeinput', () => { document.querySelector('li')!.setAttribute('data-id', 'B'); }); field.addEventListener('input', input);
+  const error = await runAction('press', { ref, key: 'Delete' }).then(() => null, error => error);
+  expect(field.value).toBe('before'); expect(input).not.toHaveBeenCalled(); expect(error).toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+});
+
+it.each(['action', 'association', 'submitter', 'new-submitter'])('does not submit a form retargeted by keydown (%s)', async change => {
+  document.body.innerHTML = '<form id="A" action="/order-A"><input name="amount" aria-label="Amount"><button>Save</button></form><form id="B" action="/order-B"></form>';
+  const field = document.querySelector('input')!, form = document.querySelector('form')!, button = document.querySelector('button')!, ref = refOf('Amount');
+  const submitted = vi.fn((event: Event) => event.preventDefault());
+  for (const node of document.querySelectorAll('form')) node.addEventListener('submit', submitted);
+  field.addEventListener('keydown', () => {
+    if (change === 'action') form.action = '/order-B';
+    if (change === 'association') field.setAttribute('form', 'B');
+    if (change === 'submitter') button.setAttribute('formaction', '/order-B');
+    if (change === 'new-submitter') { const replacement = document.createElement('button'); replacement.textContent = 'Other save'; form.prepend(replacement); }
+  });
+  const error = await runAction('press', { ref, key: 'Enter' }).then(() => null, error => error);
+  expect(submitted).not.toHaveBeenCalled(); expect(error).toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+});
+
+it('keeps a page-level key event valid when its handler updates page text', async () => {
+  document.body.innerHTML = '<p>Waiting</p>';
+  const listener = () => { document.querySelector('p')!.textContent = 'Handled'; };
+  document.body.addEventListener('keydown', listener, { once: true });
+  await expect(runAction('press', { key: 'Escape' })).resolves.toMatchObject({ executed: true, verified: { defaultAction: 'event-only' } });
+  expect(document.querySelector('p')!.textContent).toBe('Handled');
+});
+
+it('does not send a final keyup to a control replaced by its confirmed default action', async () => {
+  document.body.innerHTML = '<button>Submit</button>';
+  const button = document.querySelector('button')!, ref = refOf('Submit'), keyup = vi.fn(), clicked = vi.fn();
+  button.addEventListener('click', () => { clicked(); button.textContent = 'Different action'; });
+  button.addEventListener('keyup', keyup);
+  await expect(runAction('press', { ref, key: 'Enter' })).resolves.toMatchObject({ executed: true, verified: { defaultApplied: true, keyupSkipped: true } });
+  expect(clicked).toHaveBeenCalledTimes(1); expect(keyup).not.toHaveBeenCalled();
+});

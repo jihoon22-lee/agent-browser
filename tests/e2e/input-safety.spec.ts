@@ -127,3 +127,18 @@ test('S05 focus cannot retarget a fill to a different record', async () => {
   await expect(page.getByRole('textbox', { name: 'Amount' })).toHaveValue('before');
   expect(result).toMatchObject({ ok: false, error: { code: 'STALE_ELEMENT' } });
 });
+
+test('S06 keydown cannot retarget the native action emulated by DOM Enter', async () => {
+  const page = await world.open('quality.html');
+  await page.evaluate(() => {
+    document.body.innerHTML = '<a href="/order-A">Open order</a>';
+    const link = document.querySelector('a')!;
+    (window as any).inputSafetyWrites = [];
+    link.addEventListener('keydown', () => { link.href = '/order-B'; });
+    link.addEventListener('click', event => { event.preventDefault(); (window as any).inputSafetyWrites.push(new URL(link.href).pathname); });
+  });
+  const { operationId, ref } = await attach(page, 'Open order');
+  const result = await world.mcp.call('browser_press', { operationId, ref, key: 'Enter' });
+  expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([]);
+  expect(result).toMatchObject({ ok: false, error: { code: 'EXECUTION_UNKNOWN', retry: 'unsafe' } });
+});

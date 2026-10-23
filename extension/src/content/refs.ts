@@ -7,30 +7,36 @@ export const snapshotToken = (id: number) => id.toString(36);
 const KEEP = 5;
 const recordKey = (root: Element | null) => JSON.stringify([root?.getAttribute('data-id'),root?.getAttribute('data-key')]);
 type RefScope = 'record' | 'target' | 'dispatch';
+const formOf = (el: Element) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || el instanceof HTMLButtonElement ? el.form : null;
 
 export class RefTable {
-  private els: { node: WeakRef<Element>; parent: WeakRef<Node> | null; identity: string; record: WeakRef<Element> | null; recordIdentity: string; keyedIdentity: string; recordKey: string }[] = [];
+  private els: { node: WeakRef<Element>; parent: WeakRef<Node> | null; form: WeakRef<HTMLFormElement> | null; identity: string; record: WeakRef<Element> | null; recordIdentity: string; keyedIdentity: string; recordKey: string }[] = [];
   // Identity, not array position, protects recycled list rows. Editable values are
   // deliberately excluded so fill/select do not invalidate their own controls.
   private identity(el: Element, names?: NameCache): string {
+    const form = formOf(el);
     return JSON.stringify([roleOf(el), accessibleName(el, true, Infinity, names),
       // Native fill changes value, not authored default text. A changed default
       // signals that a reused textarea now belongs to another record.
       el instanceof HTMLTextAreaElement ? el.defaultValue : null,
       el instanceof HTMLAnchorElement ? el.href : el.getAttribute('href'),
       el.getAttribute('target'), el.getAttribute('type'), el.getAttribute('formaction'),
-      el.getAttribute('data-id'), el.getAttribute('data-key')]);
+      el.getAttribute('data-id'), el.getAttribute('data-key'), el.getAttribute('name'),
+      el.getAttribute('formmethod'), el.getAttribute('formtarget'),
+      form ? [form.id, form.action, form.method, form.target] : null]);
   }
   constructor(public snapshotId: number, public frameId: number) {}
   add(el: Element, records = new Map<Element,RecordObservation>(), names?: NameCache): string {
     const root = recordRoot(el);
+    const form = formOf(el);
     const observation = root ? recordObservation(root,records) : undefined;
-    this.els.push({ node: new WeakRef(el), parent: el.parentNode ? new WeakRef(el.parentNode) : null, identity: this.identity(el,names), record: root ? new WeakRef(root) : null, recordIdentity: observation?.identity ?? '', keyedIdentity: observation?.keyedIdentity ?? '', recordKey: recordKey(root) });
+    this.els.push({ node: new WeakRef(el), parent: el.parentNode ? new WeakRef(el.parentNode) : null, form: form ? new WeakRef(form) : null, identity: this.identity(el,names), record: root ? new WeakRef(root) : null, recordIdentity: observation?.identity ?? '', keyedIdentity: observation?.keyedIdentity ?? '', recordKey: recordKey(root) });
     return `s${snapshotToken(this.snapshotId)}f${this.frameId}e${this.els.length}`;
   }
   get(index: number, allowChanged = false, scope: RefScope = 'record'): Element | undefined {
     const entry = this.els[index - 1], el = entry?.node.deref();
     if (!el || allowChanged) return el;
+    if ((entry!.form && !entry!.form.deref()) || (entry!.form?.deref() ?? null) !== formOf(el)) return undefined;
     const original = entry!.record?.deref() ?? null;
     if(entry!.record && !original)return undefined;
     if(entry!.identity !== this.identity(el))return undefined;
@@ -57,6 +63,26 @@ export class RefTable {
     const m = REF_RE.exec(ref);
     return m ? { snapshotId: parseInt(m[1]!, 36), frameId: Number(m[2]), index: Number(m[3]) } : null;
   }
+}
+
+/** An action-local binding also protects keyboard calls that use the focused
+ * element without a published ref. It never enters or evicts the snapshot registry. */
+export function bindTarget(el: Element): () => void {
+  const doc = el.ownerDocument;
+  if (el === doc.body || el === doc.documentElement) {
+    // A page-level shortcut has no record target; its own handler may update
+    // the page text. Bind the document/root, not the whole page's accessible name.
+    return () => {
+      if (!el.isConnected || el.ownerDocument !== doc || (el !== doc.body && el !== doc.documentElement))
+        throw new ProtocolError('STALE_ELEMENT', 'The keyboard document changed. Take a new browser_snapshot.');
+    };
+  }
+  const table = new RefTable(0, 0);
+  table.add(el);
+  return () => {
+    if (!el.isConnected || table.get(1, false, 'dispatch') !== el)
+      throw new ProtocolError('STALE_ELEMENT', 'The input target changed. Take a new browser_snapshot.');
+  };
 }
 
 let tables: RefTable[] = [];

@@ -1,6 +1,6 @@
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isRendered, walkDeep } from "./dom";
-import { resolveRef } from "./refs";
+import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
+import { bindTarget, resolveRef } from "./refs";
 
 const KEYS = new Set(["Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 const MODIFIERS = ["Alt", "Control", "Meta", "Shift"];
@@ -26,7 +26,7 @@ function activeElement(): Element | null {
 function editableValue(target: HTMLElement): target is HTMLInputElement | HTMLTextAreaElement {
   return target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && INPUT_TEXT.has(target.type));
 }
-function replaceSelection(target: HTMLInputElement | HTMLTextAreaElement, text: string, deletion: "backward" | "forward" | null) {
+function replaceSelection(target: HTMLInputElement | HTMLTextAreaElement, text: string, deletion: "backward" | "forward" | null, verifyTarget: () => void) {
   const start = target.selectionStart, end = target.selectionEnd;
   if (start === null || end === null) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "This input type does not expose an editable text selection. Use browser_fill instead.");
   const from = deletion === "backward" && start === end && start > 0 ? start - codePointBefore(target.value, start) : start;
@@ -34,13 +34,21 @@ function replaceSelection(target: HTMLInputElement | HTMLTextAreaElement, text: 
   if (text && target.maxLength >= 0 && target.value.length - (to - from) + text.length > target.maxLength) return false;
   const inputType = deletion === "backward" ? "deleteContentBackward" : deletion === "forward" ? "deleteContentForward" : text === "\n" ? "insertLineBreak" : "insertText";
   if (!target.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, composed: true, cancelable: true, inputType, data: deletion ? null : text }))) return false;
-  if (target.readOnly || target.matches(":disabled") || !target.isConnected) return false;
+  verifyTarget();
+  if (target.readOnly || isDisabled(target) || !target.isConnected) return false;
   const next = target.value.slice(0, from) + text + target.value.slice(to);
   const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(target, next);
   target.setSelectionRange(from + text.length, from + text.length);
   target.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType, data: deletion ? null : text }));
   return true;
+}
+
+function defaultSubmitter(form: HTMLFormElement): HTMLElement | undefined {
+  // form.elements omits image inputs; include external form-associated controls in tree order.
+  return [...(form.getRootNode() as Document | ShadowRoot).querySelectorAll('button,input')].find(el =>
+    (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && el.form === form &&
+    (el.type === 'submit' || el instanceof HTMLInputElement && el.type === 'image')) as HTMLElement | undefined;
 }
 /** Home/End go to the line's ends; arrows move one character or collapse a selection; Shift extends from the anchor. */
 function moveCaret(target: HTMLInputElement | HTMLTextAreaElement, key: string, extend: boolean) {
@@ -100,16 +108,28 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
   const editableHost = target.closest("[contenteditable]");
   const rich = target.isContentEditable || (editableHost !== null && editableHost.getAttribute("contenteditable") !== "false");
   const edits = modifiers.length === 0 && (key === "Backspace" || key === "Delete" || key === "Space" || (key === "Enter" && (target instanceof HTMLTextAreaElement || rich)) || ((key === "ArrowUp" || key === "ArrowDown") && target instanceof HTMLInputElement && target.type === "number"));
-  const event = (type: string) => target.dispatchEvent(new KeyboardEvent(type, {
+  const bound = bindTarget(target);
+  const verifyTarget = () => {
+    try { bound(); }
+    catch { throw new ProtocolError('EXECUTION_UNKNOWN', 'Key events reached the page, but their target changed before the next input. Inspect the page before continuing.', 'unsafe'); }
+  };
+  const submitForm = key === 'Enter' && target instanceof HTMLInputElement && INPUT_TEXT.has(target.type) ? target.form : null;
+  const submitter = submitForm ? defaultSubmitter(submitForm) : undefined;
+  const boundSubmitter = submitter ? bindTarget(submitter) : undefined;
+  const event = (type: string, checkAfter = true) => {
+    const accepted = target.dispatchEvent(new KeyboardEvent(type, {
     key: key === "Space" ? " " : single ? (has("Shift") ? key.toUpperCase() : key.toLowerCase()) : key,
     code: single ? (/\d/.test(key) ? `Digit${key}` : `Key${key.toUpperCase()}`) : key,
     ctrlKey: has("Control"), shiftKey: has("Shift"), altKey: has("Alt"), metaKey: has("Meta"), bubbles: true, cancelable: true, composed: true }));
+    if (checkAfter) verifyTarget();
+    return accepted;
+  };
   const down = event("keydown"), printable = down && (modifiers.length > 0 || (key !== "Enter" && key !== "Space") || event("keypress"));
   // A Space button action occurs on release. Honor cancellation of either phase.
   const up = key === "Space" ? event("keyup") : true;
   const allowed = down && printable && up;
   let defaultApplied = false, submitted = false, defaultAction = "event-only";
-  if (allowed && target.isConnected && !target.matches(":disabled") && !(edits && editableValue(target) && target.readOnly)) {
+  if (allowed && target.isConnected && !isDisabled(target) && !(edits && editableValue(target) && target.readOnly)) {
     const button = target instanceof HTMLButtonElement || (target instanceof HTMLInputElement && ["button", "submit", "reset"].includes(target.type));
     const spaceClick = button || target.tagName === "SUMMARY" || (target instanceof HTMLInputElement && ["checkbox", "radio"].includes(target.type));
     const enterClick = button || target.tagName === "SUMMARY" || (target instanceof HTMLAnchorElement && target.hasAttribute("href"));
@@ -127,10 +147,10 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
     } else if (key === "Enter" && target instanceof HTMLInputElement && INPUT_TEXT.has(target.type) && target.form) {
       // Native implicit submit uses the default submitter (including its name/value).
       const form = target.form;
-      // form.elements omits image inputs. Include external form-associated controls in tree order.
-      const submitter = [...(form.getRootNode() as Document | ShadowRoot).querySelectorAll("button,input")].find(el =>
-        (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) && el.form === form &&
-        (el.type === "submit" || el instanceof HTMLInputElement && el.type === "image")) as HTMLElement | undefined;
+      try {
+        if (form !== submitForm || defaultSubmitter(form) !== submitter) throw new Error('Submitter changed');
+        boundSubmitter?.();
+      } catch { throw new ProtocolError('EXECUTION_UNKNOWN', 'The form or its default submitter changed during key input. Inspect the page before submitting.', 'unsafe'); }
       const blockers = [...form.elements].filter(el => el instanceof HTMLInputElement && INPUT_TEXT.has(el.type));
       if (submitter ? !submitter.matches(":disabled") : blockers.length <= 1) {
         const form = target.form, onSubmit = () => { submitted = true; };
@@ -143,7 +163,7 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
       }
       defaultAction = "submit";
     } else if (editableValue(target) && (key === "Space" || key === "Backspace" || key === "Delete" || (key === "Enter" && target instanceof HTMLTextAreaElement))) {
-      defaultApplied = replaceSelection(target, key === "Space" ? " " : key === "Enter" ? "\n" : "", key === "Backspace" ? "backward" : key === "Delete" ? "forward" : null); defaultAction = "edit";
+      defaultApplied = replaceSelection(target, key === "Space" ? " " : key === "Enter" ? "\n" : "", key === "Backspace" ? "backward" : key === "Delete" ? "forward" : null, verifyTarget); defaultAction = "edit";
     } else if (CARET.has(key) && editableValue(target)) {
       defaultApplied = moveCaret(target, key, false); defaultAction = "move-caret";
     } else if (key === "Tab") {
@@ -167,8 +187,15 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
       if (dialog && dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) { dialog.close(); defaultApplied = true; defaultAction = "close-dialog"; }
     }
   }
-  if (key !== "Space") event("keyup");
+  // The confirmed default action may replace its own control. Do not send a
+  // cleanup keyup to that replacement or turn a known action into a replay.
+  let keyupSkipped = false;
+  if (key !== "Space") {
+    try { bound(); } catch { keyupSkipped = true; }
+    if (!keyupSkipped) event('keyup', false);
+  }
   const verified: Record<string, unknown> = { key, ...(modifiers.length ? { modifiers } : {}), synthetic: true, defaultApplied, defaultAction, defaultPrevented: !allowed, submitted, activeElement: activeElement() ? accessibleName(activeElement()!) : null };
+  if (keyupSkipped) verified.keyupSkipped = true;
   if (target instanceof HTMLInputElement) {
     if (["checkbox", "radio"].includes(target.type)) verified.checked = target.checked;
     else if (target.type !== "password") verified.value = target.value.slice(0, 512);
