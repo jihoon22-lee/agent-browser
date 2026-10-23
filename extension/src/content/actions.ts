@@ -7,7 +7,7 @@ import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
 import { INPUT_TEXT, keyOf, preparePress, pressKey } from "./keyboard";
-import { cancellationError, cancelCommands, withCommandCancellation, type CommandScope } from "./cancellation";
+import { cancellationError, cancelCommands, checkCancelled, withCommandCancellation, type CommandScope } from "./cancellation";
 
 export function cancelUpTo(generation: number) { cancelCommands({ generation }); }
 
@@ -139,6 +139,7 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
     if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted drag reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
     trustedReason = answer.reason;
   }
+  checkCancelled(p, signal);
   const pointer = (on: Element, type: string, at: Point, down: boolean) =>
     on.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {
       ...at, bubbles: true, cancelable: true, composed: true, button: 0, buttons: down ? 1 : 0, detail: type.endsWith("move") ? 0 : 1,
@@ -222,6 +223,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted click reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
         if (!answer.ok) trustedReason = answer.reason;
       }
+      // Cancellation may arrive while the background decides whether it can
+      // deliver trusted input. Never revive that command as synthetic input.
+      checkCancelled(p, signal);
       const base={...point,bubbles:true,cancelable:true,composed:true,button:0,detail:1};
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
@@ -353,6 +357,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
         if (partlyDelivered(answer)) throw new ProtocolError("EXECUTION_UNKNOWN", "Part of the trusted key press reached the page before input was interrupted. Inspect the page before retrying.", "unsafe");
+        checkCancelled(p, signal);
         const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
         return { ...fallback, verified: { ...fallback.verified, trusted: false, trustedReason: answer.ok ? "" : answer.reason } };
       }

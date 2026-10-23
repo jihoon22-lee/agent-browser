@@ -4,7 +4,7 @@ import { resetRegistry } from "../src/content/refs";
 import { takeSnapshot } from "../src/content/snapshot";
 
 beforeEach(() => { vi.useFakeTimers(); document.body.innerHTML = ""; resetRegistry(); });
-afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it("cancels a running wait immediately and removes its observer and timers", async () => {
   const disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
@@ -56,6 +56,28 @@ it("propagates an external AbortSignal and never starts an already-aborted comma
   await rejected;
   expect(vi.getTimerCount()).toBe(0);
   await expect(runAction("wait", { operationId: "external-signal", generation: 1, text: "missing" }, controller.signal)).rejects.toMatchObject({ code: "CANCELLED" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(['click','double','right','hover','drag','key'])('never sends %s DOM fallback after cancellation during a trusted request', async mode => {
+  document.body.innerHTML = '<button>Submit</button><button>Drop</button>';
+  const snapshot = takeSnapshot({ snapshotId: 21, frameId: 0, maxChars: 100, offset: 0, checkLayout: false });
+  const delivered: string[] = [];
+  for (const button of document.querySelectorAll('button'))
+    for (const type of ['pointerdown','pointermove','click','contextmenu','keydown'])
+      button.addEventListener(type, () => delivered.push(type));
+  let reply!: (answer: unknown) => void;
+  vi.stubGlobal('chrome', { runtime: { sendMessage: () => new Promise(resolve => { reply = resolve; }) } });
+  const controller = new AbortController();
+  const params = { ref: snapshot.elements[0]!.ref, trusted: true,
+    ...(mode === 'key' ? { key: 'Enter' } : { mode, ...(mode === 'drag' ? { toRef: snapshot.elements[1]!.ref } : {}) }) };
+  const pending = runAction(mode === 'key' ? 'press' : 'click', params, controller.signal);
+  const rejected = expect(pending).rejects.toMatchObject({ code: 'CANCELLED', details: { executed: false } });
+  controller.abort();
+  reply({ ok: false, reason: 'not-allowed' });
+  await rejected;
+  await vi.advanceTimersByTimeAsync(0); // Flush the focus task queued by jsdom for key preparation.
+  expect(delivered).toEqual([]);
   expect(vi.getTimerCount()).toBe(0);
 });
 
