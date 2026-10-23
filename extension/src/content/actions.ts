@@ -243,24 +243,25 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
       }
       const button = mode === "right" ? 2 : 0;
+      const checkTarget = (): Point => {
+        try {
+          resolveRef(String(p.ref), false, 'dispatch');
+          return assertInteractable(el) ?? clickPoint(el);
+        } catch (error) {
+          throw new ProtocolError('EXECUTION_UNKNOWN',
+            'Pointer events were delivered, but the target changed before the next event. Inspect the page before continuing.',
+            'unsafe', { cause: error instanceof ProtocolError ? error.code : 'INTERNAL' });
+        }
+      };
       const press = (detail: number) => {
         for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
           const down=type.endsWith('down');
           pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+          checkTarget();
         }
       };
       press(1);
-      let finalPoint: Point;
-      try {
-        finalPoint = assertInteractable(el) ?? clickPoint(el);
-        // Keep the original control, parent, record key and href after pointer
-        // feedback; ordinary sibling text can change as part of this same click.
-        resolveRef(String(p.ref),false,'target');
-      } catch (error) {
-        throw new ProtocolError('EXECUTION_UNKNOWN',
-          'Pointer events were delivered, but the target changed before click. Inspect the page before continuing.',
-          'unsafe', { cause: error instanceof ProtocolError ? error.code : 'INTERNAL' });
-      }
+      const finalPoint = checkTarget();
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
       if (mode === "right") {
@@ -268,9 +269,10 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       } else {
         el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
         if (mode === "double") {
+          checkTarget();
           press(2);
-          el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0,detail:2}));
-          el.dispatchEvent(new MouseEvent('dblclick',{...base,...finalPoint,buttons:0,detail:2}));
+          el.dispatchEvent(new MouseEvent('click',{...base,...checkTarget(),buttons:0,detail:2}));
+          el.dispatchEvent(new MouseEvent('dblclick',{...base,...checkTarget(),buttons:0,detail:2}));
         }
       }
       return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };

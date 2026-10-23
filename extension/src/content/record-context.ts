@@ -6,7 +6,7 @@ const OMIT = 'script,style,template,noscript,input,textarea,select,button,[conte
   + '[role=status],[role=alert],[role=progressbar],[role=timer],[hidden],[aria-hidden=true]';
 const BREAK = 'td,th,div,p,br,section,header,footer,h1,h2,h3,h4,h5,h6,[role=cell],[role=gridcell]';
 const HIDDEN = 'script,style,template,noscript,[hidden]';
-export type RecordObservation = { identity: string; text: string; search: string };
+export type RecordObservation = { identity: string; keyedIdentity: string; text: string; search: string };
 
 export function recordRoot(el: Element): Element | null {
   for (let node = composedParent(el); node && node !== el.ownerDocument.body; node = composedParent(node))
@@ -61,7 +61,8 @@ export function observeRecord(root: Element): RecordObservation {
     }
   }
   text = text.replace(/\s+/g,' ').trim();
-  return { text, search:search.replace(/\s+/g,' ').trim().slice(0,300), identity:JSON.stringify([text,root.getAttribute('data-id'),root.getAttribute('data-key'),links]) };
+  const keys = [root.getAttribute('data-id'), root.getAttribute('data-key'), links];
+  return { text, search:search.replace(/\s+/g,' ').trim().slice(0,300), identity:JSON.stringify([text,...keys]), keyedIdentity:JSON.stringify(keys) };
 }
 export function recordObservation(root: Element, cache: Map<Element,RecordObservation>): RecordObservation {
   let data = cache.get(root);

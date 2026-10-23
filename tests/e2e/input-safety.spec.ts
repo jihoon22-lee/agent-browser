@@ -96,3 +96,18 @@ test('S03 a recycled record inside open shadow content invalidates its old ref',
   expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([]);
   expect(result).toMatchObject({ ok: false, error: { code: 'STALE_ELEMENT' } });
 });
+
+test('S04 pointer feedback cannot replace an unkeyed record before click', async () => {
+  const page = await world.open('quality.html');
+  await page.evaluate(() => {
+    document.body.innerHTML = '<li><span>Order A</span><button>Cancel order</button></li>';
+    const button = document.querySelector('button')!, label = document.querySelector('span')!;
+    (window as any).inputSafetyWrites = [];
+    button.addEventListener('pointerdown', () => { label.textContent = 'Order B'; });
+    button.addEventListener('click', () => (window as any).inputSafetyWrites.push(label.textContent));
+  });
+  const { operationId, ref } = await attach(page, 'Cancel order');
+  const result = await world.mcp.call('browser_click', { operationId, ref });
+  expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([]);
+  expect(result).toMatchObject({ ok: false, error: { code: 'EXECUTION_UNKNOWN', retry: 'unsafe' } });
+});

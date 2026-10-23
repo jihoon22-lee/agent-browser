@@ -123,14 +123,14 @@ it.each(['','x'.repeat(300)])('confirms input when sibling text changes the smal
   const ref=takeSnapshot(opts).elements[0]!.ref;
   await expect(runAction('fill',{ref,text:'after'})).resolves.toMatchObject({verified:{matches:true,value:'after'}});
 });
-it.each(['pointerdown','mousedown'])('dispatches one click after %s updates ordinary sibling feedback',async(event)=>{
+it.each(['pointerdown','mousedown'])('stops when %s changes unmarked text without a stable record key',async(event)=>{
   document.body.innerHTML='<article><span>Idle</span><button>Submit</button></article>';
   const button=document.querySelector('button')!;let clicks=0;
   button.addEventListener(event,()=>{document.querySelector('span')!.textContent='Pressed';});
   button.addEventListener('click',()=>clicks++);
   const ref=takeSnapshot(opts).elements[0]!.ref;
-  await expect(runAction('click',{ref,waitFor:{text:'Pressed'}})).resolves.toMatchObject({executed:true});
-  expect(clicks).toBe(1);
+  await expect(runAction('click',{ref,waitFor:{text:'Pressed'}})).rejects.toMatchObject({code:'EXECUTION_UNKNOWN'});
+  expect(clicks).toBe(0);
   expect(()=>resolveRef(ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
 });
 it('keeps a clickable pointer card when its only child control is ARIA-disabled',async()=>{
