@@ -97,6 +97,15 @@ function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElemen
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
 }
 
+function focusForFill(el: HTMLElement, p: P, signal: AbortSignal) {
+  el.focus();
+  checkCancelled(p, signal);
+  // Focus handlers can recycle a record or make the field unavailable before
+  // the value setter runs. Post-input verification would be too late.
+  resolveRef(String(p.ref), false, 'dispatch');
+  assertInteractable(el);
+}
+
 /** Let queued application updates and a visible render run before confirming a value. A hidden
  * tab must not depend on rAF firing. This is a bounded value observation, not server acknowledgement. */
 async function afterInput(ref: string, signal: AbortSignal) {
@@ -285,7 +294,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (el instanceof HTMLInputElement && el.type === 'file') throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','File upload is not supported by browser_fill; it cannot read a local path or choose a file.');
         if (el instanceof HTMLInputElement && !INPUT_TEXT.has(el.type)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', el.type === 'checkbox' || el.type === 'radio' ? 'browser_fill only replaces text. Use browser_select with checked for this control.' : 'browser_fill only replaces text. Use browser_click for buttons.');
         if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field is read-only.");
-        el.focus();
+        focusForFill(el, p, signal);
+        if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field became read-only during focus.");
         nativeSet(el, text);
         el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -296,7 +306,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       }
       if ((el as HTMLElement).isContentEditable) {
         const host = el as HTMLElement, doc = host.ownerDocument;
-        host.focus();
+        focusForFill(host, p, signal);
+        if (!host.isContentEditable) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'The editor became read-only during focus.');
         const range = doc.createRange(); range.selectNodeContents(host);
         const selection = doc.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
         // Editors such as ProseMirror, Draft or Slate update their own model from insertText.

@@ -111,3 +111,19 @@ test('S04 pointer feedback cannot replace an unkeyed record before click', async
   expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([]);
   expect(result).toMatchObject({ ok: false, error: { code: 'EXECUTION_UNKNOWN', retry: 'unsafe' } });
 });
+
+test('S05 focus cannot retarget a fill to a different record', async () => {
+  const page = await world.open('quality.html');
+  await page.evaluate(() => {
+    document.body.innerHTML = '<li data-id="A"><input aria-label="Amount" value="before"></li>';
+    const field = document.querySelector('input')!, row = document.querySelector('li')!;
+    (window as any).inputSafetyWrites = [];
+    field.addEventListener('focus', () => { row.dataset.id = 'B'; });
+    field.addEventListener('input', () => (window as any).inputSafetyWrites.push(row.dataset.id));
+  });
+  const { operationId, ref } = await attach(page, 'Amount');
+  const result = await world.mcp.call('browser_fill', { operationId, ref, text: '100' });
+  expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([]);
+  await expect(page.getByRole('textbox', { name: 'Amount' })).toHaveValue('before');
+  expect(result).toMatchObject({ ok: false, error: { code: 'STALE_ELEMENT' } });
+});

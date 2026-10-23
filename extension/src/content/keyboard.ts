@@ -70,6 +70,9 @@ export function preparePress(p: Record<string, unknown>, validate: (element: Ele
   if (edits && rich) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Keyboard editing of rich editable areas is not supported. Use browser_fill.");
   if (edits && editableValue(target) && key !== "ArrowUp" && key !== "ArrowDown" && target.selectionStart === null) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "This field does not support text selection. Use browser_fill.");
   target.focus();
+  if (p.ref) resolveRef(String(p.ref), false, 'dispatch');
+  validate(target);
+  if (edits && editableValue(target) && target.readOnly) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'The field became read-only during focus.');
   if (p.ref && activeElement() !== target) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The referenced element cannot receive keyboard focus.");
   return target;
 }
