@@ -16,7 +16,7 @@ export function recordRoot(el: Element): Element | null {
   let depth = 0;
   for (let node = composedParent(el); node && node !== el.ownerDocument.body && depth++ < 3; node = composedParent(node)) {
     if (!node.matches('div,section')) break;
-    const text = node.textContent ?? '';
+    const text = node.shadowRoot ? observeRecord(node).text : node.textContent ?? '';
     if (text.length > 300) break;
     if (text.trim() && text.trim() !== (el.textContent ?? '').trim()) return node;
   }
@@ -26,25 +26,38 @@ export function recordRoot(el: Element): Element | null {
 /** Static row identity. Editing a field or updating a live status must not retarget its neighbours.
  * Keep the full identity in memory; only the separately returned display context is truncated. */
 export function observeRecord(root: Element): RecordObservation {
-  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
-    acceptNode: node => node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(HIDDEN) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
-  });
-  let text = '', search = '';
-  const omitted = new WeakSet<Element>();
-  const links: string[] = [];
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      search += node.nodeValue ?? '';
-      if (!node.parentElement || !omitted.has(node.parentElement)) text += node.nodeValue ?? '';
+  // Traverse the rendered composition: a host's open root replaces its light
+  // children, and a slot contributes assigned nodes (or its fallback) once.
+  const children = (el: Element): Node[] => {
+    if (el instanceof HTMLSlotElement) {
+      const assigned = el.assignedNodes({ flatten: true });
+      if (assigned.length) return assigned;
     }
-    else {
-      const el = node as Element;
+    return [...(el.shadowRoot ?? el).childNodes];
+  };
+  const stack = children(root).reverse().map(node => ({ node, omitted: false }));
+  const visited = new WeakSet<Node>();
+  let text = '', search = '';
+  const links: string[] = [];
+  while (stack.length) {
+    const { node, omitted } = stack.pop()!;
+    if (visited.has(node)) continue;
+    visited.add(node);
+    if (node.nodeType === Node.TEXT_NODE) {
+      const value = node.nodeValue ?? '';
+      search += value;
+      if (!omitted) text += value;
+    }
+    else if (node instanceof Element) {
+      const el = node;
+      if (el.matches(HIDDEN)) continue;
       if (el.matches(BREAK)) search += ' ';
-      if (el.matches(OMIT) || (el.parentElement && omitted.has(el.parentElement))) omitted.add(el);
-      else {
+      const skipIdentity = omitted || el.matches(OMIT);
+      if (!skipIdentity) {
         if (el.matches(BREAK)) text += ' ';
         if (el instanceof HTMLAnchorElement) links.push(el.href);
       }
+      for (const child of children(el).reverse()) stack.push({ node: child, omitted: skipIdentity });
     }
   }
   text = text.replace(/\s+/g,' ').trim();

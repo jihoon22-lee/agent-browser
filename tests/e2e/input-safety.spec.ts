@@ -80,3 +80,19 @@ test('S02 a lost trusted response never repeats an actual CDP click', async () =
   expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([{ trusted: true }]);
   expect(result).toMatchObject({ ok: false, error: { code: 'EXECUTION_UNKNOWN', retry: 'unsafe' } });
 });
+
+test('S03 a recycled record inside open shadow content invalidates its old ref', async () => {
+  const page = await world.open('quality.html');
+  await page.evaluate(() => {
+    document.body.innerHTML = '<ul><li><div id="host"></div></li></ul>';
+    const root = document.querySelector('#host')!.attachShadow({ mode: 'open' });
+    root.innerHTML = '<span>Order A</span><button>Cancel order</button>';
+    (window as any).inputSafetyWrites = [];
+    root.querySelector('button')!.addEventListener('click', () => (window as any).inputSafetyWrites.push(root.querySelector('span')!.textContent));
+  });
+  const { operationId, ref } = await attach(page, 'Cancel order');
+  await page.evaluate(() => { document.querySelector('#host')!.shadowRoot!.querySelector('span')!.textContent = 'Order B'; });
+  const result = await world.mcp.call('browser_click', { operationId, ref });
+  expect(await page.evaluate(() => (window as any).inputSafetyWrites)).toEqual([]);
+  expect(result).toMatchObject({ ok: false, error: { code: 'STALE_ELEMENT' } });
+});

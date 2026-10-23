@@ -64,12 +64,10 @@ it("does not treat a large parent as a row", () => {
 
 it("reads each row's text once even for many controls in it", () => {
   document.body.innerHTML = `<ul><li>${Array.from({ length: 300 }, (_, i) => `<a href="#${i}">링크 ${i}</a>`).join(" ")}</li></ul>`;
-  const row = document.querySelector("li")!;
-  const walk = document.createTreeWalker.bind(document);
-  let reads = 0;
-  vi.spyOn(document, "createTreeWalker").mockImplementation((root: Node, ...rest: any[]) => { if (root === row) reads++; return walk(root, ...rest); });
+  // Count a representative text read, independently of how the composed tree is traversed.
+  const reads = vi.spyOn(document.querySelector('a')!.firstChild!, 'nodeValue', 'get');
   takeSnapshot({ ...opts, query: "링크 299" });
-  expect(reads).toBe(1);
+  expect(reads).toHaveBeenCalledTimes(1);
 });
 
 it("reads a row's rendered text: script text does not match, and cells stay separate words", () => {

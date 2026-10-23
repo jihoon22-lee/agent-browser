@@ -5,6 +5,7 @@ export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick
   (el.hasAttribute('tabindex') && (el as HTMLElement).tabIndex>=0);
 
 export function composedParent(el: Element): Element | null {
+  if (el.assignedSlot) return el.assignedSlot;
   if (el.parentElement) return el.parentElement;
   const root = el.getRootNode();
   // A detached anchor/area is its own root and has a URL `host` string.
