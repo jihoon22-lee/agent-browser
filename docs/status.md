@@ -2,18 +2,31 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
-## v0.3.0 브라우저 제어 확장 — 구현 완료, 배포 검증 중 (2026-10-28)
+## v0.3.0 Windows preview — 게시 완료 (2026-10-28)
+
+[v0.3.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.3.0)(prerelease)을 **2026-10-27 16:55:42 UTC / 2026-10-28 01:55:42 KST**에 게시했다. 주석 태그는 [PR #39](https://github.com/jihoon22-lee/agent-browser/pull/39)의 main 병합 커밋 **`df3a8497a4028e91397c53261301313f7c7c90ff`**를 가리킨다.
+
+- **배포 ZIP:** **3,836,924 bytes / 37 files**, SHA256 **`869469360aa5701d6ad86916c182bc0967e86e74f05e94dc60ea171fb88350b7`**. `SHA256SUMS` 별도 게시.
+- **배포 커밋 CI:** [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/40540247828)와 [main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/40543313995)의 Linux·Windows 작업이 모두 성공했다. PR head와 병합 커밋의 트리가 같음을 확인하고 정확한 main 커밋에서 MSVC release·확장·고지문·ZIP을 다시 만들었다.
+- **최종 ZIP 실제 Windows:** 게시된 v0.2.2의 해시를 확인하고 격리 경로에서 v0.2.2→v0.3.0 업데이트·실제 시작·재설치·제거를 실행했다. 설치 ID·프로세스 재사용, 합성 사용자 데이터·JSONC 주석/다른 설정 보존, 소유 프로세스 종료를 확인했다.
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 빌드본과 바이트 일치, GitHub 두 자산 digest/크기, ZIP 내부 **36개 manifest 해시/37개 파일 목록**을 확인했다. 릴리스 본문의 세 섹션·링크·해시도 다시 읽어 확인했다. 다운로드본은 검증한 최종 ZIP과 동일한 바이트이며 재설치하지 않았다.
+- **정리:** 병합된 기능 브랜치를 로컬·원격에서 삭제했다. 비교 worktree·전용 Cargo 산출물, 임시 Windows 검증/설치 폴더와 실패한 패키지 fixture, 중간 ZIP·다운로드본·합성 브라우저 산출물을 정리했다. 검토 에이전트는 보관 처리했다. 수치 원장은 아래 JSON으로 남기고 최종 배포 파일은 `release/v0.3.0-main/`에 보관했다. 완료 계획은 완료로 표시하며 기존 B10 조사 계획은 유지한다.
+
+### 구현과 검증 기록
 
 - 사용자에게 구현·태그·Release·작업 정리까지 승인받았다. [실행 계획](plans/browser-controls-expansion.md)의 모델/agent/variant 입력창 선택과 고급 기능 5개를 구현했다. Chrome 116 기본 경로, Chrome 125 이상 명시 옵션을 구분한다. 추가 MCP는 pointer/dialog/downloads이며 전체 16개다.
 - 모델 판정: 선택한 요청 capability를 고정하고 실제 v1 root ToolPart의 모델·도구·인수·busy 상태를 확인한다. 최초 작업을 붙인 MCP 연결에도 결합한다. 이는 실행 상관관계 확인이며 암호학적 호출자 증명은 아니다. 별도 모델/하네스 호출은 없다.
 - 선행·회귀: 실패 테스트 후 구현했다. 실제 Chrome에서 최상위 CDP Unicode 입력이 교차 출처 iframe에 전달되는 것과 clip 캡처를 실측했다. 디버거 연결로 viewport가 줄어드는 경합, modal에서 차단된 입력, Tab 이후 포커스 이동, hover 캔버스 변경 등을 추가 검증했다.
 - 독립 검토의 4개 결함(두 번째 클릭 재검사, 요청 취소 뒤 드래그, 시각 대상의 부모 링크 목적지, 키 응답 유실 뒤 cleanup 교착)을 각각 실패 테스트로 재현하고 수정했다. 최종 재검토에서 4건 해소·추가 차단 결함 없음. 300회 입력 취소, 300회 fill 응답 유실, 300개 stale 캡처, 300개 동시 다운로드 후보를 결정적 단위 검사했다. 이는 실제 Chrome 경합을 각 300회 실행한 결과는 아니다.
-- 로컬 전체: Extension **62파일/700개**, Rust 전체 단위·통합, Node 합성 **41개**, Python 패키징 **3개**, E2E 타입·production build·clippy(기존 경고 유지) 통과. 첫 전체 Extension 실행에서 300회 fill 검사가 5초 제한을 넘었고, 동일 300회를 50회씩 나눈 뒤 전체 통과했다. 제품 제한시간은 늘리지 않았다.
-- Linux Chrome **156.0.8078.4 headless** 전체는 **203 통과/1 실패/4 제외**였다. J01 web/window 새 탭 snapshot에서 FRAME_UNAVAILABLE가 한 번 발생했다. 최초 실패를 보존하며 이후 관련 시나리오 확인 중이다. 타임아웃 완화나 쓰기 재시도는 하지 않았다.
+- 로컬 전체: Extension **62파일/700개**, Linux Rust **227개(Windows helper 1개 ignored)**, Node 합성 **41개**, Python 패키징 **3개**, E2E 타입·production build·clippy(기존 경고 유지) 통과. 첫 전체 Extension 실행에서 300회 fill 검사가 5초 제한을 넘었고, 동일 300회를 50회씩 나눈 뒤 전체 통과했다. 제품 제한시간은 늘리지 않았다.
+- Linux Chrome **156.0.8078.4 headless** 전체는 **203 통과/1 실패/4 제외**였다. J01 web/window 새 탭 snapshot에서 FRAME_UNAVAILABLE가 한 번 발생했다. 추가 관련 실행은 86 통과/1 실패/2 제외였고 실패는 A10 시작의 serviceworker 미기동이었다. 두 실행 모두 공유 extension/dist의 병렬 재빌드와 겹쳤다. 제품 코드/제한시간 변경 없이 고정 확장 복사본으로 실행한 최종 전체는 **207 통과/5 제외**였다. 타임아웃 완화나 쓰기 재시도는 하지 않았다.
 - 실제 Windows: Windows Node **24.18.1**, Chrome **155.0.8059.86**, WSL `cargo xwin`으로 만든 MSVC release exe. 첫 전체 **204 통과/4 제외**, 최종 입력 수정 뒤 고급·포인터·키·업로드 **35 통과/2 제외**, 다운로드 선택 권한 별도 **2 통과**. GET/redirect/POST/blob과 동시 사용자 다운로드는 자동 소유 확정 없이 수동 ID 결합을 확인했다. BFCache/북마크 선택 경로는 CI 별도 검사다.
 - 실제 Windows 설치: 관리 경로 설치·시작·재설치·제거와 ACL/데이터 보존, PowerShell 5.1 설치 **15개+프로세스 검사**, ZIP allowlist·manifest·재현성·설치/재설치/제거 통과. 패키지 검사 초기에는 복사 누락과 병렬 준비 중 파일 변경으로 실패했고, 완성된 고정 입력으로 재실행해 통과했다.
 - 화면: Windows 설치/고급 설정의 한글 렌더를 직접 확인했다(맑은 고딕 10/12.5/15/20pt 검사, 15pt 이미지 육안 확인). Windows headed Chrome에서 패널 320/400/600 CSS px × device scale 1/1.25/1.5의 9개 렌더를 생성했고 좁은/중간/넓은 대표 이미지를 확인했다. 실제 모니터 DPI 설정 변경은 아니다. 첫 시각 probe는 Playwright가 viewport를 재설정해 이미지 크기가 잘못됐으므로 제외했고 CDP 캡처의 실제 픽셀 크기를 검사하도록 고쳤다.
 - OpenCode **WSL 1.19.3** 실제 서버 + 로컬 합성 provider로 MCP PNG가 다음 provider 입력에 포함되고 실행 중 root ToolPart 모델/인수가 조회되는 것을 확인했다(합성 provider 요청 2회, 실제 LLM 호출 0회). 무료 모델의 화면 판단은 미검증이다.
+- 성능: [수치 원장](reference/browser-controls-2026-10-28.json). 동일 최종 하네스·Linux Chrome·도구별 50표본에서 기본 DOM의 fill p50 **63.2→63.5ms**, 변경 click **697.2→703.4ms**, 5,000행 snapshot **116.4→122.2ms**. 고급/신뢰 입력 설정에서도 상태 oracle **13/13**, 관찰한 오대상·거짓 완료·중복·중단 뒤 입력 **0**. 이는 관찰된 fixture 결과이며 실사용 사고율 추정이 아니다.
+- 일부 p95는 최초 비교에서 20~32ms 증가했다. 100행 query는 브라우저 처리 p95 **51.2→51.4ms**로 유지되고 브라우저 밖 대기가 늘었다. 1,000행 query/5,000행 snapshot은 별도로 두 격리 브라우저를 번갈아 호출했다(5회 워밍업 뒤 각 50표본). 고급 on의 query p50 **49.7→50.7ms**, p95 **69.5→81.6ms**; snapshot p50 **98.1→97.0ms**, p95 **142.0→130.5ms**, 반환 바이트 동일. 동일 검사의 기본 off도 p50 차이 ±1ms 내였다. 최초 값은 삭제하지 않았고 별도 계측의 절대값을 전체 workload와 직접 비교하지 않는다. 속도 개선을 주장하지 않으며 지속적인 읽기 비용 증가가 교대 측정에서는 재현되지 않았다.
+- 원격 최종 [PR #39](https://github.com/jihoon22-lee/agent-browser/pull/39) / [CI 40540247828](https://github.com/jihoon22-lee/agent-browser/actions/runs/40540247828)에서 Linux·Windows 모두 성공했다. Linux E2E **207 통과/5 제외**, Windows **208 통과/4 제외**, 각 다운로드 **2개**, Windows 북마크 **2개**, 설치 **15개+프로세스**, GUI review **53개**와 마법사 **24개**, 관리 경로·배율 검사가 통과했다.
 - 제약: Chrome 116/124/125는 gate 단위 검사이며 실제 구버전 브라우저는 미실행. OS/Chrome 권한 창·beforeunload 자동 승인, 파일 내용/존재 검사, 자동 다운로드 소유 추정은 지원하지 않는다. 선택 권한 API는 격리 시험 manifest로 검증했으며 실제 사용자 권한 프롬프트 동의 검증은 아니다. 기존 B10의 간헐적 iframe 대기는 미해결 상태를 유지한다.
 
 ## 입력창 실행 선택·브라우저 제어 확장 검토 — 2026-10-27
@@ -212,9 +225,9 @@ PR #30 리뷰 지적([discussion](https://github.com/jihoon22-lee/agent-browser/
 ## 알려진 제한
 
 - 인증: Extension·MCP는 토큰을 전송하지 않는 HMAC-SHA256 상호 인증을 쓴다. 구형 인증 클라이언트와 호환되지 않으므로 Bridge와 Extension을 함께 갱신한다.
-- 지원하지 않는 대상: Chrome 내부 페이지, OS 대화상자, 닫힌 Shadow DOM, canvas 내부, 백그라운드 전체 페이지 캡처.
-- 고치지 않고 남긴 작은 결함(계획 6 판단): 늦은 이동 감시 중 Bridge 연결이 끊긴 클릭의 결과 재조회, 신뢰 클릭 좌표의 왕복 뒤 재확인, 긴 같은 이름 첨부의 지시문 표시, 탐색 재표시의 드문 경합.
-- Clippy의 기존 스타일/복잡도 경고가 남아 있다(23개).
+- 지원하지 않는 대상: Chrome 내부 페이지·OS 대화상자 및 닫힌 Shadow DOM/canvas의 구조화된 DOM 읽기. 고급 기능의 화면 좌표 조작과 전체·영역 캡처는 위 지원 조건을 따른다.
+- 고치지 않고 남긴 작은 결함(계획 6 판단): 늦은 이동 감시 중 Bridge 연결이 끊긴 클릭의 결과 재조회, 고급 기능 off 경로의 신뢰 클릭 좌표 왕복 뒤 재확인, 긴 같은 이름 첨부의 지시문 표시, 탐색 재표시의 드문 경합.
+- Clippy의 기존 스타일/복잡도 경고가 남아 있다.
 
 ## 참고 사항
 

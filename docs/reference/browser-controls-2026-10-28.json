@@ -1,0 +1,5159 @@
+{
+  "schemaVersion": 1,
+  "description": "Synthetic local deterministic measurements only; no webpage contents, conversations or credentials. Full-workload and paired-read timings have different instrumentation and are not directly comparable.",
+  "runs": [
+    {
+      "schemaVersion": 1,
+      "label": "controls-before-final-harness",
+      "createdAt": "2026-10-27T15:21:59.511Z",
+      "complete": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "dom",
+        "bridgeBuild": "debug",
+        "suiteHash": "workload-v1:a4b75ddd7cf09b7181d49cb77bd67308b88d3970bf765081d66fe370897bfa28",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "18305efa0e56a189a66a4f92601f5253fffca662",
+        "extensionSha256": "fec429e70e2f894e3dbc173a9560c4daa3f7fad72e6e749cb3be8334627bdac9",
+        "bridgeSha256": "b357ab77cf241cee476cf0816256cf652d8a52f320aa2e06d66493b93552acd5"
+      },
+      "timings": [
+        {
+          "scenario": "tabs",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 50,
+            "p50": 40.6,
+            "p95": 44.8,
+            "min": 35.9,
+            "max": 45.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 750,
+            "p95": 750,
+            "min": 750,
+            "max": 750
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1.9,
+            "p95": 2.4,
+            "min": 1.5,
+            "max": 3.4
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 50,
+            "p50": 63.2,
+            "p95": 64.8,
+            "min": 48.1,
+            "max": 64.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 165,
+            "p95": 165,
+            "min": 165,
+            "max": 165
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 21.6,
+            "p95": 25.1,
+            "min": 9.1,
+            "max": 25.7
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-no-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 1628.9,
+            "p95": 1635,
+            "min": 1624.6,
+            "max": 1637.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 172,
+            "p95": 172,
+            "min": 172,
+            "max": 172
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1625.2,
+            "p95": 1630.9,
+            "min": 1621.3,
+            "max": 1633.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-dom-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 697.2,
+            "p95": 718.1,
+            "min": 679.4,
+            "max": 730
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 2463,
+            "p95": 2463,
+            "min": 2462,
+            "max": 2463
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 656.2,
+            "p95": 686.1,
+            "min": 638,
+            "max": 700.7
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 25,
+            "p95": 37.7,
+            "min": 16.9,
+            "max": 49.3
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 51.6,
+            "p95": 86.7,
+            "min": 45.2,
+            "max": 91.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 12570,
+            "p95": 12570,
+            "min": 12570,
+            "max": 12570
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 43,
+            "p95": 51.3,
+            "min": 36.5,
+            "max": 51.3
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 43,
+            "p95": 51.3,
+            "min": 36.5,
+            "max": 51.3
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 50.3,
+            "p95": 58.2,
+            "min": 42.3,
+            "max": 91.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1175,
+            "p95": 1175,
+            "min": 1175,
+            "max": 1175
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 45,
+            "p95": 51.2,
+            "min": 38.4,
+            "max": 52.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 45,
+            "p95": 51.2,
+            "min": 38.4,
+            "max": 52.6
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 72.7,
+            "p95": 84.7,
+            "min": 65.3,
+            "max": 85.6
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19691,
+            "p95": 19691,
+            "min": 19691,
+            "max": 19691
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 62.3,
+            "p95": 72.6,
+            "min": 55.5,
+            "max": 74.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 62.3,
+            "p95": 72.6,
+            "min": 55.5,
+            "max": 74.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 67,
+            "p95": 87.9,
+            "min": 58,
+            "max": 115.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1175,
+            "p95": 1175,
+            "min": 1175,
+            "max": 1175
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 62.6,
+            "p95": 76.9,
+            "min": 53.7,
+            "max": 109.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 62.6,
+            "p95": 76.9,
+            "min": 53.7,
+            "max": 109.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 116.4,
+            "p95": 148.9,
+            "min": 99.3,
+            "max": 165.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19692,
+            "p95": 19692,
+            "min": 19692,
+            "max": 19692
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 106.9,
+            "p95": 136.4,
+            "min": 89.5,
+            "max": 154.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 106.9,
+            "p95": 136.4,
+            "min": 89.5,
+            "max": 154.6
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 125.4,
+            "p95": 154.8,
+            "min": 103.4,
+            "max": 161.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1175,
+            "p95": 1175,
+            "min": 1175,
+            "max": 1175
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 119.9,
+            "p95": 149.3,
+            "min": 99.3,
+            "max": 156.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 119.9,
+            "p95": 149.3,
+            "min": 99.3,
+            "max": 156.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 105.8,
+            "p95": 105.8,
+            "min": 105.8,
+            "max": 105.8
+          },
+          "failed": 1,
+          "errors": {
+            "STALE_ELEMENT": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2556,
+            "p95": 2556,
+            "min": 2556,
+            "max": 2556
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 100.2,
+            "p95": 100.2,
+            "min": 100.2,
+            "max": 100.2
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 50.7,
+            "p95": 50.7,
+            "min": 50.7,
+            "max": 50.7
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 1,
+            "p50": 56.3,
+            "p95": 56.3,
+            "min": 56.3,
+            "max": 56.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 166,
+            "p95": 166,
+            "min": 166,
+            "max": 166
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 52.3,
+            "p95": 52.3,
+            "min": 52.3,
+            "max": 52.3
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 52.3,
+            "p95": 52.3,
+            "min": 52.3,
+            "max": 52.3
+          },
+          "failed": 1,
+          "errors": {
+            "ELEMENT_NOT_INTERACTABLE": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 231,
+            "p95": 231,
+            "min": 231,
+            "max": 231
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 48.4,
+            "p95": 48.4,
+            "min": 48.4,
+            "max": 48.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-context",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 1,
+            "p50": 56.7,
+            "p95": 56.7,
+            "min": 56.7,
+            "max": 56.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1884,
+            "p95": 1884,
+            "min": 1884,
+            "max": 1884
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 51.9,
+            "p95": 51.9,
+            "min": 51.9,
+            "max": 51.9
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 51.9,
+            "p95": 51.9,
+            "min": 51.9,
+            "max": 51.9
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "tool": "browser_scroll",
+          "duration": {
+            "n": 1,
+            "p50": 96.2,
+            "p95": 96.2,
+            "min": 96.2,
+            "max": 96.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 201,
+            "p95": 201,
+            "min": 201,
+            "max": 201
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 54.7,
+            "p95": 54.7,
+            "min": 54.7,
+            "max": 54.7
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "submit-once",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 703.9,
+            "p95": 703.9,
+            "min": 703.9,
+            "max": 703.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2441,
+            "p95": 2441,
+            "min": 2441,
+            "max": 2441
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 698.7,
+            "p95": 698.7,
+            "min": 698.7,
+            "max": 698.7
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 46.6,
+            "p95": 46.6,
+            "min": 46.6,
+            "max": 46.6
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 3,
+            "p95": 3,
+            "min": 3,
+            "max": 3
+          },
+          "failed": 1,
+          "errors": {
+            "CANCELLED": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 288,
+            "p95": 288,
+            "min": 288,
+            "max": 288
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 17.6,
+            "p95": 17.6,
+            "min": 17.6,
+            "max": 17.6
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-result",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 312.1,
+            "p95": 312.1,
+            "min": 312.1,
+            "max": 312.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2519,
+            "p95": 2519,
+            "min": 2519,
+            "max": 2519
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 305.4,
+            "p95": 305.4,
+            "min": 305.4,
+            "max": 305.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 48,
+            "p95": 48,
+            "min": 48,
+            "max": 48
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 1216,
+            "p95": 1216,
+            "min": 1216,
+            "max": 1216
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1451,
+            "p95": 1451,
+            "min": 1451,
+            "max": 1451
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 1211.4,
+            "p95": 1211.4,
+            "min": 1211.4,
+            "max": 1211.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 45,
+            "p95": 45,
+            "min": 45,
+            "max": 45
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        {
+          "scenario": "worker-recovery",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 1,
+            "p50": 13.1,
+            "p95": 13.1,
+            "min": 13.1,
+            "max": 13.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 732,
+            "p95": 732,
+            "min": 732,
+            "max": 732
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 9.2,
+            "p95": 9.2,
+            "min": 9.2,
+            "max": 9.2
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        }
+      ],
+      "quality": {
+        "n": 13,
+        "passed": 13,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      "oracles": [
+        {
+          "scenario": "fill-retained",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "label-priority",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "shadow-label",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "query-context",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "duplicate-request",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-result",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "worker-recovery",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        }
+      ],
+      "toolCalls": 510,
+      "explicitSnapshots": 301,
+      "recoveryErrors": 1,
+      "connection": {
+        "disconnects": 0,
+        "heartbeat": {
+          "n": 7,
+          "p50": 0.4,
+          "p95": 0.5,
+          "min": 0.3,
+          "max": 0.5
+        },
+        "recoveryMs": 245.65398299999651
+      },
+      "model": null,
+      "notes": [
+        "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+        "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+        "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+        "Quality counts use fixture state, not tool ok. Null means not measured."
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "label": "controls-after-dom",
+      "createdAt": "2026-10-27T16:25:07.047Z",
+      "complete": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "dom",
+        "bridgeBuild": "debug",
+        "suiteHash": "workload-v1:a4b75ddd7cf09b7181d49cb77bd67308b88d3970bf765081d66fe370897bfa28",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "a3d84e4bf9ec1cccb5e1bea2f8b43a3a2ad9aa68",
+        "extensionSha256": "d9e405a6c991228d933ae5d5c97a3a720a8188bf7aa702512f3a3a56cedaa3b5",
+        "bridgeSha256": "631da359d9926d4d1715b69f4283ddc802e60534a540fb07f45612888eea5a6e"
+      },
+      "timings": [
+        {
+          "scenario": "tabs",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 50,
+            "p50": 40.9,
+            "p95": 45.4,
+            "min": 39.4,
+            "max": 45.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 758,
+            "p95": 758,
+            "min": 758,
+            "max": 758
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1.7,
+            "p95": 2,
+            "min": 1.5,
+            "max": 2.4
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 50,
+            "p50": 63.5,
+            "p95": 64.8,
+            "min": 45.6,
+            "max": 65
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 181,
+            "p95": 181,
+            "min": 181,
+            "max": 181
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 22.4,
+            "p95": 24.9,
+            "min": 6.8,
+            "max": 25.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-no-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 1630.1,
+            "p95": 1634.7,
+            "min": 1625,
+            "max": 1636.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 172,
+            "p95": 172,
+            "min": 172,
+            "max": 172
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1626.3,
+            "p95": 1630.6,
+            "min": 1621.4,
+            "max": 1631.8
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-dom-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 703.4,
+            "p95": 714.7,
+            "min": 684.8,
+            "max": 715.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 2464,
+            "p95": 2464,
+            "min": 2463,
+            "max": 2464
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 660,
+            "p95": 668.1,
+            "min": 642.4,
+            "max": 669.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 27,
+            "p95": 32.6,
+            "min": 18.4,
+            "max": 33.7
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 50.6,
+            "p95": 84.3,
+            "min": 44.4,
+            "max": 85.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 12571,
+            "p95": 12571,
+            "min": 12571,
+            "max": 12571
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 39.3,
+            "p95": 43.3,
+            "min": 34.5,
+            "max": 45.3
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 39.3,
+            "p95": 43.3,
+            "min": 34.5,
+            "max": 45.3
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 49.5,
+            "p95": 80,
+            "min": 45,
+            "max": 84.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1176,
+            "p95": 1176,
+            "min": 1176,
+            "max": 1176
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 44.7,
+            "p95": 51.4,
+            "min": 37.8,
+            "max": 52.7
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 44.7,
+            "p95": 51.4,
+            "min": 37.8,
+            "max": 52.7
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 70.2,
+            "p95": 88.1,
+            "min": 62.6,
+            "max": 91.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19692,
+            "p95": 19692,
+            "min": 19692,
+            "max": 19692
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 60.7,
+            "p95": 76.9,
+            "min": 52.9,
+            "max": 79.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 60.7,
+            "p95": 76.9,
+            "min": 52.9,
+            "max": 79.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 65.3,
+            "p95": 84.4,
+            "min": 55.6,
+            "max": 93.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1176,
+            "p95": 1176,
+            "min": 1176,
+            "max": 1176
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 60.1,
+            "p95": 71.9,
+            "min": 51.4,
+            "max": 83.5
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 60.1,
+            "p95": 71.9,
+            "min": 51.4,
+            "max": 83.5
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 122.2,
+            "p95": 156.8,
+            "min": 102.2,
+            "max": 194.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19693,
+            "p95": 19693,
+            "min": 19693,
+            "max": 19693
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 111.8,
+            "p95": 146,
+            "min": 92,
+            "max": 182.5
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 111.8,
+            "p95": 146,
+            "min": 92,
+            "max": 182.5
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 135.6,
+            "p95": 166.9,
+            "min": 107.4,
+            "max": 281.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1176,
+            "p95": 1176,
+            "min": 1176,
+            "max": 1176
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 130.1,
+            "p95": 162.1,
+            "min": 102.7,
+            "max": 275.5
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 130.1,
+            "p95": 162.1,
+            "min": 102.7,
+            "max": 275.5
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 101.7,
+            "p95": 101.7,
+            "min": 101.7,
+            "max": 101.7
+          },
+          "failed": 1,
+          "errors": {
+            "STALE_ELEMENT": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2557,
+            "p95": 2557,
+            "min": 2557,
+            "max": 2557
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 95.4,
+            "p95": 95.4,
+            "min": 95.4,
+            "max": 95.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 46.2,
+            "p95": 46.2,
+            "min": 46.2,
+            "max": 46.2
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 1,
+            "p50": 99.1,
+            "p95": 99.1,
+            "min": 99.1,
+            "max": 99.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 182,
+            "p95": 182,
+            "min": 182,
+            "max": 182
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 52.6,
+            "p95": 52.6,
+            "min": 52.6,
+            "max": 52.6
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 55.5,
+            "p95": 55.5,
+            "min": 55.5,
+            "max": 55.5
+          },
+          "failed": 1,
+          "errors": {
+            "ELEMENT_NOT_INTERACTABLE": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 231,
+            "p95": 231,
+            "min": 231,
+            "max": 231
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 50.9,
+            "p95": 50.9,
+            "min": 50.9,
+            "max": 50.9
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-context",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 1,
+            "p50": 60.6,
+            "p95": 60.6,
+            "min": 60.6,
+            "max": 60.6
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1885,
+            "p95": 1885,
+            "min": 1885,
+            "max": 1885
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 55.4,
+            "p95": 55.4,
+            "min": 55.4,
+            "max": 55.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 55.4,
+            "p95": 55.4,
+            "min": 55.4,
+            "max": 55.4
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "tool": "browser_scroll",
+          "duration": {
+            "n": 1,
+            "p50": 56,
+            "p95": 56,
+            "min": 56,
+            "max": 56
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 201,
+            "p95": 201,
+            "min": 201,
+            "max": 201
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 51.5,
+            "p95": 51.5,
+            "min": 51.5,
+            "max": 51.5
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "submit-once",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 705.7,
+            "p95": 705.7,
+            "min": 705.7,
+            "max": 705.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2442,
+            "p95": 2442,
+            "min": 2442,
+            "max": 2442
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 700.3,
+            "p95": 700.3,
+            "min": 700.3,
+            "max": 700.3
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 48.6,
+            "p95": 48.6,
+            "min": 48.6,
+            "max": 48.6
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 2.9,
+            "p95": 2.9,
+            "min": 2.9,
+            "max": 2.9
+          },
+          "failed": 1,
+          "errors": {
+            "CANCELLED": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 288,
+            "p95": 288,
+            "min": 288,
+            "max": 288
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 15.4,
+            "p95": 15.4,
+            "min": 15.4,
+            "max": 15.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-result",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 305.9,
+            "p95": 305.9,
+            "min": 305.9,
+            "max": 305.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2520,
+            "p95": 2520,
+            "min": 2520,
+            "max": 2520
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 300.8,
+            "p95": 300.8,
+            "min": 300.8,
+            "max": 300.8
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 43.6,
+            "p95": 43.6,
+            "min": 43.6,
+            "max": 43.6
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 1224.2,
+            "p95": 1224.2,
+            "min": 1224.2,
+            "max": 1224.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1452,
+            "p95": 1452,
+            "min": 1452,
+            "max": 1452
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 1218.2,
+            "p95": 1218.2,
+            "min": 1218.2,
+            "max": 1218.2
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 53.6,
+            "p95": 53.6,
+            "min": 53.6,
+            "max": 53.6
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        {
+          "scenario": "worker-recovery",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 1,
+            "p50": 13.4,
+            "p95": 13.4,
+            "min": 13.4,
+            "max": 13.4
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 740,
+            "p95": 740,
+            "min": 740,
+            "max": 740
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 9.3,
+            "p95": 9.3,
+            "min": 9.3,
+            "max": 9.3
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        }
+      ],
+      "quality": {
+        "n": 13,
+        "passed": 13,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      "oracles": [
+        {
+          "scenario": "fill-retained",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "label-priority",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "shadow-label",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "query-context",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "duplicate-request",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-result",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "worker-recovery",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        }
+      ],
+      "toolCalls": 510,
+      "explicitSnapshots": 301,
+      "recoveryErrors": 1,
+      "connection": {
+        "disconnects": 0,
+        "heartbeat": {
+          "n": 8,
+          "p50": 0.5,
+          "p95": 0.5,
+          "min": 0.4,
+          "max": 0.5
+        },
+        "recoveryMs": 252.09265900001628
+      },
+      "model": null,
+      "notes": [
+        "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+        "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+        "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+        "Quality counts use fixture state, not tool ok. Null means not measured."
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "label": "controls-before-trusted-advanced",
+      "createdAt": "2026-10-27T16:28:16.260Z",
+      "complete": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "trusted-advanced",
+        "bridgeBuild": "debug",
+        "suiteHash": "workload-v1:a4b75ddd7cf09b7181d49cb77bd67308b88d3970bf765081d66fe370897bfa28",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "18305efa0e56a189a66a4f92601f5253fffca662",
+        "extensionSha256": "fec429e70e2f894e3dbc173a9560c4daa3f7fad72e6e749cb3be8334627bdac9",
+        "bridgeSha256": "b357ab77cf241cee476cf0816256cf652d8a52f320aa2e06d66493b93552acd5"
+      },
+      "timings": [
+        {
+          "scenario": "tabs",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 50,
+            "p50": 41.1,
+            "p95": 44.8,
+            "min": 39.3,
+            "max": 45.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 766,
+            "p95": 766,
+            "min": 766,
+            "max": 766
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1.7,
+            "p95": 1.9,
+            "min": 1.6,
+            "max": 2.1
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 50,
+            "p50": 63.2,
+            "p95": 64.8,
+            "min": 41.7,
+            "max": 64.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 165,
+            "p95": 165,
+            "min": 165,
+            "max": 165
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 20.2,
+            "p95": 24.9,
+            "min": 8.2,
+            "max": 25.3
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-no-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 1629.4,
+            "p95": 1634.1,
+            "min": 1624,
+            "max": 1635.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 187,
+            "p95": 187,
+            "min": 187,
+            "max": 187
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1625.6,
+            "p95": 1630.3,
+            "min": 1621,
+            "max": 1631.9
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-dom-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 701.5,
+            "p95": 720.7,
+            "min": 683.9,
+            "max": 734.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 2480,
+            "p95": 2480,
+            "min": 2479,
+            "max": 2480
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 657.9,
+            "p95": 674.3,
+            "min": 640.4,
+            "max": 691.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 26.1,
+            "p95": 35.2,
+            "min": 18.4,
+            "max": 48.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 52.4,
+            "p95": 61.7,
+            "min": 44.5,
+            "max": 65.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 12572,
+            "p95": 12572,
+            "min": 12572,
+            "max": 12572
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 43.7,
+            "p95": 53,
+            "min": 37.2,
+            "max": 56.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 43.7,
+            "p95": 53,
+            "min": 37.2,
+            "max": 56.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 51.9,
+            "p95": 60.4,
+            "min": 46.2,
+            "max": 63.4
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1177,
+            "p95": 1177,
+            "min": 1177,
+            "max": 1177
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 47.1,
+            "p95": 54.7,
+            "min": 41.8,
+            "max": 57.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 47.1,
+            "p95": 54.7,
+            "min": 41.8,
+            "max": 57.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 73.9,
+            "p95": 88.1,
+            "min": 63.5,
+            "max": 96
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19693,
+            "p95": 19693,
+            "min": 19693,
+            "max": 19693
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 64.4,
+            "p95": 76.2,
+            "min": 54.3,
+            "max": 83.1
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 64.4,
+            "p95": 76.2,
+            "min": 54.3,
+            "max": 83.1
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 65.3,
+            "p95": 74.7,
+            "min": 57.8,
+            "max": 99.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1177,
+            "p95": 1177,
+            "min": 1177,
+            "max": 1177
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 60.6,
+            "p95": 67.7,
+            "min": 53.7,
+            "max": 70.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 60.6,
+            "p95": 67.7,
+            "min": 53.7,
+            "max": 70.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 115,
+            "p95": 135.2,
+            "min": 95.6,
+            "max": 137.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19694,
+            "p95": 19694,
+            "min": 19694,
+            "max": 19694
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 104.8,
+            "p95": 123.5,
+            "min": 86.6,
+            "max": 128.3
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 104.8,
+            "p95": 123.5,
+            "min": 86.6,
+            "max": 128.3
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 127.5,
+            "p95": 161,
+            "min": 111.5,
+            "max": 192.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1177,
+            "p95": 1177,
+            "min": 1177,
+            "max": 1177
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 122.9,
+            "p95": 156.5,
+            "min": 107.4,
+            "max": 187.8
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 122.9,
+            "p95": 156.5,
+            "min": 107.4,
+            "max": 187.8
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 111.2,
+            "p95": 111.2,
+            "min": 111.2,
+            "max": 111.2
+          },
+          "failed": 1,
+          "errors": {
+            "STALE_ELEMENT": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2558,
+            "p95": 2558,
+            "min": 2558,
+            "max": 2558
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 104.3,
+            "p95": 104.3,
+            "min": 104.3,
+            "max": 104.3
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 49.3,
+            "p95": 49.3,
+            "min": 49.3,
+            "max": 49.3
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 1,
+            "p50": 53.7,
+            "p95": 53.7,
+            "min": 53.7,
+            "max": 53.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 166,
+            "p95": 166,
+            "min": 166,
+            "max": 166
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 50,
+            "p95": 50,
+            "min": 50,
+            "max": 50
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 50,
+            "p95": 50,
+            "min": 50,
+            "max": 50
+          },
+          "failed": 1,
+          "errors": {
+            "ELEMENT_NOT_INTERACTABLE": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 231,
+            "p95": 231,
+            "min": 231,
+            "max": 231
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 45.8,
+            "p95": 45.8,
+            "min": 45.8,
+            "max": 45.8
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-context",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 1,
+            "p50": 49.3,
+            "p95": 49.3,
+            "min": 49.3,
+            "max": 49.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1886,
+            "p95": 1886,
+            "min": 1886,
+            "max": 1886
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 44.4,
+            "p95": 44.4,
+            "min": 44.4,
+            "max": 44.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 44.4,
+            "p95": 44.4,
+            "min": 44.4,
+            "max": 44.4
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "tool": "browser_scroll",
+          "duration": {
+            "n": 1,
+            "p50": 52.2,
+            "p95": 52.2,
+            "min": 52.2,
+            "max": 52.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 201,
+            "p95": 201,
+            "min": 201,
+            "max": 201
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 48,
+            "p95": 48,
+            "min": 48,
+            "max": 48
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "submit-once",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 707.9,
+            "p95": 707.9,
+            "min": 707.9,
+            "max": 707.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2478,
+            "p95": 2478,
+            "min": 2478,
+            "max": 2478
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 702,
+            "p95": 702,
+            "min": 702,
+            "max": 702
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 49.6,
+            "p95": 49.6,
+            "min": 49.6,
+            "max": 49.6
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 3.1,
+            "p95": 3.1,
+            "min": 3.1,
+            "max": 3.1
+          },
+          "failed": 1,
+          "errors": {
+            "CANCELLED": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 288,
+            "p95": 288,
+            "min": 288,
+            "max": 288
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 14.2,
+            "p95": 14.2,
+            "min": 14.2,
+            "max": 14.2
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-result",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 313.6,
+            "p95": 313.6,
+            "min": 313.6,
+            "max": 313.6
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2556,
+            "p95": 2556,
+            "min": 2556,
+            "max": 2556
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 307.7,
+            "p95": 307.7,
+            "min": 307.7,
+            "max": 307.7
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 41.3,
+            "p95": 41.3,
+            "min": 41.3,
+            "max": 41.3
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 1234.6,
+            "p95": 1234.6,
+            "min": 1234.6,
+            "max": 1234.6
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1469,
+            "p95": 1469,
+            "min": 1469,
+            "max": 1469
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 1229.8,
+            "p95": 1229.8,
+            "min": 1229.8,
+            "max": 1229.8
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 58.2,
+            "p95": 58.2,
+            "min": 58.2,
+            "max": 58.2
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        {
+          "scenario": "worker-recovery",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 1,
+            "p50": 13.1,
+            "p95": 13.1,
+            "min": 13.1,
+            "max": 13.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 748,
+            "p95": 748,
+            "min": 748,
+            "max": 748
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 9.4,
+            "p95": 9.4,
+            "min": 9.4,
+            "max": 9.4
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        }
+      ],
+      "quality": {
+        "n": 13,
+        "passed": 13,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      "oracles": [
+        {
+          "scenario": "fill-retained",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "label-priority",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "shadow-label",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "query-context",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "duplicate-request",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-result",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "worker-recovery",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        }
+      ],
+      "toolCalls": 510,
+      "explicitSnapshots": 301,
+      "recoveryErrors": 1,
+      "connection": {
+        "disconnects": 0,
+        "heartbeat": {
+          "n": 7,
+          "p50": 0.5,
+          "p95": 0.6,
+          "min": 0.4,
+          "max": 0.6
+        },
+        "recoveryMs": 250.7632670000021
+      },
+      "model": null,
+      "notes": [
+        "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+        "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+        "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+        "Quality counts use fixture state, not tool ok. Null means not measured."
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "label": "controls-after-trusted-advanced",
+      "createdAt": "2026-10-27T16:31:08.129Z",
+      "complete": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "trusted-advanced",
+        "bridgeBuild": "debug",
+        "suiteHash": "workload-v1:a4b75ddd7cf09b7181d49cb77bd67308b88d3970bf765081d66fe370897bfa28",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "a3d84e4bf9ec1cccb5e1bea2f8b43a3a2ad9aa68",
+        "extensionSha256": "d9e405a6c991228d933ae5d5c97a3a720a8188bf7aa702512f3a3a56cedaa3b5",
+        "bridgeSha256": "631da359d9926d4d1715b69f4283ddc802e60534a540fb07f45612888eea5a6e"
+      },
+      "timings": [
+        {
+          "scenario": "tabs",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 50,
+            "p50": 40.9,
+            "p95": 44.7,
+            "min": 40,
+            "max": 45.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 758,
+            "p95": 758,
+            "min": 758,
+            "max": 758
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1.7,
+            "p95": 2.2,
+            "min": 1.5,
+            "max": 5.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 50,
+            "p50": 63.8,
+            "p95": 64.7,
+            "min": 59.4,
+            "max": 64.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 180,
+            "p95": 180,
+            "min": 180,
+            "max": 180
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 23.1,
+            "p95": 25,
+            "min": 17.3,
+            "max": 25.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-no-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 1632.4,
+            "p95": 1638.1,
+            "min": 1624.8,
+            "max": 1639.7
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 187,
+            "p95": 187,
+            "min": 187,
+            "max": 187
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1628.3,
+            "p95": 1633.6,
+            "min": 1621.5,
+            "max": 1634.7
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-dom-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 713.8,
+            "p95": 725.1,
+            "min": 685.5,
+            "max": 735.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 2479,
+            "p95": 2479,
+            "min": 2478,
+            "max": 2479
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 671.8,
+            "p95": 681.1,
+            "min": 645.6,
+            "max": 692.5
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 31.8,
+            "p95": 38.1,
+            "min": 19.7,
+            "max": 50.6
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 53.9,
+            "p95": 69.1,
+            "min": 43.9,
+            "max": 88.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 12571,
+            "p95": 12571,
+            "min": 12571,
+            "max": 12571
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 46.1,
+            "p95": 58,
+            "min": 36.2,
+            "max": 60.8
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 46.1,
+            "p95": 58,
+            "min": 36.2,
+            "max": 60.8
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 51.8,
+            "p95": 65.4,
+            "min": 45.3,
+            "max": 69.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1176,
+            "p95": 1176,
+            "min": 1176,
+            "max": 1176
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 47.3,
+            "p95": 60.3,
+            "min": 41,
+            "max": 63.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 47.3,
+            "p95": 60.3,
+            "min": 41,
+            "max": 63.6
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 69.3,
+            "p95": 79.5,
+            "min": 64.6,
+            "max": 87.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19692,
+            "p95": 19692,
+            "min": 19692,
+            "max": 19692
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 59.9,
+            "p95": 69.9,
+            "min": 56,
+            "max": 76.1
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 59.9,
+            "p95": 69.9,
+            "min": 56,
+            "max": 76.1
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 74.3,
+            "p95": 98,
+            "min": 63,
+            "max": 116.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1176,
+            "p95": 1176,
+            "min": 1176,
+            "max": 1176
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 69.2,
+            "p95": 88.5,
+            "min": 58.3,
+            "max": 94.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 69.2,
+            "p95": 88.5,
+            "min": 58.3,
+            "max": 94.6
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 127.8,
+            "p95": 167.4,
+            "min": 102.7,
+            "max": 177.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19693,
+            "p95": 19693,
+            "min": 19693,
+            "max": 19693
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 117.2,
+            "p95": 152.3,
+            "min": 93.3,
+            "max": 161.5
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 117.2,
+            "p95": 152.3,
+            "min": 93.3,
+            "max": 161.5
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 135.9,
+            "p95": 154.2,
+            "min": 116.4,
+            "max": 163.1
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1176,
+            "p95": 1176,
+            "min": 1176,
+            "max": 1176
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 130.5,
+            "p95": 149.7,
+            "min": 111.4,
+            "max": 158.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 130.5,
+            "p95": 149.7,
+            "min": 111.4,
+            "max": 158.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 110.9,
+            "p95": 110.9,
+            "min": 110.9,
+            "max": 110.9
+          },
+          "failed": 1,
+          "errors": {
+            "STALE_ELEMENT": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2557,
+            "p95": 2557,
+            "min": 2557,
+            "max": 2557
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 104.9,
+            "p95": 104.9,
+            "min": 104.9,
+            "max": 104.9
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 50.8,
+            "p95": 50.8,
+            "min": 50.8,
+            "max": 50.8
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 1,
+            "p50": 66.3,
+            "p95": 66.3,
+            "min": 66.3,
+            "max": 66.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 181,
+            "p95": 181,
+            "min": 181,
+            "max": 181
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 62.2,
+            "p95": 62.2,
+            "min": 62.2,
+            "max": 62.2
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 57.3,
+            "p95": 57.3,
+            "min": 57.3,
+            "max": 57.3
+          },
+          "failed": 1,
+          "errors": {
+            "ELEMENT_NOT_INTERACTABLE": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 231,
+            "p95": 231,
+            "min": 231,
+            "max": 231
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 53.3,
+            "p95": 53.3,
+            "min": 53.3,
+            "max": 53.3
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-context",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 1,
+            "p50": 56.3,
+            "p95": 56.3,
+            "min": 56.3,
+            "max": 56.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1885,
+            "p95": 1885,
+            "min": 1885,
+            "max": 1885
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 51.6,
+            "p95": 51.6,
+            "min": 51.6,
+            "max": 51.6
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 51.6,
+            "p95": 51.6,
+            "min": 51.6,
+            "max": 51.6
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "tool": "browser_scroll",
+          "duration": {
+            "n": 1,
+            "p50": 59.5,
+            "p95": 59.5,
+            "min": 59.5,
+            "max": 59.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 201,
+            "p95": 201,
+            "min": 201,
+            "max": 201
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 55.5,
+            "p95": 55.5,
+            "min": 55.5,
+            "max": 55.5
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "submit-once",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 715.8,
+            "p95": 715.8,
+            "min": 715.8,
+            "max": 715.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2477,
+            "p95": 2477,
+            "min": 2477,
+            "max": 2477
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 710,
+            "p95": 710,
+            "min": 710,
+            "max": 710
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 51.6,
+            "p95": 51.6,
+            "min": 51.6,
+            "max": 51.6
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 4.1,
+            "p95": 4.1,
+            "min": 4.1,
+            "max": 4.1
+          },
+          "failed": 1,
+          "errors": {
+            "CANCELLED": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 288,
+            "p95": 288,
+            "min": 288,
+            "max": 288
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-result",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 329.8,
+            "p95": 329.8,
+            "min": 329.8,
+            "max": 329.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2555,
+            "p95": 2555,
+            "min": 2555,
+            "max": 2555
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 323.3,
+            "p95": 323.3,
+            "min": 323.3,
+            "max": 323.3
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 50.1,
+            "p95": 50.1,
+            "min": 50.1,
+            "max": 50.1
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 1274.8,
+            "p95": 1274.8,
+            "min": 1274.8,
+            "max": 1274.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1468,
+            "p95": 1468,
+            "min": 1468,
+            "max": 1468
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 1268.5,
+            "p95": 1268.5,
+            "min": 1268.5,
+            "max": 1268.5
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 80.7,
+            "p95": 80.7,
+            "min": 80.7,
+            "max": 80.7
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        {
+          "scenario": "worker-recovery",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 1,
+            "p50": 19.5,
+            "p95": 19.5,
+            "min": 19.5,
+            "max": 19.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 740,
+            "p95": 740,
+            "min": 740,
+            "max": 740
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 13.3,
+            "p95": 13.3,
+            "min": 13.3,
+            "max": 13.3
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        }
+      ],
+      "quality": {
+        "n": 13,
+        "passed": 13,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      "oracles": [
+        {
+          "scenario": "fill-retained",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "label-priority",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "shadow-label",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "query-context",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "duplicate-request",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-result",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "worker-recovery",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        }
+      ],
+      "toolCalls": 510,
+      "explicitSnapshots": 301,
+      "recoveryErrors": 1,
+      "connection": {
+        "disconnects": 0,
+        "heartbeat": {
+          "n": 8,
+          "p50": 0.5,
+          "p95": 0.5,
+          "min": 0.4,
+          "max": 0.5
+        },
+        "recoveryMs": 279.406478000019
+      },
+      "model": null,
+      "notes": [
+        "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+        "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+        "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+        "Quality counts use fixture state, not tool ok. Null means not measured."
+      ]
+    },
+    {
+      "schemaVersion": 1,
+      "label": "controls-before-dom-reverse",
+      "createdAt": "2026-10-27T16:34:19.181Z",
+      "complete": true,
+      "environment": {
+        "platform": "linux",
+        "arch": "x64",
+        "browserVersion": "156.0.8078.4",
+        "headless": true,
+        "inputMode": "dom",
+        "bridgeBuild": "debug",
+        "suiteHash": "workload-v1:a4b75ddd7cf09b7181d49cb77bd67308b88d3970bf765081d66fe370897bfa28",
+        "nodeVersion": "v24.18.0",
+        "sourceRevision": "18305efa0e56a189a66a4f92601f5253fffca662",
+        "extensionSha256": "fec429e70e2f894e3dbc173a9560c4daa3f7fad72e6e749cb3be8334627bdac9",
+        "bridgeSha256": "b357ab77cf241cee476cf0816256cf652d8a52f320aa2e06d66493b93552acd5"
+      },
+      "timings": [
+        {
+          "scenario": "tabs",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 50,
+            "p50": 40.5,
+            "p95": 44.5,
+            "min": 36.5,
+            "max": 45.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 766,
+            "p95": 766,
+            "min": 766,
+            "max": 766
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1.9,
+            "p95": 2.3,
+            "min": 1.6,
+            "max": 3.1
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 50,
+            "p50": 63,
+            "p95": 64.7,
+            "min": 47.2,
+            "max": 64.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 165,
+            "p95": 165,
+            "min": 165,
+            "max": 165
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 21.5,
+            "p95": 25.3,
+            "min": 9.2,
+            "max": 26.4
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-no-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 1628.6,
+            "p95": 1644.7,
+            "min": 1624.9,
+            "max": 1664.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 172,
+            "p95": 172,
+            "min": 172,
+            "max": 172
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 1624.9,
+            "p95": 1637.2,
+            "min": 1621.3,
+            "max": 1646.7
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "click-dom-change",
+          "tool": "browser_click",
+          "duration": {
+            "n": 50,
+            "p50": 704.3,
+            "p95": 725.7,
+            "min": 684.5,
+            "max": 735.8
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 2465,
+            "p95": 2465,
+            "min": 2464,
+            "max": 2465
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 660.9,
+            "p95": 685.9,
+            "min": 643.7,
+            "max": 689.1
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 28.5,
+            "p95": 40.6,
+            "min": 19.4,
+            "max": 42.1
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 53.1,
+            "p95": 86.4,
+            "min": 44.5,
+            "max": 95
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 12572,
+            "p95": 12572,
+            "min": 12572,
+            "max": 12572
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 43.4,
+            "p95": 56.4,
+            "min": 36.7,
+            "max": 65.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 43.4,
+            "p95": 56.4,
+            "min": 36.7,
+            "max": 65.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-100",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 50.6,
+            "p95": 60.3,
+            "min": 44.4,
+            "max": 67.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1177,
+            "p95": 1177,
+            "min": 1177,
+            "max": 1177
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 45.8,
+            "p95": 55.2,
+            "min": 39.7,
+            "max": 61.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 45.8,
+            "p95": 55.2,
+            "min": 39.7,
+            "max": 61.6
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 71,
+            "p95": 88.8,
+            "min": 61.9,
+            "max": 96.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19693,
+            "p95": 19693,
+            "min": 19693,
+            "max": 19693
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 60.9,
+            "p95": 77.4,
+            "min": 53.1,
+            "max": 83.8
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 60.9,
+            "p95": 77.4,
+            "min": 53.1,
+            "max": 83.8
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-1000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 65.3,
+            "p95": 72.8,
+            "min": 56.7,
+            "max": 84
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1177,
+            "p95": 1177,
+            "min": 1177,
+            "max": 1177
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 60.8,
+            "p95": 68.2,
+            "min": 52.6,
+            "max": 78.6
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 60.8,
+            "p95": 68.2,
+            "min": 52.6,
+            "max": 78.6
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "snapshot-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 112.3,
+            "p95": 133.6,
+            "min": 96.6,
+            "max": 141.4
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 19694,
+            "p95": 19694,
+            "min": 19694,
+            "max": 19694
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 102.5,
+            "p95": 123.9,
+            "min": 87.4,
+            "max": 128.2
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 102.5,
+            "p95": 123.9,
+            "min": 87.4,
+            "max": 128.2
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-miss-5000",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 50,
+            "p50": 128.2,
+            "p95": 182.1,
+            "min": 109.5,
+            "max": 185.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 50,
+            "p50": 1177,
+            "p95": 1177,
+            "min": 1177,
+            "max": 1177
+          },
+          "browserMs": {
+            "n": 50,
+            "p50": 123.4,
+            "p95": 176.2,
+            "min": 105.1,
+            "max": 179.7
+          },
+          "snapshotMs": {
+            "n": 50,
+            "p50": 123.4,
+            "p95": 176.2,
+            "min": 105.1,
+            "max": 179.7
+          },
+          "longTaskMaxMs": {
+            "n": 50,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 129.6,
+            "p95": 129.6,
+            "min": 129.6,
+            "max": 129.6
+          },
+          "failed": 1,
+          "errors": {
+            "STALE_ELEMENT": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2558,
+            "p95": 2558,
+            "min": 2558,
+            "max": 2558
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 123.8,
+            "p95": 123.8,
+            "min": 123.8,
+            "max": 123.8
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 58.4,
+            "p95": 58.4,
+            "min": 58.4,
+            "max": 58.4
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "tool": "browser_fill",
+          "duration": {
+            "n": 1,
+            "p50": 92.9,
+            "p95": 92.9,
+            "min": 92.9,
+            "max": 92.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 166,
+            "p95": 166,
+            "min": 166,
+            "max": 166
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 51.8,
+            "p95": 51.8,
+            "min": 51.8,
+            "max": 51.8
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 54.4,
+            "p95": 54.4,
+            "min": 54.4,
+            "max": 54.4
+          },
+          "failed": 1,
+          "errors": {
+            "ELEMENT_NOT_INTERACTABLE": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 231,
+            "p95": 231,
+            "min": 231,
+            "max": 231
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 50.5,
+            "p95": 50.5,
+            "min": 50.5,
+            "max": 50.5
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "query-context",
+          "tool": "browser_snapshot",
+          "duration": {
+            "n": 1,
+            "p50": 50.5,
+            "p95": 50.5,
+            "min": 50.5,
+            "max": 50.5
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1886,
+            "p95": 1886,
+            "min": 1886,
+            "max": 1886
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 46,
+            "p95": 46,
+            "min": 46,
+            "max": 46
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 46,
+            "p95": 46,
+            "min": 46,
+            "max": 46
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "tool": "browser_scroll",
+          "duration": {
+            "n": 1,
+            "p50": 58.3,
+            "p95": 58.3,
+            "min": 58.3,
+            "max": 58.3
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 201,
+            "p95": 201,
+            "min": 201,
+            "max": 201
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 53.6,
+            "p95": 53.6,
+            "min": 53.6,
+            "max": 53.6
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "submit-once",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 701.6,
+            "p95": 701.6,
+            "min": 701.6,
+            "max": 701.6
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2443,
+            "p95": 2443,
+            "min": 2443,
+            "max": 2443
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 696.1,
+            "p95": 696.1,
+            "min": 696.1,
+            "max": 696.1
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 43.5,
+            "p95": 43.5,
+            "min": 43.5,
+            "max": 43.5
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 3.3,
+            "p95": 3.3,
+            "min": 3.3,
+            "max": 3.3
+          },
+          "failed": 1,
+          "errors": {
+            "CANCELLED": 1
+          },
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 288,
+            "p95": 288,
+            "min": 288,
+            "max": 288
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 18.7,
+            "p95": 18.7,
+            "min": 18.7,
+            "max": 18.7
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-result",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 321.9,
+            "p95": 321.9,
+            "min": 321.9,
+            "max": 321.9
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 2521,
+            "p95": 2521,
+            "min": 2521,
+            "max": 2521
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 316,
+            "p95": 316,
+            "min": 316,
+            "max": 316
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 50.1,
+            "p95": 50.1,
+            "min": 50.1,
+            "max": 50.1
+          },
+          "longTaskMaxMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskCount": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "tool": "browser_click",
+          "duration": {
+            "n": 1,
+            "p50": 1224.2,
+            "p95": 1224.2,
+            "min": 1224.2,
+            "max": 1224.2
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 1453,
+            "p95": 1453,
+            "min": 1453,
+            "max": 1453
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 1218.6,
+            "p95": 1218.6,
+            "min": 1218.6,
+            "max": 1218.6
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 53,
+            "p95": 53,
+            "min": 53,
+            "max": 53
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        },
+        {
+          "scenario": "worker-recovery",
+          "tool": "browser_tabs",
+          "duration": {
+            "n": 1,
+            "p50": 13.6,
+            "p95": 13.6,
+            "min": 13.6,
+            "max": 13.6
+          },
+          "failed": 0,
+          "errors": {},
+          "outcomeBytes": {
+            "n": 1,
+            "p50": 748,
+            "p95": 748,
+            "min": 748,
+            "max": 748
+          },
+          "browserMs": {
+            "n": 1,
+            "p50": 9.2,
+            "p95": 9.2,
+            "min": 9.2,
+            "max": 9.2
+          },
+          "snapshotMs": {
+            "n": 1,
+            "p50": 0,
+            "p95": 0,
+            "min": 0,
+            "max": 0
+          },
+          "longTaskMaxMs": null,
+          "longTaskCount": null
+        }
+      ],
+      "quality": {
+        "n": 13,
+        "passed": 13,
+        "wrongTarget": 0,
+        "falseSuccess": 0,
+        "duplicateWrites": 0,
+        "postCancelWrites": 0
+      },
+      "oracles": [
+        {
+          "scenario": "fill-retained",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "recycled-row",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "fill-rollback",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "label-priority",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "shadow-label",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "aria-disabled",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "query-context",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "scroll-completion",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "duplicate-request",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "post-cancel",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-result",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "expected-navigation",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        },
+        {
+          "scenario": "worker-recovery",
+          "passed": true,
+          "wrongTarget": 0,
+          "falseSuccess": 0,
+          "duplicateWrites": 0,
+          "postCancelWrites": 0
+        }
+      ],
+      "toolCalls": 510,
+      "explicitSnapshots": 301,
+      "recoveryErrors": 1,
+      "connection": {
+        "disconnects": 0,
+        "heartbeat": {
+          "n": 7,
+          "p50": 0.5,
+          "p95": 1.2,
+          "min": 0.4,
+          "max": 1.2
+        },
+        "recoveryMs": 248.9498329999915
+      },
+      "model": null,
+      "notes": [
+        "Durations include failed calls. p95 uses nearest rank; fewer than 50 samples is exploratory.",
+        "Browser/snapshot times are routed command round trips, not individual DOM prepare/dispatch durations.",
+        "Long tasks are browser entries over 50ms and can miss entries delivered after a call. Not a CPU profile.",
+        "Quality counts use fixture state, not tool ok. Null means not measured."
+      ]
+    }
+  ],
+  "paired": {
+    "method": "Two isolated Chrome/Bridge instances; same synthetic DOM; five warmups then 50 samples; alternate old/current call order each sample; separate from full-workload statistics.",
+    "report": [
+      {
+        "advanced": false,
+        "rows": 100,
+        "query": true,
+        "before": {
+          "n": 50,
+          "p50": 18.8,
+          "p95": 61,
+          "min": 12.7,
+          "max": 62.3
+        },
+        "after": {
+          "n": 50,
+          "p50": 19.3,
+          "p95": 60.5,
+          "min": 13,
+          "max": 63.6
+        },
+        "beforeBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        },
+        "afterBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        }
+      },
+      {
+        "advanced": false,
+        "rows": 1000,
+        "query": true,
+        "before": {
+          "n": 50,
+          "p50": 37.2,
+          "p95": 75.7,
+          "min": 28.5,
+          "max": 78.5
+        },
+        "after": {
+          "n": 50,
+          "p50": 37.8,
+          "p95": 79.5,
+          "min": 28.4,
+          "max": 81.7
+        },
+        "beforeBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        },
+        "afterBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        }
+      },
+      {
+        "advanced": false,
+        "rows": 5000,
+        "query": false,
+        "before": {
+          "n": 50,
+          "p50": 81.7,
+          "p95": 103.6,
+          "min": 72.2,
+          "max": 105.3
+        },
+        "after": {
+          "n": 50,
+          "p50": 80.7,
+          "p95": 93.8,
+          "min": 73.2,
+          "max": 98.6
+        },
+        "beforeBytes": {
+          "n": 50,
+          "p50": 19694,
+          "p95": 19694,
+          "min": 19694,
+          "max": 19694
+        },
+        "afterBytes": {
+          "n": 50,
+          "p50": 19694,
+          "p95": 19694,
+          "min": 19694,
+          "max": 19694
+        }
+      },
+      {
+        "advanced": true,
+        "rows": 100,
+        "query": true,
+        "before": {
+          "n": 50,
+          "p50": 38.4,
+          "p95": 80.1,
+          "min": 29.5,
+          "max": 102.2
+        },
+        "after": {
+          "n": 50,
+          "p50": 39.8,
+          "p95": 76.6,
+          "min": 29.9,
+          "max": 87
+        },
+        "beforeBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        },
+        "afterBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        }
+      },
+      {
+        "advanced": true,
+        "rows": 1000,
+        "query": true,
+        "before": {
+          "n": 50,
+          "p50": 49.7,
+          "p95": 69.5,
+          "min": 40.5,
+          "max": 86.9
+        },
+        "after": {
+          "n": 50,
+          "p50": 50.7,
+          "p95": 81.6,
+          "min": 41.8,
+          "max": 95.8
+        },
+        "beforeBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        },
+        "afterBytes": {
+          "n": 50,
+          "p50": 1177,
+          "p95": 1177,
+          "min": 1177,
+          "max": 1177
+        }
+      },
+      {
+        "advanced": true,
+        "rows": 5000,
+        "query": false,
+        "before": {
+          "n": 50,
+          "p50": 98.1,
+          "p95": 142,
+          "min": 84.3,
+          "max": 165.4
+        },
+        "after": {
+          "n": 50,
+          "p50": 97,
+          "p95": 130.5,
+          "min": 86,
+          "max": 148.9
+        },
+        "beforeBytes": {
+          "n": 50,
+          "p50": 19694,
+          "p95": 19694,
+          "min": 19694,
+          "max": 19694
+        },
+        "afterBytes": {
+          "n": 50,
+          "p50": 19694,
+          "p95": 19694,
+          "min": 19694,
+          "max": 19694
+        }
+      }
+    ]
+  }
+}
