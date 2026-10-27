@@ -57,3 +57,10 @@ it.each([0, 50, 100, 150, 200, 250])('lost native-fill replies never duplicate a
   expect(inputs).toBe(1);expect(input.value).toBe('native');
  }
 });
+
+it.each(['press','fill','click'])('preserves incomplete trusted %s metadata',async action=>{
+ document.body.innerHTML='<input aria-label="Text">';resetRegistry();const [ref]=refs();
+ vi.stubGlobal('chrome',{runtime:{sendMessage:async()=>({ok:true,incomplete:true,keysReleased:false,inputRecoveryRequired:true})}});
+ const r=await runAction(action,{requestId:'partial-'+action,ref,...(action==='press'?{key:'Enter'}:{text:''}),trusted:true,trustedFrames:true,waitFor:{text:'done'}});
+ expect(r.verified).toMatchObject({incomplete:true,inputRecoveryRequired:true,keysReleased:false});
+});

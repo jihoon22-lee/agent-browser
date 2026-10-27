@@ -1,3 +1,4 @@
+import type { InputRecovery, InputDocument } from './input-recovery';
 /** Chrome's debugger, attached only to this browser's operation tabs while the user enabled
  * trusted input, so clicks and keys arrive as real user input (review B3, handoff §10 R10). */
 export type DebuggerApi = {
@@ -64,14 +65,25 @@ export function trustedTargets(operation: { id?: string; clientId?: string; tabs
 }
 
 /** An attempted input may have reached the page even if its first callback failed. */
-export class PartlyDelivered extends Error { readonly dispatched = true; }
+export class PartlyDelivered extends Error { readonly dispatched = true; constructor(message:string,readonly inputRecoveryRequired=false){super(message);} }
 class InputNotDelivered extends Error {
   readonly dispatched = false;
   constructor(message: string, readonly cancelled = false) { super(message); }
 }
 
-export function trustedInput(api: DebuggerApi, advanced = () => false) {
+export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?:InputRecovery) {
   const attached = new Set<number>();
+  const sessions=new Map<number,number>(),detaching=new Set<number>();let nextSession=0;
+  type Held={id:string;tabId:number;session:number|undefined;operation:string|null|undefined;document?:InputDocument;active:ActiveInput;lease:boolean;keys:Map<string,Record<string,unknown>>;upAttempts:Set<string>;mouse?:Record<string,unknown>;attempted:boolean;pressed:boolean;settled:boolean;quarantined:boolean;epoch:number;cleanupDeadline?:number};
+  const heldInputs=new Map<number,Held>();
+  const outstanding=(h:Held)=>!!h.mouse||h.keys.size>0;
+  const owns=(h:Held)=>attached.has(h.tabId)&&sessions.get(h.tabId)===h.session&&operationId===h.operation&&!isCancelled();
+  async function markUnresolved(h:Held){
+    if(!outstanding(h)||h.settled)return;
+    h.quarantined=true;
+    if(h.document&&h.lease)await recovery?.finish(h.document,h.id,true).catch(()=>{});
+  }
+
   // [Cancel] on Chrome's debugging bar applies to the whole operation, not one tab.
   let cancelled: { operationId: string | null | undefined; reason: string } | undefined;
   const dialogs = new Map<number, Dialog>();
@@ -85,7 +97,8 @@ export function trustedInput(api: DebuggerApi, advanced = () => false) {
   const serial = <T>(work: () => Promise<T>) => { const next = queue.then(work); queue = next.catch(() => {}); return next; };
 
   api.onDetach((tabId, reason) => {
-    attached.delete(tabId);
+    const held=heldInputs.get(tabId);if(held)void markUnresolved(held);
+    attached.delete(tabId);sessions.delete(tabId);
     if (reason === "canceled_by_user") cancelled = { operationId, reason };
   });
   api.onEvent((tabId, method, params) => {
@@ -95,7 +108,6 @@ export function trustedInput(api: DebuggerApi, advanced = () => false) {
     if(advanced())return;
     if (!((inputUntil.get(tabId) ?? 0) >= Date.now())) return;
     // An alert only informs; a confirm, prompt or leave-page question is the user's decision.
-    if (advanced() && params?.type !== "alert") return;
     const accept = params?.type === "alert";
     dialogs.set(tabId, { type: String(params?.type ?? "unknown"), message: String(params?.message ?? "").slice(0, 200) });
     void api.send(tabId, "Page.handleJavaScriptDialog", { accept }).catch(() => {});
@@ -105,68 +117,116 @@ export function trustedInput(api: DebuggerApi, advanced = () => false) {
   const isCancelled = () => !!cancelled && cancelled.operationId === operationId;
 
   async function release(tabId: number) {
-    attached.delete(tabId); dialogs.delete(tabId); inputUntil.delete(tabId);openDialogs.delete(tabId);
+    const held=heldInputs.get(tabId);if(held)await markUnresolved(held);
+    const wasAttached=attached.has(tabId);
+    attached.delete(tabId);sessions.delete(tabId);dialogs.delete(tabId);inputUntil.delete(tabId);openDialogs.delete(tabId);
+    if(!wasAttached||detaching.has(tabId))return;
+    detaching.add(tabId);
+    const original=Promise.resolve().then(()=>api.detach(tabId));
+    // A timeout does not cancel detach: fence reattachment until the actual callback settles.
+    void original.then(()=>detaching.delete(tabId),()=>detaching.delete(tabId));
     let timer:ReturnType<typeof setTimeout>;
-    try { await Promise.race([api.detach(tabId),new Promise<void>(resolve=>{timer=setTimeout(resolve,1000);})]).catch(()=>{}); }
+    try { await Promise.race([original,new Promise<void>(resolve=>{timer=setTimeout(resolve,1000);})]).catch(()=>{}); }
     finally { clearTimeout(timer!); }
-    heldInputs.delete(tabId);
   }
-  /** Each await is an opportunity for the operation/request to end. A failed CDP
-   * callback cannot prove its event was not delivered, including the first one. */
   const inputs=new Map<number,Promise<unknown>>();
-  const heldInputs=new Map<number,{keys:Map<string,Record<string,unknown>>;mouse?:Record<string,unknown>}>();
+  async function sameDocument(h:Held){return !h.document||await recovery!.current(h.document);}
   async function sendInput(tabId:number,method:string,params:Record<string,unknown>) {
-    let held=heldInputs.get(tabId);if(!held){held={keys:new Map()};heldInputs.set(tabId,held);}
-    if(method==='Input.dispatchKeyEvent'&&params.type==='keyDown')held.keys.set(String(params.key),params);
-    if(method==='Input.dispatchMouseEvent'&&params.type==='mousePressed')held.mouse=params;
+    const held=heldInputs.get(tabId);
+    if(!held||!owns(held)||!await sameDocument(held))throw new InputNotDelivered('The input document or debugger session changed.',true);
+    const keyDown=method==='Input.dispatchKeyEvent'&&params.type==='keyDown';
+    const mouseDown=method==='Input.dispatchMouseEvent'&&params.type==='mousePressed';
+    if((keyDown||mouseDown)&&!held.lease&&held.document){await recovery!.begin(held.document,held.id);held.lease=true;}
+    // Persistence and document checks may yield. Never send a new down after cancellation.
+    if(!owns(held)||!await sameDocument(held))throw new InputNotDelivered('The input document changed before dispatch.',true);
+    const cleanup=held.cleanupDeadline!==undefined;
+    if(!cleanup&&!await held.active('continue'))throw new InputNotDelivered('The input ended before dispatch.',true);
+    if(!current.enabled||!current.operationTabs.includes(tabId)||!cleanup&&(dialogEpoch.get(tabId)??0)!==held.epoch)throw new InputNotDelivered('The input was interrupted before dispatch.',true);
+    if(cleanup&&!(method==='Input.dispatchKeyEvent'&&params.type==='keyUp'))throw new InputNotDelivered('Only held key releases may finish after interruption.',true);
+    if(!owns(held)||(held.cleanupDeadline!==undefined&&Date.now()>=held.cleanupDeadline))throw new InputNotDelivered('Input cleanup is no longer authorized.',true);
+    if(keyDown)held.keys.set(String(params.key),params);
+    if(mouseDown)held.mouse=params;
+    if(method==='Input.dispatchKeyEvent'&&params.type==='keyUp')held.upAttempts.add(String(params.key));
+    held.attempted=true;
+    if(keyDown||mouseDown||method==='Input.insertText'||params.type==='mouseWheel')held.pressed=true;
     const result=await api.send(tabId,method,params);
-    if(method==='Input.dispatchKeyEvent'&&params.type==='keyUp')held.keys.delete(String(params.key));
+    if(method==='Input.dispatchKeyEvent'&&params.type==='keyUp'){held.keys.delete(String(params.key));held.upAttempts.delete(String(params.key));}
     if(method==='Input.dispatchMouseEvent'&&params.type==='mouseReleased')held.mouse=undefined;
     return result;
   }
-  function deliver(tabId:number,steps:InputStep[],active:ActiveInput) {
-    const next=(inputs.get(tabId)??Promise.resolve()).then(()=>deliverNow(tabId,steps,active));
+  function deliver(tabId:number,steps:InputStep[],active:ActiveInput,sourceDocumentId?:string) {
+    const owner=operationId,session=sessions.get(tabId),document=recovery?.capture(tabId,sourceDocumentId);
+    void document?.catch(()=>{});
+    const next=(inputs.get(tabId)??Promise.resolve()).then(async()=>{
+      const captured=await document?.catch(error=>{throw Object.assign(error instanceof Error?error:Error(String(error)),{dispatched:false,verificationFailed:true});});
+      if(owner!==operationId||session!==sessions.get(tabId)||!attached.has(tabId)||captured&&!await recovery!.current(captured))throw new InputNotDelivered('The queued input context changed.',true);
+      return deliverNow(tabId,steps,active,captured,owner,session);
+    });
     const tail=next.catch(()=>{});inputs.set(tabId,tail);void tail.then(()=>{if(inputs.get(tabId)===tail)inputs.delete(tabId);});return next;
   }
-  async function deliverNow(tabId: number, steps: InputStep[], active: ActiveInput) {
-    const startedOperation = operationId;
-    inputUntil.set(tabId, Number.POSITIVE_INFINITY);
-    let attempted = false, gestureStarted=false;
-    const dialogAtStart=dialogEpoch.get(tabId)??0;
-    try {
-      for (const next of steps) {
-        if((dialogEpoch.get(tabId)??0)!==dialogAtStart)return {...takeDialog(tabId),incomplete:true};
-        const phase=next.phase??'press';
-        const live=phase==='keyRelease' ? true : await active(phase);
-        if(!live){if(gestureStarted){await release(tabId);return {...takeDialog(tabId),incomplete:true};}throw new InputNotDelivered('The input request was cancelled before its gesture.',true);}
-        if(startedOperation!==operationId||!current.enabled||!current.operationTabs.includes(tabId)||!attached.has(tabId)||isCancelled())throw new InputNotDelivered('The debugger session changed.',true);
-        attempted=true;
-        if(phase==='press')gestureStarted=true;
-        // A modal dialog may legitimately hold the native command. Otherwise bound a lost CDP reply.
-        let timer:ReturnType<typeof setTimeout>;
-        const timeout=new Promise<never>((_,reject)=>{const expired=()=>{if(openDialogs.has(tabId)&&attached.has(tabId))timer=setTimeout(expired,1000);else reject(new Error('CDP input reply timed out'));};timer=setTimeout(expired,7000);});
-        try{await Promise.race([next(),timeout]);}finally{clearTimeout(timer!);}
-      }
-    }
-    catch (error) {
-      const held=heldInputs.get(tabId);heldInputs.delete(tabId);
-      // Modifier release does not replay a character. A mouse release can click/drop: never fabricate it as rollback.
-      const timedOut=error instanceof Error && error.message.includes('timed out');
-      if(timedOut)await release(tabId);
-      else if(attempted&&attached.has(tabId)&&startedOperation===operationId&&held){
-        for(const key of [...held.keys.values()].reverse()){
-          let timer:ReturnType<typeof setTimeout>;
-          try { await Promise.race([api.send(tabId,'Input.dispatchKeyEvent',{type:'keyUp',key:key.key,code:key.code,windowsVirtualKeyCode:key.windowsVirtualKeyCode,modifiers:0}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('cleanup timed out')),500);})]); }
-          catch { await release(tabId);break; }
-          finally { clearTimeout(timer!); }
+  async function settle(h:Held,interrupted:boolean){
+    const hadKeys=h.keys.size>0,deadline=Date.now()+1000;
+    if(interrupted){
+      h.cleanupDeadline=deadline;
+      const drain=async()=>{
+        for(const key of [...h.keys.values()].reverse()){
+          const name=String(key.key);
+          // An uncertain up must not be replayed; Space-up could activate a button.
+          if(h.upAttempts.has(name)||key.code==='Space'||name===' ')continue;
+          if(Date.now()>=h.cleanupDeadline!||openDialogs.has(h.tabId)||!owns(h)||!await sameDocument(h))break;
+          const modifiers=[...h.keys.keys()].filter(k=>k!==name).reduce((bits,k)=>bits|(MODIFIER_KEYS[k]?.bit??0),0);
+          await sendInput(h.tabId,'Input.dispatchKeyEvent',{type:'keyUp',key:key.key,code:key.code,windowsVirtualKeyCode:key.windowsVirtualKeyCode,modifiers});
         }
-      }
-      if(gestureStarted||(attempted&&!(error instanceof InputNotDelivered)&&!(error as any)?.verificationFailed&&(error as any)?.code!=='STALE_ELEMENT'))throw new PartlyDelivered(error instanceof Error?error.message:String(error));
-      if(error && typeof error==='object')Object.assign(error,{dispatched:false,verificationFailed:!('cancelled' in error && error.cancelled)});
-      throw error;
+      };
+      let timer:ReturnType<typeof setTimeout>;
+      try{await Promise.race([drain(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Input cleanup timed out')),1000);})]);}
+      catch{}finally{clearTimeout(timer!);h.cleanupDeadline=0;}
     }
-    finally { if (attempted) inputUntil.set(tabId, Date.now() + 1500); else inputUntil.delete(tabId); }
-    return takeDialog(tabId);
+
+    let uncertain=h.quarantined||outstanding(h);
+    if(h.document&&h.lease){try{await recovery!.finish(h.document,h.id,uncertain);}catch{uncertain=true;}}
+    h.settled=true;
+    if(uncertain)await release(h.tabId);
+    return {...(hadKeys?{keysReleased:h.keys.size===0}:{}),...(uncertain?{inputRecoveryRequired:true}:{})};
+  }
+  async function deliverNow(tabId:number,steps:InputStep[],active:ActiveInput,document:InputDocument|undefined,owner:string|null|undefined,session:number|undefined) {
+    const held:Held={id:crypto.randomUUID(),tabId,session,operation:owner,document,active,lease:false,keys:new Map(),upAttempts:new Set(),attempted:false,pressed:false,settled:false,quarantined:false,epoch:dialogEpoch.get(tabId)??0};
+    heldInputs.set(tabId,held);inputUntil.set(tabId,Number.POSITIVE_INFINITY);
+    const initialEpoch=dialogEpoch.get(tabId)??0;
+    let interrupted=false,failed=false,failure:unknown;
+    try{
+      for(const next of steps){
+        if((dialogEpoch.get(tabId)??0)!==initialEpoch){interrupted=true;break;}
+        const phase=next.phase??'press';
+        if(!await active(phase==='keyRelease'?'continue':phase)){
+          if(held.pressed){interrupted=true;break;}
+          throw new InputNotDelivered('The input request was cancelled before its gesture.',true);
+        }
+        if(!owns(held)||!current.enabled||!current.operationTabs.includes(tabId))throw new InputNotDelivered('The debugger session changed.',true);
+        let timer:ReturnType<typeof setTimeout>,watch:ReturnType<typeof setInterval>,checking=false;
+        const stopped=new Promise<never>((_,reject)=>{
+          watch=setInterval(()=>{if(checking)return;checking=true;void Promise.resolve().then(async()=>{if(!owns(held)||!await active('continue'))reject(new InputNotDelivered('The pending input was stopped.',true));}).catch(reject).finally(()=>{checking=false;});},100);
+          const expired=()=>{if(openDialogs.has(tabId)&&owns(held))timer=setTimeout(expired,1000);else reject(Error('CDP input reply timed out'));};timer=setTimeout(expired,7000);
+        });
+        try{await Promise.race([next(),stopped]);}finally{clearTimeout(timer!);clearInterval(watch!);}
+      }
+    }catch(error){failure=error;failed=true;interrupted=true;}
+    try{
+      // A command may acknowledge before its modal closes. Keep its queue slot until the
+      // existing dialog response/user flow completes; cancellation is checked independently.
+      while(interrupted&&openDialogs.has(tabId)&&owns(held)&&await active('continue'))await new Promise(r=>setTimeout(r,25));
+      const notice=takeDialog(tabId);
+      const cleanup=await settle(held,interrupted);
+      if(failed){
+        if(held.pressed||(held.attempted&&!(failure instanceof InputNotDelivered)&&!(failure as any)?.verificationFailed&&(failure as any)?.code!=='STALE_ELEMENT'))throw new PartlyDelivered(failure instanceof Error?failure.message:String(failure),cleanup.inputRecoveryRequired===true);
+        if(failure&&typeof failure==='object')Object.assign(failure,{dispatched:false,verificationFailed:!('cancelled' in failure&&failure.cancelled)});
+        throw failure;
+      }
+      return {...notice,...takeDialog(tabId),...(interrupted?{incomplete:true,...cleanup}:{})};
+    }finally{
+      if(heldInputs.get(tabId)===held)heldInputs.delete(tabId);
+      if(held.attempted&&owns(held))inputUntil.set(tabId,Date.now()+1500);else inputUntil.delete(tabId);
+    }
   }
 
   return {
@@ -174,11 +234,11 @@ export function trustedInput(api: DebuggerApi, advanced = () => false) {
       return serial(async () => {
         if (state.operationId !== undefined && state.operationId !== operationId) { operationId = state.operationId; if (cancelled && cancelled.operationId !== operationId) cancelled = undefined; }
         current = state;
-        if (!state.enabled || !state.operationTabs.includes(tabId) || isCancelled()) return false;
+        if (!state.enabled || !state.operationTabs.includes(tabId) || isCancelled() || detaching.has(tabId)) return false;
         if (attached.has(tabId)) return true;
         try {
           await api.attach(tabId);
-          attached.add(tabId);
+          attached.add(tabId);sessions.set(tabId,++nextSession);
           await api.send(tabId, "Page.enable");
           return true;
         } catch { await release(tabId); return false; }
@@ -191,22 +251,22 @@ export function trustedInput(api: DebuggerApi, advanced = () => false) {
         for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !state.operationTabs.includes(tabId)) await release(tabId);
       });
     },
-    click(tabId: number, x: number, y: number, mode: ClickMode = "click", active:ActiveInput = () => true) {
+    click(tabId: number, x: number, y: number, mode: ClickMode = "click", active:ActiveInput = () => true,sourceDocumentId?:string) {
       const mouse = (params: Record<string,unknown>, phase:InputPhase="prepare") => step(() => sendInput(tabId, "Input.dispatchMouseEvent", params), phase);
       const button = mode === "right" ? "right" as const : "left" as const;
       const steps = [mouse({ type: "mouseMoved", x, y })];
       if (mode !== "hover") for (const clickCount of mode === "double" ? [1, 2] : [1])
         steps.push(mouse({ type: "mousePressed", x, y, button, clickCount },"press"), mouse({ type: "mouseReleased", x, y, button, clickCount },"release"));
-      return deliver(tabId, steps, active);
+      return deliver(tabId, steps, active,sourceDocumentId);
     },
-    drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }, active:ActiveInput = () => true) {
+    drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }, active:ActiveInput = () => true,sourceDocumentId?:string) {
       const mouse = (params: Record<string,unknown>, phase:InputPhase="prepare") => step(() => sendInput(tabId, "Input.dispatchMouseEvent", params), phase);
       const steps = [mouse({ type: "mouseMoved", ...from }), mouse({ type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 },"press")];
       for (const f of [0.25, 0.5, 0.75, 1]) steps.push(mouse({ type: "mouseMoved", x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f, button: "left", buttons: 1 },"release"));
       steps.push(mouse({ type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 },"release"));
-      return deliver(tabId, steps, active);
+      return deliver(tabId, steps, active,sourceDocumentId);
     },
-    key(tabId: number, key: string, modifiers: string[] = [], active:ActiveInput = () => true) {
+    key(tabId: number, key: string, modifiers: string[] = [], active:ActiveInput = () => true,sourceDocumentId?:string) {
       const spec = keySpec(key, modifiers);
       if (!spec || modifiers.some(m => !MODIFIER_KEYS[m]) || !trustedShortcut(key, modifiers)) return Promise.reject(new InputNotDelivered(`Unsupported key ${key}`));
       const send = (params: Record<string,unknown>) => step(() => sendInput(tabId, "Input.dispatchKeyEvent", params),params.type==="keyUp"?"keyRelease":"press");
@@ -220,19 +280,20 @@ export function trustedInput(api: DebuggerApi, advanced = () => false) {
       for (const m of held) { down |= m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyDown", ...k, modifiers: down })); }
       steps.push(send({ type: "keyDown", ...up, ...typed, ...(bits ? { modifiers: bits } : {}) }), send({ type: "keyUp", ...up, ...(bits ? { modifiers: bits } : {}) }));
       for (const m of [...held].reverse()) { down &= ~m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyUp", ...k, ...(down ? { modifiers: down } : {}) })); }
-      return deliver(tabId, steps, active);
+      return deliver(tabId, steps, active,sourceDocumentId);
     },
-    wheel(tabId:number,point:{x:number;y:number},deltaX:number,deltaY:number,active:ActiveInput=()=>true) {
-      return deliver(tabId,[step(()=>sendInput(tabId,'Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX,deltaY}),'press')],active);
+    wheel(tabId:number,point:{x:number;y:number},deltaX:number,deltaY:number,active:ActiveInput=()=>true,sourceDocumentId?:string) {
+      return deliver(tabId,[step(()=>sendInput(tabId,'Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX,deltaY}),'press')],active,sourceDocumentId);
     },
-    text(tabId:number,text:string,active:ActiveInput=()=>true) {
-      return deliver(tabId, text ? [step(()=>sendInput(tabId,"Input.insertText",{text}),"press")] : [step(()=>sendInput(tabId,"Input.dispatchKeyEvent",{type:"keyDown",key:"Backspace",code:"Backspace",windowsVirtualKeyCode:8}),"press"),step(()=>sendInput(tabId,"Input.dispatchKeyEvent",{type:"keyUp",key:"Backspace",code:"Backspace",windowsVirtualKeyCode:8}),"keyRelease")], active);
+    text(tabId:number,text:string,active:ActiveInput=()=>true,sourceDocumentId?:string) {
+      return deliver(tabId, text ? [step(()=>sendInput(tabId,"Input.insertText",{text}),"press")] : [step(()=>sendInput(tabId,"Input.dispatchKeyEvent",{type:"keyDown",key:"Backspace",code:"Backspace",windowsVirtualKeyCode:8}),"press"),step(()=>sendInput(tabId,"Input.dispatchKeyEvent",{type:"keyUp",key:"Backspace",code:"Backspace",windowsVirtualKeyCode:8}),"keyRelease")], active,sourceDocumentId);
     },
     async screenshot(tabId: number) {
       const { data } = await api.send<{ data: string }>(tabId, "Page.captureScreenshot", { format: "png" });
       return `data:image/png;base64,${data}`;
     },
     cancelledReason: (_tabId: number) => isCancelled() ? cancelled!.reason : undefined,
+    isStopping:(tabId:number)=>detaching.has(tabId),
     isAttached: (tabId: number) => attached.has(tabId) && current.operationTabs.includes(tabId),
   };
 }

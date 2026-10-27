@@ -1,3 +1,4 @@
+import {inputRecovery} from './input-recovery';
 import { advancedAvailable } from '../agents/opencode-v1/capabilities';
 import { advancedBrowser } from './advanced-browser';
 import { frameInputTarget } from './frame-input';
@@ -19,7 +20,9 @@ import { markedBefore, markerScript, remarkInQueue, shouldRemark, syncMarkers } 
 // Trusted input (off by default): the debugger is attached only to this browser's operation tabs.
 const debuggerApi=chromeDebugger();
 let advancedEnabled=false;
-const trusted = trustedInput(debuggerApi,()=>advancedEnabled&&advancedAvailable());
+const recovery=inputRecovery(chrome.storage.session,realChromeApi.listFrames);
+chrome.tabs.onRemoved.addListener(tabId=>{void recovery.removeTab(tabId).catch(()=>{});});
+const trusted = trustedInput(debuggerApi,()=>advancedEnabled&&advancedAvailable(),recovery);
 let trustedEnabled = false, ownClientId: string | undefined;
 void chrome.storage.local.get(["trustedInput", "advancedBrowser", "clientId"]).then(({ trustedInput: on, advancedBrowser:advanced, clientId }) => { advancedEnabled=advanced===true;trustedEnabled = on === true; if (typeof clientId === "string") ownClientId = clientId; }).catch(() => {});
 // The person holding the browser (paused operation) gets every tab back, debugger detached.
@@ -39,16 +42,17 @@ const syncGroups = () => { grouping = grouping.then(async () => {
 // Allowing or revoking tab groups in the options applies now, not at the next status change.
 chrome.permissions.onAdded.addListener(syncGroups);
 chrome.permissions.onRemoved.addListener(syncGroups);
-const advanced=advancedBrowser(realChromeApi,debuggerApi,trusted,()=>advancedEnabled,tabId=>trusted.ensure(tabId,trustedState()),(requestId,args)=>requests.vision(requestId,args),()=>lastOperation as any);
+const advanced=advancedBrowser(realChromeApi,debuggerApi,trusted,()=>advancedEnabled,tabId=>trusted.ensure(tabId,trustedState()),(requestId,args)=>requests.vision(requestId,args),()=>lastOperation as any,tabId=>recovery.status(tabId));
 const downloadTracker=downloads(()=>lastOperation?.clientId===ownClientId?lastOperation?.id:undefined,()=>advanced.enabled());
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
   ensure: tabId => trusted.ensure(tabId, trustedState()),
   screenshot: tabId => trusted.screenshot(tabId),
+  stopping:tabId=>trusted.isStopping(tabId),
 }, async (name, panelRequestId) => {
   // Only the panel request that holds the browser now; its files are forgotten when it ends.
   const { panelBrowserRequest } = await chrome.storage.local.get("panelBrowserRequest") as { panelBrowserRequest?: { requestId?: unknown } };
   return attachmentFor(uploads, panelBrowserRequest, panelRequestId, name);
-},advanced,downloadTracker);
+},advanced,downloadTracker,recovery);
 let lastStatus: ConnStatus = { state: "disconnected" };
 // Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
 let lastOperation: { clientId: string; paused?: boolean; tabs?: number[]; id?: string } | null = null, waiting = false;
@@ -148,13 +152,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         return active();
       };
-      return msg.action==='text'?trusted.text(tabId,msg.text,checked):msg.action==='click'?trusted.click(tabId,from.x,from.y,msg.mode,checked):msg.action==='drag'?trusted.drag(tabId,from,to,checked):trusted.key(tabId,msg.key,msg.modifiers,checked);
-    })().then(result=>sendResponse({ok:true,...result}),error=>sendResponse({ok:false,reason:trusted.cancelledReason(tabId)??'debugger-error',dispatched:error?.dispatched!==false,cancelled:error?.cancelled===true,verificationFailed:error?.verificationFailed===true}));
+      return msg.action==='text'?trusted.text(tabId,msg.text,checked,sender.documentId):msg.action==='click'?trusted.click(tabId,from.x,from.y,msg.mode,checked,sender.documentId):msg.action==='drag'?trusted.drag(tabId,from,to,checked,sender.documentId):trusted.key(tabId,msg.key,msg.modifiers,checked,sender.documentId);
+    })().then(result=>sendResponse({ok:true,...result}),error=>sendResponse({ok:false,reason:trusted.cancelledReason(tabId)??'debugger-error',dispatched:error?.dispatched!==false,cancelled:error?.cancelled===true,verificationFailed:error?.verificationFailed===true,inputRecoveryRequired:error?.inputRecoveryRequired===true}));
     return true;
   }
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
-  if(msg?.kind==='advanced-status'){const op=lastOperation?.clientId===ownClientId?lastOperation:undefined;sendResponse(op?.id===msg.operationId?{ok:true,result:{dialog:advanced.pending((op as any).currentTab)}}:{ok:false});return;}
+  if(msg?.kind==='advanced-status'){
+    const op=lastOperation?.clientId===ownClientId?lastOperation:undefined;
+    if(op?.id!==msg.operationId){sendResponse({ok:false});return;}
+    const tabId=(op as any).currentTab;
+    void recovery.status(tabId).then(status=>sendResponse({ok:true,result:{dialog:advanced.pending(tabId),inputRecoveryRequired:status.required}}),()=>sendResponse({ok:false}));return true;
+  }
   if(msg?.kind==='downloads-list'||msg?.kind==='download-bind'){
     const op=lastOperation?.clientId===ownClientId?lastOperation?.id:undefined;
     if(!op||msg.operationId!==op){sendResponse({ok:false,error:{message:'현재 브라우저 작업이 아닙니다.'}});return;}
