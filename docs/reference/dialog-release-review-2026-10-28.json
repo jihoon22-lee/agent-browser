@@ -1,0 +1,640 @@
+{
+  "review": "https://github.com/jihoon22-lee/agent-browser/pull/39#discussion_r4391254649",
+  "sourceRevision": "f734d717e59cc5c421e0d64dafd242f75d7c63aa",
+  "release": "v0.3.0",
+  "releaseSha256": "869469360aa5701d6ad86916c182bc0967e86e74f05e94dc60ea171fb88350b7",
+  "runtime": {
+    "platform": "win32",
+    "nodeVersion": "v24.18.1",
+    "browserVersion": "155.0.8059.86",
+    "headless": true
+  },
+  "method": "Isolated Windows Chrome profile and the verified release ZIP extension/Windows exe; direct MCP; no LLM. Record trusted keydown/keyup and mousedown/mouseup/mousemove. Open one alert from Ctrl+Enter keydown or mousedown. Then send ArrowRight or hover in the same operation. Page state pairs down/up events. DOM control dialogs are dismissed by the synthetic test driver. No user browser or installed application changed.",
+  "result": "4 missing-release expectations failed; 4 no-dialog or trusted-off controls passed. Linux Chrome 156.0.8078.4 also reproduced the 4 affected cases.",
+  "limits": "The verified stuck state is inside the page. The following ArrowRight events had ctrlKey=false; an OS-wide Control latch and actual business data damage were not established.",
+  "cases": [
+    {
+      "advanced": false,
+      "trusted": true,
+      "modal": true,
+      "kind": "key",
+      "tool": "browser_press",
+      "ok": true,
+      "verified": {
+        "dialog": {
+          "message": "Synthetic keyboard dialog",
+          "type": "alert"
+        },
+        "domChanged": false,
+        "key": "Enter",
+        "modifiers": [
+          "Control"
+        ],
+        "trusted": true,
+        "urlChanged": false
+      },
+      "before": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          }
+        ],
+        "keys": [
+          "Control",
+          "Enter"
+        ],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [
+          "Control",
+          "Enter"
+        ],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      }
+    },
+    {
+      "advanced": false,
+      "trusted": true,
+      "modal": true,
+      "kind": "mouse",
+      "tool": "browser_click",
+      "ok": true,
+      "verified": {
+        "dialog": {
+          "message": "Synthetic mouse dialog",
+          "type": "alert"
+        },
+        "domChanged": false,
+        "incomplete": true,
+        "trusted": true,
+        "urlChanged": false
+      },
+      "before": {
+        "events": [
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": true,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": true,
+        "changed": 1,
+        "triggered": true
+      }
+    },
+    {
+      "advanced": true,
+      "trusted": true,
+      "modal": true,
+      "kind": "key",
+      "tool": "browser_press",
+      "ok": true,
+      "verified": {
+        "domChanged": false,
+        "key": "Enter",
+        "modifiers": [
+          "Control"
+        ],
+        "trusted": true,
+        "urlChanged": false
+      },
+      "before": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          }
+        ],
+        "keys": [
+          "Control",
+          "Enter"
+        ],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [
+          "Control",
+          "Enter"
+        ],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      }
+    },
+    {
+      "advanced": true,
+      "trusted": true,
+      "modal": true,
+      "kind": "mouse",
+      "tool": "browser_click",
+      "ok": true,
+      "verified": {
+        "domChanged": false,
+        "incomplete": true,
+        "trusted": true,
+        "urlChanged": false
+      },
+      "before": {
+        "events": [
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": true,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": true,
+        "changed": 1,
+        "triggered": true
+      }
+    },
+    {
+      "advanced": true,
+      "trusted": true,
+      "modal": false,
+      "kind": "key",
+      "tool": "browser_press",
+      "ok": true,
+      "verified": {
+        "domChanged": false,
+        "key": "Enter",
+        "modifiers": [
+          "Control"
+        ],
+        "trusted": true,
+        "urlChanged": false
+      },
+      "before": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "Control",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "keydown",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "keyup",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      }
+    },
+    {
+      "advanced": true,
+      "trusted": true,
+      "modal": false,
+      "kind": "mouse",
+      "tool": "browser_click",
+      "ok": true,
+      "verified": {
+        "domChanged": false,
+        "trusted": true,
+        "urlChanged": false
+      },
+      "before": {
+        "events": [
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mouseup",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mouseup",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          },
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": true
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      }
+    },
+    {
+      "advanced": false,
+      "trusted": false,
+      "modal": true,
+      "kind": "key",
+      "tool": "browser_press",
+      "ok": true,
+      "verified": {
+        "activeElement": "Native text",
+        "defaultAction": "event-only",
+        "defaultApplied": false,
+        "defaultPrevented": false,
+        "key": "Enter",
+        "modifiers": [
+          "Control"
+        ],
+        "submitted": false,
+        "synthetic": true,
+        "value": ""
+      },
+      "before": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": false
+          },
+          {
+            "type": "keyup",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": false
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "keydown",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": false
+          },
+          {
+            "type": "keyup",
+            "key": "Enter",
+            "buttons": null,
+            "ctrl": true,
+            "trusted": false
+          },
+          {
+            "type": "keydown",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": false
+          },
+          {
+            "type": "keyup",
+            "key": "ArrowRight",
+            "buttons": null,
+            "ctrl": false,
+            "trusted": false
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      }
+    },
+    {
+      "advanced": false,
+      "trusted": false,
+      "modal": true,
+      "kind": "mouse",
+      "tool": "browser_click",
+      "ok": true,
+      "verified": {
+        "domChanged": false,
+        "urlChanged": false
+      },
+      "before": {
+        "events": [
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": false
+          },
+          {
+            "type": "mouseup",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": false
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      },
+      "after": {
+        "events": [
+          {
+            "type": "mousedown",
+            "key": null,
+            "buttons": 1,
+            "ctrl": false,
+            "trusted": false
+          },
+          {
+            "type": "mouseup",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": false
+          },
+          {
+            "type": "mousemove",
+            "key": null,
+            "buttons": 0,
+            "ctrl": false,
+            "trusted": false
+          }
+        ],
+        "keys": [],
+        "dragging": false,
+        "changed": 0,
+        "triggered": true
+      }
+    }
+  ]
+}

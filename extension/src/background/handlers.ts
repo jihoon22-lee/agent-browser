@@ -1,3 +1,4 @@
+import type { InputRecovery } from './input-recovery';
 import { advancedMethod, type AdvancedBrowser } from './advanced-browser';
 import { watchesLateNavigation } from './late-navigation';
 import { ProtocolError, type Req, type RpcError } from '../protocol/envelope';
@@ -31,11 +32,11 @@ type Running = {
     sourceTopDocument?: string;
 };
 /** Trusted input, when the user enabled it: decides per tab whether clicks and keys go through the debugger. */
-export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string> };
+export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot(tabId: number): Promise<string>; stopping?(tabId:number):boolean };
 /** The file of that name the person attached to the panel request now running, if any. */
 export type AttachmentLookup = (name: string, panelRequestId: string | undefined) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
 const origin = (url: string | undefined) => { try { const value = url ? new URL(url).origin : "null"; return value === "null" ? undefined : value; } catch { return undefined; } };
-export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup, advanced?:AdvancedBrowser, download?:{handle(p:Record<string,unknown>,signal:AbortSignal):Promise<unknown>}) {
+export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup, advanced?:AdvancedBrowser, download?:{handle(p:Record<string,unknown>,signal:AbortSignal):Promise<unknown>},recovery?:InputRecovery) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
     const writes=new Map<number,Promise<unknown>>();
     /** A link click may still be committing the next document; read the page it produced. Wait for
@@ -119,7 +120,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 throw new ProtocolError(e.code, e.message, e.retry, e.details);
             throw new ProtocolError('INTERNAL', 'Invalid content response.');
         }
-        if(response?.result?.verified?.dialogPending){tabs?.dispose();return response.result;}
+        if(response?.result?.verified?.dialogPending||response?.result?.verified?.incomplete||response?.result?.verified?.inputRecoveryRequired){tabs?.dispose();return response.result;}
         if (tabs) {
             // Only Chrome lifecycle metadata may claim a new tab; content replies
             // cannot nominate arbitrary user tabs as an action's descendants.
@@ -208,6 +209,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         if (!goto) requireWeb(tab.url);
         await check(req, signal);
         const tabId = tab.id!;
+        if(WRITE.has(req.method)&&req.method!=='browser.dialog'){if(goto)await recovery?.assertWritable(tabId,true);else await recovery?.assertWritable(tabId);if(trusted?.stopping?.(tabId))throw new ProtocolError('BROWSER_BUSY','The previous debugger session is still stopping. Inspect the page manually.');}
         if(WRITE.has(req.method)&&req.method!=='browser.dialog'&&advanced?.busy(tabId))throw new ProtocolError('BROWSER_BUSY','The previous input is still settling. Observe before another action.','safe');
         if(advanced?.pending(tabId)&&req.method!=='browser.dialog')throw new ProtocolError('BROWSER_BUSY','A browser dialog is open. Use browser_dialog or respond in Chrome first.');
         const advancedCapture=advanced?.enabled()&&req.method==='browser.screenshot'&&await trusted?.ensure(tabId).catch(()=>false);

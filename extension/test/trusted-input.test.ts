@@ -118,7 +118,7 @@ describe("review fixes", () => {
     await t.ensure(1, on([1]));
     let release!: () => void, inputs = 0, active = true;
     d.api.send = async () => { inputs++; if (inputs === 1) await new Promise<void>(resolve => { release = resolve; }); return {} as any; };
-    const pending = t.key(1, 'Enter', [], () => active), released = expect(pending).resolves.toEqual({});
+    const pending = t.key(1, 'Enter', [], () => active), released = expect(pending).resolves.toMatchObject({incomplete:true,keysReleased:true});
     await vi.waitFor(()=>expect(typeof release).toBe("function"));
     active = false; release(); await released;
     expect(inputs).toBe(2); // original keyDown, then cleanup keyUp; no second keyDown

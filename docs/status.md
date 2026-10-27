@@ -2,6 +2,30 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.3.1 입력 해제·후속 입력 보호 — 검증 진행 중 (2026-10-28)
+
+- 사용자에게 패치·v0.3.1 배포·정리까지 승인받았다. [실행 계획](plans/dialog-input-release.md). 최초 v0.3.0 검증의 키·마우스 4건 실패와 정상 대조군 4건은 아래 기록과 JSON에 보존한다.
+- 대화상자·취소·응답 유실 때 이미 누른 키의 허용된 해제만 역순으로 보낸다. 다음 keydown·클릭·드래그는 재실행하지 않으며, 해제 응답을 잃으면 같은 up을 다시 보내지 않는다. 입력 전송 직전에도 문서·연결·작업·설정·취소·대화상자 변화를 재확인한다.
+- 마우스나 Space 해제는 클릭·드롭을 추가할 수 있어 중단 후 보내지 않는다. 불확실한 원래 문서의 자동 입력·이동·닫기를 차단하고 직접 확인·저장 후 수동 새로고침을 안내한다. 누르기 전에 session storage에 기록해 워커 재시작·새 작업·설정 변경·같은 문서 이동으로 차단을 우회하지 않는다. 대화상자 응답·읽기·중단은 유지한다. BFCache 문서 ID 복원 차단은 단위 검사다.
+- 키·fill·click·pointer의 incomplete/recovery 정보와 패널 안내를 보강했다. 마지막 해제까지 완료된 동작의 대화상자는 불완전으로 오인하지 않으며 기존 이동 관찰을 유지한다. 대화상자를 이미 응답한 뒤 복구 상태 조회에 실패하면 응답 성공과 상태 미확인을 구분한다.
+- 선행 실패: 최초 키 해제 단위 3건, 쓰기 차단 검사, 탭 종료/늦은 정리 경합을 재현했다. 최초 Chrome 회귀는 14 통과/마우스 결과의 recovery 전달 누락 2 실패였고 수정했다. 독립 검토에서 Space 취소, 최종 문서 조회 중 취소/대화상자, detach 거부 후 영구 차단, 마지막 해제의 완료 오인 등을 추가 실패 검사로 재현·수정했다. 두 검토자가 최종 정적 재검토에서 추가 배포 차단 결함을 찾지 못했다(별도 테스트 실행은 아님).
+- D14 최초 Chrome 실행은 23 통과/폐기 탭 1 실패였다. Chrome의 discard가 탭 ID를 바꾸는데 옛 ID의 작업을 재사용한 fixture 문제로 확인했다. 이를 D17의 옛 ID 거부/다른 탭 비변경 검사로 분리했고 새 탭·crash·discard 집중 3개가 통과했다. 제품의 탭 연결 정책·timeout·재시도는 바꾸지 않았다.
+- Windows D17은 headless와 headed 모두 `tabs.discard` 뒤 시험 브라우저 연결이 종료됐다. 기존 v0.3.0 ZIP으로 작업 연결·제품 입력 없이 raw `tabs.discard`만 실행해도 같은 종료를 재현했다. 정확한 Chrome/Playwright 원인은 미확정이며 이 검사는 Windows에서 명시적으로 제외하고 Linux에서 유지한다. 거짓 통과·오류 코드 완화·자동 재시도로 처리하지 않았다. 새 탭/crash 이동과 패치 관련 입력 복구 23개는 Windows에서 통과했다.
+- 로컬 전체 확장 **64파일/736개**, Linux Rust **227개+Windows helper 1개 ignored**, Node 보조 **41개**, Python 패키징 **3개**, E2E 타입·production build·clippy(기존 경고 유지)·문서 링크 검사 통과.
+- Linux Chrome **156.0.8078.4 headless** 전체 **231 통과/5 제외**. 실제 Windows Node **24.18.1**, Chrome **155.0.8059.86 headless**, WSL cargo xwin MSVC **0.3.1** 후보 ZIP 전체 **230 통과/위 D17 1 실패/5 제외**. D17을 Windows 제외로 명시한 뒤 Linux 집중 D17도 통과했다. 최종 전체 원격 CI는 진행 중이다.
+- 실제 Windows 후보 ZIP: 관리 경로 GUI 설치·시작·재설치·제거와 부모/설치 폴더 ACL·데이터 보존, PowerShell 5.1 설치 **15개+프로세스 검사**, package allowlist·manifest·재현성·문서 링크·네이티브 `-File` 설치/재설치/제거 통과. 검증된 게시 v0.3.0 ZIP→후보 업데이트·시작·재설치·설치 ID/프로세스 재사용·합성 데이터 보존·제거도 통과했다.
+- 화면: Windows 설치/고급 설정의 맑은 고딕 10/12.5/15/20pt 검사, 15pt 설치/고급 및 20pt 설치 경로 이미지를 직접 확인했다. 복구 안내는 고급 on/off 각각 Windows 400 CSS px 패널 이미지를 직접 확인했다. 실제 모니터 DPI를 전환한 검사는 아니다.
+- 원격 PR/main CI·최종 main 패키지·게시본 검증은 진행 중이며 통과로 기록하지 않는다. 실제 모델 호출·사용자 설치 변경·전역 OpenCode 설정 변경 없음.
+
+## v0.3.0 대화상자 중 입력 해제 누락 최초 검토 — 유효 (패치 전 기록) (2026-10-28)
+
+- [PR #39 리뷰](https://github.com/jihoon22-lee/agent-browser/pull/39#discussion_r4391254649)의 **P2** 지적을 확인했다. 원격 main `f734d71`까지 fetch했으며 v0.3.0과 해당 제품 코드 차이가 없다. 이번 작업은 타당성·심각도 검증이며 제품 수정·push·재배포는 하지 않았다.
+- 원인: `trusted-input.ts:138`의 dialogEpoch 변경 시 정상 return이 keyUp/mouseReleased와 catch의 heldInputs 정리를 모두 건너뛴다. finally는 입력 관찰 시간만 갱신한다. 일반 요청 취소에서 detach하는 경로와 별개다. `content/actions.ts:379`는 키 응답의 incomplete도 최종 결과에 전달하지 않는다.
+- 실제 **Windows Chrome 155.0.8059.86 / Node 24.18.1**, 검증된 **v0.3.0 ZIP의 확장·MSVC exe**와 격리 프로필로 재현했다. Ctrl+Enter keydown 또는 mousedown에서 alert를 열면 **고급 기능 on/off 각각 키·마우스 4개 해제 검사 모두 실패**했다. 다음 ArrowRight 뒤에도 페이지의 Control/Enter 누름 기록이 남았고, 다음 hover는 mouseup을 기다리던 합성 페이지의 드래그 이동 카운터를 1회 늘렸다. Linux Chrome 156.0.8078.4에서도 같은 4건을 재현했다.
+- 대조군: 신뢰 입력 on + 대화상자 없음(키/마우스), 신뢰 입력 off + 대화상자 있음(키/마우스) **4개 통과**. DOM 대조군의 대화상자는 테스트 실행자가 직접 닫았다. 고급 기능만 끄면 우회되지 않으며, 신뢰 입력 off 또는 해당 동작의 수동 수행이 임시 대응이다.
+- [합성 이벤트 근거](reference/dialog-release-review-2026-10-28.json)에 환경·조건·down/up 기록과 후속 입력을 남겼다. OS 전역 Ctrl 고착·실제 업무 데이터 손상은 확인하지 않았다. 후속 ArrowRight 이벤트의 ctrlKey는 false였다. 실제 사용자 설치 상태는 검사하지 않았고 배포 ZIP을 격리 실행했다.
+- 판정: **P2(중간), 다음 패치에서 우선 수정할 입력 신뢰성 결함**. 페이지별 누름/드래그 상태가 잘못 남아 이후 행동에 영향을 준다. 앞선 출시 검증은 이 down→dialog→release 조합을 놓쳤다. 수정 시 키 해제·잔여 상태 정리, 마우스 해제가 의도치 않은 click/drop을 추가하지 않는 정책, 불완전 결과 전달을 함께 검증해야 한다.
+
 ## v0.3.0 Windows preview — 게시 완료 (2026-10-28)
 
 [v0.3.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.3.0)(prerelease)을 **2026-10-27 16:55:42 UTC / 2026-10-28 01:55:42 KST**에 게시했다. 주석 태그는 [PR #39](https://github.com/jihoon22-lee/agent-browser/pull/39)의 main 병합 커밋 **`df3a8497a4028e91397c53261301313f7c7c90ff`**를 가리킨다.

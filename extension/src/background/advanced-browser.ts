@@ -17,7 +17,7 @@ export function validateCapture(c:CaptureGeometry,now:Pick<CaptureGeometry,'oper
 export const advancedMethod=(method:string,p:Record<string,unknown>,enabled:boolean)=>['browser.pointer','browser.dialog','browser.downloads'].includes(method)||(method==='browser.screenshot'&&(enabled||(p.scope!==undefined&&p.scope!=='viewport')||p.region!==undefined));
 type Dialog={dialogId:string;type:string;message:string;requestId?:string;operationId:string;generation:number;tabId:number;owned:boolean;state:"open"|"responding"|"uncertain"};
 type StoredCapture={geometry:CaptureGeometry;bitmap:ImageBitmap};
-export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedInput,enabled:()=>boolean,ensure:(tabId:number)=>Promise<boolean>,vision:(requestId:unknown,args:Record<string,unknown>)=>Promise<boolean>,current:()=>{id?:string;generation?:number;tabs?:number[]}|null=()=>null) {
+export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedInput,enabled:()=>boolean,ensure:(tabId:number)=>Promise<boolean>,vision:(requestId:unknown,args:Record<string,unknown>)=>Promise<boolean>,current:()=>{id?:string;generation?:number;tabs?:number[]}|null=()=>null,inputStatus?:(tabId:number)=>Promise<{required:boolean;pending?:boolean}>) {
  const works=new Map<string,{tabId:number;method:string;promise:Promise<any>}>();
  const captures=new Map<string,StoredCapture>(),pending=new Map<number,Dialog>(),observers=new Map<number,{req:Req;notify:(dialog:Dialog)=>void}>();
  const forget=()=>{for(const c of captures.values())c.bitmap.close();captures.clear();};
@@ -121,8 +121,8 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
        validateCapture(c,await geometry(req));if(signal.aborted)return false;
        started();return true;
      };
-     const delivered=action==='drag'?await trusted.drag(tabId,from,to!,checked):action==='wheel'?await trusted.wheel(tabId,from,Number(p.deltaX??0),Number(p.deltaY??0),checked):await trusted.click(tabId,from.x,from.y,action as any,checked);
-     return {executed:true,verified:{trusted:true,mode:action,...('incomplete' in delivered&&delivered.incomplete?{gestureIncomplete:true}:{})},nextStep:'Take a new screenshot or snapshot to check the result. The previous capture cannot be reused.'};
+     const delivered=action==='drag'?await trusted.drag(tabId,from,to!,checked,c.documentId):action==='wheel'?await trusted.wheel(tabId,from,Number(p.deltaX??0),Number(p.deltaY??0),checked,c.documentId):await trusted.click(tabId,from.x,from.y,action as any,checked,c.documentId);
+     return {executed:true,verified:{trusted:true,mode:action,...('incomplete' in delivered&&delivered.incomplete?{incomplete:true,gestureIncomplete:true}:{}),...('inputRecoveryRequired' in delivered&&delivered.inputRecoveryRequired?{inputRecoveryRequired:true}:{})},nextStep:'Take a new screenshot or snapshot to check the result. The previous capture cannot be reused.'};
    } finally {capture.bitmap.close();const top=(await api.listFrames(tabId).catch(()=>[])).find(f=>f.documentId===capture.geometry.documentId);if(top)void api.sendToFrame(tabId,top,{kind:'visual-target',action:'drop',key:req.id}).catch(()=>{});}
  }
  async function dialog(req:Req,signal:AbortSignal,started:()=>void) {
@@ -141,7 +141,8 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
      finally{clearTimeout(timer!);}
      const inputs=[...works.values()].filter(w=>w.tabId===tabId&&w.method!=='browser.dialog').map(w=>w.promise);
      if(inputs.length){let timer:ReturnType<typeof setTimeout>;try{await Promise.race([Promise.allSettled(inputs),new Promise(r=>{timer=setTimeout(r,1500);})]);}finally{clearTimeout(timer!);}}
-     return {ok:true,result:{executed:true,verified:{dialogAnswered:true},nextStep:'Observe the original action outcome; do not repeat its click.'}};
+     let statusUnknown=false;const recovery=await inputStatus?.(tabId).catch(()=>{statusUnknown=true;return undefined;});
+     return {ok:true,result:{executed:true,verified:{dialogAnswered:true,...(statusUnknown?{inputRecoveryUnknown:true}:{}),...(recovery?.required?{inputRecoveryRequired:true,gestureIncomplete:true}:{}),...(recovery?.pending?{inputCleanupPending:true}:{})},nextStep:'Observe the original action outcome; do not repeat its click.'}};
    };
    return (await race(req,respond,true)).result;
  }

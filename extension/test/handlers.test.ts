@@ -871,3 +871,16 @@ it('discards a trusted capture of an inactive tab that reloaded the same address
     await firstRef(h);
     await expect(h(request('browser.screenshot'))).rejects.toMatchObject({ code: 'NEEDS_TAB_ACTIVATION' });
 });
+
+it.each(['browser.click','browser.press','browser.fill','browser.select','browser.scroll','browser.upload','browser.navigate','browser.tabs.close','browser.pointer'])('blocks recovery-required %s before trusted or DOM dispatch',async method=>{
+ const w=world(),guard={assertWritable:vi.fn(async()=>{throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','Manual recovery required','never',{inputRecoveryRequired:true});})};
+ const h=createHandlers(w.api,memorySessionStore(),undefined,undefined,undefined,undefined,guard as any);
+ const ref=await firstRef(h);w.sent.length=0;
+ await expect(h(request(method,{ref,url:'https://example.test/new'}))).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+ expect(w.sent).toHaveLength(0);expect(guard.assertWritable).toHaveBeenCalledWith(...(method==='browser.navigate'?[1,true]:[1]));
+});
+
+it('a still-pending debugger detach cannot fall through to DOM input',async()=>{
+ const w=world(),h=createHandlers(w.api,memorySessionStore(),{ensure:async()=>false,screenshot:async()=>'',stopping:()=>true});const ref=await firstRef(h);w.sent.length=0;
+ await expect(h(request('browser.click',{ref}))).rejects.toMatchObject({code:'BROWSER_BUSY'});expect(w.sent).toHaveLength(0);
+});

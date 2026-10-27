@@ -251,3 +251,11 @@ browser_pointer는 captureId와 이미지 픽셀 x/y, mode, 드래그 끝점 또
 browser_dialog list/respond는 operation과 dialogId에 묶인다. 입력이 모달에 막히면 dialogPending과 입력 전송 여부를 반환하고 실제 원래 응답을 계속 추적한다. 응답 도구는 원래 입력의 큐 밖에서 대화를 닫아 교착을 피한다. 응답 유실은 uncertain 상태로 보존하며 같은 ID를 재사용하지 않는다.
 
 browser_downloads list는 후보를 반환하고 status/wait는 패널에서 사용자가 연결한 downloadId만 받는다. optional downloads와 Chrome 125/gate를 검사한다. pending/complete/interrupted 및 userDecisionRequired를 구분하고 wait 취소가 다운로드 자체를 취소하지 않는다. 파일 경로·내용을 반환하지 않는다.
+
+## 0.3.1 interrupted input recovery
+
+Trusted input persists a lease before a potentially held key/button down. Acknowledged ups retire their matching holds; an up with a lost reply is never replayed. Dialog interruption drains only safe outstanding key releases under the same attachment, operation and source/top document. Cleanup has a total one-second command budget; unsettled detach fences reuse. Space release and recovery mouseup are withheld because they can activate controls or commit a drop.
+
+`verified.incomplete`, `keysReleased` and `inputRecoveryRequired` survive content action replies. Dialog replies also expose recovery or pending cleanup state. Interrupted held input quarantines the original top document; all automated writes (including DOM fallback, navigation and close) are blocked before dispatch. Owned `browser_dialog`, read-only tools and Stop remain available. Storage session leases survive worker recreation; a pending orphan fails closed. Settings, operation IDs, same-document history and restored BFCache documents do not clear quarantine. A fresh document permits input; tab closure prunes records. The panel directs the person to inspect/save and reload manually. This is not proof that arbitrary page JavaScript reset its drag/key state.
+
+API reference: [Chrome Input protocol](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Input.pdl). Native `cancelDragging`/detach is not used as evidence that custom page state recovered; the synthetic Chrome regression measures this boundary.
