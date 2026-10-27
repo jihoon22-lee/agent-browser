@@ -25,6 +25,8 @@ pub struct Operation {
     pub handed_back: bool,
     #[serde(skip)]
     pub target_epoch: u64,
+    #[serde(skip)]
+    pub input_connection: Option<String>,
 }
 
 #[derive(Debug)]
@@ -66,6 +68,13 @@ pub struct BoundRequest { pub id: String, pub client: String, pub tab: Option<i6
 struct RequestTarget { id: String, client: String, tab: Option<i64>, scope: Option<RequestScope> }
 
 impl OperationGate {
+    pub fn pin_input_connection(&self,id:&str,connection:&str) {
+        let mut g=self.inner.lock().unwrap();if let Some(op)=g.current.as_mut().filter(|op|op.id==id) { if op.input_connection.is_none(){op.input_connection=Some(connection.into());} }
+    }
+    pub fn input_connection_matches(&self,id:&str,connection:Option<&str>)->bool {
+        let g=self.inner.lock().unwrap();g.current.as_ref().is_some_and(|op|op.id==id&&connection.is_some()&&op.input_connection.as_deref()==connection)
+    }
+
     pub fn attach(&self, tab_id: i64, client_id: &str) -> Result<Operation, RpcError> {
         self.attach_request(tab_id, client_id, None)
     }
@@ -180,7 +189,7 @@ impl OperationGate {
             client_id: client_id.to_string(),
             state: OpState::Active,
             current_tab_closed: tab_id.is_none(),
-            needs_observation:false,paused:false,handed_back:false,target_epoch:0,
+            needs_observation:false,paused:false,handed_back:false,target_epoch:0,input_connection:None,
         };
         g.current = Some(op.clone());
         Ok(op)
@@ -752,5 +761,20 @@ mod issue8_tests {
         let op=g.attach_request(7,"browser",Some("req")).unwrap();g.end_request("req","browser").unwrap();
         assert_eq!(g.check(&op.id).unwrap_err().code,ErrorCode::OperationInvalid);
         assert!(g.attach(9,"browser").is_ok());
+    }
+}
+
+#[cfg(test)]
+mod input_owner_tests {
+    use super::*;
+    #[test]
+    fn an_operation_cannot_transfer_its_input_connection() {
+        let gate=OperationGate::default();let op=gate.attach(1,"browser").unwrap();
+        gate.pin_input_connection(&op.id,"mcp-a");
+        assert!(gate.input_connection_matches(&op.id,Some("mcp-a")));
+        assert!(!gate.input_connection_matches(&op.id,Some("mcp-b")));
+        gate.pin_input_connection(&op.id,"mcp-b");
+        assert!(!gate.input_connection_matches(&op.id,Some("mcp-b")));
+        assert!(!gate.input_connection_matches(&op.id,None));
     }
 }

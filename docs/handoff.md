@@ -748,3 +748,7 @@ docs/status.md에 다음을 유지한다.
 [R17] MCP stdio: https://modelcontextprotocol.io/specification/2025-06-18/basic/transports
 
 구현·검토·배포 시점별 실행 기록은 [docs/status.md](./status.md)에 유지한다. 요구사항과 과거 검토 상태를 중복 관리하지 않는다.
+
+## 2026-10-28 추가 합의: 브라우저 제어 확장
+
+기존 기능/입력창 UI는 Chrome 116 이상, 고급 기능 5개(텍스트·프레임 신뢰 입력, 좌표 조작, 대화상자 응답, 전체·영역 캡처, 다운로드 확인)는 Chrome 125 이상 + 명시 설정으로 제공한다. 좌표 조작은 현재 요청의 실제 모델 이미지 입력/도구 호출 capability를 확인하며 자동 보조 모델 호출은 없다. 사용자가 구현·버전 태그·GitHub Release와 작업 정리를 승인했다. 세부 결과와 미검증은 status에 기록한다.

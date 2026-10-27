@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import type { ConnStatus } from "../background/bridge-connection";
 import { initialPanelState, reduceStatus } from "./status-store";
 import "./style.css";
+import { BrowserExtras } from "./BrowserExtras";
 import { Workbench, type WorkspaceView } from "./Workbench";
 
 function errorText(error: unknown): string {
@@ -155,6 +156,7 @@ export function App() {
         {localOperation ? <ul className="tabs">{tabs.map((tab) => <li key={tab.id}><strong>{tab.id === op.currentTab ? "현재 · " : ""}{tab.title}</strong>{tab.url && <span className="url">{tab.url}</span>}</li>)}</ul> : <p>다른 브라우저의 작업 탭 · {op.currentTab}</p>}
       </> : <p className="muted">{connected ? "진행 중인 작업이 없습니다." : "브리지 연결 후 작업 상태를 확인할 수 있습니다."}</p>}
     </section>
+    {localOperation&&op&&<BrowserExtras operationId={op.id} visible={view==="browser"} />}
     <section aria-label="최근 작업 기록"><h2>최근 작업 기록</h2>
       {state.timeline.length ? <ol className="timeline">{[...state.timeline].reverse().map((entry, index) => <li key={`${entry.atMs}-${index}`}><div><time>{new Date(entry.atMs).toLocaleTimeString("ko-KR")}</time><span className={entry.outcome === "ok" ? "outcome" : "outcome failed"}>{entry.outcome}</span></div><strong>{entry.tool}</strong>{entry.summary && <p>{entry.summary}</p>}</li>)}</ol> : <p className="muted">아직 기록이 없습니다.</p>}
     </section>

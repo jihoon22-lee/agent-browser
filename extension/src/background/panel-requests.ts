@@ -1,3 +1,5 @@
+import { visionEvidence } from './vision-evidence';
+import { advancedAvailable } from '../agents/opencode-v1/capabilities';
 import { OpenCodeApiError, OpenCodeV1Client } from '../agents/opencode-v1/client';
 import { completedRequest, requestInstructions, type RequestLease, type RequestTarget } from '../sidepanel/request-target';
 import { uploads } from './uploads';
@@ -80,6 +82,22 @@ export function panelRequests(call:Call) {
   }
   let polling=false;
   return {
+    vision:async(requestId:unknown,args:Record<string,unknown>)=>{
+      if(typeof requestId!=='string')return false;
+      try{
+        const saved=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
+        if(!saved||saved.requestId!==requestId||saved.vision?.image!=='supported'||!saved.vision.toolcall)return false;
+        const generation=state(saved.profileId).generation;check(saved.profileId,generation);
+        const api=await client(saved);if(!api)return false;
+        const get=<T>(path:string)=>api.request<T>('GET',path,{timeoutMs:2000});
+        const before=await get<Record<string,{type?:string}>>('/session/status');
+        const [messages,catalogue]=await Promise.all([get<any[]>(`/session/${encodeURIComponent(saved.sessionId)}/message`),get<any>('/provider')]);
+        const after=await get<Record<string,{type?:string}>>('/session/status');
+        check(saved.profileId,generation);
+        const current=(await chrome.storage.local.get(KEY))[KEY] as RequestLease|undefined;
+        return JSON.stringify(current)===JSON.stringify(saved)&&visionEvidence(saved,args,messages,catalogue,before)&&visionEvidence(saved,args,messages,catalogue,after);
+      }catch{return false;}
+    },
     manageProfile:async<T>(profileId:string,work:()=>Promise<T>)=>{
       const current=state(profileId);current.generation++;current.active++;probes.delete(profileId);
       try{return await work();}finally{current.generation++;current.active--;probes.delete(profileId);}
@@ -123,7 +141,8 @@ export function panelRequests(call:Call) {
       }
       const attached=uploads.register(lease.requestId,files);
       const leftOut=Array.isArray(skippedFiles)?skippedFiles.filter((name):name is string=>typeof name==='string').slice(0,20):[];
-      return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target,attached.accepted,[...leftOut,...attached.skipped])};
+      const features=await chrome.storage.local.get(['advancedBrowser','trustedInput']);
+      return {requestId:lease.requestId,system:requestInstructions(lease.requestId,target,attached.accepted,[...leftOut,...attached.skipped])+` Advanced browser features: ${advancedAvailable()&&features.advancedBrowser===true?"enabled":"disabled"}; debugger input: ${features.trustedInput===true?"enabled":"disabled"}. Image input for this request: ${lease.vision?.image??"unknown"}. Visual coordinate actions require image input and tool calling; do not guess coordinates without reading a screenshot. browser_dialog handles pending page dialogs. browser_downloads lists candidates; unbound downloads must be selected by the user in the panel.`};
     });},
     finish:(scope:Pick<RequestLease,'profileId'|'directory'|'sessionId'>)=>observeCompletion(scope),
     /** A saved request whose session waits for the user's answer; only a hint, so it never throws. */

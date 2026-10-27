@@ -210,7 +210,7 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
             state.broadcast_status();
         }
         Role::Mcp => {
-            let caller = router::Caller { runtime_id: hello.runtime_id.clone(), cwd: hello.cwd.clone() };
+            let caller = router::Caller { runtime_id: hello.runtime_id.clone(), cwd: hello.cwd.clone(), connection_id: Some(connection_id.clone()) };
             if send_hello_ok(&mut ws, hello_id, &connection_id, false, &hello.client_id).await {
                 serve_mcp(&mut ws, &state, &caller).await;
             }

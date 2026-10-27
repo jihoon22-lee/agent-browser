@@ -1,3 +1,5 @@
+import { visualTarget } from './visual-target';
+import { resolveRef } from "./refs";
 import { resetRegistry } from "./refs";
 import { takeSnapshot } from "./snapshot";
 import { runAction } from "./actions";
@@ -17,6 +19,18 @@ if (!window.__agentBrowserContent) {
     if (msg?.kind === "input-state") {
       sendResponse(inputState());
       return;
+    }
+    if(msg?.kind==='visual-target'){
+      try{sendResponse(visualTarget(msg.action,msg.key,msg.points));}catch{sendResponse({ok:false});}return;
+    }
+    if (msg?.kind === "trusted-verify") {
+      try {const el=resolveRef(msg.ref,false,'dispatch');let focused:Element|null=document.activeElement;while(focused?.shadowRoot?.activeElement)focused=focused.shadowRoot.activeElement;
+        let hit:Element|null=msg.point?document.elementFromPoint(msg.point.x,msg.point.y):null;
+        while(hit?.shadowRoot){const next=hit.shadowRoot.elementFromPoint(msg.point.x,msg.point.y);if(!next||next===hit)break;hit=next;}
+        let within=false;for(let n:Element|null=hit;n;n=n.parentElement??(n.getRootNode() as ShadowRoot).host??null)if(n===el){within=true;break;}
+        const label=hit?.closest('label');if(label&&'labels' in el&&[...((el as HTMLInputElement).labels??[])].includes(label))within=true;
+        sendResponse({ok:(!msg.focus || el===focused || el.contains(focused))&&(!msg.point||within)});
+      }catch{sendResponse({ok:false});}return;
     }
     if (msg?.kind === "cancel") {
       cancelCommands(msg);

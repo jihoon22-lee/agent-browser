@@ -187,12 +187,13 @@ export class World {
       await this.startBridge();
       this.bridge.token = JSON.parse(await readFile(join(this.bridge.home, "config.json"), "utf8")).token;
       this.relay = await new ExtensionRelay(this.bridge.port).start();
-      if (process.env.AB_TEST_BOOKMARKS === '1') {
+      if (process.env.AB_TEST_BOOKMARKS === '1' || process.env.AB_TEST_DOWNLOADS === '1') {
         const fixtureExtension=join(this.dir,'fixture-extension');
         await cp(this.config.extensionDir,fixtureExtension,{recursive:true});
         const manifest=JSON.parse(await readFile(join(fixtureExtension,'manifest.json'),'utf8'));
-        manifest.permissions=[...manifest.permissions,'bookmarks'];
-        manifest.optional_permissions=(manifest.optional_permissions ?? []).filter((p:string)=>p!=='bookmarks');
+        const permissions=[...(process.env.AB_TEST_BOOKMARKS==='1'?['bookmarks']:[]),...(process.env.AB_TEST_DOWNLOADS==='1'?['downloads']:[])];
+        manifest.permissions=[...manifest.permissions,...permissions];
+        manifest.optional_permissions=(manifest.optional_permissions ?? []).filter((p:string)=>!permissions.includes(p));
         await writeFile(join(fixtureExtension,'manifest.json'),JSON.stringify(manifest));
         this.config.extensionDir=fixtureExtension;
       }
