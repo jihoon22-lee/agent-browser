@@ -228,6 +228,7 @@ PR #30 리뷰 지적([discussion](https://github.com/jihoon22-lee/agent-browser/
 - 지원하지 않는 대상: Chrome 내부 페이지·OS 대화상자 및 닫힌 Shadow DOM/canvas의 구조화된 DOM 읽기. 고급 기능의 화면 좌표 조작과 전체·영역 캡처는 위 지원 조건을 따른다.
 - 고치지 않고 남긴 작은 결함(계획 6 판단): 늦은 이동 감시 중 Bridge 연결이 끊긴 클릭의 결과 재조회, 고급 기능 off 경로의 신뢰 클릭 좌표 왕복 뒤 재확인, 긴 같은 이름 첨부의 지시문 표시, 탐색 재표시의 드문 경합.
 - Clippy의 기존 스타일/복잡도 경고가 남아 있다.
+- 배포 후 GitHub가 표시한 Dependabot 5건을 조회했다: undici 8.11.2의 high 1/medium 2, @vitest/mocker 4.1.11의 medium 2. `pnpm why -r`에서 jsdom/Vitest의 개발 테스트 의존성으로 확인했고 배포 고지 inventory와 확장 산출물에는 포함되지 않는다. 테스트 도구 업데이트는 미처리이며 제품 릴리스에 포함된 런타임 수정으로 보고하지 않는다.
 
 ## 참고 사항
 
