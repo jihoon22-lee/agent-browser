@@ -10,7 +10,12 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 - 키·fill·click·pointer의 incomplete/recovery 정보와 패널 안내를 보강했다. 마지막 해제까지 완료된 동작의 대화상자는 불완전으로 오인하지 않으며 기존 이동 관찰을 유지한다. 대화상자를 이미 응답한 뒤 복구 상태 조회에 실패하면 응답 성공과 상태 미확인을 구분한다.
 - 선행 실패: 최초 키 해제 단위 3건, 쓰기 차단 검사, 탭 종료/늦은 정리 경합을 재현했다. 최초 Chrome 회귀는 14 통과/마우스 결과의 recovery 전달 누락 2 실패였고 수정했다. 독립 검토에서 Space 취소, 최종 문서 조회 중 취소/대화상자, detach 거부 후 영구 차단, 마지막 해제의 완료 오인 등을 추가 실패 검사로 재현·수정했다. 두 검토자가 최종 정적 재검토에서 추가 배포 차단 결함을 찾지 못했다(별도 테스트 실행은 아님).
 - D14 최초 Chrome 실행은 23 통과/폐기 탭 1 실패였다. Chrome의 discard가 탭 ID를 바꾸는데 옛 ID의 작업을 재사용한 fixture 문제로 확인했다. 이를 D17의 옛 ID 거부/다른 탭 비변경 검사로 분리했고 새 탭·crash·discard 집중 3개가 통과했다. 제품의 탭 연결 정책·timeout·재시도는 바꾸지 않았다.
-- 로컬 전체 확장 **64파일/736개**, Node 보조 **41개**, Python 패키징 **3개**, E2E 타입·production build·문서 링크 검사 통과. 실제 Windows/전체 E2E·최종 패키지·원격 CI·게시 확인은 진행 중이며 통과로 기록하지 않는다.
+- Windows D17은 headless와 headed 모두 `tabs.discard` 뒤 시험 브라우저 연결이 종료됐다. 기존 v0.3.0 ZIP으로 작업 연결·제품 입력 없이 raw `tabs.discard`만 실행해도 같은 종료를 재현했다. 정확한 Chrome/Playwright 원인은 미확정이며 이 검사는 Windows에서 명시적으로 제외하고 Linux에서 유지한다. 거짓 통과·오류 코드 완화·자동 재시도로 처리하지 않았다. 새 탭/crash 이동과 패치 관련 입력 복구 23개는 Windows에서 통과했다.
+- 로컬 전체 확장 **64파일/736개**, Linux Rust **227개+Windows helper 1개 ignored**, Node 보조 **41개**, Python 패키징 **3개**, E2E 타입·production build·clippy(기존 경고 유지)·문서 링크 검사 통과.
+- Linux Chrome **156.0.8078.4 headless** 전체 **231 통과/5 제외**. 실제 Windows Node **24.18.1**, Chrome **155.0.8059.86 headless**, WSL cargo xwin MSVC **0.3.1** 후보 ZIP 전체 **230 통과/위 D17 1 실패/5 제외**. D17을 Windows 제외로 명시한 뒤 Linux 집중 D17도 통과했다. 최종 전체 원격 CI는 진행 중이다.
+- 실제 Windows 후보 ZIP: 관리 경로 GUI 설치·시작·재설치·제거와 부모/설치 폴더 ACL·데이터 보존, PowerShell 5.1 설치 **15개+프로세스 검사**, package allowlist·manifest·재현성·문서 링크·네이티브 `-File` 설치/재설치/제거 통과. 검증된 게시 v0.3.0 ZIP→후보 업데이트·시작·재설치·설치 ID/프로세스 재사용·합성 데이터 보존·제거도 통과했다.
+- 화면: Windows 설치/고급 설정의 맑은 고딕 10/12.5/15/20pt 검사, 15pt 설치/고급 및 20pt 설치 경로 이미지를 직접 확인했다. 복구 안내는 고급 on/off 각각 Windows 400 CSS px 패널 이미지를 직접 확인했다. 실제 모니터 DPI를 전환한 검사는 아니다.
+- 원격 PR/main CI·최종 main 패키지·게시본 검증은 진행 중이며 통과로 기록하지 않는다. 실제 모델 호출·사용자 설치 변경·전역 OpenCode 설정 변경 없음.
 
 ## v0.3.0 대화상자 중 입력 해제 누락 최초 검토 — 유효 (패치 전 기록) (2026-10-28)
 

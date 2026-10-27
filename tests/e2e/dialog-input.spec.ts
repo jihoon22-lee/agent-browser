@@ -116,6 +116,9 @@ test('D16 a final modifier-up dialog keeps an acknowledged key gesture complete'
 });
 
 test('D17 discard replacement rejects the old operation tab without navigating another tab',async()=>{
+ // Native Windows Chrome 155 closes the Playwright context after raw tabs.discard,
+ // including with the unmodified v0.3.0 ZIP and no operation/input (status.md).
+ test.skip(process.platform==='win32','Windows raw-discard transport limitation; Linux verifies old-tab refusal');
  const {page,operationId}=await fixture(false,true,'key','none');const original=await world.tabId(page);
  await world.adminPage.bringToFront();const discarded=await world.adminPage.evaluate(tabId=>chrome.tabs.discard(tabId),original);
  expect(discarded.id).not.toBe(original);
