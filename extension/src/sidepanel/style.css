@@ -221,3 +221,12 @@ summary { cursor: pointer; line-height: 1.5; }
 .session-breadcrumb { flex: none; display: flex; align-items: center; gap: 5px; padding: 0 12px 8px; font-size: 10px; color: var(--muted); }
 .session-breadcrumb > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-breadcrumb button { flex: none; font-size: 11px; }
+
+.composer-settings { min-width:0; font-size:12px; }
+.composer-selectors { display:flex; flex-wrap:wrap; gap:6px; }
+.composer-selectors label { display:flex; flex-direction:column; min-width:0; flex:1 1 90px; gap:3px; }
+.composer-selectors label:first-child { flex:2 1 170px; }
+.composer-selectors select { width:100%; min-width:0; text-overflow:ellipsis; }
+.composer-settings .muted { margin:4px 0; font-size:11px; }
+.model-search { margin:3px 0; }
+.model-search input { width:100%; box-sizing:border-box; }

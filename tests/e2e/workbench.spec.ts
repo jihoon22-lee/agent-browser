@@ -37,11 +37,9 @@ test.afterAll(async () => { await world?.stop(); await api?.close(); });
 
 test("W01 runtime profile, session creation, streamed Markdown and server model filtering", async () => {
   const id = await createSession();
-  await panel.getByRole("button", { name: "실행 설정", exact: true }).click();
   await expect(panel.getByRole("combobox", { name: "모델", exact: true })).toHaveValue("fixture/fixture");
   await expect(panel.getByRole("combobox", { name: "모델", exact: true }).locator("option")).not.toContainText(["노출 금지 모델"]);
   await panel.getByRole("combobox", { name: "모델 variant·추론 옵션", exact: true }).selectOption("deep");
-  await panel.getByRole("button", { name: "대화로 돌아가기", exact: true }).click();
   await send("합성 작업을 수행해줘");
   const request = api.state.requests.findLast(item => item.path === `/session/${id}/prompt_async`)!;
   expect(request.body.variant).toBe("deep"); expect(request.body.model).toEqual({ providerID: "fixture", modelID: "fixture" });

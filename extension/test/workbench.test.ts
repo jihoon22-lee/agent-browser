@@ -828,3 +828,18 @@ it("sends at most the uploadable attachments so a large message cannot fail to s
   expect(prepare.files.map((f: any) => f.name)).toEqual(["1.png", "2.png", "3.png", "4.png", "5.png"]);
   expect(prepare.skippedFiles).toEqual(["6.png"]);
 });
+
+it('keeps model, agent and reasoning selection in the composer without opening execution settings',async()=>{
+  await render();
+  const form=host.querySelector('.composer')!;
+  for(const name of ['모델','에이전트','모델 variant·추론 옵션']) expect([...form.querySelectorAll('label')].some(label=>label.firstChild?.textContent===name&&label.querySelector('select'))).toBe(true);
+  expect(form.textContent).toContain('이미지 지원 정보 없음');
+});
+
+it('freezes the request vision metadata with the submitted model',async()=>{
+ const original=test.get.getMockImplementation()!;
+ test.get.mockImplementation((path:string,q:any)=>path==='/provider'?Promise.resolve({all:[{id:'internal',models:{company:{...model,capabilities:{input:{image:true},toolcall:true}}}}],connected:['internal']}):original(path,q));
+ await render();await draftValue('이미지 작업');await act(async()=>button('보내기').click());
+ const prepare=(chrome.runtime.sendMessage as ReturnType<typeof vi.fn>).mock.calls.map(([m])=>m).find(m=>m.kind==='request-prepare');
+ expect(prepare.lease.vision).toEqual({model:'internal/company',image:'supported',toolcall:true});
+});

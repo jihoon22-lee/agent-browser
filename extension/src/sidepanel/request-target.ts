@@ -1,6 +1,6 @@
 import { isWeb } from '../background/tabs';
 export type RequestTarget = { tabId: number; windowId: number };
-export type RequestLease = { requestId: string; messageId: string; sessionId: string; profileId: string; directory: string };
+export type RequestLease = { requestId: string; messageId: string; sessionId: string; profileId: string; directory: string; vision?: {model:string;image:'supported'|'unsupported'|'unknown';toolcall:boolean} };
 export async function captureRequestTarget(): Promise<RequestTarget | null> {
   try {
     const win=await chrome.windows.getLastFocused({populate:true,windowTypes:['normal','popup']});

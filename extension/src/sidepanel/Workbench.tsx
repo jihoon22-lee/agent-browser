@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { advancedAvailable, imageSupport, requestModelCapability } from "../agents/opencode-v1/capabilities";
 import { selectAttachments } from "../background/uploads";
 import { computeUsage } from "../agents/opencode-v1/usage";
 import type { MessageRecord, ModelInfo } from "../agents/opencode-v1/types";
@@ -43,6 +44,8 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   },[wb.profileId,wb.directory,wb.sessionId]);
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
   const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState("");
+  const [browserFeatures,setBrowserFeatures]=useState({advanced:false,trusted:false});
+  useEffect(()=>{let live=true;const update=()=>void chrome.storage.local.get(['advancedBrowser','trustedInput']).then(s=>{if(live)setBrowserFeatures({advanced:s.advancedBrowser===true,trusted:s.trustedInput===true});}).catch(()=>{});update();chrome.storage.onChanged?.addListener(update);return()=>{live=false;chrome.storage.onChanged?.removeListener(update);};},[]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const { theme, chooseTheme } = useTheme();
   const [drawer, setDrawer] = useState<"environment" | "tools" | "theme" | null>(null);
@@ -61,6 +64,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   const autoSend = useRef<string | undefined>(undefined), creating = useRef(false);
   const [autoTick, setAutoTick] = useState(0);
   const composer = useRef<HTMLTextAreaElement>(null);
+  const modelSelect = useRef<HTMLSelectElement>(null);
   const selectedControls = useRef({ key: "", dirty: false });
   const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef(false);
   const submission=useRef<{key:string;cancelled:boolean;requestId?:string;submitted:boolean}|undefined>(undefined);
@@ -172,7 +176,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     if (ui) {
       if (ui[1] === "new") await perform(async () => { await createSession(); });
       if (ui[1] === "sessions") onViewChange("sessions");
-      if (ui[1] === "models") openDrawer("environment");
+      if (ui[1] === "models") { setDrawer(null); modelSelect.current?.focus(); }
       if (ui[1] === "skills" || ui[1] === "commands") { setPalette(ui[1]); openDrawer("tools"); }
       if (current()) setDraft(""); return;
     }
@@ -212,7 +216,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         // The files attached to this message are the only ones browser_upload may use, and only for this request.
         // Filtered here too: one runtime message must stay well under Chrome's message size limit.
         const uploadable=selectAttachments(attachments.filter(a=>a.type==='file'&&typeof a.url==='string'&&a.url.startsWith('data:')).map(a=>({name:a.filename,mime:a.mime,dataUrl:a.url})));
-        const response=await chrome.runtime.sendMessage({kind:'request-prepare',lease:{...scope,messageId:messageID,requestId},target,files:uploadable.accepted,skippedFiles:uploadable.skipped,
+        const response=await chrome.runtime.sendMessage({kind:'request-prepare',lease:{...scope,messageId:messageID,requestId,vision:requestModelCapability(models,modelKey,command?wb.commands.find(item=>item.name===command[1]):undefined)},target,files:uploadable.accepted,skippedFiles:uploadable.skipped,
           ...(operation&&wb.operationOwner(operation.id)===wb.sessionId?{previousOperationId:operation.id}:{})});
         if(!response?.ok)throw Error(response?.error?.message??'요청의 작업 탭을 고정하지 못했습니다.');
         if(!canSubmit()){await discard();throw Error('요청 전송을 취소했습니다.');}
@@ -325,7 +329,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   };
   const questions = wb.state.questions.filter(request => request.sessionID === wb.sessionId), permissions = wb.state.permissions.filter(request => request.sessionID === wb.sessionId);
   const tokenLine = (value: Data | null) => value ? `입력 ${value.input.toLocaleString()} · 출력 ${value.output.toLocaleString()} · 추론 ${value.reasoning.toLocaleString()} · 캐시 읽기 ${value.cache.read.toLocaleString()} / 쓰기 ${value.cache.write.toLocaleString()}` : "정보 없음";
-  const filteredModels = models.filter(item => `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(modelSearch.toLowerCase())).sort((a, b) => Number(favorites.includes(`${b.providerID}/${b.id}`)) - Number(favorites.includes(`${a.providerID}/${a.id}`)));
+  const filteredModels = models.filter(item => `${item.providerID}/${item.id}`===modelKey || `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(modelSearch.toLowerCase())).sort((a, b) => Number(favorites.includes(`${b.providerID}/${b.id}`)) - Number(favorites.includes(`${a.providerID}/${a.id}`)));
   const environmentPanel = <section className="workspace-bar"><h3>OpenCode 연결</h3>
       <label>실행 환경<select value={wb.profileId} disabled={wb.loading} onChange={event => void wb.connect(event.target.value)}><option value="">환경 선택</option>{wb.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.kind}</option>)}</select></label>
       {!wb.profiles.length && <p className="muted">OpenCode 실행 환경이 없습니다. <button onClick={() => void chrome.runtime.openOptionsPage()}>실행 환경 추가</button></p>}
@@ -338,12 +342,12 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       {wb.hasMoreSessions && <button disabled={wb.sessionsLoading} onClick={() => void perform(wb.loadMoreSessions)}>{wb.sessionsLoading ? "불러오는 중…" : "더 보기"}</button>}
       {currentSession?.parentID && <div className="notice"><strong>현재 하위 세션: {currentSession.title}</strong><button onClick={() => onViewChange("chat")}>대화 열기</button></div>}
     </section>;
-  const modelsPanel = <details className="workspace-section" open><summary>모델·에이전트 · {model?.name ?? "모델 선택"}</summary><input aria-label="모델 검색" placeholder="모델 검색" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /><label>모델<select value={modelKey} onChange={event => { selectedControls.current.dirty = true; setModelKey(event.target.value); setVariant(""); }}><option value="">사용 가능한 모델 선택</option>{filteredModels.map(item => { const key = `${item.providerID}/${item.id}`; return <option key={key} value={key}>{favorites.includes(key) ? "★ " : ""}{item.providerName} · {item.name ?? item.id}</option>; })}</select></label>
-      <button disabled={!modelKey} onClick={() => { const next = favorites.includes(modelKey) ? favorites.filter(key => key !== modelKey) : [...favorites, modelKey]; setFavorites(next); void chrome.storage.local.set({ modelFavorites: next }); }}>{favorites.includes(modelKey) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</button>
+  const modelsPanel = <div className="composer-settings"><div className="composer-selectors"><label>모델<select ref={modelSelect} value={modelKey} onChange={event => { selectedControls.current.dirty = true; setModelKey(event.target.value); setVariant(""); }}><option value="">사용 가능한 모델 선택</option>{filteredModels.map(item => { const key = `${item.providerID}/${item.id}`; return <option key={key} value={key}>{favorites.includes(key) ? "★ " : ""}{item.providerName} · {item.name ?? item.id}</option>; })}</select></label>
+
       <label>에이전트<select value={agent} onChange={event => { selectedControls.current.dirty = true; setAgent(event.target.value); }}><option value="">서버 기본값</option>{wb.agents.filter(item => !item.hidden && ["primary", "all"].includes(item.mode)).map(item => <option key={item.name}>{item.name}</option>)}</select></label>
       {Object.keys(model?.variants ?? {}).length > 0 && <label>모델 variant·추론 옵션<select value={variant} onChange={event => { selectedControls.current.dirty = true; setVariant(event.target.value); }}><option value="">서버 기본값</option>{Object.keys(model?.variants ?? {}).map(name => <option key={name}>{name}</option>)}</select></label>}
-      <p className="muted">변경은 다음 메시지부터 적용됩니다. 현재 진행 중인 호출은 유지됩니다.</p>{!models.length && <p>이 환경에 연결·설정된 모델이 없습니다. 기존 OpenCode의 provider 설정을 확인하세요.</p>}
-    </details>;
+</div><details className="model-search"><summary>모델 검색·즐겨찾기</summary><input aria-label="모델 검색" placeholder="모델 검색" value={modelSearch} onChange={event => setModelSearch(event.target.value)} />      <button type="button" disabled={!modelKey} onClick={() => { const next = favorites.includes(modelKey) ? favorites.filter(key => key !== modelKey) : [...favorites, modelKey]; setFavorites(next); void chrome.storage.local.set({ modelFavorites: next }); }}>{favorites.includes(modelKey) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</button></details><p className="muted">{{supported:"이미지 입력 지원",unsupported:"이미지 입력 미지원",unknown:"이미지 지원 정보 없음"}[imageSupport(model)]} · {imageSupport(model)!=="supported"?"시각 조작: 이미지 모델 필요":!advancedAvailable()?"시각 조작: Chrome 125 이상 필요":!browserFeatures.advanced||!browserFeatures.trusted?"시각 조작: 고급 기능·신뢰 입력 설정 필요":model?.capabilities?.toolcall!==true?"시각 조작: 도구 호출 지원 확인 필요":"시각 조작 사용 가능"} · 다음 메시지부터 적용</p>{!models.length && <p>이 환경에 연결·설정된 모델이 없습니다. 기존 OpenCode의 provider 설정을 확인하세요.</p>}
+    </div>;
   const conversationPanel = <section className="conversation" aria-label="대화" hidden={drawer !== null}><div className="section-heading">{renaming?.place === "header" && currentSession?.id === renaming.id
         ? <RenameField initial={currentSession.title ?? ""} onSubmit={title => { setRenaming(null); void perform(() => renameSession(currentSession, title)); }} onCancel={() => setRenaming(null)} />
         : <h2 title={currentSession?.title}>{currentSession?.title ?? "새 대화"}</h2>}
@@ -368,6 +372,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         <textarea ref={composer} aria-label="메시지" value={draft} onChange={event => setDraft(event.target.value)} onCompositionStart={() => { composeActive.current = true; }} onCompositionEnd={() => { composeActive.current = false; }} onKeyDown={event => { if (event.key === "ArrowDown" && !composeActive.current) { const option = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".suggestions button"); if (option) { event.preventDefault(); option.focus(); return; } } if (!composeActive.current && shouldSubmit(event.nativeEvent)) { event.preventDefault(); void send(); } }} placeholder="어떤 작업을 할까요?  @참조  /커맨드" rows={3} />
         {mention !== undefined && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성"><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>{wb.agents.filter(item => !item.hidden && item.name.includes(mention)).map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
         {draft.startsWith("/") && !draft.includes(" ") && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)].filter(name => name.includes(draft.slice(1))).slice(0, 15).map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>}
+        {modelsPanel}
         <div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-actions"><span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span><div><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
           <button type="button" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
             if(stopLock.current)return;
@@ -418,7 +423,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       {conversationPanel}
       <aside className="control-panel view-scroll" aria-label={`${drawerTitle} 패널`} hidden={drawer === null} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setDrawer(null); } }}>
         <div className="drawer-heading"><h2>{drawerTitle}</h2><button ref={drawerClose} className="quiet" onClick={() => setDrawer(null)}>대화로 돌아가기</button></div>
-        <div hidden={drawer !== "environment"}>{environmentPanel}{modelsPanel}</div>
+        <div hidden={drawer !== "environment"}>{environmentPanel}</div>
         <div hidden={drawer !== "tools"}>{usagePanel}{tasksPanel}{commandsPanel}</div>
         <div className="theme-panel" hidden={drawer !== "theme"}><p className="muted">화면 밝기와 취향에 맞는 색을 선택하세요.</p><label>테마<select aria-label="테마" value={theme} onChange={event => chooseTheme(event.target.value)}>{(["system", ...THEMES] as const).map(name => <option key={name} value={name}>{themeNames[name]}</option>)}</select></label><div className="theme-grid">{THEMES.map(name => { const colors = themeTokens(name); return <button key={name} className="theme-card" aria-pressed={theme === name} onClick={() => chooseTheme(name)}><span className="theme-preview" style={{ background: colors["--canvas"] }} aria-hidden="true"><span style={{ background: colors["--surface"], borderColor: colors["--control-border"] }}><i style={{ background: colors["--accent"] }} /><i style={{ background: colors["--text"] }} /><i style={{ background: colors["--muted"] }} /></span></span><strong>{themeNames[name].split(" · ")[0]}</strong><small>{themeNames[name].split(" · ")[1]}</small></button>; })}</div><p className="theme-credit">Catppuccin 색상 · MIT License</p></div>
       </aside>
