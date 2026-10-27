@@ -465,3 +465,11 @@ Windows ignored WSL 단위 테스트는 `AGENT_BROWSER_TEST_EXE`에 동일 소�
 - R06: 이동을 일으킨 링크 클릭 결과가 도착 페이지를 읽는다.
 
 Linux: `pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts`. Windows: `bash scripts/test-windows.sh reliability.spec.ts`.
+
+## 고급 브라우저 기능 검증
+
+`pnpm --filter agent-browser-e2e exec playwright test advanced-browser.spec.ts cdp-capabilities.spec.ts`는 격리 Chrome에서 합성 v1 API로 문서/좌표/실제 값/대화상자를 확인한다. 선택 다운로드 권한은 `AB_TEST_DOWNLOADS=1`과 `-g "A07|A24"`로 별도 임시 확장에서 검사한다. 사용자 프로필이나 Chrome 권한 프롬프트를 자동 승인하지 않는다.
+
+`node tests/integration/opencode-v1-image.mjs`는 실제 설치 OpenCode를 격리 설정으로 실행하고 로컬 합성 provider를 사용해 MCP PNG가 다음 provider 입력과 실행 중 ToolPart에 연결되는지 확인한다. 실제 LLM 판단 평가가 아니다. 모델 ID를 제품에 고정하거나 전역 설정을 바꾸지 않는다.
+
+최종 성능 비교에는 동일 최종 측정 하네스로 이전/현재 exe·확장 경로를 선택한다. `AB_METRICS_SAMPLES=50`, `AB_METRICS_TRUSTED=1`, `AB_METRICS_ADVANCED=1`로 조건을 분리하고, 이전 소스는 `AB_SOURCE_REVISION`으로 정확히 기록한다. 기본 DOM과 고급 설정의 결과를 혼합하지 않는다.

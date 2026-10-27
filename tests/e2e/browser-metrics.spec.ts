@@ -25,9 +25,10 @@ test('collect browser timing and actual-state quality metrics',async()=>{
   try {
     world=await startWorld();
     if(process.env.AB_METRICS_TRUSTED==='1')await world.adminPage.evaluate(()=> (globalThis as any).chrome.storage.local.set({trustedInput:true}));
+    if(process.env.AB_METRICS_ADVANCED==='1')await world.adminPage.evaluate(()=> (globalThis as any).chrome.storage.local.set({advancedBrowser:true}));
     let revision=process.env.AB_SOURCE_REVISION??'unknown';
-    try{revision=execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{}
-    run.environment={platform:process.platform,arch:process.arch,nodeVersion:process.version,browserVersion:world.runtime.browserVersion,headless:world.runtime.headless,inputMode:process.env.AB_METRICS_TRUSTED==='1'?'trusted':'dom',bridgeBuild:process.env.AB_BRIDGE_BUILD??(process.platform==='win32'?'release':'debug'),sourceRevision:revision,
+    try{if(!process.env.AB_SOURCE_REVISION)revision=execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{}
+    run.environment={platform:process.platform,arch:process.arch,nodeVersion:process.version,browserVersion:world.runtime.browserVersion,headless:world.runtime.headless,inputMode:process.env.AB_METRICS_TRUSTED==='1'?(process.env.AB_METRICS_ADVANCED==='1'?'trusted-advanced':'trusted'):'dom',bridgeBuild:process.env.AB_BRIDGE_BUILD??(process.platform==='win32'?'release':'debug'),sourceRevision:revision,
       suiteHash:await benchmarkSuiteHash(ROOT),extensionSha256:digest(await readFile(join(world.config.extensionDir,'content.js'))),bridgeSha256:digest(await readFile(world.config.bridgeExe))};
     const page=await world.open('quality.html');
     let operationId=await world.attach(page);

@@ -86,6 +86,10 @@ jobs:
         run: pnpm --filter agent-browser-e2e exec playwright install --with-deps chromium
       - name: Linux Chromium extension E2E with synthetic APIs
         run: pnpm --filter agent-browser-e2e exec playwright test
+      - name: Linux optional downloads permission fixture
+        env:
+          AB_TEST_DOWNLOADS: '1'
+        run: pnpm --filter agent-browser-e2e exec playwright test advanced-browser.spec.ts -g "A07|A24"
       - name: Collect synthetic browser quality metrics (Linux)
         env:
           AB_METRICS_RUN: ci-linux
@@ -152,6 +156,10 @@ jobs:
         # Uses the runner's installed Google Chrome, isolated temporary profiles, and native Windows Node/exe.
         # The harness records the exact browser/Node versions. WSL and real OpenCode are separate manual checks.
         run: node tests/e2e/windows-run.ts --exe "$env:GITHUB_WORKSPACE\target\x86_64-pc-windows-msvc\release\browser-bridge.exe" --extension "$env:GITHUB_WORKSPACE\extension\dist"
+      - name: Native Windows optional downloads permission fixture
+        env:
+          AB_TEST_DOWNLOADS: '1'
+        run: node tests/e2e/windows-run.ts -- advanced-browser.spec.ts -g "A07|A24"
       - name: Native Windows request target boundaries
         env:
           AB_BRIDGE_EXE: ${{ github.workspace }}\target\x86_64-pc-windows-msvc\release\browser-bridge.exe

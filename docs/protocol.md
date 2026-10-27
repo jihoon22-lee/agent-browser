@@ -239,3 +239,15 @@ switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTT
 - **출력 예산(UTF-8 바이트):** content frame당 24,000B, background snapshot frame 묶음 28,000B, extract 28,000B, MCP 최종 텍스트 40,000B. OpenCode는 한 줄 도구 결과가 한도(관찰상 약 50KB)를 넘으면 통째로 파일로 돌리므로, 최종 텍스트가 40,000B를 넘으면 먼저 `data.snapshot`만 빼고 `snapshotError.tooLarge`를 붙인다. 그래도 넘으면 읽기는 `ok:false`·`details.tooLarge`로 더 작은 `maxChars`를 안내하고, 실행된 동작은 `ok`·`executed`를 유지한 채 "반복하지 말고 다시 읽으라"는 `data.note`로 바꾼다.
 - **스냅샷 요소:** `role:"clickable"`은 의미 있는 태그·역할 없이 포인터 커서만 있는 최외곽 영역이다. `state`에는 expanded/collapsed/selected/pressed/mixed/current/required/readonly/invalid/focused가 들어간다. ARIA checkbox·switch는 `checked`, 범위 위젯은 `value`다. 정적 행 문맥은 query 결과가 하나여도 `context`(≤80자)로 붙인다. 행 문맥이 없고 같은 role·name이 여러 개면 같은 이름의 다른 요소를 포함하지 않는 가장 큰 조상의 텍스트를 쓴다. 이름은 같은 root의 aria-labelledby, aria-label, native label 순으로 확인하고 자식 `img alt`·SVG `title`·자식 `aria-label`도 쓴다. DOM 기반이며 Accessibility Tree와 같지 않다.
 - **끝난 requestId:** 진행 중인 패널 요청이 없는데 requestId를 주면 "이미 끝난 요청"이라는 OPERATION_INVALID다(대기 안내가 아니다).
+
+## 0.3.0 고급 브라우저 계약
+
+MCP 도구는 16개다. browser_pointer, browser_dialog, browser_downloads를 추가했다. 스키마의 정확한 필드는 [도구 목록 fixture](../protocol/fixtures/tools-list.json)를 따른다.
+
+browser_screenshot은 scope(viewport/fullPage/region), region(x/y/width/height)과 PNG 이미지·geometry를 제공한다. viewport/region의 captureId는 operation·대상 전환 epoch·문서·CDP generation·화면 geometry에 묶이며 30초/1회 사용이다. fullPage는 좌표 입력용 ID를 만들지 않는다.
+
+browser_pointer는 captureId와 이미지 픽셀 x/y, mode, 드래그 끝점 또는 wheel delta를 받는다. 모델이 입력할 수 없는 request/connection 결합과 현재 v1 root ToolPart의 실행 모델 capability를 확인한다. 같은 operationId를 아는 다른 MCP 연결은 이미지 권한을 빌릴 수 없다. 쓰기들은 탭별로 직렬화하며 캡처 한 번 사용 시 이전 캡처 전부를 무효화한다.
+
+browser_dialog list/respond는 operation과 dialogId에 묶인다. 입력이 모달에 막히면 dialogPending과 입력 전송 여부를 반환하고 실제 원래 응답을 계속 추적한다. 응답 도구는 원래 입력의 큐 밖에서 대화를 닫아 교착을 피한다. 응답 유실은 uncertain 상태로 보존하며 같은 ID를 재사용하지 않는다.
+
+browser_downloads list는 후보를 반환하고 status/wait는 패널에서 사용자가 연결한 downloadId만 받는다. optional downloads와 Chrome 125/gate를 검사한다. pending/complete/interrupted 및 userDecisionRequired를 구분하고 wait 취소가 다운로드 자체를 취소하지 않는다. 파일 경로·내용을 반환하지 않는다.

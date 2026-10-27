@@ -226,6 +226,7 @@ summary { cursor: pointer; line-height: 1.5; }
 .composer-selectors { display:flex; flex-wrap:wrap; gap:6px; }
 .composer-selectors label { display:flex; flex-direction:column; min-width:0; flex:1 1 90px; gap:3px; }
 .composer-selectors label:first-child { flex:2 1 170px; }
+.composer-selectors label:nth-child(3) { flex-basis:140px; }
 .composer-selectors select { width:100%; min-width:0; text-overflow:ellipsis; }
 .composer-settings .muted { margin:4px 0; font-size:11px; }
 .model-search { margin:3px 0; }

@@ -9,7 +9,7 @@ Windows x64용 Chrome 확장과 Browser Bridge를 설치합니다. 관리자 권
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 같은 버전의 ZIP과 `SHA256SUMS`를 각각 받습니다. **압축을 풀거나 실행하기 전에** ZIP의 SHA256을 별도로 받은 체크섬의 해당 ZIP 행 또는 GitHub 자산의 SHA256 digest와 비교합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.2.2-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.3.0-windows-x64.zip
 ```
 
 다르면 공식 릴리스에서 다시 받습니다. 현재 exe에는 Authenticode 서명이 없습니다. ZIP 안의 `package-manifest.json`은 파일 누락·변경 확인용이며 다운로드 출처를 증명하지 않습니다.

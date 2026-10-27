@@ -1,6 +1,6 @@
 # 입력창 실행 선택과 브라우저 제어 확장
 
-상태: **사용자 구현·배포 승인, 구현 및 검증 진행 중** (2026-10-28).
+상태: **구현 완료, 최종 검증·배포 진행 중** (2026-10-28).
 
 사용자 요청은 모델·에이전트 선택을 입력창으로 옮기는 변경과 브라우저 기능 5개를 함께 검토하고, 안정성을 높일 실행 계획을 먼저 만드는 것이다. 이 문서는 구현 승인을 대신하지 않는다. 계획 수립 때는 정적 검토만 했으며, 2026-10-28부터 사용자의 승인에 따라 구현·검증·배포를 진행한다. 실제 결과는 status.md에 구분한다.
 
@@ -247,4 +247,4 @@ browser_screenshot에 `scope: viewport | fullPage | region`을 추가하는 안�
 - [CDP Page 명세: getLayoutMetrics·captureScreenshot·JavaScript dialog·deprecated download events](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Page.pdl)
 - [Chrome downloads: 권한·DownloadItem·이벤트·완료 상태](https://developer.chrome.com/docs/extensions/reference/api/downloads)
 
-이번에 실행한 것은 저장소/공식 문서 검토와 계획 문서의 로컬 링크·공백 검사뿐이다. 제품 코드는 변경하지 않았으며 브라우저·Windows·LLM 검증은 새로 실행하지 않았다.
+위 공식 근거는 계획 시점의 조사다. 이후 사용자 승인으로 제품 구현과 단위·Chrome·실제 Windows 검증을 실행했다. 실제 결과·최초 실패·미검증은 [상태 기록](../status.md)에 구분한다.
