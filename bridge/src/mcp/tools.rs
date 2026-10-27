@@ -67,8 +67,14 @@ pub fn all() -> Vec<ToolDef> {
             schema: json!({"type":"object","properties":{"operationId":op(),"kind":{"type":"string","enum":["text","selection","table"]},
                 "ref":r#ref(),"maxChars":{"type":"integer","minimum":200,"maximum":50000},"offset":{"type":"integer","minimum":0}},
                 "required":["kind"],"additionalProperties":false}) },
-        ToolDef { name: "browser_screenshot", description: "PNG of the operation tab; that tab must be active.",
-            schema: json!({"type":"object","properties":{"operationId":op()},"additionalProperties":false}) },
+        ToolDef { name: "browser_screenshot", description: "PNG. Advanced mode (Chrome 125+, debugger) supports fullPage/region and returns a 30s captureId for visual actions. Region is viewport CSS pixels; fullPage cannot authorize input.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"scope":{"enum":["viewport","fullPage","region"]},"region":{"type":"object","properties":{"x":{"type":"number","minimum":0},"y":{"type":"number","minimum":0},"width":{"type":"number","exclusiveMinimum":0},"height":{"type":"number","exclusiveMinimum":0}},"required":["x","y","width","height"],"additionalProperties":false}},"additionalProperties":false}) },
+        ToolDef { name: "browser_pointer", description: "Advanced visual input. Requires Chrome 125+, debugger, image-capable panel model and fresh viewport/region captureId. Use returned image pixel coordinates. Each input consumes the capture; observe again. Never guess coordinates.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"captureId":{"type":"string"},"mode":{"enum":["click","double","right","hover","drag","wheel"]},"x":{"type":"number","minimum":0},"y":{"type":"number","minimum":0},"toX":{"type":"number","minimum":0},"toY":{"type":"number","minimum":0},"deltaX":{"type":"number","minimum":-2000,"maximum":2000},"deltaY":{"type":"number","minimum":-2000,"maximum":2000}},"required":["captureId","x","y"],"additionalProperties":false}) },
+        ToolDef { name: "browser_dialog", description: "Advanced page dialog list/respond. Respond using the returned dialogId, accept and optional prompt text. Never repeat the click that opened it. Leave-page confirmation belongs to the user.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"action":{"enum":["list","respond"]},"dialogId":{"type":"string"},"accept":{"type":"boolean"},"text":{"type":"string","maxLength":4000}},"required":["action"],"additionalProperties":false}) },
+        ToolDef { name: "browser_downloads", description: "Advanced download candidates/status/wait; requires optional downloads permission. User binds the matching candidate in the browser panel. Never claim an unbound candidate completed this task. Does not read files or start downloads.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"action":{"enum":["list","status","wait"]},"downloadId":{"type":"integer","minimum":0},"timeoutMs":{"type":"integer","minimum":100,"maximum":30000}},"required":["action"],"additionalProperties":false}) },
         ToolDef { name: "browser_upload", description: "Put a file the user attached to this request into a file input (its ref, label or button). file: the attachment name.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"file":{"type":"string"}},"required":["ref","file"],"additionalProperties":false}) },
     ]
@@ -76,7 +82,8 @@ pub fn all() -> Vec<ToolDef> {
 
 pub fn class_of(name: &str, args: &Value) -> CommandClass {
     match name {
-        "browser_navigate" | "browser_click" | "browser_fill" | "browser_select" | "browser_press" | "browser_scroll" | "browser_upload" => CommandClass::Write,
+        "browser_dialog" if args["action"] == "respond" => CommandClass::Write,
+        "browser_pointer" | "browser_navigate" | "browser_click" | "browser_fill" | "browser_select" | "browser_press" | "browser_scroll" | "browser_upload" => CommandClass::Write,
         "browser_tabs" if args["action"] == "new" || args["action"] == "close" => CommandClass::Write,
         _ => CommandClass::Read,
     }
@@ -102,7 +109,7 @@ mod tests {
     #[test]
     fn total_schema_size_stays_small_for_free_models() {
         let size: usize = super::all().iter().map(|t| t.description.len() + t.schema.to_string().len()).sum();
-        assert!(size < 6000, "tool definitions grew to {size} chars");
+        assert!(size < 8500, "tool definitions grew to {size} chars");
     }
 
     #[test]
@@ -149,5 +156,18 @@ mod issue8_tests {
         let tools=super::all();
         let tabs=tools.iter().find(|tool|tool.name=="browser_tabs").unwrap();
         assert!(tabs.description.contains("about:blank tabs cannot be closed"));
+    }
+}
+
+#[cfg(test)]
+mod advanced_tests {
+    use super::*;
+    #[test]
+    fn visual_dialog_and_download_tools_are_explicit_and_classified() {
+        let list=all();
+        for name in ["browser_pointer","browser_dialog","browser_downloads"] {assert!(list.iter().any(|t|t.name==name),"missing {name}");}
+        assert_eq!(class_of("browser_pointer",&json!({})),CommandClass::Write);
+        assert_eq!(class_of("browser_dialog",&json!({"action":"respond"})),CommandClass::Write);
+        assert_eq!(class_of("browser_dialog",&json!({"action":"list"})),CommandClass::Read);
     }
 }

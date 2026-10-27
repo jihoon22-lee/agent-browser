@@ -339,3 +339,17 @@ test("W13 deleting a session removes only that row and keeps the rest of the lis
   expect(api.state.requests.filter(request => request.path === "/provider").length).toBe(ensures);
   expect(api.state.sessions.some(session => session.id === keep.id)).toBe(true);
 });
+
+test('W14 composer choices remain visible at narrow widths and Windows display scale factors',async({},info)=>{
+ await createSession();const cdp=await world.context.newCDPSession(panel);
+ try {for(const width of [320,400,600])for(const scale of [1,1.25,1.5]){
+  await panel.setViewportSize({width,height:900});
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:scale,mobile:false});
+  expect(await panel.evaluate(()=>({width:innerWidth,scale:devicePixelRatio}))).toEqual({width,scale});
+  await expect(panel.getByRole('combobox',{name:'모델',exact:true})).toBeVisible();
+  await expect(panel.getByRole('combobox',{name:'에이전트',exact:true})).toBeVisible();
+  const bounds=await panel.locator('.composer').evaluate(el=>({right:el.getBoundingClientRect().right,bottom:el.getBoundingClientRect().bottom,width:innerWidth,height:innerHeight,scrollWidth:document.documentElement.scrollWidth}));
+  expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.bottom).toBeLessThanOrEqual(bounds.height);expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width);
+  const path=info.outputPath(`composer-${width}-${scale}.png`);const capture=await cdp.send('Page.captureScreenshot',{format:'png'});const bytes=Buffer.from(capture.data,'base64');expect(bytes.readUInt32BE(16)).toBe(Math.round(width*scale));await writeFile(path,bytes);await info.attach(`composer-${width}-${scale}`,{path,contentType:'image/png'});
+ }}finally{await cdp.send('Emulation.clearDeviceMetricsOverride');await cdp.detach();}
+});

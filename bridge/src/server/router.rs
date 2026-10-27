@@ -87,6 +87,10 @@ pub fn validate(schema: &Value, args: &Value) -> Result<(), RpcError> {
         match prop["type"].as_str() {
             Some("string") if !value.is_string() => return Err(invalid(format!("`{key}` must be a string"))),
             Some("boolean") if !value.is_boolean() => return Err(invalid(format!("`{key}` must be a boolean"))),
+            Some("number") => {
+                let Some(n)=value.as_f64() else {return Err(invalid(format!("`{key}` must be a number")))};
+                if !n.is_finite() || prop["minimum"].as_f64().is_some_and(|min|n<min) || prop["maximum"].as_f64().is_some_and(|max|n>max) {return Err(invalid(format!("`{key}` is out of range")));}
+            }
             Some("integer") => {
                 let Some(n) = value.as_i64() else { return Err(invalid(format!("`{key}` must be an integer"))) };
                 if prop["minimum"].as_i64().is_some_and(|min| n < min) || prop["maximum"].as_i64().is_some_and(|max| n > max) {
@@ -125,6 +129,14 @@ fn check_url(url: &str) -> Result<(), RpcError> {
 
 /// Checks that depend on which action was asked for.
 fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
+    if name=="browser_pointer" {
+        let drag=args["mode"]=="drag";
+        if drag != (args["toX"].is_number() && args["toY"].is_number()) || (!drag && (args["toX"].is_number() || args["toY"].is_number())) { return Err(invalid("drag requires toX and toY; other modes do not use them")); }
+        if args["mode"]!="wheel" && (args["deltaX"].is_number() || args["deltaY"].is_number()) { return Err(invalid("wheel deltas are only for wheel mode")); }
+    }
+    if name=="browser_dialog" && args["action"]=="respond" && (!args["dialogId"].is_string() || !args["accept"].is_boolean()) {return Err(invalid("respond requires dialogId and accept"));}
+    if name=="browser_downloads" && args["action"]!="list" && !args["downloadId"].is_i64() {return Err(invalid("status/wait requires downloadId"));}
+    if name=="browser_screenshot" && ((args["scope"]=="region") != args["region"].is_object()) {return Err(invalid("region is required only for scope=region"));}
     if let Some(wait) = args.get("waitFor").filter(|v| !v.is_null()) {
         if !matches!(name,"browser_click"|"browser_press") || args["newTab"]==true {
             return Err(invalid("waitFor is only for click/press in the same tab, without newTab"));
@@ -172,7 +184,7 @@ fn timeout_for(name: &str, args: &Value) -> Duration {
         return DEFAULT_TIMEOUT+Duration::from_millis(args["waitFor"]["timeoutMs"].as_u64().unwrap_or(5000))+Duration::from_secs(3);
     }
     match name {
-        "browser_wait" => Duration::from_millis(args["timeoutMs"].as_u64().unwrap_or(5000)) + Duration::from_secs(3),
+        "browser_wait" | "browser_downloads" => Duration::from_millis(args["timeoutMs"].as_u64().unwrap_or(5000)) + Duration::from_secs(3),
         "browser_navigate" => NAVIGATE_TIMEOUT,
         "browser_tabs" if args["action"] == "new" => NAVIGATE_TIMEOUT,
         _ => DEFAULT_TIMEOUT,
@@ -203,7 +215,7 @@ fn summarize(name: &str, args: &Value) -> String {
 
 /// Who is calling: a managed runtime's proxy names its launch id and OpenCode directory.
 #[derive(Clone, Debug, Default)]
-pub struct Caller { pub runtime_id: Option<String>, pub cwd: Option<String> }
+pub struct Caller { pub runtime_id: Option<String>, pub cwd: Option<String>, pub connection_id: Option<String> }
 
 pub async fn call_tool(state: &ServerState, name: &str, args: Value) -> ToolOutcome {
     call_tool_as(state, &Caller::default(), name, args).await
@@ -237,8 +249,8 @@ pub async fn call_tool_as(state: &ServerState, caller: &Caller, name: &str, args
 }
 
 /// Tools that act inside an operation; in a bound panel request their operationId may be omitted.
-pub const OPERATION_TOOLS: [&str; 11] = ["browser_snapshot","browser_navigate","browser_click","browser_fill","browser_select",
-    "browser_press","browser_scroll","browser_wait","browser_extract","browser_screenshot","browser_upload"];
+pub const OPERATION_TOOLS: [&str; 14] = ["browser_snapshot","browser_navigate","browser_click","browser_fill","browser_select",
+    "browser_press","browser_scroll","browser_wait","browser_extract","browser_screenshot","browser_upload","browser_pointer","browser_dialog","browser_downloads"];
 
 /// Fills ids a model omitted when the caller is bound to the open panel request.
 /// Returns the arguments to run with and whether an implicit attach created the operation.
@@ -327,9 +339,10 @@ async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value
     } else if name == "browser_tabs" {
         run_tabs(state, args).await
     } else {
-        run_operation_tool(state, name, args, &def.schema).await
+        run_operation_tool(state, caller, name, args, &def.schema).await
     };
     let creates = name == "browser_tabs" && (args["action"] == "attach" || (args["action"] == "new" && args.get("operationId").is_none()));
+    if creates && outcome.ok {if let (Some(id),Some(conn))=(outcome.operation_id.as_deref(),caller.connection_id.as_deref()){state.ops.pin_input_connection(id,conn);}}
     let mut created = CreatedOperation { state, id: if creates && outcome.ok { outcome.operation_id.clone() } else { None } };
     if follow_up {
         add_follow_up_snapshot(state, name, args, &mut outcome).await;
@@ -352,8 +365,9 @@ fn operation_required(name: &str) -> ToolOutcome {
 /// How long a tool call waits while the user holds the browser; below the MCP reply window.
 pub(crate) const HANDOFF_WAIT: Duration = Duration::from_secs(45);
 
-async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schema: &Value) -> ToolOutcome {
+async fn run_operation_tool(state: &ServerState, caller:&Caller, name: &str, args: &Value, schema: &Value) -> ToolOutcome {
     let Some(op_id) = args["operationId"].as_str() else { return operation_required(name) };
+    if name=="browser_pointer"&&!state.ops.input_connection_matches(op_id,caller.connection_id.as_deref()) {return ToolOutcome::rejected(name,Some(op_id),RpcError::new(ErrorCode::ForbiddenMethod,Retry::Never,"Visual input must use the MCP connection that attached this request. Start a new panel request after reconnecting."));}
     if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(name, Some(op_id), error); }
     // Forward only what the published schema declares; the gate owns operation, generation and tab.
     let declared = schema["properties"].as_object();
@@ -366,7 +380,7 @@ async fn run_operation_tool(state: &ServerState, name: &str, args: &Value, schem
         .collect();
     // The extension uploads only the attachments of the panel request that owns this operation; after a
     // Bridge restart or outside a panel request there is none, even if the extension still holds files.
-    if name == "browser_upload" { if let Some(request) = state.ops.panel_request_of(op_id) { params.insert("panelRequestId".into(), json!(request)); } }
+    if matches!(name,"browser_upload"|"browser_pointer") { if let Some(request) = state.ops.panel_request_of(op_id) { params.insert("panelRequestId".into(), json!(request)); } }
     let class = tools::class_of(name, args);
     let method = format!("browser.{}", name.trim_start_matches("browser_"));
     let queued = match queue_operation_tool(state, op_id, &method, params, class) {
@@ -386,6 +400,7 @@ fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, m
         if class==CommandClass::Write && op.needs_observation {return Err(observation_required(op));}
         params.insert("operationId".into(), json!(op.id));
         params.insert("generation".into(), json!(op.generation));
+        params.insert("targetEpoch".into(),json!(op.target_epoch));
         params.insert("tabId".into(), json!(op.current_tab));
         let queued = state.registry.queue_command_for(&op.client_id, method, Value::Object(params), class)?;
         Ok(OperationCommand {queued,origin:op.clone()})
@@ -405,7 +420,7 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             cancellation.expect("captured cancellation"),
         ),
         Ok(mut data) => {
-            if name=="browser_snapshot" && data["tabId"].as_i64()==Some(origin.current_tab) {state.ops.observe_target(origin);}
+            if (name=="browser_snapshot" && data["tabId"].as_i64()==Some(origin.current_tab)) || (name=="browser_screenshot" && data["captureId"].is_string() && data["geometry"]["tabId"].as_i64()==Some(origin.current_tab)) {state.ops.observe_target(origin);}
             if matches!(name,"browser_click"|"browser_press") {
                 let mut adopted = None;
                 if let Some(children) = data.get_mut("openedTabs").and_then(Value::as_array_mut) {
@@ -470,6 +485,7 @@ async fn add_open_tabs(state: &ServerState, args: &Value, outcome: &mut ToolOutc
 /// Page-changing tools return the page they produced, so the model needs no extra snapshot call.
 /// Unchanged pages keep their refs, so an unchanged click returns none and saves context.
 fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
+    if outcome.verified["dialogPending"] == true { return false; }
     match name {
         "browser_click" | "browser_upload" => outcome.verified["expectationMet"] == true || outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
         "browser_press" | "browser_navigate" => true,
@@ -766,7 +782,7 @@ mod tests {
     async fn an_unbound_caller_still_needs_an_operation_id() {
         let home = tempfile::tempdir().unwrap();
         let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
-        let outcome = call_tool_as(&state, &Caller { runtime_id: Some("rid".into()), cwd: Some("/w".into()) }, "browser_snapshot", json!({})).await;
+        let outcome = call_tool_as(&state, &Caller { runtime_id: Some("rid".into()), cwd: Some("/w".into()), connection_id: None }, "browser_snapshot", json!({})).await;
         assert_eq!(outcome.error.as_ref().map(|e| e.code), Some(ErrorCode::OperationRequired));
         assert!(!outcome.created_operation);
     }

@@ -46,3 +46,14 @@ it('honors background cancellation before the separate content cancel arrives', 
   await expect(runAction('click', { ref, trusted: true, waitFor: { text: 'Done' } })).rejects.toMatchObject({ code: 'CANCELLED' });
   expect(delivered).not.toHaveBeenCalled();
 });
+
+it.each([0, 50, 100, 150, 200, 250])('lost native-fill replies never duplicate a DOM edit (50 cases starting at %i)',async start=>{
+ for(let n=start;n<start+50;n++){
+  document.body.innerHTML='<input aria-label="Name">';resetRegistry();const input=document.querySelector('input')!;
+  const ref=takeSnapshot({snapshotId:n+1,frameId:0,maxChars:100,offset:0,checkLayout:false}).elements[0]!.ref;
+  let inputs=0;input.addEventListener('input',()=>inputs++);
+  vi.stubGlobal('chrome',{runtime:{sendMessage:async()=>{input.value='native';input.dispatchEvent(new Event('input'));throw Error('reply lost');}}});
+  await expect(runAction('fill',{requestId:'lost-'+n,ref,text:'requested',trusted:true,trustedFrames:true})).rejects.toMatchObject({code:'EXECUTION_UNKNOWN'});
+  expect(inputs).toBe(1);expect(input.value).toBe('native');
+ }
+});

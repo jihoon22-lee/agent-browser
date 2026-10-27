@@ -142,9 +142,9 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
   void changes.then(unmark, unmark);
   void changes.catch(() => {});
   let trustedReason: string | undefined;
-  if (p.trusted === true && trustedFrame() && !html5) {
-    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", { x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
-    if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+  if (p.trusted === true && (trustedFrame() || p.trustedFrames === true) && !html5) {
+    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", {ref:p.ref,toRef:p.toRef, x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
+    if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...(answer.incomplete?{incomplete:true}:{}), ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
     assertTrustedFallback(answer, p, signal);
     trustedReason = answer.reason;
   }
@@ -226,9 +226,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const changes = observeChanges(p.waitFor ? 0 : 500, signal);
       void changes.then(unmark, unmark);
       let trustedReason: string | undefined;
-      if (p.trusted === true && trustedFrame()) {
-        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { x: point.clientX, y: point.clientY, ...modeNote });
-        if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
+      if (p.trusted === true && (trustedFrame() || p.trustedFrames === true)) {
+        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { ref:p.ref, x: point.clientX, y: point.clientY, ...modeNote });
+        if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...(answer.incomplete?{incomplete:true}:{}), ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         assertTrustedFallback(answer, p, signal);
         if (!answer.ok) trustedReason = answer.reason;
       }
@@ -296,13 +296,20 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field is read-only.");
         focusForFill(el, p, signal);
         if (el.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field became read-only during focus.");
-        nativeSet(el, text);
+        let usedTrusted=false;
+        if(p.trusted===true && p.trustedFrames===true && (el instanceof HTMLTextAreaElement || ['text','search','tel','url','password'].includes(el.type))) {
+          el.select();
+          const answer=await requestTrusted(String(p.requestId??''),'text',{ref:p.ref,text});
+          if(answer.ok)usedTrusted=true;else assertTrustedFallback(answer,p,signal);
+        }
+        if(!usedTrusted){nativeSet(el, text);
         el.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
         await afterInput(String(p.ref),signal);
         const value = el.value;
         const isPassword = el instanceof HTMLInputElement && el.type === "password";
-        return { executed: true, verified: isPassword ? { matches: value === text } : { ...verificationValue(value), matches: value === text } };
+        return { executed: true, verified: isPassword ? { matches: value === text, trusted:usedTrusted } : { ...verificationValue(value), matches: value === text, trusted:usedTrusted } };
       }
       if ((el as HTMLElement).isContentEditable) {
         const host = el as HTMLElement, doc = host.ownerDocument;
@@ -311,14 +318,16 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         const range = doc.createRange(); range.selectNodeContents(host);
         const selection = doc.getSelection(); selection?.removeAllRanges(); selection?.addRange(range);
         // Editors such as ProseMirror, Draft or Slate update their own model from insertText.
-        const inserted = typeof doc.execCommand === "function" && doc.execCommand("insertText", false, text);
+        let usedTrusted=false;
+        if(p.trusted===true&&p.trustedFrames===true){const answer=await requestTrusted(String(p.requestId??''),'text',{ref:p.ref,text});if(answer.ok)usedTrusted=true;else assertTrustedFallback(answer,p,signal);}
+        const inserted = usedTrusted || typeof doc.execCommand === "function" && doc.execCommand("insertText", false, text);
         if (!inserted) {
           host.textContent = text;
           host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         }
         await afterInput(String(p.ref),signal);
         const value = host.textContent ?? "";
-        return { executed: true, verified: { ...verificationValue(value), matches: value === text, method: inserted ? "insertText" : "replace" } };
+        return { executed: true, verified: { ...verificationValue(value), matches: value === text, method: inserted ? "insertText" : "replace", trusted:usedTrusted } };
       }
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_fill only works on text inputs, textareas and editable areas.");
     }
@@ -358,14 +367,14 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_select works on select, checkbox and radio elements.");
     }
     case "press": {
-      if (p.trusted === true && trustedFrame()) {
+      if (p.trusted === true && (trustedFrame() || p.trustedFrames === true)) {
         // The same checks as a DOM key press run first: a real key must not reach another element.
         const target = preparePress(p, assertInteractable);
         if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
         const changes = observeChanges(p.waitFor ? 0 : 500, signal);
         void changes.catch(() => {});
         const { key, modifiers } = keyOf(p);
-        const answer = await requestTrusted(String(p.requestId ?? ""), "key", { key, ...(modifiers.length ? { modifiers } : {}) });
+        const answer = await requestTrusted(String(p.requestId ?? ""), "key", {ref:p.ref, key, ...(modifiers.length ? { modifiers } : {}) });
         // The browser itself performs the key's default action; nothing is emulated here.
         if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});

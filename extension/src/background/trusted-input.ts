@@ -7,6 +7,10 @@ export type DebuggerApi = {
   onDetach(listener: (tabId: number, reason: string) => void): () => void;
   onEvent(listener: (tabId: number, method: string, params: any) => void): () => void;
 };
+export type InputPhase = "prepare" | "press" | "continue" | "release" | "keyRelease";
+export type ActiveInput = (phase?:InputPhase) => boolean | Promise<boolean>;
+type InputStep=(()=>Promise<unknown>) & {phase?:InputPhase};
+const step=(run:()=>Promise<unknown>,phase:InputPhase):InputStep=>Object.assign(run,{phase});
 export type TrustedState = { enabled: boolean; operationTabs: number[]; operationId?: string | null };
 export type Dialog = { type: string; message: string };
 
@@ -66,11 +70,12 @@ class InputNotDelivered extends Error {
   constructor(message: string, readonly cancelled = false) { super(message); }
 }
 
-export function trustedInput(api: DebuggerApi) {
+export function trustedInput(api: DebuggerApi, advanced = () => false) {
   const attached = new Set<number>();
   // [Cancel] on Chrome's debugging bar applies to the whole operation, not one tab.
   let cancelled: { operationId: string | null | undefined; reason: string } | undefined;
   const dialogs = new Map<number, Dialog>();
+  const dialogEpoch=new Map<number,number>(), openDialogs=new Set<number>();
   // Dialogs are answered only during an agent input and shortly after; others belong to the person.
   const inputUntil = new Map<number, number>();
   let operationId: string | null | undefined;
@@ -84,9 +89,13 @@ export function trustedInput(api: DebuggerApi) {
     if (reason === "canceled_by_user") cancelled = { operationId, reason };
   });
   api.onEvent((tabId, method, params) => {
+    if(method==='Page.javascriptDialogClosed'){openDialogs.delete(tabId);return;}
     if (method !== "Page.javascriptDialogOpening" || !attached.has(tabId)) return;
+    openDialogs.add(tabId);dialogEpoch.set(tabId,(dialogEpoch.get(tabId)??0)+1);
+    if(advanced())return;
     if (!((inputUntil.get(tabId) ?? 0) >= Date.now())) return;
     // An alert only informs; a confirm, prompt or leave-page question is the user's decision.
+    if (advanced() && params?.type !== "alert") return;
     const accept = params?.type === "alert";
     dialogs.set(tabId, { type: String(params?.type ?? "unknown"), message: String(params?.message ?? "").slice(0, 200) });
     void api.send(tabId, "Page.handleJavaScriptDialog", { accept }).catch(() => {});
@@ -96,24 +105,66 @@ export function trustedInput(api: DebuggerApi) {
   const isCancelled = () => !!cancelled && cancelled.operationId === operationId;
 
   async function release(tabId: number) {
-    attached.delete(tabId); dialogs.delete(tabId); inputUntil.delete(tabId);
-    await api.detach(tabId).catch(() => {});
+    attached.delete(tabId); dialogs.delete(tabId); inputUntil.delete(tabId);openDialogs.delete(tabId);
+    let timer:ReturnType<typeof setTimeout>;
+    try { await Promise.race([api.detach(tabId),new Promise<void>(resolve=>{timer=setTimeout(resolve,1000);})]).catch(()=>{}); }
+    finally { clearTimeout(timer!); }
+    heldInputs.delete(tabId);
   }
   /** Each await is an opportunity for the operation/request to end. A failed CDP
    * callback cannot prove its event was not delivered, including the first one. */
-  async function deliver(tabId: number, steps: Array<() => Promise<unknown>>, active: () => boolean) {
+  const inputs=new Map<number,Promise<unknown>>();
+  const heldInputs=new Map<number,{keys:Map<string,Record<string,unknown>>;mouse?:Record<string,unknown>}>();
+  async function sendInput(tabId:number,method:string,params:Record<string,unknown>) {
+    let held=heldInputs.get(tabId);if(!held){held={keys:new Map()};heldInputs.set(tabId,held);}
+    if(method==='Input.dispatchKeyEvent'&&params.type==='keyDown')held.keys.set(String(params.key),params);
+    if(method==='Input.dispatchMouseEvent'&&params.type==='mousePressed')held.mouse=params;
+    const result=await api.send(tabId,method,params);
+    if(method==='Input.dispatchKeyEvent'&&params.type==='keyUp')held.keys.delete(String(params.key));
+    if(method==='Input.dispatchMouseEvent'&&params.type==='mouseReleased')held.mouse=undefined;
+    return result;
+  }
+  function deliver(tabId:number,steps:InputStep[],active:ActiveInput) {
+    const next=(inputs.get(tabId)??Promise.resolve()).then(()=>deliverNow(tabId,steps,active));
+    const tail=next.catch(()=>{});inputs.set(tabId,tail);void tail.then(()=>{if(inputs.get(tabId)===tail)inputs.delete(tabId);});return next;
+  }
+  async function deliverNow(tabId: number, steps: InputStep[], active: ActiveInput) {
     const startedOperation = operationId;
     inputUntil.set(tabId, Number.POSITIVE_INFINITY);
-    let attempted = false;
+    let attempted = false, gestureStarted=false;
+    const dialogAtStart=dialogEpoch.get(tabId)??0;
     try {
-      for (const step of steps) {
-        if (!active() || startedOperation !== operationId || !current.enabled || !current.operationTabs.includes(tabId) || !attached.has(tabId) || isCancelled())
-          throw new InputNotDelivered('The input request is no longer active.', true);
-        attempted = true;
-        await step();
+      for (const next of steps) {
+        if((dialogEpoch.get(tabId)??0)!==dialogAtStart)return {...takeDialog(tabId),incomplete:true};
+        const phase=next.phase??'press';
+        const live=phase==='keyRelease' ? true : await active(phase);
+        if(!live){if(gestureStarted){await release(tabId);return {...takeDialog(tabId),incomplete:true};}throw new InputNotDelivered('The input request was cancelled before its gesture.',true);}
+        if(startedOperation!==operationId||!current.enabled||!current.operationTabs.includes(tabId)||!attached.has(tabId)||isCancelled())throw new InputNotDelivered('The debugger session changed.',true);
+        attempted=true;
+        if(phase==='press')gestureStarted=true;
+        // A modal dialog may legitimately hold the native command. Otherwise bound a lost CDP reply.
+        let timer:ReturnType<typeof setTimeout>;
+        const timeout=new Promise<never>((_,reject)=>{const expired=()=>{if(openDialogs.has(tabId)&&attached.has(tabId))timer=setTimeout(expired,1000);else reject(new Error('CDP input reply timed out'));};timer=setTimeout(expired,7000);});
+        try{await Promise.race([next(),timeout]);}finally{clearTimeout(timer!);}
       }
     }
-    catch (error) { if (attempted) throw new PartlyDelivered(error instanceof Error ? error.message : String(error)); throw error; }
+    catch (error) {
+      const held=heldInputs.get(tabId);heldInputs.delete(tabId);
+      // Modifier release does not replay a character. A mouse release can click/drop: never fabricate it as rollback.
+      const timedOut=error instanceof Error && error.message.includes('timed out');
+      if(timedOut)await release(tabId);
+      else if(attempted&&attached.has(tabId)&&startedOperation===operationId&&held){
+        for(const key of [...held.keys.values()].reverse()){
+          let timer:ReturnType<typeof setTimeout>;
+          try { await Promise.race([api.send(tabId,'Input.dispatchKeyEvent',{type:'keyUp',key:key.key,code:key.code,windowsVirtualKeyCode:key.windowsVirtualKeyCode,modifiers:0}),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('cleanup timed out')),500);})]); }
+          catch { await release(tabId);break; }
+          finally { clearTimeout(timer!); }
+        }
+      }
+      if(gestureStarted||(attempted&&!(error instanceof InputNotDelivered)&&!(error as any)?.verificationFailed&&(error as any)?.code!=='STALE_ELEMENT'))throw new PartlyDelivered(error instanceof Error?error.message:String(error));
+      if(error && typeof error==='object')Object.assign(error,{dispatched:false,verificationFailed:!('cancelled' in error && error.cancelled)});
+      throw error;
+    }
     finally { if (attempted) inputUntil.set(tabId, Date.now() + 1500); else inputUntil.delete(tabId); }
     return takeDialog(tabId);
   }
@@ -140,36 +191,42 @@ export function trustedInput(api: DebuggerApi) {
         for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !state.operationTabs.includes(tabId)) await release(tabId);
       });
     },
-    click(tabId: number, x: number, y: number, mode: ClickMode = "click", active = () => true) {
-      const mouse = (params: object) => () => api.send(tabId, "Input.dispatchMouseEvent", params);
+    click(tabId: number, x: number, y: number, mode: ClickMode = "click", active:ActiveInput = () => true) {
+      const mouse = (params: Record<string,unknown>, phase:InputPhase="prepare") => step(() => sendInput(tabId, "Input.dispatchMouseEvent", params), phase);
       const button = mode === "right" ? "right" as const : "left" as const;
       const steps = [mouse({ type: "mouseMoved", x, y })];
       if (mode !== "hover") for (const clickCount of mode === "double" ? [1, 2] : [1])
-        steps.push(mouse({ type: "mousePressed", x, y, button, clickCount }), mouse({ type: "mouseReleased", x, y, button, clickCount }));
+        steps.push(mouse({ type: "mousePressed", x, y, button, clickCount },"press"), mouse({ type: "mouseReleased", x, y, button, clickCount },"release"));
       return deliver(tabId, steps, active);
     },
-    drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }, active = () => true) {
-      const mouse = (params: object) => () => api.send(tabId, "Input.dispatchMouseEvent", params);
-      const steps = [mouse({ type: "mouseMoved", ...from }), mouse({ type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 })];
-      for (const f of [0.25, 0.5, 0.75, 1]) steps.push(mouse({ type: "mouseMoved", x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f, button: "left", buttons: 1 }));
-      steps.push(mouse({ type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 }));
+    drag(tabId: number, from: { x: number; y: number }, to: { x: number; y: number }, active:ActiveInput = () => true) {
+      const mouse = (params: Record<string,unknown>, phase:InputPhase="prepare") => step(() => sendInput(tabId, "Input.dispatchMouseEvent", params), phase);
+      const steps = [mouse({ type: "mouseMoved", ...from }), mouse({ type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1 },"press")];
+      for (const f of [0.25, 0.5, 0.75, 1]) steps.push(mouse({ type: "mouseMoved", x: from.x + (to.x - from.x) * f, y: from.y + (to.y - from.y) * f, button: "left", buttons: 1 },"release"));
+      steps.push(mouse({ type: "mouseReleased", ...to, button: "left", buttons: 0, clickCount: 1 },"release"));
       return deliver(tabId, steps, active);
     },
-    key(tabId: number, key: string, modifiers: string[] = [], active = () => true) {
+    key(tabId: number, key: string, modifiers: string[] = [], active:ActiveInput = () => true) {
       const spec = keySpec(key, modifiers);
       if (!spec || modifiers.some(m => !MODIFIER_KEYS[m]) || !trustedShortcut(key, modifiers)) return Promise.reject(new InputNotDelivered(`Unsupported key ${key}`));
-      const send = (params: object) => () => api.send(tabId, "Input.dispatchKeyEvent", params);
+      const send = (params: Record<string,unknown>) => step(() => sendInput(tabId, "Input.dispatchKeyEvent", params),params.type==="keyUp"?"keyRelease":"press");
       const held = modifiers.map(m => MODIFIER_KEYS[m]!);
       const bits = held.reduce((sum, m) => sum | m.bit, 0);
       // A key with Control, Alt or Meta is a shortcut, not typing.
       const { text, ...up } = spec;
       const typed = modifiers.every(m => m === "Shift") && text !== undefined ? { text } : {};
-      const steps: Array<() => Promise<unknown>> = [];
+      const steps: InputStep[] = [];
       let down = 0;
       for (const m of held) { down |= m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyDown", ...k, modifiers: down })); }
       steps.push(send({ type: "keyDown", ...up, ...typed, ...(bits ? { modifiers: bits } : {}) }), send({ type: "keyUp", ...up, ...(bits ? { modifiers: bits } : {}) }));
       for (const m of [...held].reverse()) { down &= ~m.bit; const { bit: _bit, ...k } = m; steps.push(send({ type: "keyUp", ...k, ...(down ? { modifiers: down } : {}) })); }
       return deliver(tabId, steps, active);
+    },
+    wheel(tabId:number,point:{x:number;y:number},deltaX:number,deltaY:number,active:ActiveInput=()=>true) {
+      return deliver(tabId,[step(()=>sendInput(tabId,'Input.dispatchMouseEvent',{type:'mouseWheel',...point,deltaX,deltaY}),'press')],active);
+    },
+    text(tabId:number,text:string,active:ActiveInput=()=>true) {
+      return deliver(tabId, text ? [step(()=>sendInput(tabId,"Input.insertText",{text}),"press")] : [step(()=>sendInput(tabId,"Input.dispatchKeyEvent",{type:"keyDown",key:"Backspace",code:"Backspace",windowsVirtualKeyCode:8}),"press"),step(()=>sendInput(tabId,"Input.dispatchKeyEvent",{type:"keyUp",key:"Backspace",code:"Backspace",windowsVirtualKeyCode:8}),"keyRelease")], active);
     },
     async screenshot(tabId: number) {
       const { data } = await api.send<{ data: string }>(tabId, "Page.captureScreenshot", { format: "png" });

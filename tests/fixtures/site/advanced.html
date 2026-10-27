@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>Advanced synthetic fixture</title>
+<style>body{margin:20px;font:16px sans-serif}canvas{display:block;border:1px solid}input{display:block;margin:8px}#bottom{margin-top:1600px}iframe{width:600px;height:300px;border:5px solid #555}</style>
+<label>Native text<input id="text"></label><div id="text-state"></div>
+<button id="confirm">Confirm task</button><button id="prompt">Prompt task</button><div id="dialog-result"></div>
+<canvas id="canvas" width="240" height="100"></canvas><div id="count">0</div>
+<a id="download" download="synthetic-report.txt">Download report</a><div id="bottom">Bottom marker</div>
+<script>
+const field=document.querySelector('#text');field.addEventListener('input',e=>document.querySelector('#text-state').textContent=String(e.isTrusted));
+document.querySelector('#confirm').onclick=()=>document.querySelector('#dialog-result').textContent=confirm('Continue fixture task?')?'accepted':'declined';
+document.querySelector('#prompt').onclick=()=>document.querySelector('#dialog-result').textContent=prompt('Fixture value','')??'cancelled';
+const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');ctx.fillStyle='#146d54';ctx.fillRect(0,0,240,100);ctx.fillStyle='white';ctx.font='20px sans-serif';ctx.fillText('Canvas action',20,55);let count=0;canvas.onclick=()=>document.querySelector('#count').textContent=String(++count);
+document.querySelector('#download').href=URL.createObjectURL(new Blob(['synthetic test only'],{type:'text/plain'}));
+</script>

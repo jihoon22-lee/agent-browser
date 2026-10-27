@@ -1,3 +1,4 @@
+import { advancedMethod, type AdvancedBrowser } from './advanced-browser';
 import { watchesLateNavigation } from './late-navigation';
 import { ProtocolError, type Req, type RpcError } from '../protocol/envelope';
 import type { SessionStore, Outcome } from './dedupe';
@@ -8,7 +9,7 @@ import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptib
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
 import { pageConditions, CONDITION_KEYS, type PageConditions } from '../protocol/conditions';
-const WRITE = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
+const WRITE = new Set(['browser.pointer', 'browser.dialog', 'browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
 const SNAPSHOT_RESPONSE_BYTES = 28_000;
 /** How long a click or key press that changed nothing is watched for a script navigation. */
@@ -25,6 +26,7 @@ type Running = {
     promise: Promise<unknown>;
     /** The action's confirmed result while only the late-navigation watch is still running. */
     confirmed?: unknown;
+    frame?: FrameInfo;
     /** Top document before child-frame input, to distinguish navigation from iframe removal. */
     sourceTopDocument?: string;
 };
@@ -33,8 +35,9 @@ export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot
 /** The file of that name the person attached to the panel request now running, if any. */
 export type AttachmentLookup = (name: string, panelRequestId: string | undefined) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
 const origin = (url: string | undefined) => { try { const value = url ? new URL(url).origin : "null"; return value === "null" ? undefined : value; } catch { return undefined; } };
-export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup) {
+export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup, advanced?:AdvancedBrowser, download?:{handle(p:Record<string,unknown>,signal:AbortSignal):Promise<unknown>}) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
+    const writes=new Map<number,Promise<unknown>>();
     /** A link click may still be committing the next document; read the page it produced. Wait for
      * the commit, then give subresources only a short grace: slow ads must not delay a readable DOM. */
     async function settled(tabId: number, ms: number, signal: AbortSignal) {
@@ -88,14 +91,15 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         if(tracksTabs && frame.frameId!==0 && run.req.params.waitFor)
             run.sourceTopDocument=(await interruptible(frames.list(tabId),run.controller.signal)).find(f=>f.frameId===0)?.documentId;
         // Off by default: only an enabled, attached debugger turns the content command into trusted input.
-        if (tracksTabs && frame.frameId === 0 && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true };
+        if ((tracksTabs || (advanced?.enabled() && WRITE.has(run.req.method))) && (frame.frameId === 0 || advanced?.enabled()) && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true, ...(advanced?.enabled()?{trustedFrames:true}:{}) };
         await check(run.req, run.controller.signal);
-        if (WRITE.has(run.req.method))
-            run.started = true;
+        if (WRITE.has(run.req.method)) { advanced?.clear(); run.started = true; }
         const tabs = tracksTabs ? trackCreatedTabs(api,tabId,frame.frameId,run.controller.signal) : undefined;
         let response: any;
+        run.frame=frame;
         try {
-            response = await interruptible(api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } }), run.controller.signal);
+            const work=()=>api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } });
+            response = await interruptible(WRITE.has(run.req.method) && advanced ? advanced.race(run.req,work) : work(), run.controller.signal);
         }
         catch (e) {
             tabs?.dispose();
@@ -115,6 +119,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 throw new ProtocolError(e.code, e.message, e.retry, e.details);
             throw new ProtocolError('INTERNAL', 'Invalid content response.');
         }
+        if(response?.result?.verified?.dialogPending){tabs?.dispose();return response.result;}
         if (tabs) {
             // Only Chrome lifecycle metadata may claim a new tab; content replies
             // cannot nominate arbitrary user tabs as an action's descendants.
@@ -165,6 +170,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             throw new ProtocolError('INVALID_PARAMS','waitFor is for click/press in the same tab; newTab does not support it.');
         if(req.method==='browser.wait'&&p.match==='all'&&p.refGone!==undefined)
             throw new ProtocolError('INVALID_PARAMS','match=all supports text, textGone and urlIncludes. Wait for refGone separately.');
+        if(req.method==='browser.downloads'){
+            if(!advanced?.enabled())throw new ProtocolError('FORBIDDEN_METHOD','Advanced features require Chrome 125+ and Settings activation.');
+            return download!.handle(p,signal);
+        }
         if (req.method === 'browser.bookmarks') return readBookmarks(api.bookmarks,p);
         if (req.method === 'browser.tabs.list')
             return { tabs: (await api.tabsQuery(typeof p.windowId === 'number' ? {windowId:p.windowId} : {})).map(describeTab) };
@@ -199,6 +208,15 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         if (!goto) requireWeb(tab.url);
         await check(req, signal);
         const tabId = tab.id!;
+        if(WRITE.has(req.method)&&req.method!=='browser.dialog'&&advanced?.busy(tabId))throw new ProtocolError('BROWSER_BUSY','The previous input is still settling. Observe before another action.','safe');
+        if(advanced?.pending(tabId)&&req.method!=='browser.dialog')throw new ProtocolError('BROWSER_BUSY','A browser dialog is open. Use browser_dialog or respond in Chrome first.');
+        const advancedCapture=advanced?.enabled()&&req.method==='browser.screenshot'&&await trusted?.ensure(tabId).catch(()=>false);
+        if(advancedMethod(req.method,p,!!advancedCapture)) {
+          if(!advanced?.enabled())throw new ProtocolError('FORBIDDEN_METHOD','Advanced browser features require Chrome 125+ and Settings activation.');
+          if(req.method==='browser.downloads')return download!.handle(p,signal);
+          return advanced.handle(req,signal,()=>{run.started=true;});
+        }
+
         if (req.method === 'browser.tabs.close') {
             const documents = (await frames.list(tabId)).map(frame => ({...frame}));
             const top = documents.find(f => f.frameId === 0);
@@ -399,6 +417,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 return {executed:true,openedTabs:[{...describeTab(created),pendingUrl:created.pendingUrl??(!isWeb(created.url)?url:undefined),sourceTabId:tabId,sourceFrameId:frame.frameId}]};
             }
             const result = await send(tabId, frame, req.method.slice('browser.'.length), file ? { ...p, file: undefined, panelRequestId: undefined, name: file.name, mime: file.mime, dataUrl: file.dataUrl } : p, run);
+            if((result as any)?.verified?.dialogPending)return result;
             if(expected)run.confirmed=result;
             return expected ? waitForConditions(tabId,frame,expected,run,result,tab.url) : result;
         }
@@ -504,6 +523,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         try {
             await check(req, controller.signal);
             if (WRITE.has(req.method)) {
+                if(req.method!=='browser.pointer'&&req.method!=='browser.dialog')advanced?.clear();
                 const entry = await store.claim(req.id);
                 if (entry?.state === 'done')
                     return unpack(entry.outcome);
@@ -530,15 +550,16 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             }
             if (run.started && error.code === 'INTERNAL')
                 error = new ProtocolError('EXECUTION_UNKNOWN', 'The action was dispatched but its outcome could not be confirmed. Inspect the page before retrying.', 'unsafe');
-            if (run.started && error.code === 'CANCELLED' && !(error.details as any)?.executed)
+            if (run.started && error.code === 'CANCELLED' && !(error.details as any)?.executed && !(error.details as any)?.deliveryKnown)
                 error = new ProtocolError('EXECUTION_UNKNOWN', 'Stopped after dispatch; the action may have happened. Inspect the page before retrying.', 'unsafe');
             if (claimed)
                 await store.saveResult(req.id, { ok: false, error: error.toRpc() });
             throw error;
         }
         finally {
-            if (running.get(req.id) === run)
-                running.delete(req.id);
+            const terminal=advanced?.inflight(req.id);
+            const retire=()=>{if(running.get(req.id)===run)running.delete(req.id);};
+            if(terminal)void terminal.then(retire,retire);else retire();
         }
     }
     const handle = (req: Req): Promise<unknown> => {
@@ -556,7 +577,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             return duplicate.promise;
         const run: Running = { req, controller: new AbortController(), started: false, promise: Promise.resolve() };
         running.set(req.id, run);
-        run.promise = execute(run);
+        const tabId=Number(req.params.tabId);
+        if(WRITE.has(req.method)&&req.method!=='browser.dialog') {
+            const previous=writes.get(tabId);run.promise=previous?previous.then(()=>execute(run)):execute(run);
+            const tail=run.promise.catch(()=>{});writes.set(tabId,tail);void tail.then(()=>{if(writes.get(tabId)===tail)writes.delete(tabId);});
+        } else run.promise = execute(run);
         return run.promise;
     };
     const disconnect = () => {
@@ -571,5 +596,6 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const run = running.get(requestId);
         return !!run && !run.controller.signal.aborted && run.req.method === method && Number(run.req.params.tabId) === tabId;
     };
-    return Object.assign(handle, { disconnect, isRunning });
+    const frameAllowed=(sender:{tab?:{id?:number};frameId?:number;documentId?:string},id:string)=>{const run=running.get(id);return !!run&&!!run.frame&&!!sender.documentId&&!run.controller.signal.aborted&&run.frame.documentId===sender.documentId&&run.frame.frameId===sender.frameId&&Number(run.req.params.tabId)===sender.tab?.id;};
+    return Object.assign(handle, { disconnect, isRunning, frameAllowed });
 }

@@ -106,20 +106,22 @@ describe("review fixes", () => {
     await t.ensure(1, on([1]));
     let release!: () => void, inputs = 0;
     d.api.send = async () => { inputs++; if (inputs === 1) await new Promise<void>(resolve => { release = resolve; }); return {} as any; };
-    const pending = t.click(1, 1, 1), rejected = expect(pending).rejects.toMatchObject({ dispatched: true });
+    const pending = t.click(1, 1, 1), rejected = expect(pending).rejects.toMatchObject({ dispatched: false });
+    await vi.waitFor(()=>expect(typeof release).toBe("function"));
     await t.sync({ enabled: true, operationTabs: [], operationId: null });
     release();
     await rejected;
     expect(inputs).toBe(1);
   });
-  it('does not send another CDP step for a cancelled request in a still-active operation', async () => {
+  it('completes only the release of an already-started key after cancellation', async () => {
     const d = fakeDebugger(), t = trustedInput(d.api);
     await t.ensure(1, on([1]));
     let release!: () => void, inputs = 0, active = true;
     d.api.send = async () => { inputs++; if (inputs === 1) await new Promise<void>(resolve => { release = resolve; }); return {} as any; };
-    const pending = t.key(1, 'Enter', [], () => active), rejected = expect(pending).rejects.toMatchObject({ dispatched: true });
-    active = false; release(); await rejected;
-    expect(inputs).toBe(1);
+    const pending = t.key(1, 'Enter', [], () => active), released = expect(pending).resolves.toEqual({});
+    await vi.waitFor(()=>expect(typeof release).toBe("function"));
+    active = false; release(); await released;
+    expect(inputs).toBe(2); // original keyDown, then cleanup keyUp; no second keyDown
   });
   it("detaches when enabling page events fails", async () => {
     const d = fakeDebugger(), t = trustedInput(d.api);
@@ -262,4 +264,45 @@ it("Shift alone still never sends Escape or other browser shortcuts as real inpu
   await expect(t.key(1, "Escape", ["Shift"])).rejects.toThrow();
   expect(d.calls.filter(c => c[2] === "Input.dispatchKeyEvent")).toEqual([]);
   for (const key of ["a", "Tab", "Enter", "ArrowLeft", "Home", "Delete", "Space"]) await t.key(1, key, ["Shift"]);
+});
+
+it('releases only its held key after a partially delivered modifier sequence',async()=>{
+ const d=fakeDebugger(),t=trustedInput(d.api);await t.ensure(1,on([1]));
+ const original=d.api.send;let failed=false;
+ d.api.send=async(tab,method,params:any)=>{if(method==='Input.dispatchKeyEvent'&&params.key==='a'&&params.type==='keyDown'&&!failed){failed=true;throw Error('reply lost');}return original(tab,method,params);};
+ await expect(t.key(1,'a',['Control'])).rejects.toMatchObject({dispatched:true});
+ const up=d.calls.filter(c=>c[2]==='Input.dispatchKeyEvent'&&(c[3] as any).type==='keyUp').map(c=>(c[3] as any).key);
+ expect(up).toContain('Control');expect(up).toContain('a');
+});
+
+it('300 cancellations across native delivery steps never produce a second mouse press',async()=>{
+ for(let n=0;n<300;n++){
+  const d=fakeDebugger(),t=trustedInput(d.api);await t.ensure(1,on([1],'op-'+n));let active=true,count=0;
+  const original=d.api.send;
+  d.api.send=async(tab,method,params)=>{const result=await original(tab,method,params);if(method==='Input.dispatchMouseEvent'&&++count===n%2+1)active=false;return result as any;};
+  const gesture=t.click(1,10,10,'double',()=>active);
+  if(n%2===0)await expect(gesture).rejects.toMatchObject({dispatched:false});else await expect(gesture).resolves.toMatchObject({incomplete:true});
+  const presses=d.calls.filter(c=>c[2]==='Input.dispatchMouseEvent'&&(c[3] as any).type==='mousePressed');
+  expect(presses.length).toBe(n%2);
+ }
+});
+
+it('revalidates the target before the second native press of a double click',async()=>{
+ const d=fakeDebugger(),t=trustedInput(d.api);await t.ensure(1,on([1]));let presses=0;
+ const original=d.api.send;d.api.send=async(tab,method,p:any)=>{if(method==='Input.dispatchMouseEvent'&&p.type==='mousePressed')presses++;return original(tab,method,p);};
+ await expect(t.click(1,10,10,'double',phase=>{if(phase==='press'&&presses)throw Object.assign(Error('replacement'),{verificationFailed:true});return true;})).rejects.toMatchObject({dispatched:true});
+ expect(presses).toBe(1);
+});
+it('request-scoped cancellation stops drag movement and drop after the press',async()=>{
+ const d=fakeDebugger(),t=trustedInput(d.api);await t.ensure(1,on([1]));let active=true;
+ const original=d.api.send;d.api.send=async(tab,method,p:any)=>{const result=await original(tab,method,p);if(method==='Input.dispatchMouseEvent'&&p.type==='mousePressed')active=false;return result as any;};
+ await expect(t.drag(1,{x:1,y:1},{x:10,y:10},()=>active)).resolves.toMatchObject({incomplete:true});
+ expect(d.calls.filter(c=>c[2]==='Input.dispatchMouseEvent')).toHaveLength(2);
+});
+it('a lost key callback cannot hang forever on a lost cleanup callback',async()=>{
+ vi.useFakeTimers();try{
+ const d=fakeDebugger(),t=trustedInput(d.api);await t.ensure(1,on([1]));d.api.send=()=>new Promise(()=>{});
+ const outcome=t.key(1,'a',['Control']).then(()=>null,error=>error);await vi.advanceTimersByTimeAsync(9000);
+ expect(d.calls.some(c=>c[0]==='detach')).toBe(true);expect(await outcome).toMatchObject({dispatched:true});
+ }finally{vi.useRealTimers();}
 });
