@@ -2,7 +2,17 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
-## v0.3.1 입력 해제·후속 입력 보호 — 검증 진행 중 (2026-10-28)
+## v0.3.1 Windows preview — 게시 완료 (2026-10-28)
+
+[v0.3.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.3.1)(prerelease)을 **2026-10-28 00:02:39 UTC / 2026-10-28 09:02:39 KST**에 게시했다. 주석 태그는 [PR #40](https://github.com/jihoon22-lee/agent-browser/pull/40)의 main 병합 커밋 **`131a16d55c8cfbbbda1bd256cc58a9d899c4100b`**를 가리킨다.
+
+- **배포 ZIP:** **3,839,531 bytes / 37 files**, SHA256 **`f30c97c3ae2d341bf64108a5e2fc88e1f91a7a5494a639e33747537b2915c21a`**. `SHA256SUMS` 별도 게시.
+- **소스·CI:** [최종 PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/40602167397)와 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/40604231905)의 Linux·Windows 작업이 모두 성공했다. PR head와 병합 커밋의 트리가 같음을 확인한 뒤 main에서 MSVC release·확장·고지문·ZIP을 다시 만들었다. 최종 ZIP은 아래 로컬 Windows 전체·설치 검증에 사용한 후보와 바이트 단위로 같으므로 동일 바이트의 설치를 반복하지 않았다.
+- **최종 PR CI 수치:** Linux E2E **231 통과/5 제외**, Windows Chrome **156.0.8078.48** E2E **231 통과/5 제외**. Windows는 기존 BFCache 검사 포함, D17 raw-discard 제외다. 별도 다운로드 **2개**, Windows 북마크 **2개**, 합성 품질 gate, 설치 **15개+프로세스**, GUI review **53개**·마법사·관리 경로·배율 검사 통과. 로컬 Windows Chrome 155의 최초 D17 실패와 제외 근거는 아래 보존했다.
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 빌드본과 바이트 일치, GitHub 자산 digest/크기, ZIP 내부 **36개 manifest 해시와 전체 37개 파일 목록**을 확인했다. 릴리스 본문의 세 섹션·링크·해시도 다시 읽어 확인했다.
+- **정리:** 병합된 작업 브랜치를 로컬·원격에서 삭제했다. 임시 Windows 설치·시험 폴더·프로세스, 브라우저 산출물·중복 후보·다운로드본·작업 임시 파일을 정리하고 검토 에이전트를 보관 처리했다. 최종 파일은 `release/v0.3.1-main/`에 보관하며 완료 계획은 완료로 표시했다. 기존 B10 조사 계획은 유지한다.
+
+## v0.3.1 입력 해제·후속 입력 보호 — 구현·검증 기록 (2026-10-28)
 
 - 사용자에게 패치·v0.3.1 배포·정리까지 승인받았다. [실행 계획](plans/dialog-input-release.md). 최초 v0.3.0 검증의 키·마우스 4건 실패와 정상 대조군 4건은 아래 기록과 JSON에 보존한다.
 - 대화상자·취소·응답 유실 때 이미 누른 키의 허용된 해제만 역순으로 보낸다. 다음 keydown·클릭·드래그는 재실행하지 않으며, 해제 응답을 잃으면 같은 up을 다시 보내지 않는다. 입력 전송 직전에도 문서·연결·작업·설정·취소·대화상자 변화를 재확인한다.
@@ -12,10 +22,10 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 - D14 최초 Chrome 실행은 23 통과/폐기 탭 1 실패였다. Chrome의 discard가 탭 ID를 바꾸는데 옛 ID의 작업을 재사용한 fixture 문제로 확인했다. 이를 D17의 옛 ID 거부/다른 탭 비변경 검사로 분리했고 새 탭·crash·discard 집중 3개가 통과했다. 제품의 탭 연결 정책·timeout·재시도는 바꾸지 않았다.
 - Windows D17은 headless와 headed 모두 `tabs.discard` 뒤 시험 브라우저 연결이 종료됐다. 기존 v0.3.0 ZIP으로 작업 연결·제품 입력 없이 raw `tabs.discard`만 실행해도 같은 종료를 재현했다. 정확한 Chrome/Playwright 원인은 미확정이며 이 검사는 Windows에서 명시적으로 제외하고 Linux에서 유지한다. 거짓 통과·오류 코드 완화·자동 재시도로 처리하지 않았다. 새 탭/crash 이동과 패치 관련 입력 복구 23개는 Windows에서 통과했다.
 - 로컬 전체 확장 **64파일/736개**, Linux Rust **227개+Windows helper 1개 ignored**, Node 보조 **41개**, Python 패키징 **3개**, E2E 타입·production build·clippy(기존 경고 유지)·문서 링크 검사 통과.
-- Linux Chrome **156.0.8078.4 headless** 전체 **231 통과/5 제외**. 실제 Windows Node **24.18.1**, Chrome **155.0.8059.86 headless**, WSL cargo xwin MSVC **0.3.1** 후보 ZIP 전체 **230 통과/위 D17 1 실패/5 제외**. D17을 Windows 제외로 명시한 뒤 Linux 집중 D17도 통과했다. 최종 전체 원격 CI는 진행 중이다.
+- Linux Chrome **156.0.8078.4 headless** 전체 **231 통과/5 제외**. 실제 Windows Node **24.18.1**, Chrome **155.0.8059.86 headless**, WSL cargo xwin MSVC **0.3.1** 후보 ZIP 전체 **230 통과/위 D17 1 실패/5 제외**. D17을 Windows 제외로 명시한 뒤 Linux 집중 D17도 통과했다. 최종 전체 원격 CI 결과는 위 게시 기록에 별도로 구분했다.
 - 실제 Windows 후보 ZIP: 관리 경로 GUI 설치·시작·재설치·제거와 부모/설치 폴더 ACL·데이터 보존, PowerShell 5.1 설치 **15개+프로세스 검사**, package allowlist·manifest·재현성·문서 링크·네이티브 `-File` 설치/재설치/제거 통과. 검증된 게시 v0.3.0 ZIP→후보 업데이트·시작·재설치·설치 ID/프로세스 재사용·합성 데이터 보존·제거도 통과했다.
 - 화면: Windows 설치/고급 설정의 맑은 고딕 10/12.5/15/20pt 검사, 15pt 설치/고급 및 20pt 설치 경로 이미지를 직접 확인했다. 복구 안내는 고급 on/off 각각 Windows 400 CSS px 패널 이미지를 직접 확인했다. 실제 모니터 DPI를 전환한 검사는 아니다.
-- 원격 PR/main CI·최종 main 패키지·게시본 검증은 진행 중이며 통과로 기록하지 않는다. 실제 모델 호출·사용자 설치 변경·전역 OpenCode 설정 변경 없음.
+- 원격 PR/main CI·최종 main 패키지·게시본 검증은 위 게시 기록에서 확인했다. 실제 모델 호출·사용자 설치 변경·전역 OpenCode 설정 변경 없음.
 
 ## v0.3.0 대화상자 중 입력 해제 누락 최초 검토 — 유효 (패치 전 기록) (2026-10-28)
 
@@ -252,7 +262,7 @@ PR #30 리뷰 지적([discussion](https://github.com/jihoon22-lee/agent-browser/
 - 지원하지 않는 대상: Chrome 내부 페이지·OS 대화상자 및 닫힌 Shadow DOM/canvas의 구조화된 DOM 읽기. 고급 기능의 화면 좌표 조작과 전체·영역 캡처는 위 지원 조건을 따른다.
 - 고치지 않고 남긴 작은 결함(계획 6 판단): 늦은 이동 감시 중 Bridge 연결이 끊긴 클릭의 결과 재조회, 고급 기능 off 경로의 신뢰 클릭 좌표 왕복 뒤 재확인, 긴 같은 이름 첨부의 지시문 표시, 탐색 재표시의 드문 경합.
 - Clippy의 기존 스타일/복잡도 경고가 남아 있다.
-- 배포 후 GitHub가 표시한 Dependabot 5건을 조회했다: undici 8.11.2의 high 1/medium 2, @vitest/mocker 4.1.11의 medium 2. `pnpm why -r`에서 jsdom/Vitest의 개발 테스트 의존성으로 확인했고 배포 고지 inventory와 확장 산출물에는 포함되지 않는다. 테스트 도구 업데이트는 미처리이며 제품 릴리스에 포함된 런타임 수정으로 보고하지 않는다.
+- v0.3.1 작업 중 GitHub Dependabot 경고가 10건(high 4/medium 6)으로 늘었다. 모두 undici 8.11.2와 @vitest/mocker 4.1.11이다. `pnpm why -r`로 jsdom/Vitest의 개발 테스트 의존성임을 다시 확인했고, 최종 ZIP의 파일 목록과 고지 inventory에는 포함되지 않는다. 테스트 도구 업데이트는 미처리이며 이번 패치에 포함된 런타임 보안 수정으로 보고하지 않는다.
 
 ## 참고 사항
 
