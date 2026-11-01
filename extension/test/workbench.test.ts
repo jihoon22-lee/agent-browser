@@ -928,6 +928,28 @@ describe("draft and reference details", () => {
     expect(Object.keys(saved)).toEqual([]);
   });
 
+  it("keeps oversized drafts out of the session storage shared with input recovery", async () => {
+    const saved = sessionStore();
+    await render(); await draftValue("짧은 초안"); await settle(350);
+    expect(Object.values(saved)).toEqual(["짧은 초안"]);
+    // A pasted log stays in memory only, and the shorter text saved before it must not come back later.
+    await draftValue("가".repeat(20_001)); await settle(350);
+    expect(Object.keys(saved)).toEqual([]);
+    expect(composerValue().value).toHaveLength(20_001);
+  });
+
+  it("does not re-read browser settings when only a draft is saved", async () => {
+    sessionStore();
+    const listeners: Array<(changes: Record<string, unknown>, area: string) => void> = [];
+    (chrome.storage as any).onChanged = { addListener: (f: any) => listeners.push(f), removeListener: vi.fn() };
+    await render();
+    const local = chrome.storage.local.get as ReturnType<typeof vi.fn>, before = local.mock.calls.length;
+    await act(async () => { for (const listener of listeners) listener({ "draft:x": { newValue: "초안" } }, "session"); });
+    expect(local.mock.calls.slice(before).some(([keys]) => Array.isArray(keys) && keys.includes("advancedBrowser"))).toBe(false);
+    await act(async () => { for (const listener of listeners) listener({ advancedBrowser: { newValue: true } }, "local"); });
+    expect(local.mock.calls.slice(before).some(([keys]) => Array.isArray(keys) && keys.includes("advancedBrowser"))).toBe(true);
+  });
+
   it("does not bring a sent first message back as the next new conversation's draft", async () => {
     const saved = sessionStore();
     sessions.length = 0; messages = [];

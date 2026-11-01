@@ -20,6 +20,8 @@ export type WorkspaceView = "chat" | "sessions" | "browser";
 const FAVORITE_MODELS = "★ 즐겨찾기";
 // Read-only starting points: they fill the composer and are never sent without the user.
 const EXAMPLES = ["지금 보는 페이지를 요약해줘", "이 페이지의 표를 Markdown으로 정리해줘", "이 페이지에서 입력해야 할 항목을 알려줘"];
+// Longer drafts, such as a pasted log, stay in memory only: session storage also holds the input-recovery records.
+const MAX_STORED_DRAFT = 20_000;
 type StartAction = { label: string; run: (trigger: HTMLButtonElement) => void; primary?: boolean };
 type Props = { operation: Operation | null; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void; conn: ConnStatus };
 export function Workbench({ operation, stopHandler, view, onViewChange, conn }: Props) {
@@ -52,7 +54,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
   const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState(""), [modelTools, setModelTools] = useState(false);
   const [browserFeatures,setBrowserFeatures]=useState({advanced:false,trusted:false});
-  useEffect(()=>{let live=true;const update=()=>void chrome.storage.local.get(['advancedBrowser','trustedInput']).then(s=>{if(live)setBrowserFeatures({advanced:s.advancedBrowser===true,trusted:s.trustedInput===true});}).catch(()=>{});update();chrome.storage.onChanged?.addListener(update);return()=>{live=false;chrome.storage.onChanged?.removeListener(update);};},[]);
+  useEffect(()=>{let live=true;const update=()=>void chrome.storage.local.get(['advancedBrowser','trustedInput']).then(s=>{if(live)setBrowserFeatures({advanced:s.advancedBrowser===true,trusted:s.trustedInput===true});}).catch(()=>{});const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{if(area==='local'&&(changes.advancedBrowser||changes.trustedInput))update();};update();chrome.storage.onChanged?.addListener(changed);return()=>{live=false;chrome.storage.onChanged?.removeListener(changed);};},[]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const { theme, chooseTheme } = useTheme();
   const [drawer, setDrawer] = useState<"environment" | "tools" | "theme" | null>(null);
@@ -70,7 +72,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const draftRestored = useRef(""), consumedDraft = useRef("");
   const storeDraft = (key: string, text: string) => {
     if (draftRestored.current !== key || !chrome.storage.session) return;
-    void (text.trim() ? chrome.storage.session.set({ [`draft:${key}`]: text }) : chrome.storage.session.remove(`draft:${key}`)).catch(() => {});
+    void (text.trim() && text.length <= MAX_STORED_DRAFT ? chrome.storage.session.set({ [`draft:${key}`]: text }) : chrome.storage.session.remove(`draft:${key}`)).catch(() => {});
   };
   const messageViewport = useRef<HTMLDivElement>(null), followMessages = useRef(true);
   // Id of the session created for the first message; only that session may auto-send it.

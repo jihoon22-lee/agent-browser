@@ -410,3 +410,21 @@ test("W17 Options folds the paired connection and lists real diagnostics as a ch
     const image = info.outputPath("options-diagnostics.png"); await options.screenshot({ path: image, fullPage: true }); await info.attach("options-diagnostics", { path: image, contentType: "image/png" });
   } finally { await options.close(); }
 });
+
+test("W18 typed draft text survives closing the panel and a sent draft does not come back", async () => {
+  await createSession();
+  const composer = () => panel.getByRole("textbox", { name: "메시지", exact: true });
+  const stored = () => panel.evaluate(async text => Object.values(await (globalThis as any).chrome.storage.session.get(null)).filter(value => value === text).length, "패널을 닫아도 남는 초안");
+  await composer().fill("패널을 닫아도 남는 초안");
+  // Saving is debounced; close only once the text is in session storage.
+  await expect.poll(stored).toBe(1);
+  await panel.close(); await openPanel();
+  await expect(panel.getByRole("heading", { name: "새 합성 세션", exact: true })).toBeVisible();
+  await expect(composer()).toHaveValue("패널을 닫아도 남는 초안");
+  await panel.getByRole("button", { name: "보내기", exact: true }).click();
+  await expect(panel.getByText("합성 응답입니다.", { exact: false }).last()).toBeVisible();
+  await expect.poll(stored).toBe(0);
+  await panel.close(); await openPanel();
+  await expect(panel.getByRole("heading", { name: "새 합성 세션", exact: true })).toBeVisible();
+  await expect(composer()).toHaveValue("");
+});

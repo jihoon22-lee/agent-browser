@@ -46,6 +46,20 @@ it("recovers the stop button after a failed request and shows confirmed stop", a
   expect(stopButton()).toBeUndefined();
 });
 
+it("re-reads the advanced browser setting only when that setting changes", async () => {
+  const changed: Array<(changes: Record<string, unknown>, area: string) => void> = [];
+  (chrome.storage as any).onChanged = { addListener: (f: any) => changed.push(f), removeListener: vi.fn() };
+  await render();
+  const reads = () => (chrome.storage.local.get as ReturnType<typeof vi.fn>).mock.calls.filter(([keys]) => keys === "advancedBrowser").length;
+  const before = reads();
+  expect(before).toBeGreaterThan(0);
+  // Draft saves land in session storage several times a minute while typing.
+  await act(async () => { for (const listener of changed) listener({ "draft:x": { newValue: "초안" } }, "session"); });
+  expect(reads()).toBe(before);
+  await act(async () => { for (const listener of changed) listener({ advancedBrowser: { newValue: true } }, "local"); });
+  expect(reads()).toBe(before + 1);
+});
+
 it("does not look up another browser's tab IDs in the local profile", async () => {
   sendMessage.mockImplementation(async (msg) => msg.kind === "get-conn-status" ? { state: "connected" } : { ok: true, result: { ...status, operation: { ...status.operation, clientId: "remote" } } });
   await render();
