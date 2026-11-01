@@ -896,3 +896,31 @@ describe("start screen", () => {
     expect(test.post.mock.calls.some(([path]) => path.endsWith("/prompt_async"))).toBe(false);
   });
 });
+
+describe("draft and reference details", () => {
+  const sessionStore = () => {
+    const saved: Record<string, any> = {};
+    (chrome.storage as any).session = { get: vi.fn(async (key: string) => key in saved ? { [key]: saved[key] } : {}), set: vi.fn(async (value: Record<string, any>) => { Object.assign(saved, value); }), remove: vi.fn(async (key: string) => { delete saved[key]; }) };
+    return saved;
+  };
+  const settle = (ms: number) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+
+  it("keeps typed draft text after the panel closes and drops it once sent", async () => {
+    const saved = sessionStore();
+    await render(); await draftValue("닫아도 남길 초안"); await settle(350);
+    expect(Object.values(saved)).toEqual(["닫아도 남길 초안"]);
+    await act(async () => root.unmount()); root = createRoot(host);
+    await render();
+    expect(composerValue().value).toBe("닫아도 남길 초안");
+    await act(async () => button("보내기").click()); await settle(350);
+    expect(Object.keys(saved)).toEqual([]);
+  });
+
+  it("says when a current-tab reference attached only the beginning of the page", async () => {
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation(async (message: any) => message.kind === "browser-context" ? { ok: true, result: { title: "긴 문서", url: "https://example.test/long", tabId: 3, text: "가".repeat(16000), length: 41234 } } : original(message));
+    await render();
+    await act(async () => button("현재 탭").click()); await settle(50);
+    expect(host.textContent).toContain("41,234자 중 앞부분 16,000자만 첨부했습니다");
+  });
+});
