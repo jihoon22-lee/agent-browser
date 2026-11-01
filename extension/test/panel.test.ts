@@ -42,7 +42,8 @@ it("recovers the stop button after a failed request and shows confirmed stop", a
   sendMessage.mockImplementation(async (msg) => ({ ok: true, result: msg.method === "operation.abort" ? { aborted: true } : { ...status, operation: null } }));
   await act(async () => stopButton().click());
   expect(host.textContent).toContain("이미 제출된 웹사이트 요청은 취소되지 않습니다.");
-  expect(stopButton().disabled).toBe(true);
+  // With no operation left there is nothing to stop, so the header button is removed.
+  expect(stopButton()).toBeUndefined();
 });
 
 it("does not look up another browser's tab IDs in the local profile", async () => {
@@ -78,5 +79,5 @@ it("does not claim a successful stop if the operation already ended", async () =
   sendMessage.mockImplementation(async (msg) => ({ ok: true, result: msg.method === "operation.abort" ? { aborted: false } : { ...status, operation: null } }));
   await act(async () => stopButton().click());
   expect(host.textContent).not.toContain("중단됨:");
-  expect(stopButton().disabled).toBe(true);
+  expect(stopButton()).toBeUndefined();
 });

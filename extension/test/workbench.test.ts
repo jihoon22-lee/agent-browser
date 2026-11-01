@@ -200,14 +200,14 @@ it("restores the last user model from a saved session instead of silently taking
   const original = test.get.getMockImplementation()!;
   test.get.mockImplementation(async (path: string, query: any) => path === "/provider" ? { all: [{ id: "internal", models: { company: model, previous: { ...model, id: "previous", name: "이전 모델" } } }], connected: ["internal"], default: { internal: "company" } } : original(path, query));
   await render();
-  const select = [...host.querySelectorAll("label")].find(label => label.firstChild?.textContent === "모델")!.querySelector("select")!;
+  const select = host.querySelector<HTMLSelectElement>('.composer select[aria-label="모델"]')!;
   expect(select.value).toBe("internal/previous");
 });
 
 it("requires explicit model selection when the saved model is no longer available", async () => {
   messages = [{ info: { ...info, model: { providerID: "retired-private", modelID: "old" } }, parts: [{ id: "prt-one", type: "text", text: "이전 환경 대화" }] }];
   await render();
-  const select = [...host.querySelectorAll("label")].find(label => label.firstChild?.textContent === "모델")!.querySelector("select")!;
+  const select = host.querySelector<HTMLSelectElement>('.composer select[aria-label="모델"]')!;
   expect(select.value).toBe("");
 });
 
@@ -832,7 +832,9 @@ it("sends at most the uploadable attachments so a large message cannot fail to s
 it('keeps model, agent and reasoning selection in the composer without opening execution settings',async()=>{
   await render();
   const form=host.querySelector('.composer')!;
-  for(const name of ['모델','에이전트','모델 variant·추론 옵션']) expect([...form.querySelectorAll('label')].some(label=>label.firstChild?.textContent===name&&label.querySelector('select'))).toBe(true);
+  for(const name of ['모델','에이전트','모델 variant·추론 옵션']) expect(form.querySelector(`.composer-selectors select[aria-label="${name}"]`)).not.toBeNull();
+  // One row of named selects, not stacked label blocks: short panels need the height for messages.
+  expect(form.querySelectorAll('label select').length).toBe(0);
   expect(form.textContent).toContain('이미지 지원 정보 없음');
 });
 

@@ -124,7 +124,7 @@ export function App() {
   return <main className="app-shell">
     <header className="app-header">
       <div className="brand"><svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M3 9h18M9 9v12" /></svg><div><h1>AgentBrowser</h1><div className={`connection ${connected ? "online" : "offline"}`} role="status"><span className="dot" />{connectionLabel(state.conn)}</div></div></div>
-      <div className="header-actions"><button className="quiet" onClick={() => void chrome.runtime.openOptionsPage()}>설정</button><button className="stop" aria-label="브라우저 작업 중단" disabled={!connected || !op || state.stopping} onClick={() => void stop()}>{state.stopping ? "중단 중…" : "중단"}</button></div>
+      <div className="header-actions"><button className="quiet" onClick={() => void chrome.runtime.openOptionsPage()}>설정</button>{(op || state.stopping) && <button className="stop" aria-label="브라우저 작업 중단" disabled={!connected || !op || state.stopping} onClick={() => void stop()}>{state.stopping ? "중단 중…" : "중단"}</button>}</div>
     </header>
     {(state.conn.detail || state.error || state.stopped) && <div className="global-notices">
       {state.conn.detail && <p className="muted">{state.conn.detail}</p>}

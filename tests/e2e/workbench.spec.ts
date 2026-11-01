@@ -202,7 +202,8 @@ test("W07 twelve rendered theme/width combinations retain readable content, inde
     });
     expect(layout.documentHeight).toBeLessThanOrEqual(layout.height + 1); expect(layout.documentWidth).toBeLessThanOrEqual(layout.width + 1);
     expect(layout.composerBottom).toBeLessThanOrEqual(layout.height); expect(layout.viewportHeight).toBeGreaterThan(150); expect(layout.scrollHeight).toBeGreaterThan(layout.viewportHeight);
-    await expect(panel.getByRole("button", { name: "브라우저 작업 중단", exact: true })).toBeVisible();
+    // No browser operation runs in this world, so the header Stop button is not shown.
+    await expect(panel.getByRole("button", { name: "브라우저 작업 중단", exact: true })).toHaveCount(0);
     await panel.locator(".message-viewport").evaluate(el => { el.scrollTop = el.scrollHeight; });
     await expect(composer).toBeVisible();
     await panel.getByRole("button", { name: "보내기", exact: true }).hover();
@@ -352,4 +353,30 @@ test('W14 composer choices remain visible at narrow widths and Windows display s
   expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.bottom).toBeLessThanOrEqual(bounds.height);expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width);
   const path=info.outputPath(`composer-${width}-${scale}.png`);const capture=await cdp.send('Page.captureScreenshot',{format:'png'});const bytes=Buffer.from(capture.data,'base64');expect(bytes.readUInt32BE(16)).toBe(Math.round(width*scale));await writeFile(path,bytes);await info.attach(`composer-${width}-${scale}`,{path,contentType:'image/png'});
  }}finally{await cdp.send('Emulation.clearDeviceMetricsOverride');await cdp.detach();}
+});
+
+test("W15 short panels keep a usable message area and the Send button on screen", async ({}, info) => {
+  const id = await createSession();
+  for (let index = 0; index < 12; index++) {
+    const messageID = `msg_short_${id}_${index}`;
+    api.saveMessage({ info: { id: messageID, sessionID: id, role: index % 2 ? "assistant" : "user", time: { created: Date.now() + index } }, parts: [{ id: `prt_short_${id}_${index}`, sessionID: id, messageID, type: "text", text: `짧은 패널 합성 메시지 ${index + 1}` }] });
+  }
+  await expect(panel.getByText("짧은 패널 합성 메시지 12", { exact: true })).toBeVisible();
+  // The fixture model offers variants, so the reasoning choice is shown: the tallest composer.
+  await expect(panel.getByRole("combobox", { name: "모델 variant·추론 옵션", exact: true })).toBeVisible();
+  const send = panel.getByRole("button", { name: "보내기", exact: true }), checks = [];
+  for (const [width, height] of [[400, 640], [400, 700], [400, 760], [320, 700]] as const) {
+    await panel.setViewportSize({ width, height });
+    const layout = await panel.evaluate(() => {
+      const viewport = document.querySelector<HTMLElement>(".message-viewport")!, composer = document.querySelector<HTMLElement>(".composer")!.getBoundingClientRect();
+      return { viewportHeight: viewport.clientHeight, composerHeight: Math.round(composer.height), viewportTop: Math.round(viewport.getBoundingClientRect().top), height: innerHeight, width: innerWidth, documentHeight: document.documentElement.scrollHeight };
+    });
+    checks.push({ width, height, ...layout });
+    expect(layout.viewportHeight, `${width}x${height} message area`).toBeGreaterThanOrEqual(200);
+    expect(layout.documentHeight).toBeLessThanOrEqual(layout.height + 1);
+    await expect(send).toBeInViewport({ ratio: 1 });
+    const image = info.outputPath(`short-${width}x${height}.png`); await panel.screenshot({ path: image }); await info.attach(`short-${width}x${height}`, { path: image, contentType: "image/png" });
+  }
+  const path = info.outputPath("short-panel-layout.json"); await writeFile(path, JSON.stringify(checks, null, 2));
+  await info.attach("short-panel-layout", { path, contentType: "application/json" });
 });

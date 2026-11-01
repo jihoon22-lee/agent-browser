@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { advancedAvailable, imageSupport, requestModelCapability } from "../agents/opencode-v1/capabilities";
 import { selectAttachments } from "../background/uploads";
 import { computeUsage } from "../agents/opencode-v1/usage";
@@ -14,6 +14,7 @@ import { captureRequestTarget, completedRequest, type RequestLease } from './req
 import { OpenCodeApiError } from '../agents/opencode-v1/client';
 
 export type WorkspaceView = "chat" | "sessions" | "browser";
+const FAVORITE_MODELS = "★ 즐겨찾기";
 type Props = { operation: Operation | null; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void };
 export function Workbench({ operation, stopHandler, view, onViewChange }: Props) {
   const wb = useWorkbench();
@@ -43,7 +44,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     return ()=>{active=false;chrome.storage.onChanged?.removeListener(changed);};
   },[wb.profileId,wb.directory,wb.sessionId]);
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
-  const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState("");
+  const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState(""), [modelTools, setModelTools] = useState(false);
   const [browserFeatures,setBrowserFeatures]=useState({advanced:false,trusted:false});
   useEffect(()=>{let live=true;const update=()=>void chrome.storage.local.get(['advancedBrowser','trustedInput']).then(s=>{if(live)setBrowserFeatures({advanced:s.advancedBrowser===true,trusted:s.trustedInput===true});}).catch(()=>{});update();chrome.storage.onChanged?.addListener(update);return()=>{live=false;chrome.storage.onChanged?.removeListener(update);};},[]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -96,6 +97,13 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = false; previousDraft.current = { key: draftKey, ...next };
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
+  // The message box starts at two lines and grows with its text up to the CSS max-height.
+  useLayoutEffect(() => {
+    const element = composer.current;
+    if (!element || element.offsetParent === null) return;
+    element.style.height = "auto";
+    element.style.height = `${element.scrollHeight + element.offsetHeight - element.clientHeight}px`;
+  }, [draft, view, drawer]);
   useEffect(() => {
     const target = autoSend.current;
     if (!target || !wb.sessionId || creating.current) return;
@@ -329,7 +337,8 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   };
   const questions = wb.state.questions.filter(request => request.sessionID === wb.sessionId), permissions = wb.state.permissions.filter(request => request.sessionID === wb.sessionId);
   const tokenLine = (value: Data | null) => value ? `입력 ${value.input.toLocaleString()} · 출력 ${value.output.toLocaleString()} · 추론 ${value.reasoning.toLocaleString()} · 캐시 읽기 ${value.cache.read.toLocaleString()} / 쓰기 ${value.cache.write.toLocaleString()}` : "정보 없음";
-  const filteredModels = models.filter(item => `${item.providerID}/${item.id}`===modelKey || `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(modelSearch.toLowerCase())).sort((a, b) => Number(favorites.includes(`${b.providerID}/${b.id}`)) - Number(favorites.includes(`${a.providerID}/${a.id}`)));
+  const filteredModels = models.filter(item => `${item.providerID}/${item.id}`===modelKey || `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(modelSearch.toLowerCase()));
+  const profileName = wb.profiles.find(profile => profile.id === wb.profileId)?.name as string | undefined;
   const environmentPanel = <section className="workspace-bar"><h3>OpenCode 연결</h3>
       <label>실행 환경<select value={wb.profileId} disabled={wb.loading} onChange={event => void wb.connect(event.target.value)}><option value="">환경 선택</option>{wb.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.kind}</option>)}</select></label>
       {!wb.profiles.length && <p className="muted">OpenCode 실행 환경이 없습니다. <button onClick={() => void chrome.runtime.openOptionsPage()}>실행 환경 추가</button></p>}
@@ -342,11 +351,26 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       {wb.hasMoreSessions && <button disabled={wb.sessionsLoading} onClick={() => void perform(wb.loadMoreSessions)}>{wb.sessionsLoading ? "불러오는 중…" : "더 보기"}</button>}
       {currentSession?.parentID && <div className="notice"><strong>현재 하위 세션: {currentSession.title}</strong><button onClick={() => onViewChange("chat")}>대화 열기</button></div>}
     </section>;
-  const modelsPanel = <div className="composer-settings"><div className="composer-selectors"><label>모델<select ref={modelSelect} value={modelKey} onChange={event => { selectedControls.current.dirty = true; setModelKey(event.target.value); setVariant(""); }}><option value="">사용 가능한 모델 선택</option>{filteredModels.map(item => { const key = `${item.providerID}/${item.id}`; return <option key={key} value={key}>{favorites.includes(key) ? "★ " : ""}{item.providerName} · {item.name ?? item.id}</option>; })}</select></label>
-
-      <label>에이전트<select value={agent} onChange={event => { selectedControls.current.dirty = true; setAgent(event.target.value); }}><option value="">서버 기본값</option>{wb.agents.filter(item => !item.hidden && ["primary", "all"].includes(item.mode)).map(item => <option key={item.name}>{item.name}</option>)}</select></label>
-      {Object.keys(model?.variants ?? {}).length > 0 && <label>모델 variant·추론 옵션<select value={variant} onChange={event => { selectedControls.current.dirty = true; setVariant(event.target.value); }}><option value="">서버 기본값</option>{Object.keys(model?.variants ?? {}).map(name => <option key={name}>{name}</option>)}</select></label>}
-</div><details className="model-search"><summary>모델 검색·즐겨찾기</summary><input aria-label="모델 검색" placeholder="모델 검색" value={modelSearch} onChange={event => setModelSearch(event.target.value)} />      <button type="button" disabled={!modelKey} onClick={() => { const next = favorites.includes(modelKey) ? favorites.filter(key => key !== modelKey) : [...favorites, modelKey]; setFavorites(next); void chrome.storage.local.set({ modelFavorites: next }); }}>{favorites.includes(modelKey) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</button></details><p className="muted">{{supported:"이미지 입력 지원",unsupported:"이미지 입력 미지원",unknown:"이미지 지원 정보 없음"}[imageSupport(model)]} · {imageSupport(model)!=="supported"?"시각 조작: 이미지 모델 필요":!advancedAvailable()?"시각 조작: Chrome 125 이상 필요":!browserFeatures.advanced||!browserFeatures.trusted?"시각 조작: 고급 기능·신뢰 입력 설정 필요":model?.capabilities?.toolcall!==true?"시각 조작: 도구 호출 지원 확인 필요":"시각 조작 사용 가능"} · 다음 메시지부터 적용</p>{!models.length && <p>이 환경에 연결·설정된 모델이 없습니다. 기존 OpenCode의 provider 설정을 확인하세요.</p>}
+  const capability = `${{ supported: "이미지 입력 지원", unsupported: "이미지 입력 미지원", unknown: "이미지 지원 정보 없음" }[imageSupport(model)]} · ${imageSupport(model) !== "supported" ? "시각 조작: 이미지 모델 필요" : !advancedAvailable() ? "시각 조작: Chrome 125 이상 필요" : !browserFeatures.advanced || !browserFeatures.trusted ? "시각 조작: 고급 기능·신뢰 입력 설정 필요" : model?.capabilities?.toolcall !== true ? "시각 조작: 도구 호출 지원 확인 필요" : "시각 조작 사용 가능"}`;
+  // Favorites get their own group first; the rest are grouped by provider so the closed select shows only the model name.
+  const modelKeyOf = (item: Data) => `${item.providerID}/${item.id}`;
+  const modelGroups: Array<[string, Data[]]> = [];
+  for (const item of filteredModels) {
+    const label = favorites.includes(modelKeyOf(item)) ? FAVORITE_MODELS : item.providerName;
+    const group = modelGroups.find(([name]) => name === label);
+    if (group) group[1].push(item); else if (label === FAVORITE_MODELS) modelGroups.unshift([label, [item]]); else modelGroups.push([label, [item]]);
+  }
+  const choose = (update: () => void) => { selectedControls.current.dirty = true; update(); };
+  const modelsPanel = <div className="composer-settings">
+      <div className="composer-selectors">
+        <select ref={modelSelect} aria-label="모델" className="model-select" title={model ? `${model.providerName} · ${model.name ?? model.id}\n${capability}\n다음 메시지부터 적용` : "사용할 모델을 선택하세요"} value={modelKey} onChange={event => choose(() => { setModelKey(event.target.value); setVariant(""); })}><option value="">모델 선택</option>{modelGroups.map(([label, items]) => <optgroup key={label} label={label}>{items.map(item => <option key={modelKeyOf(item)} value={modelKeyOf(item)}>{item.name ?? item.id}{label === FAVORITE_MODELS ? ` · ${item.providerName}` : ""}</option>)}</optgroup>)}</select>
+        {Object.keys(model?.variants ?? {}).length > 0 && <select aria-label="모델 variant·추론 옵션" title="모델 variant·추론 옵션" value={variant} onChange={event => choose(() => setVariant(event.target.value))}><option value="">추론 기본</option>{Object.keys(model?.variants ?? {}).map(name => <option key={name} value={name}>추론 {name}</option>)}</select>}
+        <select aria-label="에이전트" title="에이전트" value={agent} onChange={event => choose(() => setAgent(event.target.value))}><option value="">기본 에이전트</option>{wb.agents.filter(item => !item.hidden && ["primary", "all"].includes(item.mode)).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select>
+        <button type="button" className="quiet icon-button" aria-label="모델 검색·즐겨찾기" aria-expanded={modelTools} title="모델 검색·즐겨찾기" onClick={() => setModelTools(open => !open)}>☆</button>
+      </div>
+      {modelTools && <div className="model-search"><input aria-label="모델 검색" placeholder="모델 검색" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /><button type="button" disabled={!modelKey} onClick={() => { const next = favorites.includes(modelKey) ? favorites.filter(key => key !== modelKey) : [...favorites, modelKey]; setFavorites(next); void chrome.storage.local.set({ modelFavorites: next }); }}>{favorites.includes(modelKey) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</button></div>}
+      <p className="composer-capability" title={`${capability} · 다음 메시지부터 적용`}>{capability}</p>
+      {!models.length && <p className="composer-warning">이 환경에 연결·설정된 모델이 없습니다. 기존 OpenCode의 provider 설정을 확인하세요.</p>}
     </div>;
   const conversationPanel = <section className="conversation" aria-label="대화" hidden={drawer !== null}><div className="section-heading">{renaming?.place === "header" && currentSession?.id === renaming.id
         ? <RenameField initial={currentSession.title ?? ""} onSubmit={title => { setRenaming(null); void perform(() => renameSession(currentSession, title)); }} onCancel={() => setRenaming(null)} />
@@ -369,11 +393,11 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
       </div>
       <form className="composer" onSubmit={event => { event.preventDefault(); void send(); }}>
         {attachments.length > 0 && <div className="attachments">{attachments.map((part, index) => <span className="chip" key={index}>{part.type === "agent" ? "@" + part.name : part.filename}<button type="button" aria-label={`${part.filename ?? part.name} 첨부 제거`} onClick={() => setAttachments(previous => previous.filter((_, i) => i !== index))}>×</button></span>)}</div>}
-        <textarea ref={composer} aria-label="메시지" value={draft} onChange={event => setDraft(event.target.value)} onCompositionStart={() => { composeActive.current = true; }} onCompositionEnd={() => { composeActive.current = false; }} onKeyDown={event => { if (event.key === "ArrowDown" && !composeActive.current) { const option = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".suggestions button"); if (option) { event.preventDefault(); option.focus(); return; } } if (!composeActive.current && shouldSubmit(event.nativeEvent)) { event.preventDefault(); void send(); } }} placeholder="어떤 작업을 할까요?  @참조  /커맨드" rows={3} />
+        <textarea ref={composer} aria-label="메시지" value={draft} onChange={event => setDraft(event.target.value)} onCompositionStart={() => { composeActive.current = true; }} onCompositionEnd={() => { composeActive.current = false; }} onKeyDown={event => { if (event.key === "ArrowDown" && !composeActive.current) { const option = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".suggestions button"); if (option) { event.preventDefault(); option.focus(); return; } } if (!composeActive.current && shouldSubmit(event.nativeEvent)) { event.preventDefault(); void send(); } }} placeholder="무엇을 할까요? @참조 · /커맨드 · Shift+Enter 줄바꿈" rows={2} />
         {mention !== undefined && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성"><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>{wb.agents.filter(item => !item.hidden && item.name.includes(mention)).map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
         {draft.startsWith("/") && !draft.includes(" ") && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)].filter(name => name.includes(draft.slice(1))).slice(0, 15).map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>}
         {modelsPanel}
-        <div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-actions"><span className="composer-hint">Enter 전송 · Shift+Enter 줄바꿈</span><div><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
+        <div className="composer-actions"><div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-send"><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
           <button type="button" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
             if(stopLock.current)return;
             stopLock.current=true;setStopping(true);
@@ -416,10 +440,10 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     </details>;
   const commandsPanel = <details className="workspace-section" open={!!palette}><summary onClick={() => setPalette("")}>커맨드·스킬·MCP</summary><input aria-label="커맨드·스킬 검색" placeholder="검색" value={palette === "commands" || palette === "skills" ? "" : palette} onChange={event => setPalette(event.target.value)} /><ul className="command-list">{wb.commands.filter(command => `${command.name} ${command.description ?? ""}`.includes(["commands", "skills"].includes(palette) ? "" : palette)).map(command => <li key={command.name}><button onClick={() => { setDraft(`/${command.name} `); setDrawer(null); composer.current?.focus(); }}>/{command.name}</button><span>{command.source === "mcp" ? "MCP 프롬프트" : command.source === "skill" ? "스킬" : "사용자 커맨드"}</span><p>{command.description}</p>{command.hints?.length > 0 && <small>인수: {command.hints.join(" · ")}</small>}</li>)}{wb.skills.filter(skill => !wb.commands.some(command => command.name === skill.name) && `${skill.name} ${skill.description ?? ""}`.includes(["commands", "skills"].includes(palette) ? "" : palette)).map(skill => <li key={skill.name}><button onClick={() => void perform(async () => { const current = wb.captureScope(); const part = await textFilePart(`${skill.name}-SKILL.md`, `스킬 위치: ${skill.location}\n\n${skill.content}`); if (!current()) return; setAttachments(previous => [...previous, part]); setDraft(`첨부한 ${skill.name} 스킬을 사용해 다음 작업을 수행해줘.\n`); setDrawer(null); composer.current?.focus(); })}>{skill.name} 스킬 첨부</button><p>{skill.description}</p></li>)}</ul><p className="muted">MCP 프롬프트와 실행 가능한 스킬은 서버의 /command 경로를 사용합니다. 그 외 스킬은 정의를 첨부해 기존 에이전트에게 사용을 요청합니다.</p><pre>{JSON.stringify(wb.mcp, null, 2)}</pre></details>;
   return <div className="workbench" aria-label="OpenCode 작업 공간" hidden={view === "browser"}>
-    <div className="workspace-summary"><div className="workspace-identity"><strong title={wb.profiles.find(profile => profile.id === wb.profileId)?.name}>{wb.profiles.find(profile => profile.id === wb.profileId)?.name ?? "실행 환경을 연결하세요"}</strong><span className="connection-line" role="status">{wb.loading ? "실행 환경 준비 중…" : wb.connected ? `OpenCode ${wb.runtime?.version ?? ""} 연결됨` : "OpenCode 연결 대기"}</span></div><button className="quiet" onClick={event => openDrawer("theme", event.currentTarget)} aria-label="화면 테마 선택">테마</button></div>
+    <div className="workspace-summary"><div className="workspace-identity"><button className="control-chip" aria-label="실행 설정" title={`${profileName ?? "실행 환경 선택"} · ${wb.directory || "작업 디렉터리 정보 없음"}`} onClick={event => openDrawer("environment", event.currentTarget)}><strong>{profileName ?? "실행 환경 선택"}</strong><span aria-hidden="true">▾</span></button><span className="connection-line" role="status">{wb.loading ? "실행 환경 준비 중…" : wb.connected ? `OpenCode ${wb.runtime?.version ?? ""} 연결됨` : "OpenCode 연결 대기"}</span></div>
+      <div className="workspace-actions"><button className="quiet" onClick={event => openDrawer("tools", event.currentTarget)}>작업 도구</button><button className="quiet" onClick={event => openDrawer("theme", event.currentTarget)} aria-label="화면 테마 선택">테마</button></div></div>
     {(wb.error || notice) && <div className="workspace-notices">{wb.error && <p role="alert" className="error">{wb.error}</p>}{notice && <p role="status" className="notice">{notice}<button className="quiet" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></p>}</div>}
     <div id="view-chat" className="chat-view" role="tabpanel" aria-labelledby="tab-chat" hidden={view !== "chat"}>
-      <div className="chat-controls" hidden={drawer !== null}><button className="control-chip" aria-label="실행 설정" title={`${model?.name ?? "모델 선택"} · ${agent || "서버 기본 에이전트"}`} onClick={event => openDrawer("environment", event.currentTarget)}><span>실행 설정</span><small>{model?.name ?? "모델 선택"}</small></button><button className="quiet" onClick={event => openDrawer("tools", event.currentTarget)}>작업 도구</button></div>
       {conversationPanel}
       <aside className="control-panel view-scroll" aria-label={`${drawerTitle} 패널`} hidden={drawer === null} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setDrawer(null); } }}>
         <div className="drawer-heading"><h2>{drawerTitle}</h2><button ref={drawerClose} className="quiet" onClick={() => setDrawer(null)}>대화로 돌아가기</button></div>
