@@ -39,6 +39,20 @@ it("folds pairing away once connected and puts the cursor in the code field when
   expect(host.querySelector("details.pairing-change")).toBeNull();
   expect(document.activeElement).toBe([...host.querySelectorAll("label")].find(element => element.firstChild?.textContent === "페어링 코드")!.querySelector("input"));
 });
+it("keeps pairing folded until the status arrives and points a stopped Bridge to its start command", async () => {
+  let answer!: (value: unknown) => void;
+  send.mockImplementation(async message => message.kind === "get-conn-status" ? new Promise(resolve => { answer = resolve; }) : message.kind === "reconnect" ? { ok: true } : { ok: false, error: { code: "BROWSER_DISCONNECTED", message: "Bridge is not connected" } });
+  await render();
+  expect(host.querySelector('[role="status"]')?.textContent).toContain("연결하는 중");
+  expect(host.querySelector<HTMLDetailsElement>("details.pairing-change")?.open).toBe(false);
+  // A paired browser whose Bridge is stopped needs the Bridge started, not a new pairing code.
+  await act(async () => answer({ state: "disconnected", retryInMs: 4000 }));
+  expect(host.querySelector<HTMLDetailsElement>("details.pairing-change")?.open).toBe(false);
+  expect(host.textContent).toContain("start-bridge.cmd");
+  await act(async () => button("다시 연결").click());
+  expect(send.mock.calls.some(([message]) => message.kind === "reconnect")).toBe(true);
+});
+
 it("creates a profile ID when the field is left empty", async () => {
   await render();
   await fill("이름", "새 환경"); await fill("OpenCode 실행 파일의 절대 경로", "C:\\Tools\\opencode.exe"); await fill("작업 디렉터리", "C:\\Work");

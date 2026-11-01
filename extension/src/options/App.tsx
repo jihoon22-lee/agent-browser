@@ -15,7 +15,8 @@ const blank: ProfileForm = { id: "", name: "", kind: "windows", directory: "", e
 export function App() {
   const { theme, chooseTheme } = useTheme();
   const [url, setUrl] = useState(DEFAULT_BRIDGE_URL), [token, setToken] = useState("");
-  const [status, setStatus] = useState<ConnStatus>({ state: "disconnected" });
+  // Until the background answers, the connection is being established; pairing stays folded meanwhile.
+  const [status, setStatus] = useState<ConnStatus>({ state: "connecting" });
   const [pairCode, setPairCode] = useState("");
   const [profiles, setProfiles] = useState<Data[]>([]), [defaultId, setDefaultId] = useState("");
   const [form, setForm] = useState<ProfileForm>(blank), [editing, setEditing] = useState(false), [makeDefault, setMakeDefault] = useState(true);
@@ -35,6 +36,9 @@ export function App() {
   async function run(action: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await action(); } catch (error) { setError(error instanceof Error ? error.message : "요청에 실패했습니다."); } finally { setBusy(false); } }
   const field = (key: keyof ProfileForm, value: string) => setForm(previous => ({ ...previous, [key]: value }));
   const connected = status.state === "connected";
+  // Only a missing or rejected pairing opens the pairing fields. A paired browser whose Bridge is stopped
+  // needs the Bridge started, not a new code.
+  const pairingFolded = connected || status.state === "connecting" || status.state === "disconnected";
   const pairingFields = <>
       <label>페어링 코드<input ref={codeInput} value={pairCode} onChange={event => setPairCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder="6자리 숫자" /></label>
       <button disabled={busy || pairCode.length !== 6} onClick={() => void run(async () => { const response = await chrome.runtime.sendMessage({ kind: "pair-with-code", code: pairCode }); if (!response?.ok) throw new Error(response?.error?.message ?? "페어링하지 못했습니다."); setPairCode(""); setNotice("Bridge와 연결했습니다."); })}>코드로 연결</button>
@@ -46,7 +50,8 @@ export function App() {
     {error && <ErrorNotice message={error} />}{notice && <p role="status" className="notice">{notice}</p>}
     <section><h2>Bridge 페어링</h2>
       <p role="status" className={connected ? "connected-line" : undefined}>{connected ? "✓ " : ""}{LABELS[status.state]}</p>
-      {connected ? <details className="pairing-change"><summary>다시 페어링하거나 연결 정보 바꾸기</summary>{pairingFields}</details> : <><p>설치 마법사의 [Chrome에 연결]에 표시된 6자리 코드를 입력하세요. 코드가 없으면 아래에 설치 폴더의 페어링 토큰을 직접 입력할 수 있습니다.</p>{pairingFields}</>}
+      {status.state === "disconnected" && status.retryInMs !== undefined && <p>Bridge가 꺼져 있으면 Windows의 설치 폴더에서 start-bridge.cmd로 시작하세요. 시작하면 자동으로 다시 연결합니다. <button onClick={() => void chrome.runtime.sendMessage({ kind: "reconnect" }).catch(() => {})}>다시 연결</button></p>}
+      {pairingFolded ? <details className="pairing-change"><summary>다시 페어링하거나 연결 정보 바꾸기</summary>{pairingFields}</details> : <><p>설치 마법사의 [Chrome에 연결]에 표시된 6자리 코드를 입력하세요. 코드가 없으면 아래에 설치 폴더의 페어링 토큰을 직접 입력할 수 있습니다.</p>{pairingFields}</>}
     </section>
     <section><div className="row"><h2>OpenCode 실행 환경</h2><button disabled={busy || !connected} onClick={() => { setForm(blank); setEditing(false); }}>프로필 추가</button></div>
       {!connected && <p>Bridge에 먼저 연결하세요.</p>}
