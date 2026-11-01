@@ -12,11 +12,16 @@ import { THEMES, themeNames, themeTokens, useTheme } from "../theme/themes";
 import type { Operation } from "./status-store";
 import { captureRequestTarget, completedRequest, type RequestLease } from './request-target';
 import { OpenCodeApiError } from '../agents/opencode-v1/client';
+import type { ConnStatus } from "../background/bridge-connection";
+import { ErrorNotice } from "./ErrorNotice";
 
 export type WorkspaceView = "chat" | "sessions" | "browser";
 const FAVORITE_MODELS = "★ 즐겨찾기";
-type Props = { operation: Operation | null; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void };
-export function Workbench({ operation, stopHandler, view, onViewChange }: Props) {
+// Read-only starting points: they fill the composer and are never sent without the user.
+const EXAMPLES = ["지금 보는 페이지를 요약해줘", "이 페이지의 표를 Markdown으로 정리해줘", "이 페이지에서 입력해야 할 항목을 알려줘"];
+type StartAction = { label: string; run: (trigger: HTMLButtonElement) => void; primary?: boolean };
+type Props = { operation: Operation | null; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void; conn: ConnStatus };
+export function Workbench({ operation, stopHandler, view, onViewChange, conn }: Props) {
   const wb = useWorkbench();
   const [requestHeld,setRequestHeld]=useState(false);
   const [stopping,setStopping]=useState(false);
@@ -335,13 +340,38 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
     if (owner !== undefined) return owner === wb.sessionId;
     return !Object.entries(wb.state.statuses).some(([id, status]) => id !== wb.sessionId && ["busy", "retry"].includes(status?.type));
   };
+  const sessionError = wb.state.errors[wb.sessionId] ?? wb.state.errors.global;
   const questions = wb.state.questions.filter(request => request.sessionID === wb.sessionId), permissions = wb.state.permissions.filter(request => request.sessionID === wb.sessionId);
   const tokenLine = (value: Data | null) => value ? `입력 ${value.input.toLocaleString()} · 출력 ${value.output.toLocaleString()} · 추론 ${value.reasoning.toLocaleString()} · 캐시 읽기 ${value.cache.read.toLocaleString()} / 쓰기 ${value.cache.write.toLocaleString()}` : "정보 없음";
   const filteredModels = models.filter(item => `${item.providerID}/${item.id}`===modelKey || `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(modelSearch.toLowerCase()));
   const profileName = wb.profiles.find(profile => profile.id === wb.profileId)?.name as string | undefined;
+  // What the empty conversation explains: the first missing link between Chrome, the Bridge and OpenCode.
+  const stage = conn.state === "unpaired" || conn.state === "not_paired" || conn.state === "auth_failed" ? "pair"
+    : conn.state === "connecting" ? "bridge-connecting"
+    : conn.state !== "connected" ? "bridge-offline"
+    : !wb.profilesLoaded ? wb.error ? "runtime-failed" : "loading"
+    : !wb.profiles.length ? "no-profile"
+    : !wb.profileId ? "choose-profile"
+    : wb.loading || (!wb.connected && !wb.error) ? "starting"
+    : !wb.connected ? "runtime-failed" : "ready";
+  // Bridge state already explains a disconnected panel; a stale "not connected" error would repeat it in English.
+  const workspaceError = conn.state === "connected" ? wb.error : "";
+  const openOptions = () => void chrome.runtime.openOptionsPage();
+  const reconnectBridge = () => void chrome.runtime.sendMessage({ kind: "reconnect" }).catch(() => {});
+  const start: { title: string; body?: string; tone: "problem" | "setup" | "waiting" | "ready"; actions?: StartAction[] } = {
+    pair: { title: "Bridge 페어링이 필요합니다", body: conn.state === "auth_failed" ? "저장된 페어링 정보로 인증하지 못했습니다. 설정에서 다시 페어링하세요." : "설치 마법사에 표시된 6자리 코드나 페어링 토큰을 설정 화면에 입력하세요.", tone: "setup" as const, actions: [{ label: "설정에서 페어링", run: openOptions, primary: true }] },
+    "bridge-offline": { title: "Bridge에 연결할 수 없습니다", body: "Windows에서 Bridge가 실행 중인지 확인하세요. 꺼져 있으면 설치 폴더의 start-bridge.cmd로 시작한 뒤 다시 연결하세요.", tone: "problem" as const, actions: [{ label: "다시 연결", run: reconnectBridge, primary: true }, { label: "설정 열기", run: openOptions }] },
+    "bridge-connecting": { title: "Bridge에 연결하는 중…", tone: "waiting" as const },
+    loading: { title: "실행 환경을 불러오는 중…", tone: "waiting" as const },
+    "no-profile": { title: "OpenCode 실행 환경을 추가하세요", body: "기존 OpenCode를 실행할 방법(Windows·WSL·실행 중인 서버)을 설정에서 한 번 등록하면 됩니다.", tone: "setup" as const, actions: [{ label: "실행 환경 추가", run: openOptions, primary: true }] },
+    "choose-profile": { title: "실행 환경을 선택하세요", body: "실행 설정에서 사용할 OpenCode 실행 환경을 고르세요.", tone: "setup" as const, actions: [{ label: "실행 설정 열기", run: (trigger: HTMLButtonElement) => openDrawer("environment", trigger), primary: true }] },
+    starting: { title: "OpenCode를 준비하는 중…", body: "처음 시작할 때는 1분 정도 걸릴 수 있습니다.", tone: "waiting" as const },
+    "runtime-failed": { title: "OpenCode에 연결하지 못했습니다", body: "위 안내를 확인한 뒤 다시 시도하세요.", tone: "problem" as const, actions: [{ label: "다시 시도", run: () => { if (wb.profileId) void wb.connect(wb.profileId, undefined, wb.sessionId || undefined); else reconnectBridge(); }, primary: true }, { label: "설정 열기", run: openOptions }] },
+    ready: { title: "브라우저에서 바로 시작하세요", body: "페이지를 읽고, 작업을 맡기고, 결과를 이곳에서 확인하세요.", tone: "ready" as const },
+  }[stage];
   const environmentPanel = <section className="workspace-bar"><h3>OpenCode 연결</h3>
       <label>실행 환경<select value={wb.profileId} disabled={wb.loading} onChange={event => void wb.connect(event.target.value)}><option value="">환경 선택</option>{wb.profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name} · {profile.kind}</option>)}</select></label>
-      {!wb.profiles.length && <p className="muted">OpenCode 실행 환경이 없습니다. <button onClick={() => void chrome.runtime.openOptionsPage()}>실행 환경 추가</button></p>}
+      {wb.profilesLoaded && !wb.profiles.length && <p className="muted">OpenCode 실행 환경이 없습니다. <button onClick={() => void chrome.runtime.openOptionsPage()}>실행 환경 추가</button></p>}
       {wb.runtime && <details><summary>프로젝트·실행 정보</summary><label>작업 디렉터리<input value={directory} onChange={event => setDirectory(event.target.value)} /></label><button disabled={wb.loading || !directory.trim()} onClick={() => void wb.connect(wb.profileId, directory)}>디렉터리 적용</button><p>{wb.runtime.owned ? "Bridge가 관리하는 실행 서버" : "기존 서버에 연결"} · {wb.runtime.baseUrl}</p>{wb.runtime.attachCommand && <p>대화형 터미널·외부 편집기: <code>{wb.runtime.attachCommand}</code></p>}</details>}
     </section>;
   const sessionsPanel = <section className="sessions-panel"><div className="view-heading"><div><span className="eyebrow">CONVERSATIONS</span><h2>세션</h2></div><span className="muted">{wb.sessions.length}개</span></div><div className="toolbar"><input aria-label="세션 검색" value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder="세션 검색" /><button disabled={!wb.connected} onClick={() => void perform(() => wb.refreshSessions(sessionSearch))}>검색</button><button disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 세션</button></div>
@@ -378,7 +408,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         <span className={`status-pill ${running ? "busy" : ""}`} role="status">{sessionStatus?.type === "busy" ? "응답 중" : sessionStatus?.type === "retry" ? `재시도 ${sessionStatus.attempt ?? ""}` : wb.sessionId ? "대기" : "세션 없음"}</span>
         {currentSession?.id && <SessionMenu label="현재 세션 작업" actions={sessionActions(currentSession, "header")} />}</div>
       {currentSession?.parentID && <div className="session-breadcrumb"><button className="quiet" onClick={() => void perform(selectParent)}>상위 세션으로</button><span>{wb.knownSessions[currentSession.parentID]?.title ?? "하위 작업 대화"}</span></div>}
-      {(wb.state.errors[wb.sessionId] ?? wb.state.errors.global) && <p className="error" role="alert">{wb.state.errors[wb.sessionId] ?? wb.state.errors.global}</p>}
+      {sessionError && <ErrorNotice message={sessionError} />}
       {heldOperation?.paused && <div className="notice" role="status">브라우저를 직접 조작하는 중입니다. 끝나면 [이어서 진행]을 누르세요. 에이전트는 기다립니다.</div>}
       {currentSession?.revert && <div className="notice">이전 메시지로 되돌린 상태입니다. 새 메시지를 보내 이어갈 수 있습니다. <button onClick={() => void perform(async () => { await api().post(sessionPath() + "/unrevert"); await wb.resync(); })}>되돌리기 취소</button></div>}
       <div className="message-viewport" ref={messageViewport} onScroll={event => { if (view !== "chat" || drawer !== null) return; const el = event.currentTarget; followMessages.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} aria-label="대화 메시지">
@@ -387,7 +417,9 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
         {!turn.user && <TurnCopy messages={turn.messages} />}
       </div>)}
       {waiting && <p className="waiting muted">응답을 준비하는 중…</p>}
-      {!turns.length && !waiting && <div className="empty-chat"><span className="empty-chat-icon" aria-hidden="true">↗</span><h3>브라우저에서 바로 시작하세요</h3><p>페이지를 읽고, 작업을 맡기고,<br />결과를 이곳에서 확인하세요.</p>{!wb.profiles.length ? <button className="primary" onClick={() => void chrome.runtime.openOptionsPage()}>실행 환경 추가</button> : !wb.sessionId && <button className="primary" disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 대화 시작</button>}</div>}
+      {!turns.length && !waiting && <div className={`empty-chat ${start.tone}`}><span className="empty-chat-icon" aria-hidden="true">{start.tone === "problem" ? "!" : start.tone === "waiting" ? "…" : "↗"}</span><h3>{start.title}</h3>{start.body && <p>{start.body}</p>}
+        {start.actions && <div className="start-actions">{start.actions.map(action => <button key={action.label} className={action.primary ? "primary" : undefined} onClick={event => action.run(event.currentTarget)}>{action.label}</button>)}</div>}
+        {stage === "ready" && <><div className="example-prompts" aria-label="요청 예시">{EXAMPLES.map(text => <button key={text} type="button" onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div>{!wb.sessionId && <button className="primary" disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 대화 시작</button>}</>}</div>}
       {questions.map(request => <QuestionCard key={request.id} request={request} onReply={replyQuestion} />)}{permissions.map(request => <PermissionCard key={request.id} request={request} onReply={replyPermission} />)}
       {artifact && <aside className="artifact-preview" aria-label="파일 결과"><div className="section-heading"><h3>{artifact.filename}</h3><button onClick={() => setArtifact(undefined)}>닫기</button></div>{artifact.text !== undefined && <pre>{artifact.text.slice(0, 20000)}</pre>}<a href={artifact.url} download={artifact.filename}>파일 내려받기</a>{artifact.text !== undefined && <button onClick={() => void navigator.clipboard.writeText(artifact.text)}>내용 복사</button>}</aside>}
       </div>
@@ -442,7 +474,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange }: Props)
   return <div className="workbench" aria-label="OpenCode 작업 공간" hidden={view === "browser"}>
     <div className="workspace-summary"><div className="workspace-identity"><button className="control-chip" aria-label="실행 설정" title={`${profileName ?? "실행 환경 선택"} · ${wb.directory || "작업 디렉터리 정보 없음"}`} onClick={event => openDrawer("environment", event.currentTarget)}><strong>{profileName ?? "실행 환경 선택"}</strong><span aria-hidden="true">▾</span></button><span className="connection-line" role="status">{wb.loading ? "실행 환경 준비 중…" : wb.connected ? `OpenCode ${wb.runtime?.version ?? ""} 연결됨` : "OpenCode 연결 대기"}</span></div>
       <div className="workspace-actions"><button className="quiet" onClick={event => openDrawer("tools", event.currentTarget)}>작업 도구</button><button className="quiet" onClick={event => openDrawer("theme", event.currentTarget)} aria-label="화면 테마 선택">테마</button></div></div>
-    {(wb.error || notice) && <div className="workspace-notices">{wb.error && <p role="alert" className="error">{wb.error}</p>}{notice && <p role="status" className="notice">{notice}<button className="quiet" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></p>}</div>}
+    {(workspaceError || notice) && <div className="workspace-notices">{workspaceError && <ErrorNotice message={workspaceError} />}{notice && <p role="status" className="notice">{notice}<button className="quiet" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></p>}</div>}
     <div id="view-chat" className="chat-view" role="tabpanel" aria-labelledby="tab-chat" hidden={view !== "chat"}>
       {conversationPanel}
       <aside className="control-panel view-scroll" aria-label={`${drawerTitle} 패널`} hidden={drawer === null} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setDrawer(null); } }}>

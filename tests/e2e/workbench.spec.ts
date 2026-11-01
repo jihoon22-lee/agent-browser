@@ -380,3 +380,15 @@ test("W15 short panels keep a usable message area and the Send button on screen"
   const path = info.outputPath("short-panel-layout.json"); await writeFile(path, JSON.stringify(checks, null, 2));
   await info.attach("short-panel-layout", { path, contentType: "application/json" });
 });
+
+test("W16 an empty conversation offers example requests that only fill the composer", async ({}, info) => {
+  const id = await createSession(), before = api.state.requests.filter(request => request.path.endsWith("/prompt_async")).length;
+  const example = panel.locator(".example-prompts").getByRole("button", { name: "지금 보는 페이지를 요약해줘", exact: true });
+  await expect(panel.getByRole("heading", { name: "브라우저에서 바로 시작하세요", exact: true })).toBeVisible();
+  const image = info.outputPath("start-screen.png"); await panel.screenshot({ path: image }); await info.attach("start-screen", { path: image, contentType: "image/png" });
+  await example.click();
+  await expect(panel.getByRole("textbox", { name: "메시지", exact: true })).toHaveValue("지금 보는 페이지를 요약해줘");
+  await expect(panel.getByRole("textbox", { name: "메시지", exact: true })).toBeFocused();
+  expect(api.state.requests.filter(request => request.path.endsWith("/prompt_async")).length).toBe(before);
+  expect(api.state.sessions.some(session => session.id === id)).toBe(true);
+});

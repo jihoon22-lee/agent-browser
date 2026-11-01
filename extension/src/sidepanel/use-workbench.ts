@@ -4,7 +4,7 @@ import { initialWorkbench, workbenchReducer, bridgeRequest, operationBindings, t
 
 export function useWorkbench() {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbench);
-  const [profiles, setProfiles] = useState<Data[]>([]), [profileId, setProfileId] = useState("");
+  const [profiles, setProfiles] = useState<Data[]>([]), [profilesLoaded, setProfilesLoaded] = useState(false), [profileId, setProfileId] = useState("");
   const [runtime, setRuntime] = useState<Data>(), [directory, setDirectory] = useState("");
   const [sessions, setSessions] = useState<Data[]>([]), [sessionId, setSessionId] = useState("");
   const [knownSessions, setKnownSessions] = useState<Record<string, Data>>({}), [sessionsLoading, setSessionsLoading] = useState(false), [hasMoreSessions, setHasMoreSessions] = useState(false);
@@ -260,7 +260,7 @@ export function useWorkbench() {
     const load = async (changedId?: string) => {
       try {
         const result = await bridgeRequest("profile.list"); if (!active) return;
-        const list = result.profiles ?? []; setProfiles(list);
+        const list = result.profiles ?? []; setProfiles(list); setProfilesLoaded(true);
         const saved = await chrome.storage.local.get("lastProfileId");
         const id = list.some((p: Data) => p.id === saved.lastProfileId) ? saved.lastProfileId : result.defaultProfileId;
         if (client.current && !list.some((profile: Data) => profile.id === currentProfile.current)) {
@@ -285,5 +285,5 @@ export function useWorkbench() {
     const binding = bindings.current.get(operationId); if (!binding) return false;
     await binding.client.post(`/session/${encodeURIComponent(binding.sessionID)}/abort`); return true;
   }, []);
-  return { state, dispatch, profiles, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, setError, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown, operationOwner };
+  return { state, dispatch, profiles, profilesLoaded, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, setError, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown, operationOwner };
 }

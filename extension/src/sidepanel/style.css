@@ -124,6 +124,14 @@ summary { cursor: pointer; line-height: 1.5; }
 .empty-chat-icon { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--control-border); border-radius: 14px; color: var(--accent); font-size: 25px; margin-bottom: 16px; }
 .empty-chat h3 { margin: 0 0 5px; font-size: 16px; }
 .empty-chat p { color: var(--muted); margin: 4px 0 18px; }
+.empty-chat.problem .empty-chat-icon { color: var(--danger); border-color: var(--danger); }
+.start-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+/* Example requests only fill the composer; the user still decides to send. */
+.example-prompts { display: flex; flex-direction: column; gap: 6px; width: 100%; max-width: 320px; margin: 0 0 14px; }
+.example-prompts button { text-align: left; border-color: var(--line); font-weight: 500; }
+.error-original { margin-top: 6px; color: var(--muted); }
+.error-original > summary { font-size: 11px; }
+.error-original code { display: block; margin-top: 4px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .composer { flex: none; position: relative; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--surface); }
 .workbench label { display: block; font-size: 12px; font-weight: 600; margin: 12px 0; }
 .workbench input:not([type=checkbox]):not([type=radio]):not([type=file]), .workbench select, .workbench textarea { display: block; width: 100%; min-width: 0; margin-top: 6px; padding: 9px 10px; border: 1px solid var(--control-border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12px; line-height: 1.6; }

@@ -4,6 +4,8 @@ import { initialPanelState, reduceStatus } from "./status-store";
 import "./style.css";
 import { BrowserExtras } from "./BrowserExtras";
 import { Workbench, type WorkspaceView } from "./Workbench";
+import { ErrorNotice } from "./ErrorNotice";
+import { friendlyError } from "./error-text";
 
 function errorText(error: unknown): string {
   if (error && typeof error === "object") {
@@ -127,8 +129,8 @@ export function App() {
       <div className="header-actions"><button className="quiet" onClick={() => void chrome.runtime.openOptionsPage()}>설정</button>{(op || state.stopping) && <button className="stop" aria-label="브라우저 작업 중단" disabled={!connected || !op || state.stopping} onClick={() => void stop()}>{state.stopping ? "중단 중…" : "중단"}</button>}</div>
     </header>
     {(state.conn.detail || state.error || state.stopped) && <div className="global-notices">
-      {state.conn.detail && <p className="muted">{state.conn.detail}</p>}
-      {state.error && <p role="alert" className="error">{state.error}</p>}
+      {state.conn.detail && <p className="muted" title={state.conn.detail}>{friendlyError(state.conn.detail).text}</p>}
+      {state.error && <ErrorNotice message={state.error} />}
       {state.stopped && <p className="notice" role="status">중단됨: 이후 브라우저 조작이 차단되었습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다.</p>}
     </div>}
     <nav className="app-tabs" role="tablist" aria-label="작업 공간 보기" onKeyDown={event => {
@@ -140,7 +142,7 @@ export function App() {
       {([["chat", "대화"], ["sessions", "세션"], ["browser", "브라우저"]] as const).map(([id, label]) => <button key={id} id={`tab-${id}`} role="tab" aria-controls={`view-${id}`} aria-selected={view === id} tabIndex={view === id ? 0 : -1} onClick={() => setView(id)}>{label}</button>)}
     </nav>
     <div className="app-content">
-    <Workbench operation={op} stopHandler={stopHandler} view={view} onViewChange={setView} />
+    <Workbench operation={op} stopHandler={stopHandler} view={view} onViewChange={setView} conn={state.conn} />
     <div id="view-browser" className="browser-view view-scroll" role="tabpanel" aria-labelledby="tab-browser" hidden={view !== "browser"}>
       <div className="view-heading"><div><span className="eyebrow">BROWSER</span><h2>브라우저 작업</h2></div><span className={`status-pill ${op ? "busy" : ""}`}>{op ? "작업 진행 중" : "대기"}</span></div>
     {state.browsers.length > 1 && <section aria-label="브라우저 선택">

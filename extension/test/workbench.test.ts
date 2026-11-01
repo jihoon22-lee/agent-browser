@@ -845,3 +845,54 @@ it('freezes the request vision metadata with the submitted model',async()=>{
  const prepare=(chrome.runtime.sendMessage as ReturnType<typeof vi.fn>).mock.calls.map(([m])=>m).find(m=>m.kind==='request-prepare');
  expect(prepare.lease.vision).toEqual({model:'internal/company',image:'supported',toolcall:true});
 });
+
+describe("start screen", () => {
+  const override = (handler: (message: any, original: (message: any) => Promise<any>) => Promise<any>) => {
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation(async (message: any) => handler(message, original));
+    return runtime;
+  };
+  const start = () => host.querySelector<HTMLElement>(".empty-chat")!;
+  const offline = { ok: false, error: { code: "BROWSER_DISCONNECTED", message: "Bridge is not connected" } };
+
+  it("explains a stopped Bridge and reconnects on request", async () => {
+    const runtime = override(async (message, original) => message.kind === "get-conn-status" ? { state: "disconnected", retryInMs: 4000 } : message.kind === "bridge" ? offline : original(message));
+    await render();
+    expect(start().textContent).toContain("Bridge에 연결할 수 없습니다");
+    expect(start().textContent).not.toContain("실행 환경 추가");
+    expect(host.textContent).not.toContain("Bridge is not connected");
+    await act(async () => button("다시 연결").click());
+    expect(runtime.mock.calls.some(([message]) => message.kind === "reconnect")).toBe(true);
+  });
+
+  it("sends an unpaired browser to pairing in Options", async () => {
+    override(async (message, original) => message.kind === "get-conn-status" ? { state: "unpaired" } : message.kind === "bridge" ? offline : original(message));
+    await render();
+    expect(start().textContent).toContain("페어링이 필요합니다");
+    await act(async () => button("설정에서 페어링").click());
+    expect(chrome.runtime.openOptionsPage).toHaveBeenCalled();
+  });
+
+  it("shows a runtime failure in Korean with the original and retries it", async () => {
+    const failure = "OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.";
+    let ensures = 0;
+    override(async (message, original) => message.method === "runtime.ensure" && ++ensures === 1 ? { ok: true, result: { profileId: "native", state: "error", error: failure } } : original(message));
+    await render();
+    expect(start().textContent).toContain("OpenCode에 연결하지 못했습니다");
+    expect(host.textContent).toContain("60초 안에 준비되지 않았습니다");
+    expect(host.querySelector(".error-original")?.textContent).toContain(failure);
+    await act(async () => { button("다시 시도").click(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(ensures).toBe(2);
+    expect(host.textContent).toContain("기존 질문");
+  });
+
+  it("offers example requests that fill the composer without sending", async () => {
+    messages = [];
+    await render();
+    const example = [...start().querySelectorAll<HTMLButtonElement>("button")].find(element => element.textContent === "지금 보는 페이지를 요약해줘")!;
+    await act(async () => example.click());
+    expect(composerValue().value).toBe("지금 보는 페이지를 요약해줘");
+    expect(document.activeElement).toBe(composerValue());
+    expect(test.post.mock.calls.some(([path]) => path.endsWith("/prompt_async"))).toBe(false);
+  });
+});
