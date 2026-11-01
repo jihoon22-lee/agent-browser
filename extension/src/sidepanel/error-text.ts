@@ -27,6 +27,9 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/signal timed out|aborted due to timeout/i, "OpenCode가 제한 시간 안에 응답하지 않았습니다. 잠시 후 다시 시도하세요."],
 ];
 
+/** A lost or unanswered Bridge connection: such an error is stale once the Bridge is connected again. */
+export const bridgeUnavailable = (message: string) => /^Bridge is not connected|^Bridge connection closed|^Bridge did not answer /.test(message);
+
 export function friendlyError(message: string): { text: string; original?: string } {
   for (const [pattern, text] of RULES) if (pattern.test(message)) return { text, original: message };
   return { text: message };

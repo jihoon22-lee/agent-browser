@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { OpenCodeApiError, OpenCodeV1Client } from "../agents/opencode-v1/client";
 import { initialWorkbench, workbenchReducer, bridgeRequest, operationBindings, type Data, type UiMessage } from "./workbench-state";
+import { bridgeUnavailable } from "./error-text";
 
 export function useWorkbench() {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbench);
@@ -272,7 +273,10 @@ export function useWorkbench() {
       } catch (value) { if (active) fail(value); }
     };
     void load();
-    const listener = (message: Data) => { if (message.kind === "conn-status" && message.status?.state === "connected") void load(); if (message.kind === "profiles-changed") void load(message.profileId); };
+    const listener = (message: Data) => {
+      if (message.kind === "conn-status" && message.status?.state === "connected") { setError(current => bridgeUnavailable(current) ? "" : current); void load(); }
+      if (message.kind === "profiles-changed") void load(message.profileId);
+    };
     chrome.runtime.onMessage.addListener(listener);
     return () => { active = false; epoch.current++; stream.current?.abort(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); chrome.runtime.onMessage.removeListener(listener); };
   }, [connect]);

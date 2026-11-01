@@ -898,6 +898,21 @@ describe("start screen", () => {
     expect(host.textContent).toContain("기존 질문");
   });
 
+  it("drops a Bridge-down error once the Bridge is connected again", async () => {
+    await render();
+    expect(host.textContent).toContain("기존 질문");
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    const emit = (message: unknown) => act(async () => { for (const listener of [...listeners]) listener(message); await new Promise(resolve => setTimeout(resolve, 0)); });
+    runtime.mockImplementation(async (message: any) => message.method === "profile.list" ? offline : original(message));
+    await emit({ kind: "conn-status", status: { state: "disconnected" } });
+    await emit({ kind: "profiles-changed", profileId: "native" });
+    runtime.mockImplementation(original);
+    await emit({ kind: "conn-status", status: { state: "connected" } });
+    expect(host.textContent).toContain("기존 질문");
+    expect(host.textContent).not.toContain("Bridge에 연결되어 있지 않습니다");
+    expect(host.querySelector(".error")).toBeNull();
+  });
+
   it("offers example requests that fill the composer without sending", async () => {
     messages = [];
     await render();

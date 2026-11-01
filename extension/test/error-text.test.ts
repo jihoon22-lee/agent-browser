@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { friendlyError } from "../src/sidepanel/error-text";
+import { bridgeUnavailable, friendlyError } from "../src/sidepanel/error-text";
 
 // Each sample is the exact text the Bridge or the extension produces; if a source string changes, the mapping must follow.
 const samples: Array<[string, string, string]> = [
@@ -37,4 +37,12 @@ it("explains browser network failures toward OpenCode", () => {
 it("leaves messages without a known cause unchanged", () => {
   expect(friendlyError("이미 한국어로 된 안내")).toEqual({ text: "이미 한국어로 된 안내" });
   expect(friendlyError("provider quota exceeded")).toEqual({ text: "provider quota exceeded" });
+});
+
+it("recognizes the lost-Bridge errors that a reconnect makes stale", () => {
+  const source = readFileSync(join(__dirname, "..", "src/background/bridge-connection.ts"), "utf8");
+  for (const message of ["Bridge connection closed", "Bridge is not connected"]) { expect(source).toContain(`"${message}"`); expect(bridgeUnavailable(message)).toBe(true); }
+  expect(bridgeUnavailable("Bridge did not answer runtime.ensure")).toBe(true);
+  expect(bridgeUnavailable("OpenCode HTTP 400: rejected")).toBe(false);
+  expect(bridgeUnavailable("Bridge returned an error without details")).toBe(false);
 });
