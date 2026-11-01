@@ -310,17 +310,21 @@ test("W11 subagent sessions stay under collapsed parents and nested selection ca
 
 test("W12 a successful submit with no initial SSE event is still observed for a later reply", async () => {
   const id = await createSession(), path = `/session/${id}/prompt_async`;
+  let submitted = "";
   await panel.waitForTimeout(250); // Exclude the earlier session.created resync from reply recovery.
-  await panel.route(`**${path}*`, async route => { await route.fulfill({ status: 204, headers: { "access-control-allow-origin": `chrome-extension://${world.extensionId}`, "access-control-allow-headers": "Authorization, Content-Type", "access-control-allow-methods": "POST, OPTIONS" } }); });
+  await panel.route(`**${path}*`, async route => { if (route.request().method() === "POST") submitted = route.request().postDataJSON()?.messageID ?? ""; await route.fulfill({ status: 204, headers: { "access-control-allow-origin": `chrome-extension://${world.extensionId}`, "access-control-allow-headers": "Authorization, Content-Type", "access-control-allow-methods": "POST, OPTIONS" } }); });
   try {
     const before = api.state.requests.filter(request => request.path === `/session/${id}/message`).length;
     await panel.getByRole("textbox", { name: "메시지", exact: true }).fill("초기 이벤트가 없는 합성 요청");
     await panel.getByRole("button", { name: "보내기", exact: true }).click();
     await expect.poll(() => api.state.requests.filter(request => request.path === `/session/${id}/message`).length).toBeGreaterThan(before);
+    expect(submitted).toMatch(/^msg_/);
+    // OpenCode links a reply to the user message it answers; only then is the panel's browser request finished.
     const messageID = `msg_delayed_no_event_${id}`;
-    api.state.messages.get(id)!.push({ info: { id: messageID, sessionID: id, role: "assistant", time: { created: Date.now(), completed: Date.now() } }, parts: [{ id: `prt_delayed_${id}`, sessionID: id, messageID, type: "text", text: "첫 이벤트가 없어도 관찰한 합성 결과" }] });
+    api.state.messages.get(id)!.push({ info: { id: messageID, sessionID: id, role: "assistant", parentID: submitted, time: { created: Date.now(), completed: Date.now() } }, parts: [{ id: `prt_delayed_${id}`, sessionID: id, messageID, type: "text", text: "첫 이벤트가 없어도 관찰한 합성 결과" }] });
     api.emit("server.heartbeat", {});
     await expect(panel.getByText("첫 이벤트가 없어도 관찰한 합성 결과", { exact: true })).toBeVisible();
+    await expect.poll(() => panel.evaluate(async () => (await (globalThis as any).chrome.storage.local.get("panelBrowserRequest")).panelBrowserRequest)).toBeUndefined();
     expect(api.state.requests.filter(request => request.path === `/session/${id}/abort`)).toHaveLength(0);
   } finally { await panel.unroute(`**${path}*`); }
 });
