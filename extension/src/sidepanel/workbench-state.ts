@@ -78,7 +78,7 @@ export function operationBindings(messages: UiMessage[]): Record<string, string>
 }
 export const shouldSubmit = (event: { key: string; isComposing?: boolean; shiftKey?: boolean; keyCode?: number }) => event.key === "Enter" && !event.isComposing && !event.shiftKey && event.keyCode !== 229;
 export async function filePart(file: File): Promise<Data> {
-  if (file.size > 10 * 1024 * 1024) throw new Error("첨부 파일은 각각10MB 이하로 선택하세요.");
+  if (file.size > 10 * 1024 * 1024) throw new Error("첨부 파일은 각각 10MB 이하로 선택하세요.");
   const url = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error("첨부 파일을 읽지 못했습니다.")); reader.onload = () => resolve(String(reader.result)); reader.readAsDataURL(file); });
   return { type: "file", mime: file.type || "application/octet-stream", filename: file.name, url };
 }

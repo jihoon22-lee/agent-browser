@@ -6,6 +6,7 @@ import { BrowserExtras } from "./BrowserExtras";
 import { Workbench, type WorkspaceView } from "./Workbench";
 import { ErrorNotice } from "./ErrorNotice";
 import { friendlyError } from "./error-text";
+import { outcomeLabel, toolLabel } from "./tool-names";
 
 function errorText(error: unknown): string {
   if (error && typeof error === "object") {
@@ -160,7 +161,7 @@ export function App() {
     </section>
     {localOperation&&op&&<BrowserExtras operationId={op.id} visible={view==="browser"} />}
     <section aria-label="최근 작업 기록"><h2>최근 작업 기록</h2>
-      {state.timeline.length ? <ol className="timeline">{[...state.timeline].reverse().map((entry, index) => <li key={`${entry.atMs}-${index}`}><div><time>{new Date(entry.atMs).toLocaleTimeString("ko-KR")}</time><span className={entry.outcome === "ok" ? "outcome" : "outcome failed"}>{entry.outcome}</span></div><strong>{entry.tool}</strong>{entry.summary && <p>{entry.summary}</p>}</li>)}</ol> : <p className="muted">아직 기록이 없습니다.</p>}
+      {state.timeline.length ? <ol className="timeline">{[...state.timeline].reverse().map((entry, index) => <li key={`${entry.atMs}-${index}`}><div><time>{new Date(entry.atMs).toLocaleTimeString("ko-KR")}</time><span className={entry.outcome === "ok" ? "outcome" : "outcome failed"}>{outcomeLabel(entry.outcome)}</span></div><strong title={entry.tool}>{toolLabel(entry.tool) ?? entry.tool}</strong>{entry.summary && <p>{entry.summary}</p>}</li>)}</ol> : <p className="muted">아직 기록이 없습니다.</p>}
     </section>
     </div>
     </div>

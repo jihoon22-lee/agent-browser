@@ -1,6 +1,7 @@
 import { memo, useState, type ReactNode } from "react";
 import { SafeMarkdown, safeLink } from "./SafeMarkdown";
 import { csv, download, toolOutcome, type Data, type UiMessage } from "./workbench-state";
+import { toolLabel } from "./tool-names";
 
 export function QuestionCard({ request, onReply }: { request: Data; onReply: (request: Data, answers?: string[][]) => Promise<void> }) {
   const [answers, setAnswers] = useState<string[][]>(() => request.questions.map(() => []));
@@ -29,7 +30,7 @@ function ToolCard({ part, onOpenFile }: { part: Data; onOpenFile?: (part: Data) 
   let details = output;
   if (error) { try { details = JSON.stringify(JSON.parse(output), null, 2); } catch { /* Plain OpenCode errors need no JSON decoding. */ } }
   const hint = toolHint(state.input);
-  return <details className={`tool-card ${status ?? "pending"}`} open={status === "error"}><summary><span>{state.title || part.tool || "도구"}{hint && <small className="tool-hint">{hint}</small>}</span><span>{({ pending: "대기", running: "실행 중", completed: "완료", error: "오류" } as Data)[status] ?? status}</span></summary>
+  return <details className={`tool-card ${status ?? "pending"}`} open={status === "error"}><summary><span>{state.title || toolLabel(part.tool) || part.tool || "도구"}{hint && <small className="tool-hint">{hint}</small>}</span><span>{({ pending: "대기", running: "실행 중", completed: "완료", error: "오류" } as Data)[status] ?? status}</span></summary>
     <p className="muted">{part.tool}</p><details><summary>입력</summary><pre>{JSON.stringify(state.input ?? {}, null, 2)}</pre></details>
     {error && <><p role="alert">{error.code ? `${error.code}: ` : ""}{error.message}</p>{error.code === "UNSUPPORTED_PAGE" && <p>일반 HTTP/HTTPS 페이지를 열고 해당 탭의 URL이나 제목을 지정해 다시 요청하세요. Chrome 설정·새 탭·확장 프로그램 페이지는 브라우저 도구로 읽거나 조작할 수 없습니다.</p>}</>}
     {output && (error ? <details className="tool-error-details"><summary>오류 세부 정보</summary><pre>{details.slice(0, 20000)}</pre></details> : <pre>{output.slice(0, 20000)}{output.length > 20000 ? "\n… 화면 표시가 잘렸습니다. 결과 내보내기로 전체를 확인하세요." : ""}</pre>)}
