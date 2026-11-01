@@ -24,6 +24,11 @@ it.each(samples)("explains %s text %j in Korean and keeps the original", (file, 
   expect(shown.original).toBe(message);
 });
 
+it("explains a Bridge request timeout for any method", () => {
+  expect(readFileSync(join(__dirname, "..", "src/background/bridge-connection.ts"), "utf8")).toContain("`Bridge did not answer ${method}`");
+  expect(friendlyError("Bridge did not answer runtime.ensure")).toEqual({ text: "Bridge가 제한 시간 안에 응답하지 않았습니다. 잠시 후 다시 시도하세요.", original: "Bridge did not answer runtime.ensure" });
+});
+
 it("explains browser network failures toward OpenCode", () => {
   expect(friendlyError("Failed to fetch").text).toContain("OpenCode 서버에 연결할 수 없습니다");
   expect(friendlyError("signal timed out").text).toContain("제한 시간");

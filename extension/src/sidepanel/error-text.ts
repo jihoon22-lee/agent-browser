@@ -2,6 +2,7 @@
 // Korean explanation with the next step and keep the original text for support.
 const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^Bridge is not connected|^Bridge connection closed/, "Bridge에 연결되어 있지 않습니다. Windows에서 Bridge가 실행 중인지 확인한 뒤 다시 연결하세요."],
+  [/^Bridge did not answer /, "Bridge가 제한 시간 안에 응답하지 않았습니다. 잠시 후 다시 시도하세요."],
   [/^Bridge returned an error without details/, "Bridge가 오류 내용을 보내지 않았습니다. 설정의 연결 진단을 실행하세요."],
   [/mutual authentication|authentication verification failed|server proof is invalid/, "Bridge와 상호 인증하지 못했습니다. 설정에서 다시 페어링하세요."],
   [/did not become ready within 60 seconds/, "OpenCode가 60초 안에 준비되지 않았습니다. 설정의 연결 진단으로 실행 파일·버전, 포트, WSL localhost 전달, 작업 디렉터리를 확인하세요."],
