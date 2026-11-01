@@ -84,6 +84,9 @@ summary { cursor: pointer; line-height: 1.5; }
 @media (hover: none) { .message-actions, .turn-actions { opacity: 1; } }
 @media (prefers-reduced-motion: no-preference) { .message-actions, .turn-actions { transition: opacity .12s; } }
 .reasoning > summary { font-size: 11px; color: var(--muted); }
+.inline-confirm { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--danger); border-radius: 8px; background: var(--surface); font-size: 12px; }
+.inline-confirm p { margin: 0 0 6px; line-height: 1.5; }
+.inline-confirm .toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
 .waiting { font-size: 12px; margin: 14px 0; }
 .workbench pre { overflow: auto; max-height: 300px; max-width: 100%; font-size: 11px; line-height: 1.65; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--canvas); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .markdown p { margin: 7px 0; white-space: pre-wrap; }

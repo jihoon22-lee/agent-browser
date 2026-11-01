@@ -1,7 +1,8 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useEffect, useState, type ReactNode } from "react";
 import { SafeMarkdown, safeLink } from "./SafeMarkdown";
 import { csv, download, toolOutcome, type Data, type UiMessage } from "./workbench-state";
 import { toolLabel } from "./tool-names";
+import { CopyButton } from "./CopyButton";
 
 export function QuestionCard({ request, onReply }: { request: Data; onReply: (request: Data, answers?: string[][]) => Promise<void> }) {
   const [answers, setAnswers] = useState<string[][]>(() => request.questions.map(() => []));
@@ -23,20 +24,30 @@ function FileResult({ part, onOpenFile }: { part: Data; onOpenFile?: (part: Data
   return <div className="file-result">{data && /^data:image\/(png|jpeg|webp|gif);/i.test(url) && <img src={url} alt={part.filename ?? "첨부 이미지"} />}{href ? <a href={href} download={data ? part.filename ?? "attachment" : undefined} target={data ? undefined : "_blank"} rel="noopener noreferrer">{part.filename ?? "첨부 결과 열기"}</a> : <span>{part.filename ?? "파일 결과"} · 서버 경로: {url}{onOpenFile && (url.startsWith("file:") || part.source?.path) && <button onClick={() => onOpenFile(part)}>서버 파일 열기</button>}</span>}</div>;
 }
 function ToolCard({ part, onOpenFile }: { part: Data; onOpenFile?: (part: Data) => void }) {
-  const state = part.state ?? {}, raw = state.status === "error" ? state.error ?? state.output : state.output ?? state.error, outcome = toolOutcome(raw), output = typeof raw === "string" ? raw : JSON.stringify(raw ?? "", null, 2);
+  const state = part.state ?? {}, raw = state.status === "error" ? state.error ?? state.output : state.output ?? state.error, outcome = toolOutcome(raw);
   const status = outcome?.ok === false ? "error" : state.status;
+  const [open, setOpen] = useState(status === "error");
+  // A call that fails after its card was drawn opens just like one that arrived failed.
+  useEffect(() => { if (status === "error") setOpen(true); }, [status]);
+  const hint = toolHint(state.input);
+  return <details className={`tool-card ${status ?? "pending"}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}><summary><span>{state.title || toolLabel(part.tool) || part.tool || "도구"}{hint && <small className="tool-hint">{hint}</small>}</span><span>{({ pending: "대기", running: "실행 중", completed: "완료", error: "오류" } as Data)[status] ?? status}</span></summary>
+    {open && <ToolDetails part={part} raw={raw} outcome={outcome} onOpenFile={onOpenFile} />}
+  </details>;
+}
+/** Snapshot text and screenshots become DOM only while the card is open; long conversations hold dozens of them. */
+function ToolDetails({ part, raw, outcome, onOpenFile }: { part: Data; raw: unknown; outcome: Data | null; onOpenFile?: (part: Data) => void }) {
+  const state = part.state ?? {}, output = typeof raw === "string" ? raw : JSON.stringify(raw ?? "", null, 2);
   const table = outcome?.data && Array.isArray(outcome.data.rows) ? outcome.data : undefined;
   const error = outcome?.error ?? (state.status === "error" ? { message: typeof state.error === "string" ? state.error : "도구 실행에 실패했습니다." } : undefined);
   let details = output;
   if (error) { try { details = JSON.stringify(JSON.parse(output), null, 2); } catch { /* Plain OpenCode errors need no JSON decoding. */ } }
-  const hint = toolHint(state.input);
-  return <details className={`tool-card ${status ?? "pending"}`} open={status === "error"}><summary><span>{state.title || toolLabel(part.tool) || part.tool || "도구"}{hint && <small className="tool-hint">{hint}</small>}</span><span>{({ pending: "대기", running: "실행 중", completed: "완료", error: "오류" } as Data)[status] ?? status}</span></summary>
+  return <>
     <p className="muted">{part.tool}</p><details><summary>입력</summary><pre>{JSON.stringify(state.input ?? {}, null, 2)}</pre></details>
     {error && <><p role="alert">{error.code ? `${error.code}: ` : ""}{error.message}</p>{error.code === "UNSUPPORTED_PAGE" && <p>일반 HTTP/HTTPS 페이지를 열고 해당 탭의 URL이나 제목을 지정해 다시 요청하세요. Chrome 설정·새 탭·확장 프로그램 페이지는 브라우저 도구로 읽거나 조작할 수 없습니다.</p>}</>}
     {output && (error ? <details className="tool-error-details"><summary>오류 세부 정보</summary><pre>{details.slice(0, 20000)}</pre></details> : <pre>{output.slice(0, 20000)}{output.length > 20000 ? "\n… 화면 표시가 잘렸습니다. 결과 내보내기로 전체를 확인하세요." : ""}</pre>)}
-    <div className="toolbar"><button onClick={() => void navigator.clipboard.writeText(output)}>결과 복사</button><button onClick={() => download("tool-result.txt", output)}>결과 내보내기</button>{table && <><button onClick={() => download("table.csv", "\uFEFF" + csv([...(table.header ? [table.header] : []), ...table.rows]), "text/csv;charset=utf-8")}>표 CSV</button><button onClick={() => download("table.md", table.markdown ?? "", "text/markdown")}>표 Markdown</button></>}</div>
+    <div className="toolbar"><CopyButton text={output} label="결과 복사" /><button onClick={() => download("tool-result.txt", output)}>결과 내보내기</button>{table && <><button onClick={() => download("table.csv", "\uFEFF" + csv([...(table.header ? [table.header] : []), ...table.rows]), "text/csv;charset=utf-8")}>표 CSV</button><button onClick={() => download("table.md", table.markdown ?? "", "text/markdown")}>표 Markdown</button></>}</div>
     {(state.attachments ?? []).map((attachment: Data, index: number) => <FileResult key={attachment.id ?? index} part={attachment} onOpenFile={onOpenFile} />)}
-  </details>;
+  </>;
 }
 const HINT_KEYS = ["url", "ref", "text", "query", "action", "selector", "command", "filePath", "path", "pattern", "description"];
 // One short argument tells which page, element or file a call touched without opening the card.
@@ -70,10 +81,12 @@ type CardProps = { message: UiMessage; continued?: boolean; onFork: (messageID: 
 /** Assistant steps of one reply share a header (`continued`); fork and revert belong to the user's prompt. */
 export const MessageCard = memo(function MessageCard({ message, continued, onFork, onRevert, onOpenFile }: CardProps) {
   const user = message.info.role === "user";
+  const [confirmRevert, setConfirmRevert] = useState(false);
   const parts = message.parts.map((part, index) => { const node = renderPart(part, onOpenFile); return node === null ? null : <div key={part.id ?? index}>{node}</div>; }).filter(Boolean);
   return <article className={`message ${user ? "user" : "assistant"}${continued ? " continued" : ""}`} data-message-id={message.info.id}>
     {!continued && <header><strong>{user ? "나" : message.info.agent ?? "OpenCode"}</strong><time>{time(message)}</time>
-      {user && <span className="message-actions"><button onClick={() => onFork(message.info.id)}>여기서 분기</button><button onClick={() => onRevert(message.info.id)}>이전으로 되돌리기</button></span>}</header>}
+      {user && <span className="message-actions"><button onClick={() => onFork(message.info.id)}>여기서 분기</button><button onClick={() => setConfirmRevert(true)}>이전으로 되돌리기</button></span>}</header>}
+    {confirmRevert && <div className="inline-confirm" role="group" aria-label="되돌리기 확인"><p>이 메시지 이전으로 대화·서버 파일 변경을 되돌릴까요? 이미 완료된 웹사이트 작업은 되돌리지 않습니다.</p><div className="toolbar"><button className="stop" onClick={() => { setConfirmRevert(false); onRevert(message.info.id); }}>되돌리기 확인</button><button autoFocus onClick={() => setConfirmRevert(false)}>취소</button></div></div>}
     {parts}
     {message.info.error && <p className="error" role="alert">{message.info.error.data?.message ?? message.info.error.message ?? message.info.error.name}</p>}
   </article>;

@@ -14,6 +14,7 @@ import { captureRequestTarget, completedRequest, type RequestLease } from './req
 import { OpenCodeApiError } from '../agents/opencode-v1/client';
 import type { ConnStatus } from "../background/bridge-connection";
 import { ErrorNotice } from "./ErrorNotice";
+import { CopyButton } from "./CopyButton";
 
 export type WorkspaceView = "chat" | "sessions" | "browser";
 const FAVORITE_MODELS = "★ 즐겨찾기";
@@ -318,7 +319,8 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const messageHandlers = useRef({ fork: (_: string) => {}, revert: (_: string) => {}, open: (_: Data) => {} });
   messageHandlers.current = {
     fork: messageID => void perform(() => forkSession(messageID)),
-    revert: messageID => { if (window.confirm("이 메시지 이전으로 대화·서버 파일 변경을 되돌릴까요? 이미 완료된 웹사이트 작업은 되돌리지 않습니다.")) void perform(async () => { await api().post(sessionPath() + "/revert", { messageID }); await wb.resync(); }); },
+    // MessageCard has already asked for confirmation inside the message.
+    revert: messageID => void perform(async () => { await api().post(sessionPath() + "/revert", { messageID }); await wb.resync(); }),
     open: part => void perform(() => openArtifact(part)),
   };
   const onFork = useCallback((id: string) => messageHandlers.current.fork(id), []), onRevert = useCallback((id: string) => messageHandlers.current.revert(id), []), onOpenFile = useCallback((part: Data) => messageHandlers.current.open(part), []);
@@ -421,7 +423,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
         {start.actions && <div className="start-actions">{start.actions.map(action => <button key={action.label} className={action.primary ? "primary" : undefined} onClick={event => action.run(event.currentTarget)}>{action.label}</button>)}</div>}
         {stage === "ready" && <><div className="example-prompts" aria-label="요청 예시">{EXAMPLES.map(text => <button key={text} type="button" onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div>{!wb.sessionId && <button className="primary" disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 대화 시작</button>}</>}</div>}
       {questions.map(request => <QuestionCard key={request.id} request={request} onReply={replyQuestion} />)}{permissions.map(request => <PermissionCard key={request.id} request={request} onReply={replyPermission} />)}
-      {artifact && <aside className="artifact-preview" aria-label="파일 결과"><div className="section-heading"><h3>{artifact.filename}</h3><button onClick={() => setArtifact(undefined)}>닫기</button></div>{artifact.text !== undefined && <pre>{artifact.text.slice(0, 20000)}</pre>}<a href={artifact.url} download={artifact.filename}>파일 내려받기</a>{artifact.text !== undefined && <button onClick={() => void navigator.clipboard.writeText(artifact.text)}>내용 복사</button>}</aside>}
+      {artifact && <aside className="artifact-preview" aria-label="파일 결과"><div className="section-heading"><h3>{artifact.filename}</h3><button onClick={() => setArtifact(undefined)}>닫기</button></div>{artifact.text !== undefined && <pre>{artifact.text.slice(0, 20000)}</pre>}<a href={artifact.url} download={artifact.filename}>파일 내려받기</a>{artifact.text !== undefined && <CopyButton text={artifact.text} label="내용 복사" />}</aside>}
       </div>
       <form className="composer" onSubmit={event => { event.preventDefault(); void send(); }}>
         {attachments.length > 0 && <div className="attachments">{attachments.map((part, index) => <span className="chip" key={index}>{part.type === "agent" ? "@" + part.name : part.filename}<button type="button" aria-label={`${part.filename ?? part.name} 첨부 제거`} onClick={() => setAttachments(previous => previous.filter((_, i) => i !== index))}>×</button></span>)}</div>}
@@ -490,5 +492,5 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
 
 function TurnCopy({ messages }: { messages: UiMessage[] }) {
   const text = messages.map(messageText).filter(value => value.trim()).join("\n\n");
-  return text ? <footer className="turn-actions"><button className="quiet" onClick={() => void navigator.clipboard.writeText(text)}>복사</button></footer> : null;
+  return text ? <footer className="turn-actions"><CopyButton text={text} className="quiet" /></footer> : null;
 }

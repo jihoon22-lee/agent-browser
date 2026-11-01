@@ -1,4 +1,5 @@
 import { Fragment, type ReactNode } from "react";
+import { CopyButton } from "./CopyButton";
 export function safeLink(url: string): string | undefined {
   try { const parsed = new URL(url); return ["https:", "http:", "mailto:"].includes(parsed.protocol) ? parsed.href : undefined; } catch { return undefined; }
 }
@@ -21,7 +22,7 @@ export function SafeMarkdown({ text }: { text: string }) {
     const line = lines[i]!;
     if (line.startsWith("```")) {
       const code: string[] = [], language = line.slice(3); while (++i < lines.length && !lines[i]!.startsWith("```")) code.push(lines[i]!);
-      blocks.push(<div className="code-block" key={i}><div><span>{language}</span><button onClick={() => void navigator.clipboard.writeText(code.join("\n"))}>코드 복사</button></div><pre><code>{code.join("\n")}</code></pre></div>); continue;
+      blocks.push(<div className="code-block" key={i}><div><span>{language}</span><CopyButton text={code.join("\n")} label="코드 복사" /></div><pre><code>{code.join("\n")}</code></pre></div>); continue;
     }
     if (!line.trim()) continue;
     const heading = /^(#{1,6})\s+(.+)$/.exec(line);

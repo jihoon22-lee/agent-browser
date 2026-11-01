@@ -132,8 +132,10 @@ test("W06 exports, message fork, revert and session search remain usable", async
   // Message actions stay hidden until the message is hovered (or focused), so they do not clutter the conversation.
   await panel.mouse.move(0, 0); await expect(userMessage.locator(".message-actions")).toHaveCSS("opacity", "0");
   await userMessage.hover(); await expect(userMessage.locator(".message-actions")).toHaveCSS("opacity", "1");
-  panel.once("dialog", dialog => dialog.accept());
   await panel.locator("article.message.user").first().getByRole("button", { name: "이전으로 되돌리기" }).click();
+  // The confirmation is asked inside the message; nothing is sent until it is accepted.
+  await expect(panel.getByRole("button", { name: "취소", exact: true })).toBeFocused();
+  await panel.getByRole("button", { name: "되돌리기 확인", exact: true }).click();
   await expect(panel.getByRole("button", { name: "되돌리기 취소", exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "되돌리기 취소", exact: true }).click();
   await expect.poll(() => api.state.sessions.find(session => session.id === id)!.revert).toBeUndefined();
