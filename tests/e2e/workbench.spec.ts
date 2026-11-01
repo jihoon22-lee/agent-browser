@@ -394,3 +394,19 @@ test("W16 an empty conversation offers example requests that only fill the compo
   expect(api.state.requests.filter(request => request.path.endsWith("/prompt_async")).length).toBe(before);
   expect(api.state.sessions.some(session => session.id === id)).toBe(true);
 });
+
+test("W17 Options folds the paired connection and lists real diagnostics as a checklist", async ({}, info) => {
+  const options = await world.context.newPage();
+  try {
+    await options.setViewportSize({ width: 900, height: 1000 });
+    await options.goto(`chrome-extension://${world.extensionId}/${world.manifest.options_page}`);
+    await expect(options.getByRole("status").filter({ hasText: "Bridge에 연결되었습니다" })).toBeVisible();
+    await expect(options.getByLabel("페어링 코드", { exact: true })).toBeHidden();
+    await options.getByRole("button", { name: "진단 실행", exact: true }).click();
+    const checks = options.locator(".doctor-checks > li");
+    await expect(checks.first()).toBeVisible({ timeout: 30_000 });
+    await expect(checks.filter({ hasText: "Chrome 연결" })).toContainText("정상");
+    await expect(options.locator("details.doctor-raw")).not.toHaveAttribute("open", "");
+    const image = info.outputPath("options-diagnostics.png"); await options.screenshot({ path: image, fullPage: true }); await info.attach("options-diagnostics", { path: image, contentType: "image/png" });
+  } finally { await options.close(); }
+});

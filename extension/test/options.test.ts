@@ -25,3 +25,31 @@ it("reports pairing storage failure without claiming it was saved", async () => 
   expect(host.textContent).not.toContain("저장했습니다. 연결 상태를 확인하세요.");
   expect(send.mock.calls.some(([message]) => message.kind === "reconnect")).toBe(false);
 });
+async function fill(label: string, value: string) {
+  const input = [...host.querySelectorAll("label")].find(element => element.firstChild?.textContent === label)!.querySelector<HTMLInputElement>("input")!;
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+}
+it("folds pairing away once connected and puts the cursor in the code field when unpaired", async () => {
+  await render();
+  expect(host.querySelector('[role="status"]')?.textContent).toContain("Bridge에 연결되었습니다");
+  expect(host.querySelector<HTMLDetailsElement>("details.pairing-change")?.open).toBe(false);
+  await act(async () => root.unmount()); root = createRoot(host);
+  send.mockImplementation(async message => message.kind === "get-conn-status" ? { state: "unpaired" } : { ok: false, error: { code: "BROWSER_DISCONNECTED", message: "Bridge is not connected" } });
+  await render(); await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  expect(host.querySelector("details.pairing-change")).toBeNull();
+  expect(document.activeElement).toBe([...host.querySelectorAll("label")].find(element => element.firstChild?.textContent === "페어링 코드")!.querySelector("input"));
+});
+it("creates a profile ID when the field is left empty", async () => {
+  await render();
+  await fill("이름", "새 환경"); await fill("OpenCode 실행 파일의 절대 경로", "C:\\Tools\\opencode.exe"); await fill("작업 디렉터리", "C:\\Work");
+  await act(async () => button("프로필 저장").click());
+  const call = send.mock.calls.find(([message]) => message.method === "profile.save")![0];
+  expect(call.params.profile.id).toMatch(/^windows-[a-f0-9]{8}$/);
+  expect(send.mock.calls.find(([message]) => message.kind === "profiles-changed")![0].profileId).toBe(call.params.profile.id);
+});
+it("shows diagnostics as a checklist with the raw result folded", async () => {
+  send.mockImplementation(async message => message.kind === "get-conn-status" ? { state: "connected" } : message.method === "doctor.run" ? { ok: true, result: { ok: true, checks: [{ id: "bridge", status: "ok", message: "Authenticated Bridge" }] } } : message.method === "profile.list" ? { ok: true, result: { profiles: [], defaultProfileId: null } } : { ok: true, result: {} });
+  await render(); await act(async () => button("진단 실행").click());
+  expect(host.querySelector(".doctor-checks")?.textContent).toContain("인증된 Bridge가 실행 중입니다");
+  expect(host.querySelector<HTMLDetailsElement>("details.doctor-raw")?.open).toBe(false);
+});

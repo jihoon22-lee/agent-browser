@@ -35,3 +35,8 @@ export function formFromProfile<T extends Record<string, unknown>>(blank: T, pro
   return { ...blank, ...profile, username: typeof profile.username === "string" ? profile.username : "", password: "", envText: "",
     port: typeof profile.port === "number" ? String(profile.port) : "" } as T;
 }
+
+/** A new profile left without an ID is named after its kind; the ID only identifies the profile inside the Bridge. */
+export function withProfileId(form: ProfileForm, suffix = crypto.randomUUID().slice(0, 8)): ProfileForm {
+  return form.id.trim() ? form : { ...form, id: `${form.kind}-${suffix}` };
+}
