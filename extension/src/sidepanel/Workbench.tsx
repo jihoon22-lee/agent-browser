@@ -66,6 +66,12 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const [artifact, setArtifact] = useState<Data>();
   const [files, setFiles] = useState<string[]>([]), [palette, setPalette] = useState(""), [shell, setShell] = useState("");
   const draftCache = useRef(new Map<string, { draft: string; attachments: Data[] }>()), previousDraft = useRef({ key: "", draft: "", attachments: [] as Data[] });
+  // Draft text is also kept in chrome.storage.session; a key is written only after its saved text was read.
+  const draftRestored = useRef(""), consumedDraft = useRef("");
+  const storeDraft = (key: string, text: string) => {
+    if (draftRestored.current !== key || !chrome.storage.session) return;
+    void (text.trim() ? chrome.storage.session.set({ [`draft:${key}`]: text }) : chrome.storage.session.remove(`draft:${key}`)).catch(() => {});
+  };
   const messageViewport = useRef<HTMLDivElement>(null), followMessages = useRef(true);
   // Id of the session created for the first message; only that session may auto-send it.
   const autoSend = useRef<string | undefined>(undefined), creating = useRef(false);
@@ -98,14 +104,16 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   useEffect(() => {
     const previous = previousDraft.current;
     if (previous.key !== draftKey) {
-      if (previous.key) draftCache.current.set(previous.key, { draft: previous.draft, attachments: previous.attachments });
+      if (previous.key && previous.key === consumedDraft.current) {
+        // The first message moved to the session it created; it must not return as the next new conversation's draft.
+        consumedDraft.current = ""; draftCache.current.delete(previous.key); void chrome.storage.session?.remove(`draft:${previous.key}`).catch(() => {});
+      } else if (previous.key) { draftCache.current.set(previous.key, { draft: previous.draft, attachments: previous.attachments }); storeDraft(previous.key, previous.draft); }
       const next = draftCache.current.get(draftKey) ?? { draft: "", attachments: [] };
       setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = false; previousDraft.current = { key: draftKey, ...next };
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
   // Draft text survives closing the panel for this browser session. Attachments stay in memory only:
-  // each can be 10MB, beyond what session storage holds. A key is written only after its saved text was read.
-  const draftRestored = useRef("");
+  // each can be 10MB, beyond what session storage holds.
   useEffect(() => {
     let active = true;
     if (draftCache.current.has(draftKey) || !chrome.storage.session) { draftRestored.current = draftKey; return; }
@@ -118,8 +126,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     return () => { active = false; };
   }, [draftKey]);
   useEffect(() => {
-    if (draftRestored.current !== draftKey || !chrome.storage.session) return;
-    const key = `draft:${draftKey}`, timer = setTimeout(() => void (draft.trim() ? chrome.storage.session.set({ [key]: draft }) : chrome.storage.session.remove(key)).catch(() => {}), 300);
+    const timer = setTimeout(() => storeDraft(draftKey, draft), 300);
     return () => clearTimeout(timer);
   }, [draftKey, draft]);
   // The message box starts at two lines and grows with its text up to the CSS max-height.
@@ -163,7 +170,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   async function perform(action: () => Promise<void>) { const current = wb.captureScope(); wb.setError(""); try { await action(); } catch (error) { if (current()) wb.setError(error instanceof Error ? error.message : String(error)); } }
   const api = () => { if (!wb.client.current) throw new Error("먼저 실행 환경을 연결하세요."); return wb.client.current; };
   const sessionPath = () => { if (!wb.sessionId) throw new Error("세션을 선택하거나 새로 만드세요."); return `/session/${encodeURIComponent(wb.sessionId)}`; };
-  async function createSession(carry?: { draft: string; attachments: Data[] }): Promise<Data | undefined> { const current = wb.captureScope(); const session = await api().post<Data>("/session", { ...(agent ? { agent } : {}), ...(model ? { model: { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) } } : {}) }); if (!current()) return undefined; if (carry) draftCache.current.set(JSON.stringify([wb.profileId, wb.directory, session.id]), carry); await wb.refreshSessions(); if (!current()) return undefined; const selection = wb.selectSession(session), destination = wb.captureScope(); await selection; if (destination()) { setNotice(""); onViewChange("chat"); setDrawer(null); } return session; }
+  async function createSession(carry?: { draft: string; attachments: Data[] }): Promise<Data | undefined> { const current = wb.captureScope(); const session = await api().post<Data>("/session", { ...(agent ? { agent } : {}), ...(model ? { model: { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) } } : {}) }); if (!current()) return undefined; if (carry) { draftCache.current.set(JSON.stringify([wb.profileId, wb.directory, session.id]), carry); consumedDraft.current = draftKey; } await wb.refreshSessions(); if (!current()) return undefined; const selection = wb.selectSession(session), destination = wb.captureScope(); await selection; if (destination()) { setNotice(""); onViewChange("chat"); setDrawer(null); } return session; }
   async function forkSession(messageID?: string, source = currentSession) {
     if (!source?.id) throw new Error("세션을 선택하거나 새로 만드세요.");
     const current = wb.captureScope(), original = messages.find(item => item.info.id === messageID);

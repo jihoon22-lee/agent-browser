@@ -928,6 +928,29 @@ describe("draft and reference details", () => {
     expect(Object.keys(saved)).toEqual([]);
   });
 
+  it("does not bring a sent first message back as the next new conversation's draft", async () => {
+    const saved = sessionStore();
+    sessions.length = 0; messages = [];
+    const storage = await chrome.storage.local.get(); delete (storage as any)["recentSession:native"];
+    test.post.mockImplementation(async (path: string) => {
+      if (path === "/session") { const created = { id: "ses-first", title: "새 대화", directory: "/fixture", time: { updated: 3 } }; sessions.push(created); return created; }
+      return true;
+    });
+    (chrome as any).windows = { getLastFocused: vi.fn(async () => ({ id: 4, focused: true, tabs: [{ id: 31, active: true, url: "https://mail.test" }] })) };
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation(async (message: any) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+    await render(); await draftValue("첫 요청"); await settle(350);
+    await act(async () => button("보내기").click()); await settle(400);
+    expect(test.post.mock.calls.some(([path]) => path === "/session/ses-first/prompt_async")).toBe(true);
+    expect(Object.values(saved)).toEqual([]);
+    // Deleting the new session returns this panel to an empty conversation.
+    await act(async () => test.stream({ id: "evt-deleted", type: "session.deleted", properties: { info: { id: "ses-first" } } }));
+    expect(composerValue().value).toBe("");
+    await act(async () => root.unmount()); root = createRoot(host);
+    await render();
+    expect(composerValue().value).toBe("");
+  });
+
   it("says when a current-tab reference attached only the beginning of the page", async () => {
     const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
     runtime.mockImplementation(async (message: any) => message.kind === "browser-context" ? { ok: true, result: { title: "긴 문서", url: "https://example.test/long", tabId: 3, text: "가".repeat(16000), length: 41234 } } : original(message));
