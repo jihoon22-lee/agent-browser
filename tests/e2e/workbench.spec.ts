@@ -371,11 +371,11 @@ test("W15 short panels keep a usable message area and the Send button on screen"
     await panel.setViewportSize({ width, height });
     const layout = await panel.evaluate(() => {
       const viewport = document.querySelector<HTMLElement>(".message-viewport")!, composer = document.querySelector<HTMLElement>(".composer")!.getBoundingClientRect();
-      return { viewportHeight: viewport.clientHeight, composerHeight: Math.round(composer.height), viewportTop: Math.round(viewport.getBoundingClientRect().top), height: innerHeight, width: innerWidth, documentHeight: document.documentElement.scrollHeight };
+      return { viewportHeight: viewport.clientHeight, composerHeight: Math.round(composer.height), viewportTop: Math.round(viewport.getBoundingClientRect().top), windowHeight: innerHeight, documentHeight: document.documentElement.scrollHeight };
     });
     checks.push({ width, height, ...layout });
     expect(layout.viewportHeight, `${width}x${height} message area`).toBeGreaterThanOrEqual(200);
-    expect(layout.documentHeight).toBeLessThanOrEqual(layout.height + 1);
+    expect(layout.documentHeight).toBeLessThanOrEqual(layout.windowHeight + 1);
     await expect(send).toBeInViewport({ ratio: 1 });
     const image = info.outputPath(`short-${width}x${height}.png`); await panel.screenshot({ path: image }); await info.attach(`short-${width}x${height}`, { path: image, contentType: "image/png" });
   }
