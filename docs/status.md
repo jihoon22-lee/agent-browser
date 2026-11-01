@@ -2,9 +2,19 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.4.0 Windows preview — 게시 완료 (2026-11-01)
+
+[v0.4.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.0)(prerelease)을 **2026-11-01 14:50:15 UTC / 2026-11-01 23:50:15 KST**에 게시했다. 주석 태그는 [PR #41](https://github.com/jihoon22-lee/agent-browser/pull/41)의 main 병합 커밋 **`52bd2ef1adf3c8a3b56d1fe62a80bee81902027b`**를 가리킨다. 사용자 지시("푸시 pr 릴리스 배포까지 알아서")에 따라 push·PR·병합·게시를 이어서 진행했다.
+
+- **배포 ZIP:** **3,878,180 bytes / 37 files**, SHA256 **`184ffca6e3e6a6bb71016e31a390f0f7089e9993afcdfe2391c7a19a476c3921`**. `SHA256SUMS` 별도 게시. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/41316911690)의 Windows 작업이 MSVC release Bridge·확장·고지문으로 만든 `windows-x64-package-52bd2ef…` 아티팩트다. WSL interop 오류로 로컬 Windows 재빌드·설치 검증은 하지 않았다.
+- **소스·CI:** [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/41315462211)와 배포 커밋 main CI의 Linux·Windows 작업이 모두 성공했다. PR head `774f0f0`와 병합 커밋의 트리(`d32d874e`)가 같다.
+- **CI 수치(PR·main 동일):** Linux E2E **235 통과/5 제외**, Windows Chrome **156.0.8078.48** E2E **235 통과/5 제외**(W15–W18의 첫 Windows 실행 포함). 확장 단위 **68파일/775개**, Linux Rust **227개**(1개 ignored), Node 합성 **38개**, 문서·도우미 **3개**, 별도 다운로드 각 **2개**, Windows 북마크 **2개**, 합성 품질 gate, Windows 설치·패키지·GUI 회귀가 통과했다.
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, GitHub 자산 크기·digest, ZIP 내부 **36개 manifest 해시와 전체 37개 파일 목록**, 확장 버전 0.4.0을 확인했다. 릴리스 본문의 세 섹션·링크·해시도 다시 읽어 확인했다.
+- **정리:** 병합된 작업 브랜치를 로컬·원격에서 삭제했다. 최종 파일은 `release/v0.4.0-main/`에 보관하고 다운로드·임시 파일을 지웠다.
+
 ## M4 사용성 개선 — 구현·Linux 검증 (2026-11-01)
 
-사용자 요청("더 나은 기능과 쉬운 사용을 위한 방향으로 권장 방안을 찾아 작업 진행해")에 따라 `feat/m4-usability` 브랜치에서 진행했다. 사용자 요청으로 보안 정책 항목은 넣지 않았고 페어링 등 기존 보호는 바꾸지 않았다. push·PR·Release는 하지 않았다.
+사용자 요청("더 나은 기능과 쉬운 사용을 위한 방향으로 권장 방안을 찾아 작업 진행해")에 따라 `feat/m4-usability` 브랜치에서 진행했다. 사용자 요청으로 보안 정책 항목은 넣지 않았고 페어링 등 기존 보호는 바꾸지 않았다. 이후 PR #41로 병합해 v0.4.0으로 게시했다(위 게시 기록).
 
 - **입력창·상단 행:** 2026-10-27 합의한 `[모델 ▾] [추론 옵션 ▾] [에이전트 ▾]` 한 줄 배치를 실제로 구현했다. 라벨 행을 없애고 접근 이름은 유지했다. 모델 검색·즐겨찾기는 ☆로 접고 이미지·시각 조작 표시는 한 줄로 남겼다. 입력란은 2줄에서 내용에 따라 늘어나고 첨부 버튼과 보내기가 한 행이다. 환경 요약과 실행 설정 행을 합쳤고, 머리글 중단 버튼은 브라우저 작업이 있을 때만 보인다.
 - **시작 화면·오류:** 빈 대화가 페어링 필요·Bridge 끊김·실행 환경 없음/미선택·준비 중·준비 실패·준비됨을 구분해 다음 행동 버튼을 보인다. 패널은 첫 Bridge 상태를 받기 전 "연결 중"으로 시작한다(이전에는 "연결 끊김"이 잠깐 보였다). 알려진 Bridge·실행 환경·네트워크 오류는 한국어 설명과 다음 행동으로 보이고 원문은 접어 둔다. 샘플 문구가 Rust·확장 원문에 그대로 있는지 테스트로 고정했다. 준비된 빈 대화의 예시 요청은 입력란만 채운다. 끊긴 동안 생긴 Bridge 연결 오류는 Bridge가 다시 연결되면 지운다. 이전에는 실행 환경이 이미 연결된 경우 연결된 화면에 남았다.
@@ -12,8 +22,8 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 - **설정 화면:** 연결되면 페어링 입력을 접고, 미페어링이면 코드 입력에 커서를 둔다. 빈 프로필 ID는 실행 방식으로 자동 생성한다. 연결 진단은 ✓/!/✗/i 목록으로 보이고 원본 JSON은 접는다. Chrome 연결 항목은 Bridge가 판정한 선택 상태를 그대로 쓴다. 첫 상태를 받기 전에는 "연결하는 중"으로 시작한다. 페어링된 브라우저가 Bridge에 연결할 수 없으면 새 코드 안내 대신 입력을 접고 `start-bridge.cmd` 시작 안내와 **다시 연결**을 보인다. 페어링이 없거나 거부됐을 때만 입력을 펼친다.
 - **측정(Linux Chromium headless, 합성 fixture, 추론 옵션이 있는 모델):** 메시지 영역 400×640 **12→263px**, 400×700 **21→323px**, 400×760 **81→383px**, 320×700 **29→313px**. 입력창 **423→181px**, 메시지 영역 위쪽 **256→196px**. 변경 전 값은 같은 날 리뷰 probe, 변경 후 값은 W15 결과다. Windows에서는 다시 재지 않았다.
 - **실행한 검사:** 과제마다 실패 테스트를 먼저 확인했다(예: W15의 400×640 메시지 영역 12px, 초안 크기 제한·저장소 리스너 필터·재연결 뒤 남는 오류·설정 화면 첫 상태). 최종 확인(코드 기준 `395728b`): 확장 단위 전체 **68파일/775개**, production build(`tsc --noEmit` 포함), E2E 타입 검사, `ci-checks` **3개**와 문서 링크, `git diff --check`, Node 합성 **38개**, Python 패키징 **3개**가 통과했다. Linux Chrome **156.0.8078.4 headless** 전체 E2E는 **235 통과/5 제외/0 실패**(새 W15–W18 포함, 7.3분)다. 직전 전체 실행에서는 새 W18만 실패했다(234 통과/1 실패/5 제외). 원인은 W12였다. W12는 `prompt_async`를 204로 가로챈 뒤 `parentID` 없는 합성 응답을 넣어서, 패널의 브라우저 요청 예약이 끝나지 않고 남았다. 같은 파일에서 W12 다음에 메시지를 보내는 테스트가 W18뿐이라 그때 드러났다. W12의 합성 응답이 OpenCode처럼 제출한 메시지를 가리키게 하고 예약 해제를 확인하도록 고쳤다. W12+W18 연속 실행으로 실패 재현과 통과를 확인했다. 중간 확인으로는 패널을 여는 4개 spec **74개**, W17·W18·R25 **3개**, panel·workbench·error-text 단위 **127개**를 돌렸다. 이전 회차에서는 여러 파일을 병렬로 돌린 단위 실행 중 기존 R8(중단 연타) 검사가 한 번 실패했다. 단독 3회, 변경 전 커밋 1회, 이후 전체 실행에서는 통과했으며 제한 시간은 바꾸지 않았다.
-- **Windows 전용 패널 스크립트(코드만 확인):** `opencode-panel.windows.mjs`·`request-target.windows.mjs`·`panel-journeys.mjs`가 쓰는 화면 요소는 이번 브랜치에서 바뀌지 않았다. form 안의 `textarea[aria-label="메시지"]`, `응답 중단`의 `disabled`(hidden/disabled 조건이 main과 같음), 모델 `option[value]`, 원문 `HTTP 400`이 든 `role=alert`(해당 한국어 변환 규칙 없음), provider 오류의 `innerText`가 그렇다. 이 스크립트들은 실행하지 않았다. Windows CI의 기본 Playwright 실행에도 `workbench.spec.ts`가 들어가므로 W15–W18은 Windows에서 아직 한 번도 돌지 않았다. W15의 최소 높이는 Linux 글꼴로 잰 값이다.
-- **실행하지 않은 것:** WSL interop 오류(`UtilAcceptVsock accept4 failed 110`)로 실제 Windows 실행·화면 확인은 하지 않았다. Bridge(Rust)·설치 관리자는 바꾸지 않았고 Rust 테스트는 다시 돌리지 않았다. push·PR 전이라 Windows CI도 이 브랜치에서 돌지 않았다. 실제 모델 호출은 없다.
+- **Windows 전용 패널 스크립트(코드만 확인):** `opencode-panel.windows.mjs`·`request-target.windows.mjs`·`panel-journeys.mjs`가 쓰는 화면 요소는 이번 브랜치에서 바뀌지 않았다. form 안의 `textarea[aria-label="메시지"]`, `응답 중단`의 `disabled`(hidden/disabled 조건이 main과 같음), 모델 `option[value]`, 원문 `HTTP 400`이 든 `role=alert`(해당 한국어 변환 규칙 없음), provider 오류의 `innerText`가 그렇다. 이 스크립트들은 실행하지 않았다. W15–W18은 이후 PR #41·main CI의 Windows Chrome 156.0.8078.48에서 통과했다.
+- **실행하지 않은 것:** WSL interop 오류(`UtilAcceptVsock accept4 failed 110`)로 실제 Windows 실행·화면 확인은 하지 않았다. Bridge(Rust)·설치 관리자는 바꾸지 않았고 Rust 테스트는 다시 돌리지 않았다. Windows 검증은 PR #41과 main CI의 Windows 작업 결과다(위 게시 기록). 실제 모델 호출은 없다.
 
 이번에 하지 않은 개선과 이유:
 
