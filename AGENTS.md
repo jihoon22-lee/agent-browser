@@ -49,4 +49,5 @@ Windows용 Browser Bridge(`browser-bridge.exe`) 두 가지다.
 
 - 커밋은 영어 Conventional Commits, 과제 단위. 작성자 이메일은 저장소 로컬 설정의 GitHub noreply 주소를 쓴다.
 - 기본 브랜치는 `main`. 마일스톤 작업은 `feat/<milestone>-<topic>` 브랜치에서 진행한다.
-- push·PR·Release·저장소 설정 변경은 사용자 요청이 있을 때만 한다.
+- 검증을 마친 작업은 push·PR·CI 확인(Windows 포함)·병합·Release 게시·정리까지 이어서 진행한다. 단계마다 사용자에게 다시 묻거나 수동 절차를 넘기지 않는다(사용자 지시, 2026-11-01).
+- 저장소 설정 변경은 사용자 요청이 있을 때만 한다.
