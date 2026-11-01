@@ -42,7 +42,22 @@ it("recovers the stop button after a failed request and shows confirmed stop", a
   sendMessage.mockImplementation(async (msg) => ({ ok: true, result: msg.method === "operation.abort" ? { aborted: true } : { ...status, operation: null } }));
   await act(async () => stopButton().click());
   expect(host.textContent).toContain("이미 제출된 웹사이트 요청은 취소되지 않습니다.");
-  expect(stopButton().disabled).toBe(true);
+  // With no operation left there is nothing to stop, so the header button is removed.
+  expect(stopButton()).toBeUndefined();
+});
+
+it("re-reads the advanced browser setting only when that setting changes", async () => {
+  const changed: Array<(changes: Record<string, unknown>, area: string) => void> = [];
+  (chrome.storage as any).onChanged = { addListener: (f: any) => changed.push(f), removeListener: vi.fn() };
+  await render();
+  const reads = () => (chrome.storage.local.get as ReturnType<typeof vi.fn>).mock.calls.filter(([keys]) => keys === "advancedBrowser").length;
+  const before = reads();
+  expect(before).toBeGreaterThan(0);
+  // Draft saves land in session storage several times a minute while typing.
+  await act(async () => { for (const listener of changed) listener({ "draft:x": { newValue: "초안" } }, "session"); });
+  expect(reads()).toBe(before);
+  await act(async () => { for (const listener of changed) listener({ advancedBrowser: { newValue: true } }, "local"); });
+  expect(reads()).toBe(before + 1);
 });
 
 it("does not look up another browser's tab IDs in the local profile", async () => {
@@ -78,5 +93,5 @@ it("does not claim a successful stop if the operation already ended", async () =
   sendMessage.mockImplementation(async (msg) => ({ ok: true, result: msg.method === "operation.abort" ? { aborted: false } : { ...status, operation: null } }));
   await act(async () => stopButton().click());
   expect(host.textContent).not.toContain("중단됨:");
-  expect(stopButton().disabled).toBe(true);
+  expect(stopButton()).toBeUndefined();
 });

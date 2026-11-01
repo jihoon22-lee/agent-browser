@@ -4,7 +4,8 @@ export type Operation = { id: string; tabs: number[]; currentTab: number; state:
 export type BrowserInfo = { clientId: string; connected: boolean; selected: boolean };
 export type TimelineEntry = { atMs: number; operationId?: string | null; tool: string; summary: string; outcome: string };
 export type PanelState = { conn: ConnStatus; operation: Operation | null; browsers: BrowserInfo[]; timeline: TimelineEntry[]; stopping: boolean; stopped: boolean; error: string | null };
-export const initialPanelState: PanelState = { conn: { state: "disconnected" }, operation: null, browsers: [], timeline: [], stopping: false, stopped: false, error: null };
+// Until the background answers, the connection is being established, not down.
+export const initialPanelState: PanelState = { conn: { state: "connecting" }, operation: null, browsers: [], timeline: [], stopping: false, stopped: false, error: null };
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object";
 const isOperation = (value: unknown): value is Operation => object(value) && typeof value.id === "string" && Array.isArray(value.tabs) && value.tabs.every(Number.isInteger) && typeof value.currentTab === "number" && typeof value.state === "string";

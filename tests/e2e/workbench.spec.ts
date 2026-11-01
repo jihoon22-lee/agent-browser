@@ -132,8 +132,10 @@ test("W06 exports, message fork, revert and session search remain usable", async
   // Message actions stay hidden until the message is hovered (or focused), so they do not clutter the conversation.
   await panel.mouse.move(0, 0); await expect(userMessage.locator(".message-actions")).toHaveCSS("opacity", "0");
   await userMessage.hover(); await expect(userMessage.locator(".message-actions")).toHaveCSS("opacity", "1");
-  panel.once("dialog", dialog => dialog.accept());
   await panel.locator("article.message.user").first().getByRole("button", { name: "이전으로 되돌리기" }).click();
+  // The confirmation is asked inside the message; nothing is sent until it is accepted.
+  await expect(panel.getByRole("button", { name: "취소", exact: true })).toBeFocused();
+  await panel.getByRole("button", { name: "되돌리기 확인", exact: true }).click();
   await expect(panel.getByRole("button", { name: "되돌리기 취소", exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "되돌리기 취소", exact: true }).click();
   await expect.poll(() => api.state.sessions.find(session => session.id === id)!.revert).toBeUndefined();
@@ -202,7 +204,8 @@ test("W07 twelve rendered theme/width combinations retain readable content, inde
     });
     expect(layout.documentHeight).toBeLessThanOrEqual(layout.height + 1); expect(layout.documentWidth).toBeLessThanOrEqual(layout.width + 1);
     expect(layout.composerBottom).toBeLessThanOrEqual(layout.height); expect(layout.viewportHeight).toBeGreaterThan(150); expect(layout.scrollHeight).toBeGreaterThan(layout.viewportHeight);
-    await expect(panel.getByRole("button", { name: "브라우저 작업 중단", exact: true })).toBeVisible();
+    // No browser operation runs in this world, so the header Stop button is not shown.
+    await expect(panel.getByRole("button", { name: "브라우저 작업 중단", exact: true })).toHaveCount(0);
     await panel.locator(".message-viewport").evaluate(el => { el.scrollTop = el.scrollHeight; });
     await expect(composer).toBeVisible();
     await panel.getByRole("button", { name: "보내기", exact: true }).hover();
@@ -307,17 +310,21 @@ test("W11 subagent sessions stay under collapsed parents and nested selection ca
 
 test("W12 a successful submit with no initial SSE event is still observed for a later reply", async () => {
   const id = await createSession(), path = `/session/${id}/prompt_async`;
+  let submitted = "";
   await panel.waitForTimeout(250); // Exclude the earlier session.created resync from reply recovery.
-  await panel.route(`**${path}*`, async route => { await route.fulfill({ status: 204, headers: { "access-control-allow-origin": `chrome-extension://${world.extensionId}`, "access-control-allow-headers": "Authorization, Content-Type", "access-control-allow-methods": "POST, OPTIONS" } }); });
+  await panel.route(`**${path}*`, async route => { if (route.request().method() === "POST") submitted = route.request().postDataJSON()?.messageID ?? ""; await route.fulfill({ status: 204, headers: { "access-control-allow-origin": `chrome-extension://${world.extensionId}`, "access-control-allow-headers": "Authorization, Content-Type", "access-control-allow-methods": "POST, OPTIONS" } }); });
   try {
     const before = api.state.requests.filter(request => request.path === `/session/${id}/message`).length;
     await panel.getByRole("textbox", { name: "메시지", exact: true }).fill("초기 이벤트가 없는 합성 요청");
     await panel.getByRole("button", { name: "보내기", exact: true }).click();
     await expect.poll(() => api.state.requests.filter(request => request.path === `/session/${id}/message`).length).toBeGreaterThan(before);
+    expect(submitted).toMatch(/^msg_/);
+    // OpenCode links a reply to the user message it answers; only then is the panel's browser request finished.
     const messageID = `msg_delayed_no_event_${id}`;
-    api.state.messages.get(id)!.push({ info: { id: messageID, sessionID: id, role: "assistant", time: { created: Date.now(), completed: Date.now() } }, parts: [{ id: `prt_delayed_${id}`, sessionID: id, messageID, type: "text", text: "첫 이벤트가 없어도 관찰한 합성 결과" }] });
+    api.state.messages.get(id)!.push({ info: { id: messageID, sessionID: id, role: "assistant", parentID: submitted, time: { created: Date.now(), completed: Date.now() } }, parts: [{ id: `prt_delayed_${id}`, sessionID: id, messageID, type: "text", text: "첫 이벤트가 없어도 관찰한 합성 결과" }] });
     api.emit("server.heartbeat", {});
     await expect(panel.getByText("첫 이벤트가 없어도 관찰한 합성 결과", { exact: true })).toBeVisible();
+    await expect.poll(() => panel.evaluate(async () => (await (globalThis as any).chrome.storage.local.get("panelBrowserRequest")).panelBrowserRequest)).toBeUndefined();
     expect(api.state.requests.filter(request => request.path === `/session/${id}/abort`)).toHaveLength(0);
   } finally { await panel.unroute(`**${path}*`); }
 });
@@ -352,4 +359,76 @@ test('W14 composer choices remain visible at narrow widths and Windows display s
   expect(bounds.right).toBeLessThanOrEqual(bounds.width);expect(bounds.bottom).toBeLessThanOrEqual(bounds.height);expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width);
   const path=info.outputPath(`composer-${width}-${scale}.png`);const capture=await cdp.send('Page.captureScreenshot',{format:'png'});const bytes=Buffer.from(capture.data,'base64');expect(bytes.readUInt32BE(16)).toBe(Math.round(width*scale));await writeFile(path,bytes);await info.attach(`composer-${width}-${scale}`,{path,contentType:'image/png'});
  }}finally{await cdp.send('Emulation.clearDeviceMetricsOverride');await cdp.detach();}
+});
+
+test("W15 short panels keep a usable message area and the Send button on screen", async ({}, info) => {
+  const id = await createSession();
+  for (let index = 0; index < 12; index++) {
+    const messageID = `msg_short_${id}_${index}`;
+    api.saveMessage({ info: { id: messageID, sessionID: id, role: index % 2 ? "assistant" : "user", time: { created: Date.now() + index } }, parts: [{ id: `prt_short_${id}_${index}`, sessionID: id, messageID, type: "text", text: `짧은 패널 합성 메시지 ${index + 1}` }] });
+  }
+  await expect(panel.getByText("짧은 패널 합성 메시지 12", { exact: true })).toBeVisible();
+  // The fixture model offers variants, so the reasoning choice is shown: the tallest composer.
+  await expect(panel.getByRole("combobox", { name: "모델 variant·추론 옵션", exact: true })).toBeVisible();
+  const send = panel.getByRole("button", { name: "보내기", exact: true }), checks = [];
+  for (const [width, height] of [[400, 640], [400, 700], [400, 760], [320, 700]] as const) {
+    await panel.setViewportSize({ width, height });
+    const layout = await panel.evaluate(() => {
+      const viewport = document.querySelector<HTMLElement>(".message-viewport")!, composer = document.querySelector<HTMLElement>(".composer")!.getBoundingClientRect();
+      return { viewportHeight: viewport.clientHeight, composerHeight: Math.round(composer.height), viewportTop: Math.round(viewport.getBoundingClientRect().top), windowHeight: innerHeight, documentHeight: document.documentElement.scrollHeight };
+    });
+    checks.push({ width, height, ...layout });
+    expect(layout.viewportHeight, `${width}x${height} message area`).toBeGreaterThanOrEqual(200);
+    expect(layout.documentHeight).toBeLessThanOrEqual(layout.windowHeight + 1);
+    await expect(send).toBeInViewport({ ratio: 1 });
+    const image = info.outputPath(`short-${width}x${height}.png`); await panel.screenshot({ path: image }); await info.attach(`short-${width}x${height}`, { path: image, contentType: "image/png" });
+  }
+  const path = info.outputPath("short-panel-layout.json"); await writeFile(path, JSON.stringify(checks, null, 2));
+  await info.attach("short-panel-layout", { path, contentType: "application/json" });
+});
+
+test("W16 an empty conversation offers example requests that only fill the composer", async ({}, info) => {
+  const id = await createSession(), before = api.state.requests.filter(request => request.path.endsWith("/prompt_async")).length;
+  const example = panel.locator(".example-prompts").getByRole("button", { name: "지금 보는 페이지를 요약해줘", exact: true });
+  await expect(panel.getByRole("heading", { name: "브라우저에서 바로 시작하세요", exact: true })).toBeVisible();
+  const image = info.outputPath("start-screen.png"); await panel.screenshot({ path: image }); await info.attach("start-screen", { path: image, contentType: "image/png" });
+  await example.click();
+  await expect(panel.getByRole("textbox", { name: "메시지", exact: true })).toHaveValue("지금 보는 페이지를 요약해줘");
+  await expect(panel.getByRole("textbox", { name: "메시지", exact: true })).toBeFocused();
+  expect(api.state.requests.filter(request => request.path.endsWith("/prompt_async")).length).toBe(before);
+  expect(api.state.sessions.some(session => session.id === id)).toBe(true);
+});
+
+test("W17 Options folds the paired connection and lists real diagnostics as a checklist", async ({}, info) => {
+  const options = await world.context.newPage();
+  try {
+    await options.setViewportSize({ width: 900, height: 1000 });
+    await options.goto(`chrome-extension://${world.extensionId}/${world.manifest.options_page}`);
+    await expect(options.getByRole("status").filter({ hasText: "Bridge에 연결되었습니다" })).toBeVisible();
+    await expect(options.getByLabel("페어링 코드", { exact: true })).toBeHidden();
+    await options.getByRole("button", { name: "진단 실행", exact: true }).click();
+    const checks = options.locator(".doctor-checks > li");
+    await expect(checks.first()).toBeVisible({ timeout: 30_000 });
+    await expect(checks.filter({ hasText: "Chrome 연결" })).toContainText("정상");
+    await expect(options.locator("details.doctor-raw")).not.toHaveAttribute("open", "");
+    const image = info.outputPath("options-diagnostics.png"); await options.screenshot({ path: image, fullPage: true }); await info.attach("options-diagnostics", { path: image, contentType: "image/png" });
+  } finally { await options.close(); }
+});
+
+test("W18 typed draft text survives closing the panel and a sent draft does not come back", async () => {
+  await createSession();
+  const composer = () => panel.getByRole("textbox", { name: "메시지", exact: true });
+  const stored = () => panel.evaluate(async text => Object.values(await (globalThis as any).chrome.storage.session.get(null)).filter(value => value === text).length, "패널을 닫아도 남는 초안");
+  await composer().fill("패널을 닫아도 남는 초안");
+  // Saving is debounced; close only once the text is in session storage.
+  await expect.poll(stored).toBe(1);
+  await panel.close(); await openPanel();
+  await expect(panel.getByRole("heading", { name: "새 합성 세션", exact: true })).toBeVisible();
+  await expect(composer()).toHaveValue("패널을 닫아도 남는 초안");
+  await panel.getByRole("button", { name: "보내기", exact: true }).click();
+  await expect(panel.getByText("합성 응답입니다.", { exact: false }).last()).toBeVisible();
+  await expect.poll(stored).toBe(0);
+  await panel.close(); await openPanel();
+  await expect(panel.getByRole("heading", { name: "새 합성 세션", exact: true })).toBeVisible();
+  await expect(composer()).toHaveValue("");
 });

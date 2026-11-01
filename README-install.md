@@ -9,7 +9,7 @@ Windows x64용 Chrome 확장과 Browser Bridge를 설치합니다. 관리자 권
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 같은 버전의 ZIP과 `SHA256SUMS`를 각각 받습니다. **압축을 풀거나 실행하기 전에** ZIP의 SHA256을 별도로 받은 체크섬의 해당 ZIP 행 또는 GitHub 자산의 SHA256 digest와 비교합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.3.1-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.4.0-windows-x64.zip
 ```
 
 다르면 공식 릴리스에서 다시 받습니다. 현재 exe에는 Authenticode 서명이 없습니다. ZIP 안의 `package-manifest.json`은 파일 누락·변경 확인용이며 다운로드 출처를 증명하지 않습니다.
@@ -56,9 +56,9 @@ WSL 경로는 해당 배포판 기준으로 입력합니다. Windows에 설치�
 
 작업 폴더를 확인하고 **저장하고 연결 확인**을 누릅니다. 마법사는 버전을 확인해 기본 실행 환경으로 저장하고, OpenCode를 한 번 시작해 브라우저 도구 연결까지 확인한 결과를 문장으로 보여 줍니다. 아래 **저장된 실행 환경** 목록은 Bridge가 실제로 저장한 내용이며 Chrome 설정에도 같은 목록이 보입니다. 마지막 **설정 완료** 화면은 Bridge·Chrome 연결·실행 환경·브라우저 도구를 다시 점검하고, 문제가 있으면 ✗와 다음 할 일을 표시합니다.
 
-프로필을 저장하고 패널의 **대화 → 실행 설정**에서 선택합니다. 관리 서버는 별도 실행 설정으로 `browser` MCP를 연결합니다. 기존 모델·provider·인증·다른 MCP 설정을 덮어쓰지 않습니다. 전역 OpenCode 설정에 `mcp`가 없다는 것만으로 관리 서버의 연결 실패라고 판단하지 않습니다. 외부 서버는 그 서버의 유효 설정에 MCP를 별도로 등록해야 합니다.
+기본 실행 환경으로 저장한 프로필은 사이드 패널을 열 때 자동으로 연결됩니다. 다른 프로필은 패널 위쪽의 실행 환경 이름(▾)을 눌러 고릅니다. 관리 서버는 별도 실행 설정으로 `browser` MCP를 연결합니다. 기존 모델·provider·인증·다른 MCP 설정을 덮어쓰지 않습니다. 전역 OpenCode 설정에 `mcp`가 없다는 것만으로 관리 서버의 연결 실패라고 판단하지 않습니다. 외부 서버는 그 서버의 유효 설정에 MCP를 별도로 등록해야 합니다.
 
-**OpenCode 연결됨**을 확인하고 모델·에이전트를 선택한 뒤 **대화로 돌아가기 → 새 대화 시작**을 누릅니다. 일반 웹페이지에서 다음처럼 요청합니다.
+**OpenCode 연결됨**을 확인하고 입력란 아래에서 모델·에이전트를 선택합니다. 첫 메시지를 보내면 새 대화가 만들어집니다. 일반 웹페이지에서 다음처럼 요청합니다.
 
 > 현재 페이지의 제목을 읽어줘. 다른 탭으로 바꾸지는 말아줘.
 

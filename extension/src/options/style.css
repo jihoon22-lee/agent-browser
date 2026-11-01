@@ -27,5 +27,17 @@ body { margin: 0; }
 .options .error { border-left-color: var(--danger); color: var(--danger); }
 .options pre { overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
 .options details { padding: 10px 0; }
+.options .connected-line { color: var(--success, var(--text)); font-weight: 600; }
+.options .error-original { padding: 6px 0 0; color: var(--muted); }
+.options .error-original code { display: block; margin-top: 4px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Diagnostics read as a checklist; the raw JSON stays folded for support. */
+.options .doctor-checks { list-style: none; padding: 0; margin: 12px 0; }
+.options .doctor-checks li { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+.options .doctor-checks p { margin: 2px 0; color: var(--text); }
+.options .doctor-icon { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid currentColor; border-radius: 50%; font-weight: 700; font-size: 12px; color: var(--muted); }
+.options .doctor-ok .doctor-icon { color: var(--success, var(--accent)); }
+.options .doctor-warning .doctor-icon { color: var(--accent); }
+.options .doctor-error .doctor-icon, .options .doctor-error .doctor-status { color: var(--danger); }
+.options .doctor-status { font-size: 12px; color: var(--muted); margin-left: 4px; }
 .options summary { cursor: pointer; }
 @media (max-width: 600px) { .options { padding: 0 12px; } .options .grid { grid-template-columns: 1fr; } .options-header { display: block; } }

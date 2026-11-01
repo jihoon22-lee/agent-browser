@@ -200,14 +200,14 @@ it("restores the last user model from a saved session instead of silently taking
   const original = test.get.getMockImplementation()!;
   test.get.mockImplementation(async (path: string, query: any) => path === "/provider" ? { all: [{ id: "internal", models: { company: model, previous: { ...model, id: "previous", name: "이전 모델" } } }], connected: ["internal"], default: { internal: "company" } } : original(path, query));
   await render();
-  const select = [...host.querySelectorAll("label")].find(label => label.firstChild?.textContent === "모델")!.querySelector("select")!;
+  const select = host.querySelector<HTMLSelectElement>('.composer select[aria-label="모델"]')!;
   expect(select.value).toBe("internal/previous");
 });
 
 it("requires explicit model selection when the saved model is no longer available", async () => {
   messages = [{ info: { ...info, model: { providerID: "retired-private", modelID: "old" } }, parts: [{ id: "prt-one", type: "text", text: "이전 환경 대화" }] }];
   await render();
-  const select = [...host.querySelectorAll("label")].find(label => label.firstChild?.textContent === "모델")!.querySelector("select")!;
+  const select = host.querySelector<HTMLSelectElement>('.composer select[aria-label="모델"]')!;
   expect(select.value).toBe("");
 });
 
@@ -832,7 +832,9 @@ it("sends at most the uploadable attachments so a large message cannot fail to s
 it('keeps model, agent and reasoning selection in the composer without opening execution settings',async()=>{
   await render();
   const form=host.querySelector('.composer')!;
-  for(const name of ['모델','에이전트','모델 variant·추론 옵션']) expect([...form.querySelectorAll('label')].some(label=>label.firstChild?.textContent===name&&label.querySelector('select'))).toBe(true);
+  for(const name of ['모델','에이전트','모델 variant·추론 옵션']) expect(form.querySelector(`.composer-selectors select[aria-label="${name}"]`)).not.toBeNull();
+  // One row of named selects, not stacked label blocks: short panels need the height for messages.
+  expect(form.querySelectorAll('label select').length).toBe(0);
   expect(form.textContent).toContain('이미지 지원 정보 없음');
 });
 
@@ -842,4 +844,155 @@ it('freezes the request vision metadata with the submitted model',async()=>{
  await render();await draftValue('이미지 작업');await act(async()=>button('보내기').click());
  const prepare=(chrome.runtime.sendMessage as ReturnType<typeof vi.fn>).mock.calls.map(([m])=>m).find(m=>m.kind==='request-prepare');
  expect(prepare.lease.vision).toEqual({model:'internal/company',image:'supported',toolcall:true});
+});
+
+describe("start screen", () => {
+  const override = (handler: (message: any, original: (message: any) => Promise<any>) => Promise<any>) => {
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation(async (message: any) => handler(message, original));
+    return runtime;
+  };
+  const start = () => host.querySelector<HTMLElement>(".empty-chat")!;
+  const offline = { ok: false, error: { code: "BROWSER_DISCONNECTED", message: "Bridge is not connected" } };
+
+  it("waits for the first Bridge status instead of reporting the Bridge as down", async () => {
+    let answer!: (value: unknown) => void;
+    messages = [];
+    override(async (message, original) => message.kind === "get-conn-status" ? new Promise(resolve => { answer = resolve; }) : original(message));
+    await render();
+    expect(start().textContent).toContain("Bridge에 연결하는 중");
+    expect(host.textContent).not.toContain("Bridge에 연결할 수 없습니다");
+    expect(host.querySelector('[role="status"]')?.textContent).not.toContain("끊김");
+    await act(async () => answer({ state: "connected" }));
+    expect(start().textContent).toContain("브라우저에서 바로 시작하세요");
+  });
+
+  it("explains a stopped Bridge and reconnects on request", async () => {
+    const runtime = override(async (message, original) => message.kind === "get-conn-status" ? { state: "disconnected", retryInMs: 4000 } : message.kind === "bridge" ? offline : original(message));
+    await render();
+    expect(start().textContent).toContain("Bridge에 연결할 수 없습니다");
+    expect(start().textContent).not.toContain("실행 환경 추가");
+    expect(host.textContent).not.toContain("Bridge is not connected");
+    await act(async () => button("다시 연결").click());
+    expect(runtime.mock.calls.some(([message]) => message.kind === "reconnect")).toBe(true);
+  });
+
+  it("sends an unpaired browser to pairing in Options", async () => {
+    override(async (message, original) => message.kind === "get-conn-status" ? { state: "unpaired" } : message.kind === "bridge" ? offline : original(message));
+    await render();
+    expect(start().textContent).toContain("페어링이 필요합니다");
+    await act(async () => button("설정에서 페어링").click());
+    expect(chrome.runtime.openOptionsPage).toHaveBeenCalled();
+  });
+
+  it("shows a runtime failure in Korean with the original and retries it", async () => {
+    const failure = "OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.";
+    let ensures = 0;
+    override(async (message, original) => message.method === "runtime.ensure" && ++ensures === 1 ? { ok: true, result: { profileId: "native", state: "error", error: failure } } : original(message));
+    await render();
+    expect(start().textContent).toContain("OpenCode에 연결하지 못했습니다");
+    expect(host.textContent).toContain("60초 안에 준비되지 않았습니다");
+    expect(host.querySelector(".error-original")?.textContent).toContain(failure);
+    await act(async () => { button("다시 시도").click(); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(ensures).toBe(2);
+    expect(host.textContent).toContain("기존 질문");
+  });
+
+  it("drops a Bridge-down error once the Bridge is connected again", async () => {
+    await render();
+    expect(host.textContent).toContain("기존 질문");
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    const emit = (message: unknown) => act(async () => { for (const listener of [...listeners]) listener(message); await new Promise(resolve => setTimeout(resolve, 0)); });
+    runtime.mockImplementation(async (message: any) => message.method === "profile.list" ? offline : original(message));
+    await emit({ kind: "conn-status", status: { state: "disconnected" } });
+    await emit({ kind: "profiles-changed", profileId: "native" });
+    runtime.mockImplementation(original);
+    await emit({ kind: "conn-status", status: { state: "connected" } });
+    expect(host.textContent).toContain("기존 질문");
+    expect(host.textContent).not.toContain("Bridge에 연결되어 있지 않습니다");
+    expect(host.querySelector(".error")).toBeNull();
+  });
+
+  it("offers example requests that fill the composer without sending", async () => {
+    messages = [];
+    await render();
+    const example = [...start().querySelectorAll<HTMLButtonElement>("button")].find(element => element.textContent === "지금 보는 페이지를 요약해줘")!;
+    await act(async () => example.click());
+    expect(composerValue().value).toBe("지금 보는 페이지를 요약해줘");
+    expect(document.activeElement).toBe(composerValue());
+    expect(test.post.mock.calls.some(([path]) => path.endsWith("/prompt_async"))).toBe(false);
+  });
+});
+
+describe("draft and reference details", () => {
+  const sessionStore = () => {
+    const saved: Record<string, any> = {};
+    (chrome.storage as any).session = { get: vi.fn(async (key: string) => key in saved ? { [key]: saved[key] } : {}), set: vi.fn(async (value: Record<string, any>) => { Object.assign(saved, value); }), remove: vi.fn(async (key: string) => { delete saved[key]; }) };
+    return saved;
+  };
+  const settle = (ms: number) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+
+  it("keeps typed draft text after the panel closes and drops it once sent", async () => {
+    const saved = sessionStore();
+    await render(); await draftValue("닫아도 남길 초안"); await settle(350);
+    expect(Object.values(saved)).toEqual(["닫아도 남길 초안"]);
+    await act(async () => root.unmount()); root = createRoot(host);
+    await render();
+    expect(composerValue().value).toBe("닫아도 남길 초안");
+    await act(async () => button("보내기").click()); await settle(350);
+    expect(Object.keys(saved)).toEqual([]);
+  });
+
+  it("keeps oversized drafts out of the session storage shared with input recovery", async () => {
+    const saved = sessionStore();
+    await render(); await draftValue("짧은 초안"); await settle(350);
+    expect(Object.values(saved)).toEqual(["짧은 초안"]);
+    // A pasted log stays in memory only, and the shorter text saved before it must not come back later.
+    await draftValue("가".repeat(20_001)); await settle(350);
+    expect(Object.keys(saved)).toEqual([]);
+    expect(composerValue().value).toHaveLength(20_001);
+  });
+
+  it("does not re-read browser settings when only a draft is saved", async () => {
+    sessionStore();
+    const listeners: Array<(changes: Record<string, unknown>, area: string) => void> = [];
+    (chrome.storage as any).onChanged = { addListener: (f: any) => listeners.push(f), removeListener: vi.fn() };
+    await render();
+    const local = chrome.storage.local.get as ReturnType<typeof vi.fn>, before = local.mock.calls.length;
+    await act(async () => { for (const listener of listeners) listener({ "draft:x": { newValue: "초안" } }, "session"); });
+    expect(local.mock.calls.slice(before).some(([keys]) => Array.isArray(keys) && keys.includes("advancedBrowser"))).toBe(false);
+    await act(async () => { for (const listener of listeners) listener({ advancedBrowser: { newValue: true } }, "local"); });
+    expect(local.mock.calls.slice(before).some(([keys]) => Array.isArray(keys) && keys.includes("advancedBrowser"))).toBe(true);
+  });
+
+  it("does not bring a sent first message back as the next new conversation's draft", async () => {
+    const saved = sessionStore();
+    sessions.length = 0; messages = [];
+    const storage = await chrome.storage.local.get(); delete (storage as any)["recentSession:native"];
+    test.post.mockImplementation(async (path: string) => {
+      if (path === "/session") { const created = { id: "ses-first", title: "새 대화", directory: "/fixture", time: { updated: 3 } }; sessions.push(created); return created; }
+      return true;
+    });
+    (chrome as any).windows = { getLastFocused: vi.fn(async () => ({ id: 4, focused: true, tabs: [{ id: 31, active: true, url: "https://mail.test" }] })) };
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation(async (message: any) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+    await render(); await draftValue("첫 요청"); await settle(350);
+    await act(async () => button("보내기").click()); await settle(400);
+    expect(test.post.mock.calls.some(([path]) => path === "/session/ses-first/prompt_async")).toBe(true);
+    expect(Object.values(saved)).toEqual([]);
+    // Deleting the new session returns this panel to an empty conversation.
+    await act(async () => test.stream({ id: "evt-deleted", type: "session.deleted", properties: { info: { id: "ses-first" } } }));
+    expect(composerValue().value).toBe("");
+    await act(async () => root.unmount()); root = createRoot(host);
+    await render();
+    expect(composerValue().value).toBe("");
+  });
+
+  it("says when a current-tab reference attached only the beginning of the page", async () => {
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation(async (message: any) => message.kind === "browser-context" ? { ok: true, result: { title: "긴 문서", url: "https://example.test/long", tabId: 3, text: "가".repeat(16000), length: 41234 } } : original(message));
+    await render();
+    await act(async () => button("현재 탭").click()); await settle(50);
+    expect(host.textContent).toContain("41,234자 중 앞부분 16,000자만 첨부했습니다");
+  });
 });
