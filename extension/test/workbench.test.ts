@@ -855,6 +855,18 @@ describe("start screen", () => {
   const start = () => host.querySelector<HTMLElement>(".empty-chat")!;
   const offline = { ok: false, error: { code: "BROWSER_DISCONNECTED", message: "Bridge is not connected" } };
 
+  it("waits for the first Bridge status instead of reporting the Bridge as down", async () => {
+    let answer!: (value: unknown) => void;
+    messages = [];
+    override(async (message, original) => message.kind === "get-conn-status" ? new Promise(resolve => { answer = resolve; }) : original(message));
+    await render();
+    expect(start().textContent).toContain("Bridge에 연결하는 중");
+    expect(host.textContent).not.toContain("Bridge에 연결할 수 없습니다");
+    expect(host.querySelector('[role="status"]')?.textContent).not.toContain("끊김");
+    await act(async () => answer({ state: "connected" }));
+    expect(start().textContent).toContain("브라우저에서 바로 시작하세요");
+  });
+
   it("explains a stopped Bridge and reconnects on request", async () => {
     const runtime = override(async (message, original) => message.kind === "get-conn-status" ? { state: "disconnected", retryInMs: 4000 } : message.kind === "bridge" ? offline : original(message));
     await render();
