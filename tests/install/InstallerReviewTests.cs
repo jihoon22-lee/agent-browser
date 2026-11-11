@@ -123,6 +123,21 @@ internal static class InstallerReviewTests {
   });
 
   Case("managed-install-ancestor",o=>{string parent=o.InstallDir,child=Path.Combine(parent,"nested");InstallerEngine.PrivateDirectory(child);var acl=Directory.GetAccessControl(parent);byte[] original=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.DeleteSubdirectoriesAndFiles,AccessControlType.Allow));Directory.SetAccessControl(parent,acl);try{InstallerEngine.Root(child);}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(original,AccessControlSections.Access);Directory.SetAccessControl(parent,restore);}});
+  Case("command-output-decoding-never-throws",o=>{
+   string listing="Ubuntu\r\n우분투\r\n";var utf16=System.Text.Encoding.Unicode;
+   Assert(NativeIO.DecodeOutput(utf16.GetBytes(listing),utf16)==listing,"UTF-16LE wsl --list was not decoded");
+   Assert(NativeIO.DecodeOutput(NativeIO.Utf8.GetBytes(listing),utf16)==listing,"WSL_UTF8=1 wsl --list was decoded as UTF-16");
+   Assert(NativeIO.DecodeOutput(utf16.GetPreamble().Concat(utf16.GetBytes(listing)).ToArray(),null)==listing,"UTF-16 byte order mark was kept or misread");
+   Assert(NativeIO.DecodeOutput(new byte[]{0xEF,0xBB,0xBF}.Concat(NativeIO.Utf8.GetBytes(listing)).ToArray(),utf16)==listing,"UTF-8 byte order mark was kept or misread");
+   Assert(NativeIO.DecodeOutput(utf16.GetBytes("There is no distribution with the supplied name.\r\n"),null).StartsWith("There is no distribution"),"a UTF-16LE wsl.exe message was read as UTF-8");
+   Assert(NativeIO.DecodeOutput(NativeIO.Utf8.GetBytes("USER\tsynthetic\nHOME\t/home/사용자\n"),null)=="USER\tsynthetic\nHOME\t/home/사용자\n","UTF-8 --exec output changed");
+   string lenient=NativeIO.DecodeOutput(new byte[]{0x41,0xFF,0x42},null);Assert(lenient.StartsWith("A")&&lenient.EndsWith("B"),"invalid UTF-8 output threw or lost its readable part");
+   Assert(NativeIO.DecodeOutput(new byte[0],null)==""&&NativeIO.DecodeOutput(System.Text.Encoding.ASCII.GetBytes("1.18.29\r\n"),System.Text.Encoding.Default)=="1.18.29\r\n","empty or cmd output changed");
+   // End to end: bytes that are not valid UTF-8 no longer fail the command capture.
+   string script=Path.Combine(o.InstallDir,"invalid-output.cmd");File.WriteAllBytes(script,System.Text.Encoding.ASCII.GetBytes("@echo off\r\necho A").Concat(new byte[]{0xFF}).Concat(System.Text.Encoding.ASCII.GetBytes("B\r\n")).ToArray());
+   var captured=NativeIO.Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe"),new[]{"/d","/c",script},null,null,15000);
+   Assert(captured.ExitCode==0&&captured.Output.StartsWith("A")&&captured.Output.EndsWith("B"),"capturing non-UTF-8 output failed: "+captured.Output);
+  });
   Case("mapped-network-drive-policy",o=>{bool rejected=false;try{InstallerEngine.RequireLocalInstallDrive(DriveType.Network);}catch(IOException){rejected=true;}Assert(rejected,"mapped network drive type accepted");InstallerEngine.RequireLocalInstallDrive(DriveType.Fixed);});
   Case("relative-wsl-executable-contract",o=>{bool rejected=false;try{ManagedProfile.ValidateWslPaths(new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",Executable="opencode"},"/tmp");}catch(IOException){rejected=true;}Assert(rejected,"relative WSL executable accepted by confirmation");ManagedProfile.ValidateWslPaths(new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",Executable="/opt/opencode"},"/tmp");});
   Case("package-captured-bytes-verified",o=>{string path=Path.Combine(o.InstallDir,"captured.js");File.WriteAllText(path,"original",NativeIO.Utf8);var file=new OwnedFile{Path="captured.js",Sha256=NativeIO.FileHash(path)};File.WriteAllText(path,"changed after manifest validation",NativeIO.Utf8);bool rejected=false;try{InstallerEngine.CapturePackageFile(o.InstallDir,file);}catch(IOException){rejected=true;}Assert(rejected,"changed bytes were captured under the original manifest hash");});
