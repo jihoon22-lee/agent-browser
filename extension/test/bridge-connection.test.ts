@@ -101,6 +101,40 @@ describe("BridgeConnection", () => {
     expect(live.sent.map(parseEnvelope).some(env => env.type === "req" && env.method === "heartbeat")).toBe(true);
   });
 
+  it("keeps the heartbeat of a live connection when a reconnect is scheduled", async () => {
+    const token = "d".repeat(64);
+    const { conn, store } = setup({ clientId: "cli-1", pairingToken: token });
+    conn.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const live = FakeWs.last; live.open();
+    await finishAuthentication(live, { authVersion: 1, selected: true }, token);
+    await vi.advanceTimersByTimeAsync(0);
+    const pairing = conn.pairWithCode("123456");
+    await vi.advanceTimersByTimeAsync(0);
+    const ws = FakeWs.last; ws.open();
+    // A different token schedules a reconnect; that must replace only a pending reconnect timer.
+    ws.reply(makeOk((parseEnvelope(ws.sent[0]!) as any).id, { token: "e".repeat(64) }));
+    await pairing;
+    expect(store.pairingToken).toBe("e".repeat(64));
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(live.sent.map(parseEnvelope).some(env => env.type === "req" && env.method === "heartbeat")).toBe(true);
+  });
+
+  it("still times out a code pairing when the announcement poll reschedules meanwhile", async () => {
+    const { conn } = setup({ clientId: "cli-1" });
+    conn.start();
+    await vi.runOnlyPendingTimersAsync();
+    const announcement = FakeWs.last;
+    let outcome: unknown = "pending";
+    void conn.pairWithCode("123456").catch(error => { outcome = error; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(FakeWs.last).not.toBe(announcement);
+    // The announcement socket closes and schedules the next poll while the code request is unanswered.
+    announcement.close();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(outcome).toMatchObject({ code: "TIMEOUT" });
+  });
+
   it("reports a wrong pairing code without storing anything", async () => {
     const { conn, store } = setup({ clientId: "cli-1" });
     const pairing = conn.pairWithCode("000000");
@@ -245,6 +279,14 @@ async function authenticated(conn: BridgeConnection) {
 
 describe("BridgeConnection lifecycle", () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("reports the manifest version in auth.hello and still completes the mutual proof", async () => {
+    const { conn, statuses } = setup({ pairingToken: "tok", clientId: "cli-1" }, { extensionVersion: "0.4.1" });
+    await authenticatedWith(conn, { authVersion: 1 });
+    const hello = parseEnvelope(FakeWs.last.sent[0]!);
+    expect(hello.type === "req" && hello.params.clientVersion).toBe("0.4.1");
+    expect(statuses.at(-1)).toEqual({ state: "connected" });
+  });
 
   it("reloads at most once per newer Bridge version", async () => {
     const reload = vi.fn();

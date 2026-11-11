@@ -2,16 +2,16 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OpenCodeApiError } from "../src/agents/opencode-v1/client";
 import { App } from "../src/sidepanel/App";
-const test = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), stream: undefined as any, online: undefined as any, calls: [] as string[], scopes: [] as [string, string][], streamDirectories: [] as string[] }));
+const test = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), stream: undefined as any, online: undefined as any, calls: [] as string[], scopes: [] as [string, string][], streamDirectories: [] as string[], failStream: undefined as any, autoOnline: true, baseUrls: [] as string[] }));
 vi.mock("../src/agents/opencode-v1/client", async importOriginal => ({ ...(await importOriginal<typeof import("../src/agents/opencode-v1/client")>()), OpenCodeV1Client: class {
-  directory: string; constructor(value: any) { this.directory = value.directory; }
+  directory: string; constructor(value: any) { this.directory = value.directory; test.baseUrls.push(value.baseUrl); }
   get = (path: string, query?: any) => { test.scopes.push([path, this.directory]); return test.get(path, query); };
   findFiles = (query: string, limit = 12) => test.get("/find/file", { query, limit });
   post = (path: string, body?: any) => { test.calls.push(path); return test.post(path, body); };
   patch = (path: string, body?: any) => test.post(path, body);
   delete = (path: string) => test.post(path);
   request = (method: string, path: string, options?: any) => test.request(method, path, options);
-  events(event: any, online: any, signal: AbortSignal) { test.streamDirectories.push(this.directory); test.stream = event; test.online = online; online(true); return new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true })); }
+  events(event: any, online: any, signal: AbortSignal) { test.streamDirectories.push(this.directory); test.stream = event; test.online = online; if (test.autoOnline) online(true); return new Promise<void>((resolve, reject) => { test.failStream = reject; signal.addEventListener("abort", () => resolve(), { once: true }); }); }
 } }));
 let host: HTMLDivElement, root: Root;
 let questions: any[], messages: any[], sessions: any[];
@@ -19,17 +19,17 @@ const listeners = new Set<(message: any) => void>();
 const info = { id: "msg-one", sessionID: "ses-one", role: "user", time: { created: 1 }, agent: "build", model: { providerID: "internal", modelID: "company" } };
 const model = { id: "company", providerID: "internal", name: "사내 모델", status: "active", limit: { context: 10000 }, variants: { careful: {} } };
 beforeEach(() => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); test.calls = []; test.scopes = []; test.streamDirectories = []; listeners.clear();
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); test.calls = []; test.scopes = []; test.streamDirectories = []; test.baseUrls = []; test.autoOnline = true; listeners.clear();
   sessions = [{ id: "ses-one", title: "기존 대화", directory: "/fixture", time: { updated: 1 }, agent: "build" }];
   messages = [{ info, parts: [{ id: "prt-one", type: "text", text: "기존 질문" }] }]; questions = [];
-  test.get.mockReset().mockImplementation(async (path: string) => {
+  test.get.mockReset().mockImplementation(async (path: string, query?: any) => {
     if (path === "/provider") return { all: [{ id: "internal", name: "업무", models: { company: model } }], connected: ["internal"], default: { internal: "company" } };
     if (path === "/agent") return [{ name: "build", mode: "primary" }];
     if (path === "/session") return sessions;
     if (sessions.some(session => path === `/session/${session.id}`)) return sessions.find(session => path === `/session/${session.id}`);
     if (path === "/session/status") return { "ses-one": { type: "idle" } };
     if (path === "/question") return questions;
-    if (path.endsWith("/message")) return messages;
+    if (path.endsWith("/message")) return query?.limit ? messages.slice(-query.limit) : messages;
     if (path === "/mcp") return { browser: { status: "connected" } };
     return [];
   });
@@ -913,6 +913,19 @@ describe("start screen", () => {
     expect(host.querySelector(".error")).toBeNull();
   });
 
+  it("B9 recognizes a Bridge-down error by its code when the English text is different", async () => {
+    await render();
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    const emit = (message: unknown) => act(async () => { for (const listener of [...listeners]) listener(message); await new Promise(resolve => setTimeout(resolve, 0)); });
+    runtime.mockImplementation(async (message: any) => message.method === "profile.list" ? { ok: false, error: { code: "BROWSER_DISCONNECTED", message: "The bridge link went away", retry: "safe" } } : original(message));
+    await emit({ kind: "profiles-changed", profileId: "native" });
+    expect(host.querySelector(".error")?.textContent).toContain("Bridge에 연결되어 있지 않습니다");
+    expect(host.querySelector(".error-original")?.textContent).toContain("The bridge link went away");
+    runtime.mockImplementation(original);
+    await emit({ kind: "conn-status", status: { state: "connected" } });
+    expect(host.querySelector(".error")).toBeNull();
+  });
+
   it("offers example requests that fill the composer without sending", async () => {
     messages = [];
     await render();
@@ -994,5 +1007,202 @@ describe("draft and reference details", () => {
     await render();
     await act(async () => button("현재 탭").click()); await settle(50);
     expect(host.textContent).toContain("41,234자 중 앞부분 16,000자만 첨부했습니다");
+  });
+});
+
+describe("review 2026-11-11", () => {
+  const sessionStore = () => {
+    const saved: Record<string, any> = {};
+    (chrome.storage as any).session = { get: vi.fn(async (key: string) => key in saved ? { [key]: saved[key] } : {}), set: vi.fn(async (value: Record<string, any>) => { Object.assign(saved, value); }), remove: vi.fn(async (key: string) => { delete saved[key]; }) };
+    return saved;
+  };
+  const settle = (ms: number) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+  const override = (handler: (message: any, original: (message: any) => Promise<any>) => any) => {
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation((message: any) => handler(message, original));
+    return runtime;
+  };
+  const ready = { ok: true, result: { profileId: "native", state: "ready", baseUrl: "http://127.0.0.1:7777", directory: "/fixture", version: "1.18.29", owned: true } };
+
+  it("B1 keeps text typed while the runtime is still connecting", async () => {
+    const saved = sessionStore(), ensure = deferred<any>();
+    override((message, original) => message.method === "runtime.ensure" ? ensure.promise : original(message));
+    await render(); await draftValue("연결 중에 쓴 글"); await settle(350);
+    // The directory is not known yet, so nothing may be stored under that provisional key.
+    expect(Object.keys(saved)).toEqual([]);
+    await act(async () => { ensure.resolve(ready); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(host.textContent).toContain("기존 질문");
+    expect(composerValue().value).toBe("연결 중에 쓴 글");
+    await settle(350);
+    expect(Object.keys(saved)).toEqual([`draft:${JSON.stringify(["native", "/fixture", "ses-one"])}`]);
+  });
+
+  it("B2 releases the send lock when the same session is selected again during a command", async () => {
+    const original = test.get.getMockImplementation()!, pending = deferred<any>();
+    test.get.mockImplementation(async (path: string, query: any) => path === "/command" ? [{ name: "review" }] : original(path, query));
+    test.request.mockReturnValue(pending.promise);
+    override(async (message, original) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+    await render(); await draftValue("/review"); await act(async () => button("보내기").click()); await settle(30);
+    expect(test.request).toHaveBeenCalledWith("POST", "/session/ses-one/command", expect.anything());
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(el => el.querySelector("strong")?.textContent === "기존 대화")!.click());
+    await act(async () => pending.resolve(true));
+    expect(button("보내기").textContent).toBe("보내기");
+    await draftValue("다음 요청"); await act(async () => button("보내기").click());
+    expect(test.post.mock.calls.filter(([path]) => path.endsWith("/prompt_async"))).toHaveLength(1);
+  });
+
+  const previousSession = () => act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(el => el.querySelector("strong")?.textContent === "기존 대화")!.click());
+  it("B4 does not leave /new behind as the previous session's draft", async () => {
+    test.post.mockImplementation(async (path: string) => {
+      if (path === "/session") { const created = { id: "ses-new", title: "새로 만든 대화", directory: "/fixture", time: { updated: 2 } }; sessions.push(created); return created; }
+      return true;
+    });
+    await render(); await draftValue("/new"); await act(async () => button("보내기").click()); await settle(30);
+    expect(host.querySelector(".conversation h2")?.textContent).toBe("새로 만든 대화");
+    expect(composerValue().value).toBe("");
+    await previousSession();
+    expect(host.querySelector(".conversation h2")?.textContent).toBe("기존 대화");
+    expect(composerValue().value).toBe("");
+  });
+  it("B4 puts /new back when the session could not be created", async () => {
+    test.post.mockImplementation(async (path: string) => { if (path === "/session") throw new Error("세션 생성 실패"); return true; });
+    await render(); await draftValue("/new"); await act(async () => button("보내기").click()); await settle(30);
+    expect(host.textContent).toContain("세션 생성 실패");
+    expect(composerValue().value).toBe("/new");
+  });
+
+  describe("B7 busy polling", () => {
+    // Called under fake timers: the busy event restarts the poll so that its timer is a fake one.
+    const busy = async () => { const original = test.get.getMockImplementation()!; test.get.mockImplementation(async (path: string, query: any) => path === "/session/status" ? { "ses-one": { type: "busy" } } : original(path, query)); await act(async () => test.stream({ type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } })); };
+    const lists = (full: boolean) => test.get.mock.calls.filter(([path, query]) => path === "/session/ses-one/message" && !query?.limit === full).length;
+    const answer = (text: string) => ({ info: { ...info, id: "msg-answer", role: "assistant", time: { created: 2 } }, parts: [{ id: "prt-answer", type: "text", text }] });
+
+    it("checks only the status and the last message while nothing changes", async () => {
+      messages.push(answer("도구 실행을 기다리는 중")); await render(); vi.useFakeTimers();
+      try {
+        await busy(); const before = lists(true);
+        await act(async () => vi.advanceTimersByTimeAsync(6_500));
+        expect(lists(false)).toBeGreaterThanOrEqual(2);
+        expect(lists(true)).toBe(before);
+        expect(test.get.mock.calls.filter(([path, query]) => path === "/session/ses-one/message" && query?.limit).every(([, query]) => query.limit === 1)).toBe(true);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("fetches the conversation when the last message grew without any event", async () => {
+      messages.push(answer("처음 조각")); await render(); vi.useFakeTimers();
+      try {
+        await busy(); const before = lists(true);
+        messages[1] = answer("처음 조각과 이벤트 없이 늘어난 조각");
+        await act(async () => vi.advanceTimersByTimeAsync(2_500));
+        expect(host.textContent).toContain("이벤트 없이 늘어난 조각");
+        expect(lists(true)).toBe(before + 1);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("still refetches the conversation periodically if the last-message check tells nothing", async () => {
+      await render(); vi.useFakeTimers();
+      try {
+        await busy();
+        // A server that answers the bounded request with the oldest message never reports the new one.
+        const original = test.get.getMockImplementation()!;
+        test.get.mockImplementation(async (path: string, query: any) => path.endsWith("/message") && query?.limit ? messages.slice(0, 1) : original(path, query));
+        messages.push(answer("주기적 전체 조회로 복원한 응답"));
+        await act(async () => vi.advanceTimersByTimeAsync(4_500));
+        expect(host.textContent).not.toContain("주기적 전체 조회로 복원한 응답");
+        await act(async () => vi.advanceTimersByTimeAsync(8_000));
+        expect(host.textContent).toContain("주기적 전체 조회로 복원한 응답");
+      } finally { vi.useRealTimers(); }
+    });
+  });
+
+  describe("B3 runtime recovery", () => {
+    const restarted = { ok: true, result: { ...ready.result, baseUrl: "http://127.0.0.1:8888" } };
+    const ensures = (runtime: ReturnType<typeof vi.fn>) => runtime.mock.calls.filter(([message]) => message.method === "runtime.ensure").length;
+    const emit = (message: unknown) => act(async () => { for (const listener of [...listeners]) listener(message); await new Promise(resolve => setTimeout(resolve, 0)); });
+    const unauthorized = () => act(async () => { test.failStream(new OpenCodeApiError(401, "Unauthorized")); await new Promise(resolve => setTimeout(resolve, 0)); });
+    const title = () => host.querySelector(".conversation h2")?.textContent;
+
+    it("asks the Bridge again when the event stream is rejected and keeps the session and draft", async () => {
+      secondSession();
+      let count = 0;
+      const runtime = override((message, original) => message.method === "runtime.ensure" ? Promise.resolve(++count === 1 ? ready : restarted) : original(message));
+      await render(); await selectOtherSession(); await draftValue("재연결에도 남을 초안");
+      await unauthorized();
+      expect(ensures(runtime)).toBe(2);
+      expect(test.baseUrls.at(-1)).toBe("http://127.0.0.1:8888");
+      expect(title()).toBe("둘째 대화");
+      expect(composerValue().value).toBe("재연결에도 남을 초안");
+      expect(host.textContent).toContain("연결됨");
+      expect(host.querySelector(".error")).toBeNull();
+    });
+
+    it("stops with the error after one automatic attempt until the user retries", async () => {
+      const runtime = override((message, original) => original(message));
+      await render(); await draftValue("실패에도 남을 초안");
+      test.autoOnline = false;
+      await unauthorized();
+      expect(ensures(runtime)).toBe(2);
+      // The reconnected stream is rejected as well, before it ever came online.
+      await unauthorized(); await settle(30);
+      expect(ensures(runtime)).toBe(2);
+      expect(host.textContent).toContain("OpenCode HTTP 401");
+      expect(host.textContent).toContain("기존 질문");
+      expect(composerValue().value).toBe("실패에도 남을 초안");
+      test.autoOnline = true;
+      await act(async () => { button("다시 시도").click(); await new Promise(resolve => setTimeout(resolve, 0)); });
+      expect(ensures(runtime)).toBe(3);
+      expect(title()).toBe("기존 대화");
+      expect(host.querySelector(".error")).toBeNull();
+    });
+
+    it("shows a failed automatic runtime.ensure and does not repeat it", async () => {
+      let count = 0;
+      const runtime = override((message, original) => message.method === "runtime.ensure" && ++count > 1 ? Promise.resolve({ ok: false, error: { code: "INTERNAL", message: "Cannot launch OpenCode; check the executable." } }) : original(message));
+      await render();
+      await unauthorized(); await settle(30);
+      expect(ensures(runtime)).toBe(2);
+      expect(host.textContent).toContain("OpenCode를 실행하지 못했습니다");
+      expect(button("다시 시도")).toBeDefined();
+    });
+
+    it("reconnects when the server stays unreachable, but not for a short interruption", async () => {
+      const runtime = override((message, original) => original(message));
+      await render(); vi.useFakeTimers();
+      try {
+        await act(async () => { test.online(false); await vi.advanceTimersByTimeAsync(2_000); test.online(true); await vi.advanceTimersByTimeAsync(10_000); });
+        expect(ensures(runtime)).toBe(1);
+        await act(async () => { test.online(false); await vi.advanceTimersByTimeAsync(5_100); });
+        expect(ensures(runtime)).toBe(2);
+        expect(title()).toBe("기존 대화");
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("waits for the user after Options stopped the server, with the conversation still shown", async () => {
+      const runtime = override((message, original) => original(message));
+      await render();
+      await emit({ kind: "profiles-changed", profileId: "native", runtime: "stopped" });
+      expect(ensures(runtime)).toBe(1);
+      expect(host.textContent).toContain("서버를 중지했습니다");
+      expect(host.textContent).toContain("기존 질문");
+      expect(host.textContent).toContain("OpenCode 연결 대기");
+      await act(async () => { button("다시 시도").click(); await new Promise(resolve => setTimeout(resolve, 0)); });
+      expect(ensures(runtime)).toBe(2);
+      expect(host.textContent).toContain("연결됨");
+      expect(title()).toBe("기존 대화");
+    });
+
+    it("reconnects a stopped panel when Options started the server, and leaves a live one alone", async () => {
+      const runtime = override((message, original) => original(message));
+      await render();
+      await emit({ kind: "profiles-changed", profileId: "native", runtime: "started" });
+      await emit({ kind: "profiles-changed", profileId: "other", runtime: "stopped" });
+      expect(ensures(runtime)).toBe(1);
+      expect(host.querySelector(".error")).toBeNull();
+      await emit({ kind: "profiles-changed", profileId: "native", runtime: "stopped" });
+      await emit({ kind: "profiles-changed", profileId: "native", runtime: "started" });
+      expect(ensures(runtime)).toBe(2);
+      expect(title()).toBe("기존 대화");
+      expect(host.textContent).toContain("연결됨");
+    });
   });
 });

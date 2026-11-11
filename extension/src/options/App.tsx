@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_BRIDGE_URL, type ConnStatus } from "../background/bridge-connection";
-import { bridgeRequest, type Data } from "../sidepanel/workbench-state";
+import { bridgeRequest, codeOf, type Data } from "../sidepanel/workbench-state";
 import { validatePairing, profilePayload, type ProfileForm, passwordDropped, formFromProfile, withProfileId } from "./profile-form";
 import { DoctorChecks } from "./DoctorChecks";
 import { ErrorNotice } from "../sidepanel/ErrorNotice";
@@ -20,7 +20,10 @@ export function App() {
   const [pairCode, setPairCode] = useState("");
   const [profiles, setProfiles] = useState<Data[]>([]), [defaultId, setDefaultId] = useState("");
   const [form, setForm] = useState<ProfileForm>(blank), [editing, setEditing] = useState(false), [makeDefault, setMakeDefault] = useState(true);
-  const [notice, setNotice] = useState(""), [error, setError] = useState(""), [busy, setBusy] = useState(false), [doctor, setDoctor] = useState<Data>();
+  const [notice, setNotice] = useState(""), [error, setErrorText] = useState(""), [errorCode, setErrorCode] = useState<string>(), [busy, setBusy] = useState(false), [doctor, setDoctor] = useState<Data>();
+  const setError = (message: string, code?: string) => { setErrorText(message); setErrorCode(message ? code : undefined); };
+  // An open side panel hears this directly: it stops waiting on a stopped server or reconnects to a started one.
+  const runtimeChanged = (profileId: string, runtime: "started" | "stopped") => chrome.runtime.sendMessage({ kind: "profiles-changed", profileId, runtime }).catch(() => {});
   const refresh = async () => { const data = await bridgeRequest("profile.list"); setProfiles(data.profiles ?? []); setDefaultId(data.defaultProfileId ?? ""); };
   useEffect(() => {
     let active = true;
@@ -29,11 +32,11 @@ export function App() {
     const listener = (message: { kind?: string; status?: ConnStatus }) => { if (message.kind === "conn-status" && message.status) setStatus(message.status); };
     chrome.runtime.onMessage.addListener(listener); return () => { active = false; chrome.runtime.onMessage.removeListener(listener); };
   }, []);
-  useEffect(() => { if (status.state === "connected") void refresh().catch(error => setError(error.message)); }, [status.state]);
+  useEffect(() => { if (status.state === "connected") void refresh().catch(error => setError(error.message, codeOf(error))); }, [status.state]);
   // Pairing is the only thing an unpaired page can do, so the code field takes the cursor.
   const codeInput = useRef<HTMLInputElement>(null);
   useEffect(() => { if (status.state === "unpaired" || status.state === "not_paired") codeInput.current?.focus(); }, [status.state]);
-  async function run(action: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await action(); } catch (error) { setError(error instanceof Error ? error.message : "요청에 실패했습니다."); } finally { setBusy(false); } }
+  async function run(action: () => Promise<void>) { if (busy) return; setBusy(true); setError(""); setNotice(""); try { await action(); } catch (error) { setError(error instanceof Error ? error.message : "요청에 실패했습니다.", codeOf(error)); } finally { setBusy(false); } }
   const field = (key: keyof ProfileForm, value: string) => setForm(previous => ({ ...previous, [key]: value }));
   const connected = status.state === "connected";
   // Only a missing or rejected pairing opens the pairing fields. A paired browser whose Bridge is stopped
@@ -47,7 +50,7 @@ export function App() {
       <button disabled={busy} onClick={() => void run(async () => { const next = validatePairing(url, token); await chrome.storage.local.set(next); setToken(""); await chrome.runtime.sendMessage({ kind: "reconnect" }); setNotice("저장했습니다. 연결 상태를 확인하세요."); })}>저장 후 연결</button>
     </>;
   return <main className="options"><header className="options-header"><div><h1>AgentBrowser 설정</h1><p>Chrome과 기존 OpenCode 실행 환경을 연결합니다.</p></div><label>테마<select aria-label="테마" value={theme} onChange={event => chooseTheme(event.target.value)}>{(["system", ...THEMES] as const).map(name => <option key={name} value={name}>{themeNames[name]}</option>)}</select></label></header>
-    {error && <ErrorNotice message={error} />}{notice && <p role="status" className="notice">{notice}</p>}
+    {error && <ErrorNotice message={error} code={errorCode} />}{notice && <p role="status" className="notice">{notice}</p>}
     <section><h2>Bridge 페어링</h2>
       <p role="status" className={connected ? "connected-line" : undefined}>{connected ? "✓ " : ""}{LABELS[status.state]}</p>
       {status.state === "disconnected" && status.retryInMs !== undefined && <p>Bridge가 꺼져 있으면 Windows의 설치 폴더에서 start-bridge.cmd로 시작하세요. 시작하면 자동으로 다시 연결합니다. <button onClick={() => void chrome.runtime.sendMessage({ kind: "reconnect" }).catch(() => {})}>다시 연결</button></p>}
@@ -57,8 +60,8 @@ export function App() {
       {!connected && <p>Bridge에 먼저 연결하세요.</p>}
       <ul className="profiles">{profiles.map(profile => <li key={profile.id}><div><strong>{profile.name}</strong> <span>{profile.kind}{profile.id === defaultId ? " · 기본" : ""}</span><small>{profile.directory}</small></div><div className="row">
         <button disabled={busy} onClick={() => { setForm(formFromProfile(blank, profile as unknown as Record<string, unknown>)); setEditing(true); setMakeDefault(profile.id === defaultId); }}>편집</button>
-        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.ensure", { profileId: profile.id }); if (info.state !== "ready") throw new Error(info.error ?? "실행 환경을 준비하지 못했습니다."); setNotice(`${profile.name}: 준비됨 · OpenCode ${info.version ?? "버전 정보 없음"}`); })}>시작·연결 확인</button>
-        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.stop", { profileId: profile.id }); setNotice(info.stopped ? "Bridge가 시작한 서버를 종료했습니다." : "종료할 소유 서버가 없습니다. 기존 외부 서버는 유지됩니다."); })}>서버 중지</button>
+        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.ensure", { profileId: profile.id }); if (info.state !== "ready") throw new Error(info.error ?? "실행 환경을 준비하지 못했습니다."); await runtimeChanged(profile.id, "started"); setNotice(`${profile.name}: 준비됨 · OpenCode ${info.version ?? "버전 정보 없음"}`); })}>시작·연결 확인</button>
+        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.stop", { profileId: profile.id }); if (info.stopped) await runtimeChanged(profile.id, "stopped"); setNotice(info.stopped ? "Bridge가 시작한 서버를 종료했습니다." : "종료할 소유 서버가 없습니다. 기존 외부 서버는 유지됩니다."); })}>서버 중지</button>
         <button disabled={busy} onClick={() => { if (window.confirm(`프로필 '${profile.name}'을 삭제할까요? 기존 OpenCode 설정·대화는 유지됩니다.`)) void run(async () => { await bridgeRequest("profile.delete", { profileId: profile.id }); await chrome.runtime.sendMessage({ kind: "profiles-changed", profileId: profile.id }).catch(() => {}); await refresh(); setNotice("프로필을 삭제했습니다."); }); }}>삭제</button>
       </div></li>)}</ul>
       <form onSubmit={event => { event.preventDefault(); void run(async () => { const payload = profilePayload(editing ? form : withProfileId(form)); const original = editing ? profiles.find(item => item.id === form.id) as { kind: string; baseUrl?: string; username?: string; hasPassword?: boolean } | undefined : undefined; await bridgeRequest("profile.save", { profile: payload, makeDefault }); await chrome.runtime.sendMessage({ kind: "profiles-changed", profileId: payload.id }).catch(() => {}); setForm(blank); setEditing(false); await refresh(); setNotice(passwordDropped(original, payload) ? "실행 방식·서버 주소·인증 사용자 중 하나가 바뀌어 이전 비밀번호는 지웠습니다. 인증이 필요한 서버라면 새 비밀번호를 입력해 다시 저장하세요." : "실행 프로필을 저장했습니다."); }); }}>

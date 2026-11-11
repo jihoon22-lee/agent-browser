@@ -1,4 +1,4 @@
-import type { AssistantMessage, MessageRecord, Model, ProviderCatalog, StepFinishPart } from "./types";
+import type { AssistantMessage, MessageRecord, Model, StepFinishPart } from "./types";
 
 export type TokenUsage = { input: number; output: number; reasoning: number; cache: { read: number; write: number }; total: number };
 type Call = { tokens: TokenUsage; cost: number | null; message: AssistantMessage };
@@ -53,11 +53,4 @@ export function computeUsage(records: MessageRecord[], model?: Model, sessionID 
     },
     compaction,
   };
-}
-
-/** The configured server is authoritative. Never supplement it from an external model catalogue. */
-export function availableModels(catalog: ProviderCatalog): Model[] {
-  const connected = new Set(catalog.connected);
-  const models = catalog.all.filter(provider => connected.has(provider.id)).flatMap(provider => Object.values(provider.models).filter(model => model.status !== "deprecated"));
-  return [...new Map(models.map(model => [`${model.providerID}/${model.id}`, model])).values()];
 }

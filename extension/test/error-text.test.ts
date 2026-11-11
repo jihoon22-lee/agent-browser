@@ -46,3 +46,26 @@ it("recognizes the lost-Bridge errors that a reconnect makes stale", () => {
   expect(bridgeUnavailable("OpenCode HTTP 400: rejected")).toBe(false);
   expect(bridgeUnavailable("Bridge returned an error without details")).toBe(false);
 });
+
+describe("classification by protocol code", () => {
+  it("explains a lost Bridge or a timeout by code even if the English text changes", () => {
+    expect(friendlyError("The bridge link went away", "BROWSER_DISCONNECTED")).toEqual({ text: friendlyError("Bridge is not connected").text, original: "The bridge link went away" });
+    expect(friendlyError("No reply for runtime.ensure", "TIMEOUT")).toEqual({ text: friendlyError("Bridge did not answer runtime.ensure").text, original: "No reply for runtime.ensure" });
+    expect(friendlyError("Pairing was rejected", "AUTH_FAILED").text).toContain("다시 페어링하세요");
+    expect(bridgeUnavailable("The bridge link went away", "BROWSER_DISCONNECTED")).toBe(true);
+    expect(bridgeUnavailable("No reply for runtime.ensure", "TIMEOUT")).toBe(true);
+  });
+  it("trusts the code over text that only looks like a lost Bridge", () => {
+    expect(bridgeUnavailable("Bridge is not connected", "INVALID_PARAMS")).toBe(false);
+    expect(friendlyError("Bridge is not connected to the profile store", "INTERNAL")).toEqual({ text: "Bridge is not connected to the profile store" });
+  });
+  it("still reads the text of runtime failures, whose codes are generic", () => {
+    expect(friendlyError("Cannot launch OpenCode; check the executable, working directory, and environment", "INTERNAL").text).toContain("OpenCode를 실행하지 못했습니다");
+    expect(friendlyError("Unknown runtime profile", "INVALID_PARAMS").text).toContain("실행 환경을 찾을 수 없습니다");
+    expect(friendlyError("Bridge returned an error without details", "INTERNAL").text).toContain("오류 내용을 보내지 않았습니다");
+  });
+  it("keeps the message rules for errors without a code", () => {
+    expect(friendlyError("Failed to fetch").text).toContain("OpenCode 서버에 연결할 수 없습니다");
+    expect(bridgeUnavailable("Bridge connection closed")).toBe(true);
+  });
+});
