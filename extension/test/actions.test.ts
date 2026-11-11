@@ -481,3 +481,26 @@ describe("upload", () => {
     await expect(runAction('upload', { ref: refOf('둘'), ...png, generation: 10 })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
   });
 });
+
+it('selects the option named by its label even when another option shares its value', async () => {
+  document.body.innerHTML = '<select aria-label="Plan"><option value="">Choose</option><option value="x">Basic</option><option value="x">Premium</option></select>';
+  const el = document.querySelector('select')!, events: string[] = [];
+  el.addEventListener('input', () => events.push('input')); el.addEventListener('change', () => events.push('change'));
+  const result: any = await runAction('select', { ref: refOf('Plan'), option: 'Premium', generation: 10 });
+  expect(el.selectedIndex).toBe(2);
+  expect(result.verified).toMatchObject({ matches: true, value: 'x', label: 'Premium' });
+  expect(events).toEqual(['input', 'change']);
+});
+it('adds an option to a multiple select without clearing the other selections', async () => {
+  document.body.innerHTML = '<select multiple aria-label="Tags"><option selected>Red</option><option>Green</option><option>Blue</option></select>';
+  const el = document.querySelector('select')!;
+  const result: any = await runAction('select', { ref: refOf('Tags'), option: 'Blue', generation: 10 });
+  expect([...el.selectedOptions].map(o => o.text)).toEqual(['Red', 'Blue']);
+  expect(result.verified).toMatchObject({ matches: true, value: 'Blue', label: 'Blue' });
+});
+it('reports a select the page reverted as not matching', async () => {
+  document.body.innerHTML = '<select aria-label="Locked"><option>One</option><option>Two</option></select>';
+  const el = document.querySelector('select')!; el.addEventListener('change', () => { el.selectedIndex = 0; });
+  const result: any = await runAction('select', { ref: refOf('Locked'), option: 'Two', generation: 10 });
+  expect(result.verified).toMatchObject({ matches: false, value: 'One', label: 'One' });
+});

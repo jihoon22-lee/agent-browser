@@ -348,12 +348,16 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (opt.disabled || (opt.parentElement instanceof HTMLOptGroupElement && opt.parentElement.disabled)) {
           throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The requested option is disabled.");
         }
-        nativeSet(el, opt.value);
+        // Select the option itself: assigning its value would pick the first option sharing that
+        // value, and would clear the other choices of a multiple select.
+        if (el.multiple) opt.selected = true; else el.selectedIndex = opt.index;
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
         await afterInput(String(p.ref),signal);
-        const label = el.selectedOptions[0]?.text.trim() ?? "";
-        return { executed: true, verified: { ...verificationValue(el.value), matches: el.value === opt.value, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
+        const matches = el.multiple ? opt.selected : el.selectedOptions[0] === opt;
+        const shown = el.multiple && opt.selected ? opt : el.selectedOptions[0];
+        const label = shown?.text.trim() ?? "";
+        return { executed: true, verified: { ...verificationValue(shown?.value ?? el.value), matches, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
