@@ -1023,4 +1023,18 @@ describe("review 2026-11-11", () => {
     await settle(350);
     expect(Object.keys(saved)).toEqual([`draft:${JSON.stringify(["native", "/fixture", "ses-one"])}`]);
   });
+
+  it("B2 releases the send lock when the same session is selected again during a command", async () => {
+    const original = test.get.getMockImplementation()!, pending = deferred<any>();
+    test.get.mockImplementation(async (path: string, query: any) => path === "/command" ? [{ name: "review" }] : original(path, query));
+    test.request.mockReturnValue(pending.promise);
+    override(async (message, original) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+    await render(); await draftValue("/review"); await act(async () => button("보내기").click()); await settle(30);
+    expect(test.request).toHaveBeenCalledWith("POST", "/session/ses-one/command", expect.anything());
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(el => el.querySelector("strong")?.textContent === "기존 대화")!.click());
+    await act(async () => pending.resolve(true));
+    expect(button("보내기").textContent).toBe("보내기");
+    await draftValue("다음 요청"); await act(async () => button("보내기").click());
+    expect(test.post.mock.calls.filter(([path]) => path.endsWith("/prompt_async"))).toHaveLength(1);
+  });
 });

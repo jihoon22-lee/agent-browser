@@ -83,7 +83,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const composer = useRef<HTMLTextAreaElement>(null);
   const modelSelect = useRef<HTMLSelectElement>(null);
   const selectedControls = useRef({ key: "", dirty: false });
-  const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef(false);
+  const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef<object | undefined>(undefined);
   const submission=useRef<{key:string;cancelled:boolean;requestId?:string;submitted:boolean}|undefined>(undefined);
   const models = useMemo(() => availableModels(wb.catalog), [wb.catalog]);
   const model = models.find(item => `${item.providerID}/${item.id}` === modelKey);
@@ -117,7 +117,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
       const carried = previous.key && provisional(previous.key) && (previous.draft || previous.attachments.length) && (!previousProfile || previousProfile === wb.profileId);
       if (carried) draftCache.current.delete(previous.key);
       const next = carried ? { draft: previous.draft, attachments: previous.attachments } : draftCache.current.get(draftKey) ?? { draft: "", attachments: [] };
-      setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = false; previousDraft.current = { key: draftKey, ...next };
+      setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = undefined; previousDraft.current = { key: draftKey, ...next };
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
   // Draft text survives closing the panel for this browser session. Attachments stay in memory only:
@@ -238,7 +238,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
       if (created && typeof created.id === "string") { autoSend.current = created.id; setAutoTick(tick => tick + 1); }
       return;
     }
-    sendLock.current = true; setSending(true); wb.setError("");
+    const lock = {}; sendLock.current = lock; setSending(true); wb.setError("");
     const attempt={key:draftKey,cancelled:false,submitted:false,requestId:undefined as string|undefined};
     submission.current=attempt;
     const canSubmit=()=>current()&&!attempt.cancelled;
@@ -309,7 +309,8 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
       }
       if (current()&&!attempt.cancelled) wb.setError(error instanceof Error ? error.message : String(error));
     }
-    finally { if (current()) { sendLock.current = false; setSending(false); } }
+    // A reselected session changes the scope but not the draft key; this attempt still releases the lock it took, never a later attempt's.
+    finally { if (sendLock.current === lock) { sendLock.current = undefined; setSending(false); } }
   }
   async function addBrowserReference(reference: string) {
     const current = wb.captureScope();
