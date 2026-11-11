@@ -462,10 +462,39 @@ async fn open_tabs(state: &ServerState, client: &str, window: Option<i64>) -> Va
     let Ok(listed) = queued.wait(FOLLOW_UP_TIMEOUT).await else { return Value::Null };
     let tabs: Vec<Value> = listed["tabs"].as_array().into_iter().flatten().take(20).map(|tab| json!({
         "tabId": tab["tabId"], "active": tab["active"], "attachable": tab["attachable"],
-        "title": tab["title"].as_str().unwrap_or("").chars().take(60).collect::<String>(),
-        "url": tab["url"].as_str().unwrap_or("").chars().take(100).collect::<String>(),
+        "title": clip_chars(&tab["title"], TAB_TITLE_CHARS), "url": clip_chars(&tab["url"], TAB_URL_CHARS),
     })).collect();
     json!(tabs)
+}
+
+const TAB_TITLE_CHARS: usize = 60;
+const TAB_URL_CHARS: usize = 100;
+/// The `tabs` array of `browser_tabs list`; with the outcome's own fields it stays under the MCP text limit.
+const TAB_LIST_BYTES: usize = 32_000;
+
+fn clip_chars(value: &Value, max: usize) -> String {
+    value.as_str().unwrap_or("").chars().take(max).collect()
+}
+
+/// A tab list is a menu of ids: titles and URLs are clipped like `openTabs`, and a list that still
+/// does not fit keeps its first tabs and says how many were left out.
+fn bounded_tab_list(mut data: Value) -> Value {
+    let Some(tabs) = data.get_mut("tabs").and_then(Value::as_array_mut) else { return data };
+    let (total, mut bytes, mut kept) = (tabs.len(), 0, 0);
+    for tab in tabs.iter_mut() {
+        for (key, max) in [("title", TAB_TITLE_CHARS), ("url", TAB_URL_CHARS)] {
+            if tab[key].is_string() { tab[key] = json!(clip_chars(&tab[key], max)); }
+        }
+        bytes += tab.to_string().len() + 1;
+        if bytes > TAB_LIST_BYTES { break; }
+        kept += 1;
+    }
+    tabs.truncate(kept);
+    if kept < total {
+        data["omittedTabs"] = json!(total - kept);
+        data["note"] = json!(format!("Only the first {kept} of {total} tabs are listed. Use action=windows, then list with windowId to read one window."));
+    }
+    data
 }
 
 /// Tab choices travel with the results that need them, so the model never guesses a tabId.
@@ -573,7 +602,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
     }
     match action {
         "list" | "windows" => match read(if action == "windows" {"browser.windows.list"} else {"browser.tabs.list"}, json!({"windowId":args["windowId"]})).await {
-            Ok(data) => ToolOutcome::success(NAME, None, true, Executed::No, Value::Null, data),
+            Ok(data) => ToolOutcome::success(NAME, None, true, Executed::No, Value::Null, if action == "list" { bounded_tab_list(data) } else { data }),
             Err(e) => delivered_failure(None, e),
         },
         "attach" => {

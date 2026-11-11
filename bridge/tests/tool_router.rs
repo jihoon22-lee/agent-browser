@@ -533,6 +533,33 @@ async fn attach_lists_open_tabs_and_a_failed_switch_offers_them_again() {
 }
 
 #[tokio::test]
+async fn a_long_tab_list_is_clipped_and_cut_to_fit_the_output_limit() {
+    fn many_tabs(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+        if method != "browser.tabs.list" { return default_reply(method, p); }
+        let count = if p["windowId"] == 2 { 3 } else { 300 };
+        let tabs: Vec<Value> = (0..count).map(|i| json!({"tabId": i + 1, "windowId": 1, "index": i, "active": i == 0, "pinned": false, "status": "complete", "attachable": true,
+            "title": format!("{i} {}", "제목😀".repeat(80)), "url": format!("https://example.test/{i}/{}", "가".repeat(700))})).collect();
+        Ok(json!({"tabs": tabs}))
+    }
+    let (_h, serve, cfg) = start_test_serve().await;
+    let _ext = fake_extension(serve.port, cfg.token.clone(), many_tabs).await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let listed = tool(&mut mcp, "browser_tabs", json!({"action":"list"})).await;
+    assert_eq!(listed["ok"], true, "{listed}");
+    assert!(listed.to_string().len() <= 40_000, "the list must fit the MCP text limit, got {} bytes", listed.to_string().len());
+    let tabs = listed["data"]["tabs"].as_array().unwrap();
+    assert!(!tabs.is_empty() && tabs.len() < 300);
+    assert_eq!(tabs[0]["tabId"], 1, "tabs are kept from the front");
+    assert_eq!(tabs[0]["index"], 0, "fields other than title and url are kept");
+    assert!(tabs.iter().all(|tab| tab["title"].as_str().unwrap().chars().count() <= 60 && tab["url"].as_str().unwrap().chars().count() <= 100), "{}", tabs[0]);
+    assert_eq!(listed["data"]["omittedTabs"], 300 - tabs.len());
+    assert!(listed["data"]["note"].as_str().unwrap().contains("windowId"), "{}", listed["data"]["note"]);
+    let window = tool(&mut mcp, "browser_tabs", json!({"action":"list","windowId":2})).await;
+    assert_eq!(window["data"]["tabs"].as_array().unwrap().len(), 3);
+    assert!(window["data"].get("omittedTabs").is_none() && window["data"].get("note").is_none(), "a list that fits says nothing: {window}");
+}
+
+#[tokio::test]
 async fn follow_up_snapshots_ask_for_fewer_elements_than_a_full_read() {
     let (_h, serve, cfg) = start_test_serve().await;
     let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
