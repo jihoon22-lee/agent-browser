@@ -445,6 +445,9 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             ToolOutcome::success(name, Some(op_id), true, executed, verified, data)
         }
         Err(mut e) => {
+            // A page that cannot be read has nothing unseen to act on: the answer itself is the
+            // observation, so a blank or internal tab can still be navigated away from.
+            if name=="browser_snapshot" && e.code==ErrorCode::UnsupportedPage {state.ops.observe_target(origin);}
             if aborted {
                 let mut details = if e.details.is_object() { e.details.clone() } else { json!({}) };
                 details["abortedAfter"] = Value::Bool(true);
@@ -1022,6 +1025,20 @@ mod tests {
         state.registry.handle_response(conn, Envelope::err(id, RpcError::new(ErrorCode::TabNotFound, Retry::Never, "closed")));
         assert_eq!(task.await.unwrap().error.unwrap().code, ErrorCode::TabNotFound);
         assert_eq!(state.ops.check(&replacement.id).unwrap().tabs, vec![2]);
+    }
+
+    #[test]
+    fn an_unreadable_page_answer_counts_as_the_observation_but_other_failures_do_not() {
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let op = state.ops.attach(1, "A").unwrap();
+        state.ops.pause(&op.id, "A").unwrap();
+        let held = state.ops.resume(&op.id, "A").unwrap();
+        let failed = |code| finish(&state, "browser_snapshot", &op.id, CommandClass::Read, &held, Err(RpcError::new(code, Retry::Never, "x")));
+        failed(ErrorCode::FrameUnavailable);
+        assert!(state.ops.check(&op.id).unwrap().needs_observation);
+        failed(ErrorCode::UnsupportedPage);
+        assert!(!state.ops.check(&op.id).unwrap().needs_observation, "a blank tab must stay navigable after a hand-back");
     }
 
     #[test]

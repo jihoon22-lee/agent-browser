@@ -259,6 +259,9 @@ impl OperationGate {
         let op = g.current.as_mut().unwrap();
             if !op.tabs.contains(&tab) { op.tabs.push(tab); op.opened_tabs.push(tab); }
         Self::select_tab(&mut g,tab);
+        // A tab this operation just created holds nothing the model has yet to see, and a blank
+        // one cannot be read before its first navigation.
+        let op = g.current.as_mut().unwrap(); op.needs_observation=false; op.handed_back=false;
         Ok(())
     }
 
@@ -283,8 +286,8 @@ impl OperationGate {
         g.recent_tabs.retain(|visited| *visited != tab);
         g.recent_tabs.push(tab);
         let op=g.current.as_mut().unwrap();
-        op.current_tab=tab;op.current_tab_closed=false;
-        op.target_epoch+=1;op.needs_observation=false;op.handed_back=false;
+        // Selecting a tab is not looking at it: only observe_target lifts needs_observation.
+        op.current_tab=tab;op.current_tab_closed=false;op.target_epoch+=1;
     }
 
     pub fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
@@ -603,6 +606,26 @@ mod tests {
         gate.remove_tab(9);assert_eq!(gate.check(&op.id).unwrap_err().code,ErrorCode::TabClosed);
         gate.visit_verified_tab(&op.id,10).unwrap();assert_eq!(gate.check(&op.id).unwrap().current_tab,10);
         assert_eq!(gate.visit_verified_tab(&op.id,9).unwrap_err().code,ErrorCode::TabClosed);
+    }
+
+    #[test]
+    fn switching_tabs_does_not_stand_in_for_looking_at_the_page() {
+        let gate=OperationGate::default();let op=gate.attach(1,"A").unwrap();
+        gate.add_and_switch_tab(&op.id,2).unwrap();gate.remove_tab(2);
+        assert!(gate.check(&op.id).unwrap().needs_observation);
+        gate.switch_tab(&op.id,1).unwrap();
+        assert!(gate.check(&op.id).unwrap().needs_observation,"re-selecting the restored tab is not an observation");
+        gate.visit_verified_tab(&op.id,9).unwrap();
+        let moved=gate.check(&op.id).unwrap();
+        assert!(moved.needs_observation && moved.current_tab==9,"another existing tab has not been seen either");
+        gate.observe_target(&moved);assert!(!gate.check(&op.id).unwrap().needs_observation);
+        gate.pause(&op.id,"A").unwrap();gate.resume(&op.id,"A").unwrap();
+        gate.switch_tab(&op.id,1).unwrap();
+        let back=gate.check(&op.id).unwrap();
+        assert!(back.needs_observation && back.handed_back,"a switch after a hand-back keeps the hand-back reason");
+        gate.add_and_switch_tab(&op.id,3).unwrap();
+        let fresh=gate.check(&op.id).unwrap();
+        assert!(!fresh.needs_observation && !fresh.handed_back,"a tab this operation just created holds nothing unseen");
     }
 
     #[test]

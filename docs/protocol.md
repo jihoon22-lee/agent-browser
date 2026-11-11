@@ -206,7 +206,7 @@ background는 활성 worker에서 15초 주기, suspended worker에서는 1분 a
 
 패널 요청의 requestId는 메시지 전송 전에 생성되어 OpenCode system 문맥에 전달된다. 첫 attach/new는 그 ID로 예약을 확인하며 탭마다 새 ID를 만들지 않는다. 동일 요청에 활성 operation이 있으면 중복 bootstrap은 BROWSER_BUSY와 기존 operationId를 반환한다. 이후 도구는 operationId로 계속한다. 누락·불일치 ID를 임의 보정하거나 다른 요청의 예약을 가져오지 않는다.
 
-switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTTP(S) 대상임을 확인하고 방문 목록에 추가한다. 같은 작업이 이미 생성·채택한 준비 중 빈 탭은 재선택할 수 있다. 외부 빈 탭이나 Chrome 내부 페이지를 일반 쓰기 대상으로 편입하지 않는다. switch는 DOM 관찰을 대신하지 않으며 요소 참조는 대상 문서·operation·snapshot 경계를 그대로 유지한다.
+switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTTP(S) 대상임을 확인하고 방문 목록에 추가한다. 같은 작업이 이미 생성·채택한 준비 중 빈 탭은 재선택할 수 있다. 외부 빈 탭이나 Chrome 내부 페이지를 일반 쓰기 대상으로 편입하지 않는다. switch는 DOM 관찰을 대신하지 않으며 요소 참조는 대상 문서·operation·snapshot 경계를 그대로 유지한다. 복귀·넘겨받기 뒤의 관찰 요구(needsObservation)도 switch만으로는 풀리지 않는다. switch 결과에 붙는 스냅샷이나 별도 `browser_snapshot`이 현재 대상에서 성공해야 풀린다. 스냅샷이 `UNSUPPORTED_PAGE`로 끝난 경우(빈 탭·내부 페이지)는 읽을 것이 없다는 답 자체를 관찰로 보아 goto로 벗어날 수 있다. 같은 작업이 `new`로 방금 만든 탭은 아직 보지 못한 내용이 없으므로 관찰 요구 없이 시작한다. 없는 tabId로 switch해 `TAB_NOT_FOUND`가 나도, 작업이 보유한 적 없는 ID는 닫힌 탭으로 기록하지 않는다.
 
 ## 결과에 붙는 스냅샷·탭 목록과 출력 예산 (2026-10-15)
 

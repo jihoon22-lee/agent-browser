@@ -578,6 +578,35 @@ async fn switching_to_a_tab_that_does_not_exist_yet_does_not_ban_its_id() {
 }
 
 #[tokio::test]
+async fn a_switch_whose_snapshot_fails_still_requires_one_before_writing() {
+    static READABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+    fn unreadable(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+        if method == "browser.snapshot" && !READABLE.load(std::sync::atomic::Ordering::SeqCst) { return Err(("FRAME_UNAVAILABLE", "still loading")); }
+        default_reply(method, p)
+    }
+    let (_h, serve, cfg) = start_test_serve().await;
+    let seen = fake_extension(serve.port, cfg.token.clone(), unreadable).await;
+    let mut panel = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut panel, "extension", &cfg.token, "panel-1").await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let op = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await["operationId"].as_str().unwrap().to_string();
+    assert!(matches!(call(&mut panel, "operation.pause", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    assert!(matches!(call(&mut panel, "operation.resume", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    READABLE.store(false, std::sync::atomic::Ordering::SeqCst);
+    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42})).await;
+    assert_eq!(switched["ok"], true, "{switched}");
+    assert_eq!(switched["data"]["snapshotError"]["code"], "FRAME_UNAVAILABLE", "{switched}");
+    let blocked = tool(&mut mcp, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await;
+    assert_eq!(blocked["error"]["code"], "STALE_ELEMENT", "a switch is not an observation: {blocked}");
+    assert!(blocked["error"]["message"].as_str().unwrap().contains("user handled the browser"), "{blocked}");
+    assert!(!seen.lock().unwrap().iter().any(|m| m == "browser.fill"));
+    READABLE.store(true, std::sync::atomic::Ordering::SeqCst);
+    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42})).await;
+    assert!(switched["data"]["snapshot"].is_object(), "{switched}");
+    assert_eq!(tool(&mut mcp, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await["ok"], true, "the snapshot attached to a switch is the observation");
+}
+
+#[tokio::test]
 async fn follow_up_snapshots_ask_for_fewer_elements_than_a_full_read() {
     let (_h, serve, cfg) = start_test_serve().await;
     let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
