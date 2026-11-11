@@ -310,21 +310,30 @@ async fn run(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> 
 /// `follow_up=false` skips the attached snapshot and tab list: an implicit attach in front of a
 /// read discards them, and the read itself reads the page.
 async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value, follow_up: bool) -> ToolOutcome {
-    let (bound_args, implicit) = match bind_arguments(state, caller, name, args).await { Ok(bound) => bound, Err(failed) => return failed };
-    let args = &bound_args;
     let Some(def) = tools::all().into_iter().find(|t| t.name == name) else {
         return ToolOutcome::rejected(name, None, invalid(format!("unknown tool `{name}`")));
     };
     let empty = json!({});
     let args = if args.is_null() { &empty } else { args };
-    let operation_id = args["operationId"].as_str();
-    // A missing operationId is the most actionable mistake: say "attach first" instead of a schema error.
     let needs_operation = OPERATION_TOOLS.contains(&name);
+    // Arguments are checked before binding: a call that cannot run must not attach the request's tab.
+    if let Err(e) = validate(&def.schema, args).and_then(|_| validate_action(name, args)) {
+        let operation_id = args["operationId"].as_str();
+        // A missing operationId is the most actionable mistake: say "attach first" instead of a
+        // schema error, unless the panel request would have supplied the operation.
+        if needs_operation && operation_id.is_none() {
+            return match super::binding::resolve(state, caller).await {
+                Some(bound) => ToolOutcome::rejected(name, bound.operation.as_deref(), e),
+                None => operation_required(name),
+            };
+        }
+        return ToolOutcome::rejected(name, operation_id, e);
+    }
+    let (bound_args, implicit) = match bind_arguments(state, caller, name, args).await { Ok(bound) => bound, Err(failed) => return failed };
+    let args = &bound_args;
+    let operation_id = args["operationId"].as_str();
     if needs_operation && operation_id.is_none() {
         return operation_required(name);
-    }
-    if let Err(e) = validate(&def.schema, args).and_then(|_| validate_action(name, args)) {
-        return ToolOutcome::rejected(name, operation_id, e);
     }
     // An implicitly created operation is released if this call is cancelled while it runs.
     let mut implicit_guard = CreatedOperation { state, id: if implicit { operation_id.map(str::to_string) } else { None } };
