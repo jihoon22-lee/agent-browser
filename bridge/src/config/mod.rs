@@ -19,9 +19,15 @@ pub struct Config {
 
 pub fn home_dir() -> anyhow::Result<PathBuf> {
     if let Some(p) = std::env::var_os("AGENT_BROWSER_HOME") {
-        return Ok(PathBuf::from(p));
+        return Ok(absolute_home(PathBuf::from(p)));
     }
     Ok(dirs::data_local_dir().context("no local data directory for this user")?.join("AgentBrowser"))
+}
+
+/// The home is handed to processes with another working directory (the MCP proxy runs in
+/// the OpenCode project directory), so a relative `--home` must be resolved here, once.
+pub fn absolute_home(home: PathBuf) -> PathBuf {
+    std::path::absolute(&home).unwrap_or(home)
 }
 
 fn new_token() -> String {
@@ -139,6 +145,15 @@ mod tests {
         assert_eq!(a.port, DEFAULT_PORT);
         let b = load_or_init(dir.path()).unwrap();
         assert_eq!(a.token, b.token);
+    }
+
+    #[test]
+    fn a_relative_home_is_resolved_against_the_current_directory() {
+        let resolved = absolute_home(PathBuf::from("relative-home"));
+        assert!(resolved.is_absolute(), "{}", resolved.display());
+        assert_eq!(resolved, std::env::current_dir().unwrap().join("relative-home"));
+        let absolute = std::env::temp_dir().join("absolute-home");
+        assert_eq!(absolute_home(absolute.clone()), absolute);
     }
 
     #[test]

@@ -64,7 +64,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub fn new(home: PathBuf, port: u16) -> Self { Self { store: Store::new(home.clone()), home, port, locks: Default::default(), verified_docs: Default::default() } }
+    pub fn new(home: PathBuf, port: u16) -> Self { let home = crate::config::absolute_home(home); Self { store: Store::new(home.clone()), home, port, locks: Default::default(), verified_docs: Default::default() } }
     fn lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> { self.locks.lock().unwrap().entry(id.into()).or_default().clone() }
     fn reserve_port(&self, profile: &str, requested: Option<u16>) -> Result<ReservedPort<'_>,RpcError> {
         let controller = process::identity(std::process::id()).ok_or_else(|| failure("Cannot verify the Bridge process identity"))?;
@@ -876,6 +876,15 @@ mod tests {
         let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
         assert_eq!(value["model"],"fixture/model"); assert_eq!(value["provider"]["fixture"]["options"]["secret"],"private"); assert_eq!(value["plugin"],json!(["fixture"])); assert_eq!(value["mcp"]["existing"]["enabled"],false);
         assert_eq!(value["mcp"]["browser"]["environment"]["AGENT_BROWSER_PORT"],"54321");
+    }
+    #[test]
+    fn overlay_hands_the_mcp_proxy_an_absolute_home() {
+        let manager = Manager::new("relative-home".into(),54321);
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":"/fixture","executable":"/fixture/opencode"})).unwrap();
+        let mut env = BTreeMap::new(); manager.overlay(&profile,&mut env).unwrap();
+        let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+        let home = value["mcp"]["browser"]["environment"]["AGENT_BROWSER_HOME"].as_str().unwrap();
+        assert!(std::path::Path::new(home).is_absolute(),"the proxy runs in the project directory: {home}");
     }
     #[test]
     fn overlay_hands_the_runtime_id_to_the_browser_mcp() {
