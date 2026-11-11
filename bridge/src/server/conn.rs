@@ -415,6 +415,15 @@ fn not_available(id: String) -> Envelope {
     Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
 }
 
+/// Ends an operation whose creating call was cancelled or could not be answered. Like every
+/// other abort, the browser that owns it is told so it stops that operation's work.
+fn abort_created_operation(state: &ServerState, operation_id: &str) {
+    if let Some(op) = state.ops.abort(Some(operation_id)) {
+        state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation }));
+    }
+    state.broadcast_status();
+}
+
 async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
     use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered};
     let mut pending = FuturesUnordered::new();
@@ -440,7 +449,7 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
                         if let Some(handle) = running.get(request) { handle.abort(); }
                         if attached.as_ref().is_some_and(|(id, _)| id == request) {
                             let (_, op) = attached.take().unwrap();
-                            state.ops.abort(Some(&op)); state.broadcast_status();
+                            abort_created_operation(state, &op);
                         }
                     }
                     if !send(ws, &Envelope::ok(id, json!({"cancelled":true}))).await { break; }
@@ -485,7 +494,7 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
                 if created { attached = outcome.operation_id.clone().map(|op| (id.clone(), op)); }
                 let reply = Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"));
                 if !send(ws, &reply).await {
-                    if created && let Some((_, op)) = attached.take() { state.ops.abort(Some(&op)); state.broadcast_status(); }
+                    if created && let Some((_, op)) = attached.take() { abort_created_operation(state, &op); }
                     break;
                 }
             }
