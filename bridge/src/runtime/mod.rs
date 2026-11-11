@@ -181,6 +181,7 @@ impl Manager {
         }
         drop(reservation);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let mut exited = false;
         loop {
             let inspection = match self.inspect(profile,&mut record).await {
                 Ok(value) => value,
@@ -195,10 +196,14 @@ impl Manager {
                 }
             }
             if profile.kind == Kind::Wsl && matches!(inspection.state,WslState::Stopped | WslState::NotStarted) { break; }
+            // A listener is only adopted through its live launcher, so once the launcher has
+            // positively exited without a recorded server nothing can become ready any more.
+            if profile.kind != Kind::Wsl && ended(&record) { exited = true; break; }
             if tokio::time::Instant::now() >= deadline { break; }
             tokio::time::sleep(Duration::from_millis(if profile.kind == Kind::Wsl {1500} else {400})).await;
         }
         self.stop_inner(profile).await?;
+        if exited { return Err(failure("OpenCode exited before its server became ready. Check the executable/version, port, directory, and environment.")); }
         Err(failure("OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment."))
     }
     fn persist(&self, record: &RuntimeRecord) -> Result<(), RpcError> { self.store.update(|config| { config.runtimes.insert(record.profile_id.clone(), record.clone()); Ok(()) }) }
@@ -511,6 +516,11 @@ impl Manager {
     }
 }
 
+/// Positive evidence that no process of a native runtime record is left; an inspection
+/// failure (access denied) is not evidence. WSL records are judged by their owner markers.
+fn ended(record: &RuntimeRecord) -> bool {
+    record.wsl_owner_file.is_none() && process::exited(&record.launcher) && record.server.as_ref().is_none_or(process::exited)
+}
 fn starting(id: &str, profile: &Profile) -> Value { json!({"profileId":id,"state":"starting","directory":profile.directory,"owned":false,"reason":"PROFILE_OPERATION_IN_PROGRESS"}) }
 fn info(profile: &Profile, record: &RuntimeRecord, state: &str, secrets: bool, home: &std::path::Path) -> Value {
     let mut value = json!({"profileId":profile.id,"state":state,"baseUrl":record.base_url,"directory":profile.directory,"version":record.version,"owned":true,"attachCommand":attach(&profile.id,home)});
