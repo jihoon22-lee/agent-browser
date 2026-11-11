@@ -91,6 +91,39 @@ async fn starts_serve_when_missing_and_serve_outlives_mcp() {
     assert!(!diagnostics.contains(&cfg.token), "token leaked into launch diagnostics");
 }
 
+/// A managed runtime launches the proxy in the project directory with its own credentials,
+/// overlay, launch id and profile variables. The resident serve it starts outlives that
+/// runtime and later launches others, so none of it may be inherited.
+#[cfg(unix)]
+#[tokio::test]
+async fn serve_started_by_a_runtime_proxy_inherits_neither_its_environment_nor_its_directory() {
+    let home = tempfile::tempdir().unwrap(); let project = tempfile::tempdir().unwrap();
+    let port = free_port();
+    let child = tokio::process::Command::new(bin()).arg("mcp").current_dir(project.path())
+        .env("AGENT_BROWSER_HOME", home.path()).env("AGENT_BROWSER_PORT", port.to_string())
+        .env("OPENCODE_SERVER_PASSWORD", "runtime-private").env("OPENCODE_SERVER_USERNAME", "opencode")
+        .env("OPENCODE_CONFIG_CONTENT", "{\"mcp\":{}}").env("AGENT_BROWSER_RUNTIME_ID", "rid-fixture")
+        .env("AGENT_BROWSER_PROFILE_ENV_KEYS", "AB_PROFILE_ONLY,AGENT_BROWSER_HOME").env("AB_PROFILE_ONLY", "profile-private").env("AB_UNLISTED", "kept")
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null())
+        .kill_on_drop(true).spawn().unwrap();
+    let mut child = child;
+    let mut m = McpChild { stdin: child.stdin.take().unwrap(), out: BufReader::new(child.stdout.take().unwrap()).lines(), child };
+    m.init().await;
+    m.send(json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"browser_tabs","arguments":{"action":"list"}}})).await;
+    assert!(m.recv().await["result"]["content"][0]["text"].as_str().unwrap().contains("BROWSER_DISCONNECTED"));
+    let pid: u32 = std::fs::read_to_string(home.path().join("serve.pid")).unwrap().trim().parse().unwrap();
+    let environment = std::fs::read(format!("/proc/{pid}/environ")).unwrap();
+    let directory = std::fs::read_link(format!("/proc/{pid}/cwd")).unwrap();
+    let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+    let environment: Vec<String> = environment.split(|byte| *byte == 0).map(|entry| String::from_utf8_lossy(entry).into_owned()).collect();
+    for name in ["OPENCODE_SERVER_PASSWORD","OPENCODE_SERVER_USERNAME","OPENCODE_CONFIG_CONTENT","AGENT_BROWSER_RUNTIME_ID","AGENT_BROWSER_PROFILE_ENV_KEYS","AB_PROFILE_ONLY"] {
+        assert!(!environment.iter().any(|entry| entry.starts_with(&format!("{name}="))), "{name} leaked into the resident serve");
+    }
+    assert!(environment.contains(&"AB_UNLISTED=kept".to_string()), "variables the runtime did not add stay");
+    assert!(environment.contains(&format!("AGENT_BROWSER_HOME={}", home.path().display())), "the Bridge home is never scrubbed");
+    assert_eq!(directory, std::fs::canonicalize(home.path()).unwrap(), "serve must not hold the project directory");
+}
+
 #[tokio::test]
 async fn mcp_exits_cleanly_when_stdin_closes() {
     let (home, serve, _cfg) = common::start_test_serve().await;

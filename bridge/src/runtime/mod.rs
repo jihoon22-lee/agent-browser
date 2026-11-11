@@ -225,8 +225,13 @@ impl Manager {
         // The proxy names this launch so the server can bind a guarded panel request.
         let runtime_id = env.get("AGENT_BROWSER_RUNTIME_ID").cloned();
         if let Some(id) = &runtime_id { mcp_env["AGENT_BROWSER_RUNTIME_ID"] = json!(id); }
+        // A serve started by the proxy must not keep this profile's variables (see PROFILE_ENV_KEYS).
+        // Keys the Bridge already has are not listed: the proxy cannot restore their original value.
+        let added: Vec<&str> = profile.env.iter().flatten().map(|(key,_)| key.as_str()).filter(|key| *key != "OPENCODE_CONFIG_CONTENT" && std::env::var_os(key).is_none()).collect();
+        if !added.is_empty() { mcp_env[crate::mcp::client::PROFILE_ENV_KEYS] = json!(added.join(",")); }
         if profile.kind == Kind::Wsl {
-            mcp_env["WSLENV"] = json!(if runtime_id.is_some() { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w:AGENT_BROWSER_RUNTIME_ID/w" } else { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w" });
+            let forwarded: Vec<String> = mcp_env.as_object().into_iter().flatten().map(|(key,_)| format!("{key}/w")).collect();
+            mcp_env["WSLENV"] = json!(forwarded.join(":"));
         }
         mcp.insert("browser".into(), json!({"type":"local","command":[exe,"mcp"],"environment":mcp_env,"enabled":true}));
         env.insert("OPENCODE_CONFIG_CONTENT".into(), overlay.to_string()); Ok(())
@@ -968,6 +973,26 @@ mod tests {
         let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
         let home = value["mcp"]["browser"]["environment"]["AGENT_BROWSER_HOME"].as_str().unwrap();
         assert!(std::path::Path::new(home).is_absolute(),"the proxy runs in the project directory: {home}");
+    }
+    #[test]
+    fn overlay_names_the_profile_variables_the_proxy_must_not_pass_on() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),54321);
+        let kinds: &[&str] = if cfg!(windows) { &["windows","wsl"] } else { &["windows"] };
+        for kind in kinds {
+            let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":kind,"distribution":"Ubuntu","directory":"/fixture","executable":"/fixture/opencode",
+                "env":{"AB_FIXTURE_ADDED_ONE":"1","AB_FIXTURE_ADDED_TWO":"2","PATH":"/profile/bin","OPENCODE_CONFIG_CONTENT":"{}"}})).unwrap();
+            assert!(std::env::var_os("PATH").is_some() && std::env::var_os("AB_FIXTURE_ADDED_ONE").is_none());
+            let mut env = profile.env.clone().unwrap(); env.insert("AGENT_BROWSER_RUNTIME_ID".into(),"rid-1".into());
+            manager.overlay(&profile,&mut env).unwrap();
+            let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+            let environment = &value["mcp"]["browser"]["environment"];
+            assert_eq!(environment["AGENT_BROWSER_PROFILE_ENV_KEYS"],"AB_FIXTURE_ADDED_ONE,AB_FIXTURE_ADDED_TWO","an inherited key such as PATH cannot be restored and is not listed");
+            if *kind == "wsl" { assert!(environment["WSLENV"].as_str().unwrap().split(':').any(|entry| entry == "AGENT_BROWSER_PROFILE_ENV_KEYS/w")); }
+        }
+        let plain: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":"/fixture","executable":"/fixture/opencode"})).unwrap();
+        let mut env = BTreeMap::new(); manager.overlay(&plain,&mut env).unwrap();
+        let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+        assert!(value["mcp"]["browser"]["environment"].get("AGENT_BROWSER_PROFILE_ENV_KEYS").is_none());
     }
     #[test]
     fn overlay_hands_the_runtime_id_to_the_browser_mcp() {
