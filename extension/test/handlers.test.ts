@@ -884,3 +884,35 @@ it('a still-pending debugger detach cannot fall through to DOM input',async()=>{
  const w=world(),h=createHandlers(w.api,memorySessionStore(),{ensure:async()=>false,screenshot:async()=>'',stopping:()=>true});const ref=await firstRef(h);w.sent.length=0;
  await expect(h(request('browser.click',{ref}))).rejects.toMatchObject({code:'BROWSER_BUSY'});expect(w.sent).toHaveLength(0);
 });
+
+describe('browser.tabs.create load timeout', () => {
+  afterEach(() => vi.useRealTimers());
+  const slowTab = (w: ReturnType<typeof world>) => { w.api.tabsCreate = async p => { const t = { id: 9, windowId: 10, active: false, url: p.url, title: '', status: 'loading' } as chrome.tabs.Tab; w.tabs.set(9, t); return t; }; };
+  it('returns the tab marked as still loading instead of losing its ID', async () => {
+    vi.useFakeTimers();
+    const w = world(); slowTab(w);
+    const h = createHandlers(w.api, memorySessionStore());
+    const pending = h(request('browser.tabs.create', { url: 'https://example.test/slow' }));
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await pending).toMatchObject({ tabId: 9, url: 'https://example.test/slow', status: 'loading', loadIncomplete: true });
+  });
+  it('still reports a tab that closed while loading as a failure', async () => {
+    vi.useFakeTimers();
+    const w = world(); slowTab(w);
+    const h = createHandlers(w.api, memorySessionStore());
+    const pending = h(request('browser.tabs.create', { url: 'https://example.test/slow' })).catch(error => error);
+    await vi.advanceTimersByTimeAsync(1_000); w.tabs.delete(9);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await pending).toMatchObject({ code: expect.stringMatching(/TAB_NOT_FOUND|TIMEOUT/) });
+  });
+  it('keeps the existing outcome when stopped during the load', async () => {
+    vi.useFakeTimers();
+    const w = world(); slowTab(w);
+    const h = createHandlers(w.api, memorySessionStore());
+    const pending = h(request('browser.tabs.create', { url: 'https://example.test/slow' }, 'create-stop')).catch(error => error);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h(request('browser.cancel', { requestId: 'create-stop' }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await pending).toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+  });
+});

@@ -194,8 +194,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             const created = await api.tabsCreate({ url, active: false, ...(windowId === undefined ? {} : {windowId}) });
             if (!created.id)
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'Chrome did not return a new tab ID.', 'unsafe');
-            const tab = await loadedTab(api, created.id, async () => { }, signal);
-            return describeTab(tab);
+            try { return describeTab(await loadedTab(api, created.id, async () => { }, signal)); }
+            catch (error) {
+                // The tab exists: a slow page must not cost the operation its tab ID. Stop keeps its own outcome.
+                if (signal.aborted || !(error instanceof ProtocolError) || error.code !== 'TIMEOUT') throw error;
+                const current = await api.tabsGet(created.id).catch(() => undefined);
+                if (!current?.id) throw error;
+                return { ...describeTab(current), loadIncomplete: true, note: 'The tab is still loading after 30 seconds. Wait for its content or take a snapshot before acting.' };
+            }
         }
         const tab = await getTab(api, Number(p.tabId));
         const goto = req.method === 'browser.navigate' && (p.action ?? 'goto') === 'goto';
