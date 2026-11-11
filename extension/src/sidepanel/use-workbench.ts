@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { OpenCodeApiError, OpenCodeV1Client } from "../agents/opencode-v1/client";
-import { initialWorkbench, workbenchReducer, bridgeRequest, operationBindings, sameMessage, type Data, type UiMessage } from "./workbench-state";
+import { initialWorkbench, workbenchReducer, bridgeRequest, codeOf, operationBindings, sameMessage, type Data, type UiMessage } from "./workbench-state";
 import { bridgeUnavailable } from "./error-text";
 
 // An event stream that stays down this long is treated as a restarted or stopped server.
@@ -21,7 +21,10 @@ export function useWorkbench() {
   const [catalog, setCatalog] = useState<Data>({ all: [], connected: [], default: {} });
   const [agents, setAgents] = useState<Data[]>([]), [commands, setCommands] = useState<Data[]>([]), [skills, setSkills] = useState<Data[]>([]);
   const [todos, setTodos] = useState<Data[]>([]), [children, setChildren] = useState<Data[]>([]), [diff, setDiff] = useState<Data[]>([]), [mcp, setMcp] = useState<Data>({});
-  const [connected, setConnected] = useState(false), [loading, setLoading] = useState(false), [error, setError] = useState("");
+  const [connected, setConnected] = useState(false), [loading, setLoading] = useState(false), [error, setErrorText] = useState(""), [errorCode, setErrorCode] = useState<string>();
+  // The Bridge protocol code of the shown error, when it has one; error-text classifies by it.
+  const shownError = useRef({ message: "", code: undefined as string | undefined });
+  const setError = useCallback((message: string, code?: string) => { shownError.current = { message, code: message ? code : undefined }; setErrorText(message); setErrorCode(message ? code : undefined); }, []);
   const client = useRef<OpenCodeV1Client | undefined>(undefined), epoch = useRef(0), stream = useRef<AbortController | undefined>(undefined), selected = useRef("");
   const syncing = useRef(false), buffered = useRef<Data[]>([]), refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), listTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const bindings = useRef(new Map<string, { client: OpenCodeV1Client; sessionID: string; profileId: string; directory: string }>());
@@ -39,7 +42,7 @@ export function useWorkbench() {
   const autoRecovered = useRef(false), offlineTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), streamOnline = useRef(false);
   const reconnect = useRef<(id: string, workdir?: string, restoreId?: string, automatic?: boolean) => Promise<void>>(async () => {});
   const captureScope = useCallback(() => { const revision = epoch.current, selection = selectionRevision.current; return () => revision === epoch.current && selection === selectionRevision.current; }, []);
-  const fail = (value: unknown) => setError(value instanceof Error ? value.message : String(value));
+  const fail = useCallback((value: unknown) => setError(value instanceof Error ? value.message : String(value), codeOf(value)), [setError]);
   const mergeSessions = (items: Data[]) => setKnownSessions(previous => { const next = { ...previous }; for (const item of items) if (typeof item?.id === "string" && !deletedSessions.current.has(item.id)) next[item.id] = item; return next; });
   const refreshSessions = useCallback(async (search?: string) => {
     const api = client.current, revision = epoch.current; if (!api) return;
@@ -312,7 +315,7 @@ export function useWorkbench() {
     };
     void load();
     const listener = (message: Data) => {
-      if (message.kind === "conn-status" && message.status?.state === "connected") { setError(current => bridgeUnavailable(current) ? "" : current); void load(); }
+      if (message.kind === "conn-status" && message.status?.state === "connected") { if (bridgeUnavailable(shownError.current.message, shownError.current.code)) setError(""); void load(); }
       if (message.kind === "profiles-changed" && message.runtime) {
         // Options stopped or started this profile's server; the profile list itself is unchanged.
         if (message.profileId !== currentProfile.current || !client.current) return;
@@ -337,5 +340,5 @@ export function useWorkbench() {
     const binding = bindings.current.get(operationId); if (!binding) return false;
     await binding.client.post(`/session/${encodeURIComponent(binding.sessionID)}/abort`); return true;
   }, []);
-  return { state, dispatch, profiles, profilesLoaded, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, setError, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown, operationOwner };
+  return { state, dispatch, profiles, profilesLoaded, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, errorCode, setError, fail, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown, operationOwner };
 }

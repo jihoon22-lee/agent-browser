@@ -913,6 +913,19 @@ describe("start screen", () => {
     expect(host.querySelector(".error")).toBeNull();
   });
 
+  it("B9 recognizes a Bridge-down error by its code when the English text is different", async () => {
+    await render();
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    const emit = (message: unknown) => act(async () => { for (const listener of [...listeners]) listener(message); await new Promise(resolve => setTimeout(resolve, 0)); });
+    runtime.mockImplementation(async (message: any) => message.method === "profile.list" ? { ok: false, error: { code: "BROWSER_DISCONNECTED", message: "The bridge link went away", retry: "safe" } } : original(message));
+    await emit({ kind: "profiles-changed", profileId: "native" });
+    expect(host.querySelector(".error")?.textContent).toContain("Bridge에 연결되어 있지 않습니다");
+    expect(host.querySelector(".error-original")?.textContent).toContain("The bridge link went away");
+    runtime.mockImplementation(original);
+    await emit({ kind: "conn-status", status: { state: "connected" } });
+    expect(host.querySelector(".error")).toBeNull();
+  });
+
   it("offers example requests that fill the composer without sending", async () => {
     messages = [];
     await render();

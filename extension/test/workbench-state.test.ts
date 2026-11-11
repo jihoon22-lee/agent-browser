@@ -88,3 +88,15 @@ it("keeps no event history of its own: the stream client drops a replayed delta 
   expect(state).not.toHaveProperty("seen");
   expect(initialWorkbench).not.toHaveProperty("seen");
 });
+
+it("keeps the code and retry class of a failed Bridge request", async () => {
+  const { bridgeRequest, BridgeRequestError, codeOf } = await import("../src/sidepanel/workbench-state");
+  vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: false, error: { code: "BROWSER_DISCONNECTED", message: "Bridge is not connected", retry: "safe" } })) } });
+  try {
+    const error = await bridgeRequest("profile.list").catch(value => value);
+    expect(error).toBeInstanceOf(BridgeRequestError);
+    expect(error).toMatchObject({ message: "Bridge is not connected", code: "BROWSER_DISCONNECTED", retry: "safe" });
+    expect(codeOf(error)).toBe("BROWSER_DISCONNECTED");
+    expect(codeOf(new Error("Failed to fetch"))).toBeUndefined();
+  } finally { vi.unstubAllGlobals(); }
+});

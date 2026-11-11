@@ -175,7 +175,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     const timer = setTimeout(() => { void wb.client.current!.findFiles(mention, 12).then(next => { if (active) setFiles(next); }).catch(() => { if (active) setFiles([]); }); }, 200);
     return () => { active = false; clearTimeout(timer); };
   }, [mention, wb.runtime]);
-  async function perform(action: () => Promise<void>) { const current = wb.captureScope(); wb.setError(""); try { await action(); } catch (error) { if (current()) wb.setError(error instanceof Error ? error.message : String(error)); } }
+  async function perform(action: () => Promise<void>) { const current = wb.captureScope(); wb.setError(""); try { await action(); } catch (error) { if (current()) wb.fail(error); } }
   const api = () => { if (!wb.client.current) throw new Error("먼저 실행 환경을 연결하세요."); return wb.client.current; };
   const sessionPath = () => { if (!wb.sessionId) throw new Error("세션을 선택하거나 새로 만드세요."); return `/session/${encodeURIComponent(wb.sessionId)}`; };
   async function createSession(carry?: { draft: string; attachments: Data[] }): Promise<Data | undefined> { const current = wb.captureScope(); const session = await api().post<Data>("/session", { ...(agent ? { agent } : {}), ...(model ? { model: { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) } } : {}) }); if (!current()) return undefined; if (carry) { draftCache.current.set(JSON.stringify([wb.profileId, wb.directory, session.id]), carry); consumedDraft.current = draftKey; } await wb.refreshSessions(); if (!current()) return undefined; const selection = wb.selectSession(session), destination = wb.captureScope(); await selection; if (destination()) { setNotice(""); onViewChange("chat"); setDrawer(null); } return session; }
@@ -309,7 +309,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
           }
         }catch{/* Keep the uncertain identity when storage itself is unavailable. */}
       }
-      if (current()&&!attempt.cancelled) wb.setError(error instanceof Error ? error.message : String(error));
+      if (current()&&!attempt.cancelled) wb.fail(error);
     }
     // A reselected session changes the scope but not the draft key; this attempt still releases the lock it took, never a later attempt's.
     finally { if (sendLock.current === lock) { sendLock.current = undefined; setSending(false); } }
@@ -518,7 +518,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   return <div className="workbench" aria-label="OpenCode 작업 공간" hidden={view === "browser"}>
     <div className="workspace-summary"><div className="workspace-identity"><button className="control-chip" aria-label="실행 설정" title={`${profileName ?? "실행 환경 선택"} · ${wb.directory || "작업 디렉터리 정보 없음"}`} onClick={event => openDrawer("environment", event.currentTarget)}><strong>{profileName ?? "실행 환경 선택"}</strong><span aria-hidden="true">▾</span></button><span className="connection-line" role="status">{wb.loading ? "실행 환경 준비 중…" : wb.connected ? `OpenCode ${wb.runtime?.version ?? ""} 연결됨` : "OpenCode 연결 대기"}</span></div>
       <div className="workspace-actions"><button className="quiet" onClick={event => openDrawer("tools", event.currentTarget)}>작업 도구</button><button className="quiet" onClick={event => openDrawer("theme", event.currentTarget)} aria-label="화면 테마 선택">테마</button></div></div>
-    {(workspaceError || notice) && <div className="workspace-notices">{workspaceError && <ErrorNotice message={workspaceError} />}{notice && <p role="status" className="notice">{notice}<button className="quiet" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></p>}</div>}
+    {(workspaceError || notice) && <div className="workspace-notices">{workspaceError && <ErrorNotice message={workspaceError} code={wb.errorCode} />}{notice && <p role="status" className="notice">{notice}<button className="quiet" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></p>}</div>}
     <div id="view-chat" className="chat-view" role="tabpanel" aria-labelledby="tab-chat" hidden={view !== "chat"}>
       {conversationPanel}
       <aside className="control-panel view-scroll" aria-label={`${drawerTitle} 패널`} hidden={drawer === null} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setDrawer(null); } }}>

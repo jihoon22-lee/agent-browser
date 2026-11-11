@@ -92,9 +92,14 @@ export async function respondOnce(inflight: Set<string>, id: string, list: () =>
   catch (error) { if (error && typeof error === "object" && "status" in error && error.status === 404) return false; throw error; }
   finally { inflight.delete(id); }
 }
+/** A failed Bridge request with its protocol code and retry class, so callers classify it without reading the English text. */
+export class BridgeRequestError extends Error {
+  constructor(message: string, readonly code?: string, readonly retry?: string) { super(message); this.name = "BridgeRequestError"; }
+}
+export const codeOf = (error: unknown): string | undefined => error instanceof BridgeRequestError ? error.code : undefined;
 export async function bridgeRequest<T = any>(method: string, params: Data = {}): Promise<T> {
   const response = await chrome.runtime.sendMessage({ kind: "bridge", method, params });
-  if (!response?.ok) throw new Error(response?.error?.message ?? response?.error?.code ?? "Bridge 응답을 받지 못했습니다.");
+  if (!response?.ok) { const error = response?.error; throw new BridgeRequestError(error?.message ?? error?.code ?? "Bridge 응답을 받지 못했습니다.", typeof error?.code === "string" ? error.code : undefined, typeof error?.retry === "string" ? error.retry : undefined); }
   return response.result;
 }
 export function download(name: string, content: string, mime = "text/plain") {

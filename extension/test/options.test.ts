@@ -68,7 +68,7 @@ it("shows diagnostics as a checklist with the raw result folded", async () => {
   expect(host.querySelector<HTMLDetailsElement>("details.doctor-raw")?.open).toBe(false);
 });
 it("tells an open side panel when a profile's server was stopped or started", async () => {
-  const original = send.getMockImplementation()!;
+  const original = send.getMockImplementation() as (message: any) => Promise<any>;
   let stopped = true;
   send.mockImplementation(async message => message.method === "runtime.stop" ? { ok: true, result: { stopped } } : message.method === "runtime.ensure" ? { ok: true, result: { state: "ready", version: "1.18.29" } } : original(message));
   const notices = () => send.mock.calls.map(([message]) => message).filter(message => message.kind === "profiles-changed");
