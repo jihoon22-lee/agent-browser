@@ -56,14 +56,19 @@ function reaches(top: Element | null, el: Element): boolean {
   return !!label && "labels" in el && [...((el as HTMLInputElement).labels ?? [])].includes(label);
 }
 
-function assertInteractable(el: Element): Point | undefined {
+const inViewport = (point: Point) => point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight;
+/** A reachable point of the element in viewport coordinates, scrolling it into view when needed.
+ * With `allowScroll` false the page is left where it is: the caller holds coordinates of another
+ * element that a scroll would invalidate. */
+function assertInteractable(el: Element, allowScroll = true): Point | undefined {
   if (!isRendered(el, { checkLayout: hasLayout() }) || isDisabled(el)) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
   }
   if (!hasLayout()) return undefined;
   // Preserve an already usable position instead of recentering every field/button.
   for (const point of candidatePoints(el))
-    if (point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight && reaches(topAt(point),el)) return point;
+    if (inViewport(point) && reaches(topAt(point),el)) return point;
+  if (!allowScroll) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} cannot be reached without scrolling the page again.`);
   // "instant" defeats CSS smooth scrolling, so hit testing uses the new position.
   (el as HTMLElement).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   const points = candidatePoints(el);
@@ -167,8 +172,11 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
 /** Drag ref onto toRef: trusted mouse input when allowed and the source is not an HTML5 drag source,
  * otherwise pointer events followed, for HTML5 sources, by a drag sequence sharing one DataTransfer. */
 async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
-  const from = assertInteractable(el) ?? clickPoint(el);
+  assertInteractable(el);
   const to = assertInteractable(target) ?? clickPoint(target);
+  // Bringing the target into view may have moved the source: read its position again, without
+  // scrolling. Two ends that cannot be on screen together fail here, before any input.
+  const from = assertInteractable(el, false) ?? clickPoint(el);
   // The browser drags the nearest draggable ancestor (a card holding the link the ref names).
   const source = el.closest('[draggable=true], a[href]:not([draggable=false]), img:not([draggable=false])');
   const html5 = source !== null;

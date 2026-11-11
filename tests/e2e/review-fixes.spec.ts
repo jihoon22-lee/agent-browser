@@ -1,0 +1,69 @@
+import { test, expect } from "@playwright/test";
+import { startWorld, type World } from "./harness";
+
+/** Layout- and browser-dependent fixes from the 2026-11-11 review (plan items A2, A6, A7, A9, A11). */
+let world: World;
+const all = (snapshot: any): Array<{ ref: string; name: string }> => snapshot.frames.flatMap((frame: any) => frame.elements);
+const refIn = (snapshot: any, name: string) => { const found = all(snapshot).filter(e => e.name === name); expect(found, name).toHaveLength(1); return found[0]!.ref; };
+const setTrusted = (on: boolean) => world.adminPage.evaluate(async on => { await (globalThis as any).chrome.storage.local.set({ trustedInput: on }); }, on);
+/** A loopback port nothing listens on: Chrome shows its own error page. */
+const UNREACHABLE = "http://127.0.0.1:1/";
+
+test.beforeAll(async () => { world = await startWorld(); });
+test.afterEach(async () => {
+  await setTrusted(false);
+  const status = await world.admin("status.get");
+  if (status.operation) await world.mcp.call("browser_tabs", { action: "release", operationId: status.operation.id });
+  for (const page of world.context.pages()) if (page !== world.adminPage) await page.close();
+});
+test.afterAll(async () => { await world?.stop(); });
+
+async function attach(prepare: (page: import("@playwright/test").Page) => Promise<void>, path = "pointer.html") {
+  const page = await world.open(path);
+  await prepare(page);
+  const attached = await world.ok("browser_tabs", { action: "attach", tabId: await world.tabId(page) });
+  return { page, operationId: attached.operationId!, snapshot: attached.data.snapshot };
+}
+
+for (const trusted of [false, true]) {
+  const label = trusted ? "trusted" : "DOM";
+  test(`A2 ${label}: a drag whose target must be scrolled into view still presses on the source`, async () => {
+    await setTrusted(trusted);
+    const { page, operationId, snapshot } = await attach(async page => {
+      await page.setViewportSize({ width: 800, height: 400 });
+      await page.evaluate(() => {
+        const items = document.querySelectorAll<HTMLElement>(".item");
+        // Item C starts below the fold; A and C still fit in the viewport together.
+        items[2]!.style.marginTop = "260px";
+        (window as any).__press = [];
+        document.addEventListener("mousedown", event => {
+          const r = items[0]!.getBoundingClientRect();
+          (window as any).__press.push({ target: (event.target as Element).closest(".item")?.getAttribute("data-id") ?? null,
+            inside: event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom });
+        }, true);
+      });
+    });
+    expect(await page.evaluate(() => document.querySelectorAll(".item")[2]!.getBoundingClientRect().top >= innerHeight)).toBe(true);
+    const result = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "항목 A"), toRef: refIn(snapshot, "항목 C"), mode: "drag" });
+    if (trusted) expect(result.verified!.trusted).toBe(true);
+    expect(await page.evaluate(() => (window as any).__press)).toEqual([{ target: "A", inside: true }]);
+    await expect(page.locator("#order")).toHaveText("B,A,C");
+  });
+}
+
+test("A2: a drag whose two ends cannot be on screen together is refused before any input", async () => {
+  const { page, operationId, snapshot } = await attach(async page => {
+    await page.setViewportSize({ width: 800, height: 400 });
+    await page.evaluate(() => {
+      const items = document.querySelectorAll<HTMLElement>(".item");
+      items[2]!.style.marginTop = "2000px";
+      (window as any).__events = 0;
+      for (const type of ["pointerdown", "mousedown", "mouseup"]) document.addEventListener(type, () => { (window as any).__events++; }, true);
+    });
+  });
+  const result = await world.mcp.call("browser_click", { operationId, ref: refIn(snapshot, "항목 A"), toRef: refIn(snapshot, "항목 C"), mode: "drag" });
+  expect(result.ok, JSON.stringify(result)).toBe(false);
+  expect(result.error?.code).toBe("ELEMENT_NOT_INTERACTABLE");
+  expect(await page.evaluate(() => (window as any).__events)).toBe(0);
+  await expect(page.locator("#order")).toHaveText("A,B,C");
+});
