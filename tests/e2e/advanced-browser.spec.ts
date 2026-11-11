@@ -210,3 +210,16 @@ test('A26 double clicks work on a stable target and stop when the first click re
  snap=await world.ok('browser_snapshot',{operationId});const result=await world.mcp.call('browser_click',{operationId,ref:ref(snap.data,'Stable double'),mode:'double'});
  expect(result.ok).toBe(false);await expect(page.locator('#count')).toHaveText('0');
 });
+
+test('A27 a dialog whose debugger detached stops blocking the tab once it is closed',async()=>{
+ const {page,operationId,snapshot}=await start();const appeared=page.waitForEvent('dialog');
+ const pending=await world.ok('browser_click',{operationId,ref:ref(snapshot,'Confirm task')});expect(pending.verified?.dialogPending).toBe(true);const dialog=await appeared;
+ // The extension detaches its debugger: no closed event can reach it for this dialog any more.
+ await set({trustedInput:false});
+ await expect.poll(async()=>(await world.ok('browser_dialog',{operationId,action:'list'})).data.dialogs[0]?.detached,{timeout:15_000}).toBe(true);
+ const blocked=await world.mcp.call('browser_snapshot',{operationId});expect(blocked.error?.code,JSON.stringify(blocked)).toBe('BROWSER_BUSY');
+ expect((await world.mcp.call('browser_dialog',{operationId,action:'respond',dialogId:pending.data.dialog.dialogId,accept:true})).error?.code).toBe('FORBIDDEN_METHOD');
+ await dialog.dismiss();await expect(page.locator('#dialog-result')).toHaveText('declined');
+ const read=await world.mcp.call('browser_snapshot',{operationId});expect(read.ok,JSON.stringify(read)).toBe(true);
+ expect((await world.ok('browser_dialog',{operationId,action:'list'})).data.dialogs).toEqual([]);
+});
