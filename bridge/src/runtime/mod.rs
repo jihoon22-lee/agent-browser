@@ -637,12 +637,22 @@ fn wsl_forwarder(record: &RuntimeRecord) -> bool {
     #[cfg(windows)] {
         let Some(port) = reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()) else { return false; };
         let Some(listener) = process::listener(port) else { return false; };
-        let image = listener.image.to_ascii_lowercase();
-        let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()).to_ascii_lowercase();
-        (image.starts_with(&format!("{root}\\system32\\")) || image.starts_with("c:\\program files\\wsl\\") || image.starts_with("c:\\program files\\windowsapps\\microsoftcorporationii.windowssubsystemforlinux_"))
-            && (image.ends_with("\\wslrelay.exe") || image.ends_with("\\wslhost.exe"))
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        // A 32-bit view would name "Program Files (x86)"; WSL is installed in the native one.
+        let programs = std::env::var("ProgramW6432").or_else(|_| std::env::var("ProgramFiles")).unwrap_or_else(|_| "C:\\Program Files".into());
+        wsl_relay_image(&listener.image,&root,&programs)
     }
     #[cfg(not(windows))] { let _ = record; true }
+}
+/// The Windows process that holds a WSL2 localhost-forwarded port: wslrelay/wslhost of the
+/// inbox WSL, the MSI package, or the Store package, on whichever drive Windows is installed.
+#[cfg(any(windows,test))]
+fn wsl_relay_image(image: &str, system_root: &str, program_files: &str) -> bool {
+    let image = image.to_ascii_lowercase();
+    let under = |directory: String| image.starts_with(&directory.to_ascii_lowercase());
+    let (root,programs) = (system_root.trim_end_matches('\\'),program_files.trim_end_matches('\\'));
+    (under(format!("{root}\\system32\\")) || under(format!("{programs}\\wsl\\")) || under(format!("{programs}\\windowsapps\\microsoftcorporationii.windowssubsystemforlinux_")))
+        && (image.ends_with("\\wslrelay.exe") || image.ends_with("\\wslhost.exe"))
 }
 async fn wsl_control(profile: &Profile, record: &RuntimeRecord, mode: &str) -> bool {
     wsl_control_status(profile, record, mode).await == Some(0)
@@ -1046,6 +1056,16 @@ mod overlay_identity_tests {
         let first = one.reserve_port("first",None).unwrap(); let second = two.reserve_port("second",None).unwrap();
         assert_ne!(first.port,second.port); assert_eq!(one.store.read().unwrap().reservations.len(),2);
         drop(first); drop(second); assert!(one.store.read().unwrap().reservations.is_empty());
+    }
+    #[test]
+    fn wsl_relay_is_recognised_under_the_actual_windows_and_program_files_folders() {
+        for image in [r"D:\Program Files\WSL\wslrelay.exe",r"d:\program files\wsl\WSLHOST.EXE",r"D:\Windows\System32\wslhost.exe",r"D:\Program Files\WindowsApps\MicrosoftCorporationII.WindowsSubsystemForLinux_2.7.12.0_x64__8wekyb3d8bbwe\wslrelay.exe"] {
+            assert!(wsl_relay_image(image,r"D:\Windows",r"D:\Program Files"),"{image}");
+        }
+        assert!(wsl_relay_image(r"C:\Program Files\WSL\wslrelay.exe",r"C:\Windows\",r"C:\Program Files\"));
+        for image in [r"C:\Program Files\WSL\wslrelay.exe",r"D:\Users\fixture\wslrelay.exe",r"D:\Program Files\WSL\other.exe",r"D:\Program Files\WSLX\wslrelay.exe"] {
+            assert!(!wsl_relay_image(image,r"D:\Windows",r"D:\Program Files"),"{image}");
+        }
     }
     #[test]
     fn overlay_reuse_requires_same_port_and_an_existing_original_bridge_executable() {
