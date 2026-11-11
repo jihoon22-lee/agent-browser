@@ -9,6 +9,14 @@ internal static class InstallerReviewTests {
   finally{var state=InstallerEngine.State(options.InstallDir);if(state!=null)try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=options.InstallDir}),CancellationToken.None,s=>{});}catch(Exception e){Console.WriteLine("REVIEW cleanup: "+e.Message);}}
  }
  static void Apply(SetupOptions options){InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,s=>{});}
+ // A copy of the fixture package under another version, optionally shipping one extra file.
+ static string VersionedPackage(string name,string version,string extra){
+  string target=Path.Combine(root,name);Directory.CreateDirectory(target);var manifest=InstallerEngine.Read<PackageManifest>(Path.Combine(package,"package-manifest.json"));
+  foreach(var file in manifest.Files){string dest=NativeIO.SafePath(target,file.Path);Directory.CreateDirectory(Path.GetDirectoryName(dest));File.Copy(NativeIO.SafePath(package,file.Path),dest);}
+  manifest.Version=version;string extensionPath=Path.Combine(target,"extension","manifest.json");var extension=InstallerEngine.Read<Dictionary<string,object>>(extensionPath);extension["version"]=version;NativeIO.WriteText(extensionPath,NativeIO.Json.Serialize(extension));manifest.Files.Single(f=>f.Path=="extension/manifest.json").Sha256=NativeIO.FileHash(extensionPath);
+  if(extra!=null){string added=NativeIO.SafePath(target,extra);Directory.CreateDirectory(Path.GetDirectoryName(added));File.WriteAllText(added,"// synthetic asset "+version,NativeIO.Utf8);manifest.Files=manifest.Files.Concat(new[]{new OwnedFile{Path=extra,Sha256=NativeIO.FileHash(added)}}).ToArray();}
+  NativeIO.WriteText(Path.Combine(target,"package-manifest.json"),NativeIO.Json.Serialize(manifest));return target;
+ }
  public static int? SyntheticBridge(string[] args){string probe=Environment.GetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE");if(args.Length==1&&args[0]=="--version"&&probe!=null){File.WriteAllText(probe,"ran");Console.WriteLine("1.18.29");return 0;}string data=Environment.GetEnvironmentVariable("AGENT_BROWSER_HOME");if(data==null)return null;var update=UpdateSynthetic(args,data);if(update.HasValue)return update.Value;if(args.Length>0&&args[0]=="start"&&File.Exists(Path.Combine(data,".review-unowned-fixture"))){File.WriteAllText(Path.Combine(data,"unowned-ran.txt"),"ran");return 0;}if(args.Length>1&&args[0]=="runtime"&&File.Exists(Path.Combine(data,".review-runtime-fixture"))){if(args[1]=="stop-all"){Console.WriteLine("{\"stoppedProfiles\":[\"broken\",\"healthy\"],\"errors\":[\"synthetic failure\"]}");return 1;}if(args[1]=="start"){string id=args.Last();File.AppendAllText(Path.Combine(data,"restart-attempts.txt"),id+"\n");return id=="broken"?1:0;}}return null;}
 
  static int? UpdateSynthetic(string[] args,string data) {
@@ -143,6 +151,41 @@ internal static class InstallerReviewTests {
      bool refused=false;try{BridgeControl.Stop(state);}catch(IOException){refused=true;}Assert(refused&&File.Exists(path),"a marker of another installation was accepted");File.Delete(path);
     }finally{if(!unrelated.HasExited){unrelated.Kill();unrelated.WaitForExit(5000);}}
    }
+  });
+  Case("update-prunes-obsolete-owned-files",o=>{
+   string a=VersionedPackage("prune-package-a","0.9.1-prune","extension/assets/index-old.js"),b=VersionedPackage("prune-package-b","0.9.2-prune","extension/assets/index-new.js"),c=VersionedPackage("prune-package-c","0.9.3-prune",null),d=VersionedPackage("prune-package-d","0.9.4-prune",null);
+   o.PackageDir=a;Apply(o);var first=InstallerEngine.State(o.InstallDir);
+   string oldAsset=Path.Combine(o.InstallDir,"extension","assets","index-old.js"),userFile=Path.Combine(o.InstallDir,"extension","assets","user-note.txt");File.WriteAllText(userFile,"mine");
+   o.Operation="update";o.PackageDir=b;
+   // A cancelled update restores what the cleanup removed.
+   var plan=InstallerEngine.Prepare(o);Assert(plan.Prune.Any(f=>f.Path=="extension/assets/index-old.js"),"obsolete asset is not planned for cleanup");
+   var cancel=new CancellationTokenSource();int writes=0;bool cancelled=false;
+   try{InstallerEngine.Apply(plan,cancel.Token,s=>{if(s.StartsWith("파일 적용")&&++writes==plan.Changes.Count)cancel.Cancel();});}catch(OperationCanceledException){cancelled=true;}
+   Assert(cancelled&&File.Exists(oldAsset)&&InstallerEngine.State(o.InstallDir).Version==first.Version,"cancelled update did not restore a cleaned-up file");
+   Apply(o);var second=InstallerEngine.State(o.InstallDir);
+   Assert(!File.Exists(oldAsset)&&!second.OwnedFiles.Any(f=>f.Path=="extension/assets/index-old.js"),"obsolete owned asset was left behind");
+   Assert(File.Exists(Path.Combine(o.InstallDir,"extension","assets","index-new.js"))&&File.ReadAllText(userFile)=="mine","cleanup touched a current or user file");
+   Assert(File.Exists(first.CurrentExe)&&second.OwnedFiles.Any(f=>InstallerEngine.Same(NativeIO.SafePath(o.InstallDir,f.Path),first.CurrentExe)),"previous executable was not kept");
+   // An old executable folder that is in use stays, even when it is neither current nor previous.
+   string holder=Path.Combine(Path.GetDirectoryName(first.CurrentExe),"holder.exe");File.Copy(Assembly.GetExecutingAssembly().Location,holder);
+   using(var running=Process.Start(new ProcessStartInfo(holder,"--hold"){UseShellExecute=false,CreateNoWindow=true})){
+    try{o.PackageDir=c;Apply(o);Assert(File.Exists(first.CurrentExe)&&File.Exists(second.CurrentExe),"an executable folder in use, or the previous version, was removed");}
+    finally{if(!running.HasExited){running.Kill();running.WaitForExit(5000);}}
+   }
+   for(int attempt=0;;attempt++){try{File.Delete(holder);break;}catch(Exception){if(attempt>=50)throw;Thread.Sleep(100);}}
+   var third=InstallerEngine.State(o.InstallDir);string runtime=Path.Combine(third.DataDir,"runtime.json");
+   try{
+    File.WriteAllText(runtime,NativeIO.Json.Serialize(new {profiles=new Dictionary<string,object>{{"ext",new{kind="external"}}},runtimes=new Dictionary<string,object>{{"ext",new{baseUrl="https://external.invalid",bridgeExecutable=first.CurrentExe}}}}));
+    var referenced=BridgeControl.ReferencedAppDirectories(third);Assert(referenced!=null&&referenced.Contains(Path.GetDirectoryName(first.CurrentExe)),"an executable recorded by runtime.json is not protected");
+    File.WriteAllText(runtime,"{\"profiles\":{},\"runtimes\":{\"managed\":{}}}");Assert(BridgeControl.ReferencedAppDirectories(third)==null,"an unverifiable runtime record did not keep every executable");
+    File.WriteAllText(runtime,"{ broken");Assert(BridgeControl.ReferencedAppDirectories(third)==null,"unreadable runtime data did not keep every executable");
+   }finally{File.Delete(runtime);}
+   o.PackageDir=d;Apply(o);var fourth=InstallerEngine.State(o.InstallDir);
+   Assert(!File.Exists(first.CurrentExe)&&!Directory.Exists(Path.GetDirectoryName(first.CurrentExe))&&!File.Exists(second.CurrentExe),"unused old executables were left behind");
+   Assert(File.Exists(third.CurrentExe)&&File.Exists(fourth.CurrentExe)&&File.Exists(third.SetupExe),"current or previous executable was removed");
+   Assert(!fourth.OwnedFiles.Any(f=>InstallerEngine.Same(NativeIO.SafePath(o.InstallDir,f.Path),first.CurrentExe)),"a removed executable is still recorded as owned");
+   // Reapplying the same version removes nothing under app.
+   Apply(o);Assert(File.Exists(third.CurrentExe),"reapplying the same version removed the previous executable");
   });
   Case("cancel-version-update-restores-old-bridge",o=>{
    var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();o.Port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();o.Start=true;Apply(o);var old=InstallerEngine.State(o.InstallDir);string nextPackage=Path.Combine(root,"changed-version-package");Directory.CreateDirectory(nextPackage);var manifest=InstallerEngine.Read<PackageManifest>(Path.Combine(package,"package-manifest.json"));foreach(var file in manifest.Files){string dest=NativeIO.SafePath(nextPackage,file.Path);Directory.CreateDirectory(Path.GetDirectoryName(dest));File.Copy(NativeIO.SafePath(package,file.Path),dest);}manifest.Version="0.1.5-review-next";string extensionPath=Path.Combine(nextPackage,"extension","manifest.json");var extension=InstallerEngine.Read<Dictionary<string,object>>(extensionPath);extension["version"]=manifest.Version;NativeIO.WriteText(extensionPath,NativeIO.Json.Serialize(extension));manifest.Files.Single(f=>f.Path=="extension/manifest.json").Sha256=NativeIO.FileHash(extensionPath);NativeIO.WriteText(Path.Combine(nextPackage,"package-manifest.json"),NativeIO.Json.Serialize(manifest));o.PackageDir=nextPackage;o.Operation="update";var cancel=new CancellationTokenSource();bool cancelled=false;string error=null;

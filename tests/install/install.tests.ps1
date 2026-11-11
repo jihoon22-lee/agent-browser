@@ -17,7 +17,7 @@ $activeInstalls = New-Object 'System.Collections.Generic.List[string]'
 function Assert($Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Assert-Throws([scriptblock]$Action, [string]$Message) { $caught=$false; try { $null = & $Action } catch { $caught=$true }; Assert $caught $Message }
 function Case([string]$Name, [scriptblock]$Action) { & $Action; $script:passed++; Write-Output ('PASS ' + $Name) }
-function New-TestPackage([string]$Name, [string]$Version) {
+function New-TestPackage([string]$Name, [string]$Version, [string[]]$ExtraFiles=@()) {
     $package = Join-Path $testRoot $Name
     $null = New-Item -ItemType Directory -Path (Join-Path $package 'extension') -Force
     foreach ($name in @('setup.ps1','uninstall.ps1','installer-common.ps1','start-bridge.ps1','start-bridge.cmd','show-pairing.ps1')) { Copy-Item -LiteralPath (Join-Path $Scripts $name) -Destination (Join-Path $package $name) }
@@ -27,6 +27,7 @@ function New-TestPackage([string]$Name, [string]$Version) {
     Write-Utf8Atomic (Join-Path $package 'README-install.md') 'Synthetic installation fixture, not a release package.'
     foreach ($name in @('CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md')) { Write-Utf8Atomic (Join-Path $package $name) 'Synthetic release documentation.' }
     Write-Utf8Atomic (Join-Path $package 'THIRD_PARTY_NOTICES') 'Synthetic installer test only.'
+    foreach ($extra in $ExtraFiles) { Write-Utf8Atomic (Join-Path $package $extra) ('// synthetic asset ' + $Version) }
     $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | ForEach-Object { [pscustomobject]@{ Path=$_.FullName.Substring($package.Length+1).Replace('\','/'); Sha256=(Get-FileSha256 $_.FullName) } })
     Write-Utf8Atomic (Join-Path $package 'package-manifest.json') (ConvertTo-Json @{Product='agent-browser';Platform='windows-x64';Version=$Version;Files=$files} -Depth 10)
     return $package
@@ -77,6 +78,46 @@ try {
         $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $privateInstall -RemoveData -Quiet
         Assert ([IO.Directory]::GetAccessControl($parent).GetSecurityDescriptorSddlForm('Access,Owner,Group') -eq $parentAcl) 'Managed path lifecycle changed parent directory policy'
         if(-not $SkipProcessTests){Assert (-not (Get-Process -Id ([int]$managed.Running.pid) -ErrorAction SilentlyContinue)) 'Managed path uninstall left its Bridge running'}
+    }
+    Case 'update removes unshipped owned files and keeps the current and previous executables' {
+        $pruneA=New-TestPackage 'prune a' '0.5.0' @('extension\assets\index-old.js')
+        $pruneB=New-TestPackage 'prune b' '0.6.0' @('extension\assets\index-new.js')
+        $pruneC=New-TestPackage 'prune c' '0.7.0'
+        $pruneD=New-TestPackage 'prune d' '0.8.0'
+        $pruneInstall=Join-Path $testRoot 'prune install'; $activeInstalls.Add($pruneInstall)
+        $null=& (Join-Path $pruneA 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateA=Read-InstallState $pruneInstall
+        $oldAsset=Join-Path $pruneInstall 'extension\assets\index-old.js'; $userFile=Join-Path $pruneInstall 'extension\assets\user-note.txt'
+        Assert (Test-Path -LiteralPath $oldAsset) 'Fixture asset was not installed'
+        Write-Utf8Atomic $userFile 'mine'
+        # A file the user edited is never deleted: the update is refused and nothing changes.
+        $shipped=Read-Utf8Text $oldAsset; Write-Utf8Atomic $oldAsset 'user edit'
+        Assert-Throws { & (Join-Path $pruneB 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet } 'Update accepted a modified owned file'
+        Assert ((Read-Utf8Text $oldAsset) -eq 'user edit' -and (Read-InstallState $pruneInstall).Version -eq '0.5.0') 'A modified owned file was not preserved'
+        Write-Utf8Atomic $oldAsset $shipped
+        $null=& (Join-Path $pruneB 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateB=Read-InstallState $pruneInstall
+        Assert (-not (Test-Path -LiteralPath $oldAsset)) 'An unshipped owned asset was left behind'
+        Assert (@($stateB.OwnedFiles | Where-Object { $_.Path.Replace('\','/') -eq 'extension/assets/index-old.js' }).Count -eq 0) 'A removed asset is still recorded as owned'
+        Assert ((Test-Path -LiteralPath (Join-Path $pruneInstall 'extension\assets\index-new.js')) -and (Read-Utf8Text $userFile) -eq 'mine') 'Cleanup touched a current or user file'
+        Assert ((Test-Path -LiteralPath $stateA.CurrentExe) -and (Test-Path -LiteralPath $stateB.CurrentExe)) 'The previous executable was not kept'
+        # An executable recorded by runtime.json stays even when it is neither current nor previous.
+        $runtimePath=Join-Path $stateB.DataDir 'runtime.json'
+        Write-Utf8Atomic $runtimePath (ConvertTo-Json @{ version=1; profiles=@{ ext=@{ kind='external' } }; runtimes=@{ ext=@{ baseUrl='https://external.invalid'; bridgeExecutable=$stateA.CurrentExe } } } -Depth 6)
+        $null=& (Join-Path $pruneC 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateC=Read-InstallState $pruneInstall
+        Assert ((Test-Path -LiteralPath $stateA.CurrentExe) -and (Test-Path -LiteralPath $stateB.CurrentExe)) 'A referenced or previous executable was removed'
+        Remove-Item -LiteralPath $runtimePath
+        $null=& (Join-Path $pruneD 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateD=Read-InstallState $pruneInstall
+        Assert (-not (Test-Path -LiteralPath $stateA.CurrentExe) -and -not (Test-Path -LiteralPath $stateB.CurrentExe)) 'Unused old executables were left behind'
+        Assert (-not (Test-Path -LiteralPath ([IO.Path]::GetDirectoryName($stateA.CurrentExe)))) 'An emptied executable folder was left behind'
+        Assert ((Test-Path -LiteralPath $stateC.CurrentExe) -and (Test-Path -LiteralPath $stateD.CurrentExe)) 'The current or previous executable was removed'
+        Assert (@($stateD.OwnedFiles | Where-Object { $_.Path -like 'app/*' }).Count -eq 2) 'Removed executables are still recorded as owned'
+        $null=& (Join-Path $pruneD 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        Assert (Test-Path -LiteralPath $stateC.CurrentExe) 'Reapplying the same version removed the previous executable'
+        $null=& (Join-Path $pruneD 'uninstall.ps1') -InstallDir $pruneInstall -RemoveData -Quiet
+        Assert (Test-Path -LiteralPath $userFile) 'Uninstall removed a user file'
     }
     $install = Join-Path $testRoot '사용자 설치 & 공백'
     # Include a character outside legacy Windows ANSI code pages on every locale.

@@ -404,6 +404,36 @@ function Remove-StaleBridgeMarker($State, $Transaction=$null) {
     if ($Transaction) { Remove-TransactionFile $Transaction $path; return }
     if ((Test-Path -LiteralPath $path -PathType Leaf) -and (Get-FileSha256 $path) -eq $before) { Remove-Item -LiteralPath $path -Force }
 }
+function Get-ReferencedAppDirectories($State) {
+    # Directories under app\ whose executables may still be in use: recorded by
+    # runtime.json or the Bridge marker, or running right now. Returns $null when
+    # that cannot be determined; callers then keep every old executable.
+    $used = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    try {
+        $appRoot = (Get-FullPath (Join-Path $State.InstallDir 'app')) + '\'
+        $runtimePath = Join-Path $State.DataDir 'runtime.json'
+        if (Test-Path -LiteralPath $runtimePath) {
+            Assert-PlainPath $runtimePath
+            $runtime = (Read-Utf8Text $runtimePath) | ConvertFrom-Json
+            if ($null -eq $runtime -or $null -eq $runtime.runtimes) { return $null }
+            foreach ($entry in $runtime.runtimes.PSObject.Properties) {
+                $recordedExe = [string]$entry.Value.bridgeExecutable
+                if ($recordedExe) { $null = $used.Add([IO.Path]::GetDirectoryName((Get-FullPath $recordedExe))); continue }
+                $runtimeProfile = $null
+                if ($null -ne $runtime.profiles) { $runtimeProfile = $runtime.profiles.PSObject.Properties[$entry.Name] }
+                if (-not $runtimeProfile -or $runtimeProfile.Value.kind -ne 'external') { return $null }
+            }
+        }
+        $marker = Get-BridgeProcessMarker $State.DataDir
+        if ($marker -and $marker.Executable) { $null = $used.Add([IO.Path]::GetDirectoryName((Get-FullPath ([string]$marker.Executable)))) }
+        foreach ($process in @(Get-CimInstance Win32_Process -Property ProcessId,ExecutablePath -ErrorAction Stop)) {
+            if (-not $process.ExecutablePath) { continue }
+            $processExe = Get-FullPath $process.ExecutablePath
+            if ($processExe.StartsWith($appRoot, [StringComparison]::OrdinalIgnoreCase)) { $null = $used.Add([IO.Path]::GetDirectoryName($processExe)) }
+        }
+    } catch { return $null }
+    return ,$used
+}
 function Assert-NoManagedRuntimeForScriptUpdate($State) {
     $path=Join-Path $State.DataDir 'runtime.json'
     if(-not (Test-Path -LiteralPath $path)){return}
