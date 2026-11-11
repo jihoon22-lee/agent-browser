@@ -267,8 +267,14 @@ try {
                 $fakeMarker=$savedMarker | ConvertFrom-Json; $fakeMarker.Pid=$unrelated.Id
                 $fakeProcess=Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $unrelated.Id); $fakeMarker.CreatedAt=$fakeProcess.CreationDate.ToUniversalTime().ToString('o')
                 Write-Utf8Atomic $markerPath (ConvertTo-Json $fakeMarker)
-                Assert-Throws { Stop-OwnedBridge $liveState } 'A different process matched a stale PID marker'
+                Assert (-not (Stop-OwnedBridge $liveState)) 'A different process matched a stale PID marker'
+                Assert (-not (Test-Path -LiteralPath $markerPath)) 'A stale PID marker was not cleaned up'
                 $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'Ownership check killed an unrelated process'
+                Assert ($null -ne (Get-Process -Id $firstPid -ErrorAction SilentlyContinue)) 'Stale marker cleanup stopped a process'
+                $foreignMarker=$savedMarker | ConvertFrom-Json; $foreignMarker.InstallId=('0' * 32)
+                Write-Utf8Atomic $markerPath (ConvertTo-Json $foreignMarker)
+                Assert-Throws { Stop-OwnedBridge $liveState } 'A marker of another installation was accepted'
+                Assert (Test-Path -LiteralPath $markerPath) 'A marker of another installation was removed'
             } finally { Write-Utf8Atomic $markerPath $savedMarker; if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
             $occupied=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $occupied.Start()
             try {
@@ -286,6 +292,36 @@ try {
             Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'NoStart update retained the old Bridge process'
             $null=& (Join-Path $package2 'uninstall.ps1') -InstallDir $liveInstall -RemoveData -Quiet
             Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'Owned process survived uninstall'
+        }
+        Case 'stale marker with a reused PID does not block start, update or uninstall' {
+            $staleInstall=Join-Path $testRoot 'stale marker install'; $activeInstalls.Add($staleInstall); $stalePort=Free-Port
+            $null=& (Join-Path $package1 'setup.ps1') -InstallDir $staleInstall -NoStartup -Port $stalePort -NoStart -Quiet
+            $unrelated=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 180') -PassThru -WindowStyle Hidden
+            $writeStale={
+                $staleState=Read-InstallState $staleInstall
+                Write-Utf8Atomic (Join-Path $staleState.DataDir '.installer-bridge-process.json') (ConvertTo-Json ([ordered]@{ Product=$staleState.Product; InstallId=$staleState.InstallId; Pid=[int]$stalePid; Executable=$staleState.CurrentExe; Port=[int]$staleState.Port; CreatedAt=[DateTime]::UtcNow.ToString('o') }))
+            }
+            try {
+                $stalePackages=@($package2,$package1); $staleIndex=0
+                # PID 4 is the System process: Win32_Process reports no ExecutablePath for it.
+                foreach ($stalePid in @([int]$unrelated.Id, 4)) {
+                    & $writeStale
+                    $started=& (Join-Path $staleInstall 'start-bridge.ps1')
+                    Assert ($started.running -and [int]$started.pid -ne $stalePid) 'Start was blocked by a stale PID marker'
+                    Assert (Stop-OwnedBridge (Read-InstallState $staleInstall)) 'Bridge started over a stale marker could not be stopped'
+                    & $writeStale
+                    $updated=& (Join-Path $stalePackages[$staleIndex] 'setup.ps1') -InstallDir $staleInstall -NoStartup -Quiet
+                    $staleIndex++
+                    Assert ($updated.Running.running -and [int]$updated.Running.pid -ne $stalePid) 'Update was blocked by a stale PID marker'
+                    Assert (Stop-OwnedBridge (Read-InstallState $staleInstall)) 'Updated Bridge could not be stopped'
+                    $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'A stale PID marker terminated an unrelated process'
+                }
+                $stalePid=[int]$unrelated.Id
+                & $writeStale
+                $removed=& (Join-Path $package1 'uninstall.ps1') -InstallDir $staleInstall -RemoveData -Quiet
+                Assert $removed.Removed 'Uninstall was blocked by a stale PID marker'
+                $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'Uninstall terminated an unrelated process'
+            } finally { if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
         }
         Case 'occupied port rolls back assets, Startup and user config' {
             $listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $listener.Start(); $blockedPort=$listener.LocalEndpoint.Port

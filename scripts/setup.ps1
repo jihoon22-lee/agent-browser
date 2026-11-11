@@ -134,7 +134,7 @@ try {
     $running = $null
     if($changesRuntime) {
         Assert-NoManagedRuntimeForScriptUpdate $old
-        $stoppedOld=Stop-OwnedBridge $old
+        $stoppedOld=Stop-OwnedBridge $old $transaction
         Assert-NoManagedRuntimeForScriptUpdate $old
     }
     if (-not $NoStart) {

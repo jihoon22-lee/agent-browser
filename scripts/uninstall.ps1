@@ -67,7 +67,7 @@ try {
             throw ('Owned OpenCode runtimes could not all be stopped; installation was retained. ' + $runtimeResult.Stderr)
         }
     }
-    $stopped = Stop-OwnedBridge $state
+    $stopped = Stop-OwnedBridge $state $transaction
     if ($state.Startup -and (Test-Path -LiteralPath $state.Startup.Path)) { Remove-TransactionFile $transaction $state.Startup.Path }
     if ($mcpPlan -and $mcpPlan.Edit.Changed) {
         if ((Get-FileSha256 $mcpPlan.Path) -ne $mcpPlan.OriginalHash) { throw 'OpenCode settings changed during uninstall; no settings were overwritten.' }

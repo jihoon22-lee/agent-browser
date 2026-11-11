@@ -336,10 +336,13 @@ namespace AgentBrowser.Installer {
             if(owned.Length!=1) throw new IOException("Recorded Bridge executable is not owned.");
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
                 foreach(ManagementObject process in query.Get()) {
-                    if(!File.Exists(expected)||!InstallerEngine.Same(NativeIO.FileHash(expected),owned[0].Sha256)){process.Dispose();throw new IOException("Recorded Bridge executable is missing or changed; the live process was retained.");}
-                    DateTime created=ManagementDateTimeConverter.ToDateTime((string)process["CreationDate"]).ToUniversalTime();
+                    // Windows reuses PIDs. A live process with another identity (including a
+                    // protected process whose path cannot be read) is not this Bridge: report
+                    // "not running" so callers clean up the stale marker. Nothing is stopped.
+                    string actualPath=process["ExecutablePath"] as string,commandLine=process["CommandLine"] as string,creation=process["CreationDate"] as string;
                     var expectedCreated=DateTime.Parse((string)marker["CreatedAt"],null,System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime();
-                    if(!InstallerEngine.Same(InstallerEngine.Full((string)process["ExecutablePath"]),expected)||!Regex.IsMatch((string)process["CommandLine"],@"(?:^|\s)serve\s+--port\s+"+Convert.ToInt32(marker["Port"])+@"(?:\s|$)")||created!=expectedCreated) {process.Dispose();throw new IOException("Recorded PID identity changed. No process was stopped.");}
+                    if(String.IsNullOrEmpty(actualPath)||String.IsNullOrEmpty(commandLine)||String.IsNullOrEmpty(creation)||!InstallerEngine.Same(InstallerEngine.Full(actualPath),expected)||!Regex.IsMatch(commandLine,@"(?:^|\s)serve\s+--port\s+"+Convert.ToInt32(marker["Port"])+@"(?:\s|$)")||ManagementDateTimeConverter.ToDateTime(creation).ToUniversalTime()!=expectedCreated) {process.Dispose();return null;}
+                    if(!File.Exists(expected)||!InstallerEngine.Same(NativeIO.FileHash(expected),owned[0].Sha256)){process.Dispose();throw new IOException("Recorded Bridge executable is missing or changed; the live process was retained.");}
                     return process;
                 }
             }return null;
@@ -368,7 +371,8 @@ namespace AgentBrowser.Installer {
             startup.RequireChild(pid);
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
                 foreach(ManagementObject process in query.Get()) using(process) {
-                    if(!InstallerEngine.Same(InstallerEngine.Full((string)process["ExecutablePath"]),state.CurrentExe)||!Regex.IsMatch((string)process["CommandLine"],@"(?:^|\s)serve\s+--port\s+"+state.Port+@"(?:\s|$)")) throw new IOException("Bridge process identity could not be verified.");
+                    string startedPath=process["ExecutablePath"] as string,startedCommand=process["CommandLine"] as string;
+                    if(String.IsNullOrEmpty(startedPath)||String.IsNullOrEmpty(startedCommand)||!InstallerEngine.Same(InstallerEngine.Full(startedPath),state.CurrentExe)||!Regex.IsMatch(startedCommand,@"(?:^|\s)serve\s+--port\s+"+state.Port+@"(?:\s|$)")) throw new IOException("Bridge process identity could not be verified.");
                     var marker=new Dictionary<string,object>{{"Product",InstallerEngine.Product},{"InstallId",state.InstallId},{"Pid",pid},{"Executable",state.CurrentExe},{"Port",state.Port},{"CreatedAt",ManagementDateTimeConverter.ToDateTime((string)process["CreationDate"]).ToUniversalTime().ToString("o")}};
                     NativeIO.WriteText(Path.Combine(state.DataDir,".installer-bridge-process.json"),NativeIO.Json.Serialize(marker));
                     startup.Commit();
