@@ -117,7 +117,7 @@ export function App() {
   const select = async () => {
     if (!clientId || selecting) return;
     setSelecting(true); dispatch({ kind: "clear-error" });
-    try { await request("browser.use", { clientId }); if (mounted.current) await refresh.current(); }
+    try { const used = await request("browser.use", { clientId }) as { persisted?: boolean } | undefined; if (mounted.current) { await refresh.current(); if (used?.persisted === false) dispatch({ kind: "request-failed", message: "브라우저를 선택했지만 저장하지 못했습니다. Bridge를 다시 시작하면 선택이 풀립니다." }); } }
     catch (error) { if (mounted.current) dispatch({ kind: "request-failed", message: errorText(error) }); }
     finally { if (mounted.current) setSelecting(false); }
   };
