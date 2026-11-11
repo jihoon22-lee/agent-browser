@@ -103,6 +103,21 @@ function verificationValue(value: string) {
   return { value: clipText(value, 512), ...(value.length > 512 ? { valueTruncated: true } : {}) };
 }
 
+const EDITOR_BLOCK = "p,div,li,h1,h2,h3,h4,h5,h6,pre,blockquote,tr";
+/** An editor's text with its line structure: innerText in a browser, a block walk without layout. */
+function editorText(host: HTMLElement): string {
+  if (typeof host.innerText === "string") return host.innerText;
+  let text = "";
+  const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeType === Node.TEXT_NODE) text += node.nodeValue ?? "";
+    else if ((node as Element).tagName === "BR" || ((node as Element).matches(EDITOR_BLOCK) && text && !text.endsWith("\n"))) text += "\n";
+  }
+  return text;
+}
+/** Lines as a person reads them: editors add blank lines between paragraphs and use no-break spaces. */
+const shownLines = (value: string) => value.replace(/\r\n?/g, "\n").split("\n").map(line => line.replace(/\u00a0/g, " ").trimEnd()).filter(Boolean).join("\n");
+
 function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
@@ -339,8 +354,10 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
           host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         }
         await afterInput(String(p.ref),signal);
-        const value = host.textContent ?? "";
-        return { executed: true, verified: { ...verificationValue(value), matches: value === text, method: inserted ? "insertText" : "replace", trusted:usedTrusted,...trustedResult } };
+        // An editor renders each line as its own block, which textContent runs together.
+        const multiline = /[\r\n]/.test(text);
+        const value = multiline ? editorText(host) : host.textContent ?? "";
+        return { executed: true, verified: { ...verificationValue(value), matches: value === text || host.textContent === text || (multiline && shownLines(value) === shownLines(text)), method: inserted ? "insertText" : "replace", trusted:usedTrusted,...trustedResult } };
       }
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_fill only works on text inputs, textareas and editable areas.");
     }

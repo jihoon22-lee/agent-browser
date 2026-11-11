@@ -26,12 +26,15 @@ export function pageText(doc: Document): string {
   const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
   const base = plain(body), parts = [base];
   function shadows(root: Document | ShadowRoot, ancestorText: string) {
+    // Normalized once per root, and only if it holds a shadow host: not once per chunk per host.
+    let padded: string | undefined;
+    const ancestors = () => padded ??= ` ${normalize(ancestorText)} `;
     for (const host of root.querySelectorAll("*")) {
       if (!host.shadowRoot || !isRendered(host, { checkLayout: false })) continue;
       const chunks = [...host.shadowRoot.childNodes].map(plain).filter((text) => normalize(text));
       // Some renderers include shadow text in an ancestor's innerText. Compare
       // only against ancestors, so identical independent shadow roots stay distinct.
-      for (const chunk of chunks) if (!` ${normalize(ancestorText)} `.includes(` ${normalize(chunk)} `)) parts.push(chunk);
+      for (const chunk of chunks) if (!ancestors().includes(` ${normalize(chunk)} `)) parts.push(chunk);
       shadows(host.shadowRoot, `${ancestorText}\n${chunks.join("\n")}`);
     }
   }
@@ -154,8 +157,11 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   };
   let budgetFull = false;
   let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
+  // A PDF or image tab is a viewer around content the DOM does not hold.
+  if (document.contentType && !/^text\/|html|xml/i.test(document.contentType)) limits.add("document-content-not-readable");
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
+    if ((el.tagName === "EMBED" || el.tagName === "OBJECT") && /pdf/i.test(el.getAttribute("type") ?? "")) limits.add("embedded-content-not-readable");
     const interactive = isInteractive(el);
     const pointer = !interactive && el.tagName !== "TABLE" && isPointerTarget(el);
     if ((!interactive && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;

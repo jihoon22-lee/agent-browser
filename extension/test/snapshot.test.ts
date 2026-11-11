@@ -95,3 +95,17 @@ it('rejects a recycled button with changed accessible identity', () => {
   document.querySelector('button')!.setAttribute('aria-label', 'Read post 2');
   expect(() => resolveRef(s.elements[0]!.ref)).toThrowError(expect.objectContaining({ code: 'STALE_ELEMENT' }));
 });
+
+it('flags a document the DOM cannot read, such as a PDF viewer', () => {
+  const type = vi.spyOn(document, 'contentType', 'get');
+  try {
+    type.mockReturnValue('application/pdf');
+    document.body.innerHTML = '<embed type="application/pdf" src="about:blank">';
+    expect(takeSnapshot({ snapshotId: 1, frameId: 0, maxChars: 1000, offset: 0, checkLayout: false }).limits).toContain('document-content-not-readable');
+    type.mockReturnValue('text/html');
+    expect(takeSnapshot({ snapshotId: 2, frameId: 0, maxChars: 1000, offset: 0, checkLayout: false }).limits).toEqual(['embedded-content-not-readable']);
+    document.body.innerHTML = '<p>plain</p>';
+    for (const readable of ['text/html', 'application/xhtml+xml', 'text/plain', 'image/svg+xml'])
+      { type.mockReturnValue(readable); expect(takeSnapshot({ snapshotId: 3, frameId: 0, maxChars: 1000, offset: 0, checkLayout: false }).limits).toEqual([]); }
+  } finally { type.mockRestore(); }
+});

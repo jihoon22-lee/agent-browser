@@ -523,3 +523,24 @@ it('a cancelled mousedown keeps focus where it was', async () => {
   await runAction('click', { ref: refOf('Bold'), generation: 10 });
   expect(document.activeElement).toBe(editor);
 });
+
+it('confirms multi-line text in a rich editor that renders each line as its own block', async () => {
+  document.body.innerHTML = '<div contenteditable="true" aria-label="Note">old</div>';
+  const editor = document.querySelector<HTMLElement>('div')!;
+  Object.defineProperty(editor, 'isContentEditable', { get: () => true });
+  (document as any).execCommand = (_command: string, _ui: boolean, value: string) => { editor.innerHTML = ''; for (const line of value.split('\n')) { const p = document.createElement('p'); p.textContent = line; editor.append(p); } return true; };
+  try {
+    const result: any = await runAction('fill', { ref: refOf('Note'), text: 'first line\nsecond line', generation: 10 });
+    expect(result.verified).toMatchObject({ matches: true, method: 'insertText', value: 'first line\nsecond line' });
+  } finally { delete (document as any).execCommand; }
+});
+it('a rich editor that drops part of multi-line text is reported as not matching', async () => {
+  document.body.innerHTML = '<div contenteditable="true" aria-label="Note">old</div>';
+  const editor = document.querySelector<HTMLElement>('div')!;
+  Object.defineProperty(editor, 'isContentEditable', { get: () => true });
+  (document as any).execCommand = (_command: string, _ui: boolean, value: string) => { editor.textContent = value.split('\n')[0]!; return true; };
+  try {
+    const result: any = await runAction('fill', { ref: refOf('Note'), text: 'first line\nsecond line', generation: 10 });
+    expect(result.verified).toMatchObject({ matches: false });
+  } finally { delete (document as any).execCommand; }
+});
