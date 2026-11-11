@@ -40,7 +40,14 @@ const INIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn read_config(path: &Path) -> anyhow::Result<Option<Config>> {
     match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).map(Some).with_context(|| format!("invalid config at {}", path.display())),
+        Ok(text) => {
+            let cfg: Config = serde_json::from_str(&text).with_context(|| format!("invalid config at {}", path.display()))?;
+            // A newer layout must not be half-read and written back, and an empty token would
+            // make the pairing proof computable by anyone.
+            anyhow::ensure!(cfg.version == 1, "unsupported config version {} at {}; its contents were preserved", cfg.version, path.display());
+            anyhow::ensure!(!cfg.token.trim().is_empty(), "config at {} has no pairing token; its contents were preserved", path.display());
+            Ok(Some(cfg))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
     }
@@ -249,6 +256,17 @@ mod tests {
         load_or_init(dir.path()).unwrap();
         let mode = std::fs::metadata(dir.path().join("config.json")).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn another_version_or_an_empty_token_is_refused_and_left_untouched() {
+        for text in [r#"{"version":2,"token":"0123456789abcdef","port":4317}"#, r#"{"version":1,"token":"","port":4317}"#, r#"{"version":1,"token":"  ","port":4317}"#] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("config.json"), text).unwrap();
+            let error = load_or_init(dir.path()).unwrap_err().to_string();
+            assert!(error.contains("unsupported config version") || error.contains("no pairing token"), "{error}");
+            assert_eq!(std::fs::read_to_string(dir.path().join("config.json")).unwrap(), text);
+        }
     }
 
     #[test]

@@ -14,7 +14,8 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const START_WAIT: Duration = Duration::from_secs(10);
 const RETRY_EVERY: Duration = Duration::from_millis(200);
 const START_COOLDOWN: Duration = Duration::from_secs(30);
-/// Longest tool timeout serve applies (navigate, 30s) plus headroom for its own bookkeeping.
+/// Must exceed the longest reply serve can take: its navigate/new-tab wait plus the snapshot and
+/// tab-list reads attached to the result (35s + 2 × 8s today; asserted in `server::router` tests).
 pub(crate) const REPLY_WAIT: Duration = Duration::from_secs(60);
 
 /// Returns true when an agent-browser serve answers on `port`.

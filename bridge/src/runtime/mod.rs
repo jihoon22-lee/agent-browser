@@ -13,7 +13,7 @@ use process::Identity;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
-use storage::{failure, Store};
+use storage::{failure, os_failure, Store};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,14 +107,14 @@ impl Manager {
     }
     fn try_operation_lock(&self, id: &str) -> Result<Option<storage::FileLock>,RpcError> {
         if id.is_empty() || id.len() > 64 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)) { return Err(invalid("Invalid profile id")); }
-        let directory = self.home.join("runtime"); std::fs::create_dir_all(&directory).map_err(|_| failure("Cannot create runtime directory"))?;
+        let directory = self.home.join("runtime"); std::fs::create_dir_all(&directory).map_err(os_failure("Cannot create runtime directory"))?;
         let mut options = std::fs::OpenOptions::new(); options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-        let file = options.open(directory.join(format!("{id}.lock"))).map_err(|_| failure("Cannot open profile operation lock"))?;
+        let file = options.open(directory.join(format!("{id}.lock"))).map_err(os_failure("Cannot open profile operation lock"))?;
         match file.try_lock() {
             Ok(()) => Ok(Some(storage::FileLock(file))),
             Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(_) => Err(failure("Cannot lock profile operation")),
+            Err(std::fs::TryLockError::Error(error)) => Err(os_failure("Cannot lock profile operation")(error)),
         }
     }
     pub async fn delete(&self, id: &str) -> Result<Value, RpcError> {
@@ -158,6 +158,7 @@ impl Manager {
             }
             if profile.kind == Kind::Wsl && self.terminate_wsl(profile,&record).await.is_none() { return Err(failure("Cannot safely stop the previous WSL interop keeper; retry Stop")); }
             self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
+            self.remove_wsl_markers(&record);
         }
         let reservation = self.reserve_port(&profile.id,profile.port)?;
         let port = reservation.port;
@@ -175,7 +176,7 @@ impl Manager {
             self.launch_wsl(profile,port,instance,password,env,command).await?
         } else {
             let (program, args) = native_command(executable, serve_args);
-            let launcher = process::spawn(&program, &args, Some(&profile.directory), &env).map_err(|_| failure("Cannot launch OpenCode; check the executable, working directory, and environment"))?;
+            let launcher = process::spawn(&program, &args, Some(&profile.directory), &env).map_err(os_failure("Cannot launch OpenCode; check the executable, working directory, and environment"))?;
             RuntimeRecord {profile_id:profile.id.clone(),instance,base_url:format!("http://127.0.0.1:{port}"),username:"opencode".into(),password,launcher,server:None,wsl_owner_file:None,version:None,bridge_port:Some(self.port),bridge_executable:std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),wsl_keeper:None}
         };
         if profile.kind != Kind::Wsl {
@@ -316,6 +317,7 @@ impl Manager {
         if profile.kind == Kind::Wsl {
             if let Some(stopped) = self.terminate_wsl(profile, &record).await {
                 self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
+                self.remove_wsl_markers(&record);
                 return Ok(json!({"stopped": stopped}));
             }
             let code=wsl_control_status(profile,&record,"state").await;
@@ -424,7 +426,10 @@ impl Manager {
         let confirmed = if profile.kind == Kind::Wsl { matches!(state,WslState::NotStarted | WslState::Stopped) && self.terminate_wsl(profile,record).await.is_some() } else { ended(record) };
         if !confirmed { return; }
         let removed = self.store.update(|config| { if config.runtimes.get(&profile.id).is_some_and(|stored| stored.instance == record.instance) { config.runtimes.remove(&profile.id); } Ok(()) });
-        if let Err(error) = removed { tracing::warn!(profile_id = %profile.id, error = %error.message, "cannot remove the record of an ended runtime"); }
+        match removed {
+            Ok(()) => self.remove_wsl_markers(record),
+            Err(error) => tracing::warn!(profile_id = %profile.id, error = %error.message, "cannot remove the record of an ended runtime"),
+        }
     }
     /// Extension-only connection discovery. Never launches a stopped runtime;
     /// ordinary status and doctor continue to omit credentials.
@@ -595,14 +600,25 @@ async fn installation_check(profile: &Profile) -> Value {
     }
     command.envs(env).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] { command.creation_flags(0x08000000); }
-    let version = match tokio::time::timeout(Duration::from_secs(8),command.output()).await {
-        Ok(Ok(output)) if output.status.success() => String::from_utf8(output.stdout).ok().map(|value| value.trim().to_string()).filter(|value| value.len() < 40 && value.starts_with("1.") && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))),
+    let version = match tokio::time::timeout(Duration::from_secs(8),limited_stdout(command,4096)).await {
+        Ok(Some(output)) => Some(output.trim().to_string()).filter(|value| value.len() < 40 && value.starts_with("1.") && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))),
         _ => None,
     };
     match version {
         Some(version) => json!({"id":"executable","profileId":profile.id,"status":"ok","version":version,"message":"Configured OpenCode v1 executable and working directory are available"}),
         None => json!({"id":"executable","profileId":profile.id,"status":"error","message":"Cannot verify OpenCode v1; check the executable, working directory, WSL distribution/user, and interop availability"}),
     }
+}
+/// Standard output of a successful run, refused beyond `limit` bytes: a version probe prints
+/// one short line, and whatever else the configured file writes is never buffered. The
+/// command must be kill-on-drop, which also ends it when the caller's deadline passes.
+async fn limited_stdout(mut command: tokio::process::Command, limit: u64) -> Option<String> {
+    use tokio::io::AsyncReadExt;
+    let mut child = command.spawn().ok()?;
+    let mut bytes = Vec::new();
+    child.stdout.take()?.take(limit + 1).read_to_end(&mut bytes).await.ok()?;
+    if bytes.len() as u64 > limit { return None; }
+    child.wait().await.ok()?.success().then(|| String::from_utf8(bytes).ok())?
 }
 const WSL_LAUNCH: &str = r#"set -eu
 directory=$1; owner=$2; instance=$3; shift 3
@@ -710,7 +726,6 @@ validate_owner() {
   tr '\000' '\n' </proc/$pid/environ | grep -Fqx "AGENT_BROWSER_RUNTIME_ID=$2" || return 12
 }
 if validate_owner "$1" "$2"; then code=0; else code=$?; fi
-if [ "$3" = dead ]; then [ "$code" = 11 ]; exit $?; fi
 if [ "$code" != 0 ]; then
   case $3 in state|inspect) exit "$code";; *) exit 12;; esac
 fi
@@ -720,8 +735,8 @@ if [ "$3" = inspect ] && [ -n "${5:-}" ]; then
     [ "$nonce" = "$2" ] && [ "$socket" = "${6:-}" ] && [ -S "$socket" ]
   ) || exit 25
 fi
-if [ "$3" = listener ] || [ "$3" = inspect ]; then
-  missing=1; [ "$3" != inspect ] || missing=20
+if [ "$3" = inspect ]; then
+  missing=20
   inode=$(awk -v addr="0100007F:$4" '$2 == addr && $4 == "0A" {print $10; exit}' /proc/net/tcp)
   [ -n "$inode" ] || exit "$missing"
   for fd in /proc/$pid/fd/*; do
@@ -1164,6 +1179,17 @@ mod wsl_start_tests {
         assert_eq!(control(&owner,"fixture","state"),Some(0));
         assert_eq!(control(&owner,"fixture","stop"),Some(0)); child.wait().unwrap();
         assert_eq!(control(&owner,"fixture","state"),Some(11));
+    }
+    #[tokio::test]
+    async fn version_probe_refuses_unbounded_output_without_waiting_for_the_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap(); let executable = home.path().join("noisy.sh");
+        std::fs::write(&executable, "#!/bin/sh\nhead -c 3000000 /dev/zero | tr '\\000' 1\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"fixture","kind":"windows","directory":home.path(),"executable":executable})).unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(installation_check(&profile).await["status"],"error");
+        assert!(started.elapsed() < Duration::from_secs(4),"the probe must stop at its output limit: {:?}",started.elapsed());
     }
     #[tokio::test]
     async fn d01_doctor_uses_profile_env_and_directory() {
