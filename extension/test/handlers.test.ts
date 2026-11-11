@@ -916,3 +916,31 @@ describe('browser.tabs.create load timeout', () => {
     expect(await pending).toMatchObject({ code: 'EXECUTION_UNKNOWN' });
   });
 });
+
+it('reports a child-frame click that replaced the top document as navigation without waitFor', async () => {
+  const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://example.test/child' });
+  const base = w.api.sendToFrame; let clicks = 0;
+  w.api.sendToFrame = async (tab, frame, msg: any) => {
+    if (msg.method === 'click') {
+      clicks++;
+      // A target=_top link: the whole page, and with it the frame, is replaced before the reply.
+      w.frames.set(1, [{ frameId: 0, documentId: 'landing', url: 'https://example.test/landing' }]); w.tabs.get(1)!.url = 'https://example.test/landing';
+      throw Error('The message port closed before a response was received.');
+    }
+    return base(tab, frame, msg);
+  };
+  const h = createHandlers(w.api, memorySessionStore()), snapshot: any = await h(request('browser.snapshot'));
+  const result: any = await h(request('browser.click', { ref: snapshot.frames[1].elements[0].ref }));
+  expect(result).toMatchObject({ executed: true, verified: { navigated: true, urlChanged: true } });
+  expect(clicks).toBe(1);
+});
+it('a child frame that only disappeared is still an unknown outcome', async () => {
+  const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://example.test/child' });
+  const base = w.api.sendToFrame;
+  w.api.sendToFrame = async (tab, frame, msg: any) => {
+    if (msg.method === 'click') { w.frames.set(1, [w.frames.get(1)![0]!]); throw Error('The message port closed before a response was received.'); }
+    return base(tab, frame, msg);
+  };
+  const h = createHandlers(w.api, memorySessionStore()), snapshot: any = await h(request('browser.snapshot'));
+  await expect(h(request('browser.click', { ref: snapshot.frames[1].elements[0].ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe' });
+}, 10_000);

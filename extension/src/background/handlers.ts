@@ -90,7 +90,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         };
         const inputBefore = tracksTabs ? await inputState() : null;
         const startUrl = tracksTabs ? (await api.tabsGet(tabId).catch(() => undefined))?.url : undefined;
-        if(tracksTabs && frame.frameId!==0 && run.req.params.waitFor)
+        if(tracksTabs && frame.frameId!==0)
             run.sourceTopDocument=(await interruptible(frames.list(tabId),run.controller.signal)).find(f=>f.frameId===0)?.documentId;
         // Off by default: only an enabled, attached debugger turns the content command into trusted input.
         if ((tracksTabs || (advanced?.enabled() && WRITE.has(run.req.method))) && (frame.frameId === 0 || advanced?.enabled()) && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true, ...(advanced?.enabled()?{trustedFrames:true}:{}) };
