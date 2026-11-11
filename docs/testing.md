@@ -247,6 +247,8 @@ node --experimental-transform-types .\tests\integration\opencode-v1-stream.mjs `
 [CI workflow](../.github/workflows/ci.yml)는 main 대상 PR과 main push에서 Linux/Windows를 따로 실행한다.
 Linux는 전체 Rust·Extension·합성 Node·Chromium E2E, 문서 링크와 workflow 구문을 검사한다.
 Windows는 네이티브 MSVC 빌드·실행, 설치된 Chrome의 합성 E2E, PowerShell 5.1 설치·정리·패키징을 검사한다.
+Rust 툴체인 버전·컴포넌트·타깃은 `rust-toolchain.toml` 한 곳에서 읽는다(workflow에 버전을 다시 적지 않는다).
+Windows의 `cargo test`는 Unix 전용 정리 명령을 쓰는 `mcp_stdio`를 뺀 모든 통합 테스트를 실행한다. 통합 테스트 파일을 추가하면 workflow의 `--test` 목록에도 추가한다.
 호스팅 runner에 WSL이나 실제 OpenCode를 설치해 모델을 호출하지 않는다. 그 항목은 앞의 별도 실제 환경 검증과 구분한다.
 
 Actions는 커밋 SHA, 도구는 명시한 버전, 의존성은 lockfile로 고정한다. Chrome 버전은 runner 제공값을 매 실행 기록한다.
