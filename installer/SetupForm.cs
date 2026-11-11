@@ -344,11 +344,14 @@ namespace AgentBrowser.Installer {
         void ShowAdvanced(){
             // This panel has already scaled with the main form. Do not scale it again
             // when it moves into a dialog, or text and fields overlap at large fonts.
-            int margin=(int)Math.Ceiling(20*Font.Size/10F),buttonHeight=(int)Math.Ceiling(32*Font.Size/10F);
+            // Font.Size is in points and ignores the display DPI; lay out from the real pixel height
+            // of the font (17 px at the 10 pt, 96 DPI design size) and the measured button text.
+            float scale=Font.Height/17F;var closeText=TextRenderer.MeasureText("확인",Font);
+            int margin=(int)Math.Ceiling(20*scale),buttonHeight=Math.Max((int)Math.Ceiling(32*scale),closeText.Height+12),buttonWidth=Math.Max(5*margin,closeText.Width+32);
             using(var dialog=new Form{Text="AgentBrowser 고급 설정",Font=Font,AutoScaleMode=AutoScaleMode.None,AutoScroll=true,BackColor=Color.White,FormBorderStyle=FormBorderStyle.Sizable,MaximizeBox=true,MinimizeBox=false,StartPosition=FormStartPosition.CenterParent}){
                 advanced.Parent=dialog;advanced.Location=new Point(margin,margin);advanced.Visible=true;
                 dialog.ClientSize=new Size(advanced.Width+2*margin,advanced.Height+3*margin+buttonHeight);
-                var close=new Button{Text="확인"};Position(dialog,close,"CloseAdvanced",Math.Max(margin,advanced.Right-5*margin),advanced.Bottom+margin,5*margin,buttonHeight);StyleButton(close,true);close.Click+=delegate{dialog.Close();};dialog.AcceptButton=close;
+                var close=new Button{Text="확인"};Position(dialog,close,"CloseAdvanced",Math.Max(margin,advanced.Right-buttonWidth),advanced.Bottom+margin,buttonWidth,buttonHeight);StyleButton(close,true);close.Click+=delegate{dialog.Close();};dialog.AcceptButton=close;
                 dialog.Shown+=delegate{var area=Screen.FromControl(dialog).WorkingArea;if(dialog.Height>area.Height||dialog.Width>area.Width){dialog.Size=new Size(Math.Min(dialog.Width,area.Width),Math.Min(dialog.Height,area.Height));dialog.Location=area.Location;}};
                 try{dialog.ShowDialog(this);}finally{advanced.Visible=false;advanced.Parent=input;}
             }

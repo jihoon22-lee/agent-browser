@@ -17,6 +17,14 @@ namespace AgentBrowser.Installer {
                 Check(control);
             }
         }
+        // A button sized from the point size alone clips its caption on a scaled display.
+        static void CheckButton(Control parent, string name) {
+            var found = parent.Controls.Find(name, true);
+            if (found.Length != 1) throw new Exception("Button missing: " + name);
+            var needed = TextRenderer.MeasureText(found[0].Text, found[0].Font);
+            if (found[0].Height < needed.Height || found[0].Width < needed.Width)
+                throw new Exception("Clipped button: " + name + " required=" + needed + " actual=" + found[0].Size);
+        }
         [STAThread] public static int Main(string[] args) {
             Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
             Directory.CreateDirectory(args[0]);
@@ -40,7 +48,7 @@ namespace AgentBrowser.Installer {
                                 foreach(Form dialog in Application.OpenForms) {
                                     if(dialog==form)continue;
                                     timer.Stop();
-                                    try {Check(dialog);using(var bitmap=new Bitmap(dialog.Width,dialog.Height)){dialog.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));bitmap.Save(Path.Combine(args[0],"font-"+size+"-advanced.png"));}}
+                                    try {Check(dialog);CheckButton(dialog,"CloseAdvanced");using(var bitmap=new Bitmap(dialog.Width,dialog.Height)){dialog.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));bitmap.Save(Path.Combine(args[0],"font-"+size+"-advanced.png"));}}
                                     catch(Exception error){dialogError=error;}
                                     dialog.Close();break;
                                 }
