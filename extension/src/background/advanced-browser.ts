@@ -16,7 +16,7 @@ export function validateCapture(c:CaptureGeometry,now:Pick<CaptureGeometry,'oper
  if(at-c.created>30000)throw stale();
 }
 export const advancedMethod=(method:string,p:Record<string,unknown>,enabled:boolean)=>['browser.pointer','browser.dialog','browser.downloads'].includes(method)||(method==='browser.screenshot'&&(enabled||(p.scope!==undefined&&p.scope!=='viewport')||p.region!==undefined));
-type Dialog={dialogId:string;type:string;message:string;requestId?:string;operationId:string;generation:number;tabId:number;owned:boolean;state:"open"|"responding"|"uncertain"};
+type Dialog={dialogId:string;type:string;message:string;requestId?:string;operationId:string;generation:number;tabId:number;owned:boolean;state:"open"|"responding"|"uncertain";detached?:boolean};
 type StoredCapture={geometry:CaptureGeometry;bitmap:ImageBitmap};
 export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedInput,enabled:()=>boolean,ensure:(tabId:number)=>Promise<boolean>,vision:(requestId:unknown,args:Record<string,unknown>)=>Promise<boolean>,current:()=>{id?:string;generation?:number;tabs?:number[]}|null=()=>null,inputStatus?:(tabId:number)=>Promise<{required:boolean;pending?:boolean}>) {
  const works=new Map<string,{tabId:number;method:string;promise:Promise<any>}>();
@@ -35,7 +35,28 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
      dialog.state='responding';void debug.send(tabId,'Page.handleJavaScriptDialog',{accept:true}).catch(()=>{if(pending.get(tabId)===dialog){dialog.state='uncertain';observer.notify(dialog);}});
    }else observer?.notify(dialog);
  });
- debug.onDetach(tabId=>{const d=pending.get(tabId);if(d){d.state='uncertain';d.owned=false;}forget();});
+ const orphan=(d:Dialog)=>{d.state='uncertain';d.owned=false;d.detached=true;};
+ debug.onDetach(tabId=>{const d=pending.get(tabId);if(d)orphan(d);forget();});
+ /** Without the debugger no closed event arrives, so a detached dialog would block the tab for good.
+  * A page with a modal dialog open cannot run script: one that answers again has none.
+  * True when no dialog blocks the tab (any more); false while one may still be open. */
+ async function recover(tabId:number):Promise<boolean> {
+   const d=pending.get(tabId);if(!d)return true;
+   // The extension's own detach (pause, settings) raises no onDetach event.
+   if(!d.detached&&!trusted.isAttached(tabId))orphan(d);
+   if(!d.detached)return false;
+   const closed=()=>{if(pending.get(tabId)===d)pending.delete(tabId);return true;};
+   if(!await api.tabsGet(tabId).then(tab=>!!tab?.id,()=>false))return closed();
+   const top=(await api.listFrames(tabId).catch(()=>[])).find(f=>f.frameId===0);
+   if(!top)return false;
+   let timer:ReturnType<typeof setTimeout>;
+   const answered=await Promise.race([
+     api.inject(tabId,top).then(()=>api.sendToFrame(tabId,top,{kind:'input-state'})).then(()=>true,()=>false),
+     new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),1500);}),
+   ]);
+   clearTimeout(timer!);
+   return answered?closed():false;
+ }
  async function geometry(req:Req) {
    const tabId=Number(req.params.tabId),top=(await api.listFrames(tabId)).find(f=>f.frameId===0);
    if(!top)throw stale();
@@ -127,9 +148,12 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
    } finally {capture.bitmap.close();const top=(await api.listFrames(tabId).catch(()=>[])).find(f=>f.documentId===capture.geometry.documentId);if(top)void api.sendToFrame(tabId,top,{kind:'visual-target',action:'drop',key:req.id}).catch(()=>{});}
  }
  async function dialog(req:Req,signal:AbortSignal,started:()=>void) {
-   gate();const tabId=Number(req.params.tabId),d=pending.get(tabId);
+   gate();const tabId=Number(req.params.tabId);
+   await recover(tabId);aborted(signal);
+   const d=pending.get(tabId);
    if(req.params.action==='list')return {dialogs:d&&d.operationId===req.params.operationId?[d]:[]};
    if(!d||d.dialogId!==req.params.dialogId||d.operationId!==req.params.operationId||d.generation!==req.params.generation)throw new ProtocolError('STALE_ELEMENT','The dialog has already closed or belongs to another request.');
+   if(d.detached)throw new ProtocolError('FORBIDDEN_METHOD','The debugger detached while this dialog was open, so it cannot be answered here. Respond in Chrome, then take a snapshot.');
    if(!d.owned||d.type==='beforeunload')throw new ProtocolError('FORBIDDEN_METHOD','This dialog belongs to the user. Handle it in Chrome.');
    if(d.state!=='open')throw new ProtocolError('BROWSER_BUSY','A reply is already in progress or uncertain. Inspect the dialog in Chrome.');
    if(typeof req.params.accept!=='boolean'||(req.params.text!==undefined&&(typeof req.params.text!=='string'||req.params.text.length>4000)))throw new ProtocolError('INVALID_PARAMS','Invalid dialog answer.');
@@ -164,6 +188,7 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
  return {
    enabled:()=>enabled()&&advancedAvailable(),clear:forget,
    pending:(tabId:number)=>pending.get(tabId),
+   recover,
    race,
    inflight:(id:string)=>works.get(id)?.promise,
    busy:(tabId:number)=>[...works.values()].some(w=>w.tabId===tabId),

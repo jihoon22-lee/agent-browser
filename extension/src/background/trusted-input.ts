@@ -100,6 +100,8 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
   api.onDetach((tabId, reason) => {
     const held=heldInputs.get(tabId);if(held)void markUnresolved(held);
     attached.delete(tabId);sessions.delete(tabId);
+    // No closed event follows a detach: a remembered dialog would outlive the session.
+    openDialogs.delete(tabId);dialogs.delete(tabId);
     if (reason === "canceled_by_user") cancelled = { operationId, reason };
   });
   api.onEvent((tabId, method, params) => {

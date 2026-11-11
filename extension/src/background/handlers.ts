@@ -218,7 +218,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const tabId = tab.id!;
         if(WRITE.has(req.method)&&req.method!=='browser.dialog'){if(goto)await recovery?.assertWritable(tabId,true);else await recovery?.assertWritable(tabId);if(trusted?.stopping?.(tabId))throw new ProtocolError('BROWSER_BUSY','The previous debugger session is still stopping. Inspect the page manually.');}
         if(WRITE.has(req.method)&&req.method!=='browser.dialog'&&advanced?.busy(tabId))throw new ProtocolError('BROWSER_BUSY','The previous input is still settling. Observe before another action.','safe');
-        if(advanced?.pending(tabId)&&req.method!=='browser.dialog')throw new ProtocolError('BROWSER_BUSY','A browser dialog is open. Use browser_dialog or respond in Chrome first.');
+        if(advanced?.pending(tabId)&&req.method!=='browser.dialog'){
+            // A dialog whose debugger detached sends no closed event. Reading the page is the way
+            // back: a write is never let through on the strength of this probe alone.
+            const recovered=!WRITE.has(req.method)&&await interruptible(advanced.recover(tabId),signal);
+            if(!recovered)throw advanced.pending(tabId)?.detached
+                ? new ProtocolError('BROWSER_BUSY','A browser dialog was open when the debugger detached. Respond in Chrome if it is still open, then take a snapshot before another action.','safe')
+                : new ProtocolError('BROWSER_BUSY','A browser dialog is open. Use browser_dialog or respond in Chrome first.');
+        }
         const advancedCapture=advanced?.enabled()&&req.method==='browser.screenshot'&&await trusted?.ensure(tabId).catch(()=>false);
         if(advancedMethod(req.method,p,!!advancedCapture)) {
           if(!advanced?.enabled())throw new ProtocolError('FORBIDDEN_METHOD','Advanced browser features require Chrome 125+ and Settings activation.');
