@@ -28,7 +28,8 @@ JSON 메시지 규약이다. 계약의 원장은 `protocol/` 디렉터리이며 
 | `/extension` | Extension | `chrome-extension://<id>` 필수 | `auth.hello` |
 | `/mcp-proxy` | Mcp | 헤더가 있으면 거부 | `auth.hello` |
 
-페어링 토큰은 URL이나 WebSocket 메시지에 보내지 않는다. 봉투 `v: 1` 안에서 별도
+페어링 토큰은 URL에 넣지 않고, 인증(`auth.hello`·`auth.prove`) 메시지에도 싣지 않는다. 토큰이 WebSocket
+메시지에 실리는 경우는 아래 "페어링 코드로 토큰 받기"의 `pair.request` 성공 응답 하나뿐이다. 봉투 `v: 1` 안에서 별도
 `authVersion: 1`인 HMAC-SHA256 상호 인증을 사용한다. 인증 전에 일반 메서드를 보내면
 `AUTH_REQUIRED`로 응답하고 연결을 닫는다.
 
@@ -67,9 +68,24 @@ Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 
 | 방향 | 메서드 |
 |---|---|
 | Extension → serve | `heartbeat`, `status.get`, `request.begin`, `request.end`, `operation.abort`, `operation.pause`, `operation.resume`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
-| Mcp → serve | `tool.call`, `tool.cancel` |
+| Mcp → serve | `tool.call`, `tool.cancel`, `status.get`, `pairing.open` |
 | serve → Extension | `browser.*` 명령(`browser.click` 등) |
+| 인증 전 Extension → serve | `pair.request`(첫 메시지로만, 아래 참고) |
 | 그 밖 | `FORBIDDEN_METHOD` |
+
+MCP 역할의 `status.get`은 Extension의 것과 결과가 다르다. 설치 프로그램과 진단이 쓰는 `{pairedExtensionId, extensionSeen, browsers, serverVersion}`를 돌려주며, `extensionSeen`은 최근 15초 안에 `pair.request`를 보낸 Extension ID다. 작업·타임라인은 포함하지 않는다.
+
+### 페어링 코드로 토큰 받기
+
+설치 프로그램은 토큰으로 인증한 MCP 역할 연결에서 `pairing.open {extensionId, seconds?}`(32자 Extension ID, 10–300초, 기본 120초)를 호출해 6자리 `code`를 받아 화면에 보여 준다. 창은 하나만 열리며 새로 열면 이전 창을 대체한다.
+
+아직 토큰이 없는 Extension은 `/extension` 연결의 첫 메시지로 `auth.hello` 대신 `pair.request {clientId, code?}`를 보낸다(서버는 `code`만 본다). 응답 뒤 서버가 연결을 닫는다.
+- `code`가 없으면 "Extension이 로드됨"만 알리는 요청이다. `AUTH_REQUIRED`이며 토큰을 주지 않는다.
+- 열린 창이 없거나 만료됐거나 Origin의 Extension ID가 창의 것과 다르면 `AUTH_REQUIRED`다.
+- 코드가 틀리면 `AUTH_FAILED`이고, 한 창에서 5번 틀리면 창을 닫는다.
+- 코드가 맞으면 창을 닫고(1회용) `{token}`으로 **기존** 페어링 토큰을 돌려준다. 새 토큰을 만들지 않는다. Extension은 이 토큰으로 다시 연결해 일반 상호 인증을 거친다.
+
+Origin은 로컬의 다른 프로그램이 꾸밀 수 있으므로 화면에 표시된 코드를 사용자가 직접 입력하는 것이 토큰 전달의 근거다.
 
 MCP 연결은 동일한 토큰으로 인증했더라도 프로필과 런타임 관리 메서드를 호출할 수 없다. Extension SW는 확장 내부 페이지에서 온 관리 요청만 전달한다. 관리 작업은 연결의 브라우저 응답 처리를 막지 않도록 비동기로 실행된다.
 
