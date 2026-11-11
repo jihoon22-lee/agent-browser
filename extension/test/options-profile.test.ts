@@ -15,3 +15,7 @@ it("requires explicit string environment values and never silently converts them
 it("rejects an external server path prefix unsupported by the v1 client", () => {
   expect(() => profilePayload({ id: "external", name: "External", kind: "external", directory: "/work", baseUrl: "https://server.test/prefix" })).toThrow();
 });
+it("trims pasted profile fields but sends the password as typed", () => {
+  const profile = profilePayload({ id: "wsl", name: "WSL", kind: "wsl", directory: "/work", executable: " /usr/bin/opencode\t", distribution: " Ubuntu ", user: " dev ", username: " opencode ", password: " secret " });
+  expect(profile).toMatchObject({ executable: "/usr/bin/opencode", distribution: "Ubuntu", user: "dev", username: "opencode", password: " secret " });
+});

@@ -15,7 +15,7 @@ export function profilePayload(form: ProfileForm): Record<string, unknown> {
   const profile: Record<string, unknown> = { id: form.id, name: form.name.trim(), kind: form.kind, directory: form.directory.trim() };
   if (form.kind !== "external" && !form.executable?.trim()) throw new Error("OpenCode 실행 파일의 절대 경로를 입력하세요.");
   if (form.kind === "external") { const url = new URL(form.baseUrl ?? ""); if (!["http:", "https:"].includes(url.protocol) || url.pathname !== "/" || url.username || url.password || url.search || url.hash) throw new Error("서버 주소에는 HTTP(S) 주소만 입력하고 인증정보는 별도 필드를 사용하세요."); profile.baseUrl = url.href; }
-  for (const key of ["executable", "distribution", "user", "username", "password"] as const) if (form[key]?.trim()) profile[key] = form[key];
+  for (const key of ["executable", "distribution", "user", "username", "password"] as const) if (form[key]?.trim()) profile[key] = key === "password" ? form[key] : form[key]!.trim();
   if (form.port?.trim()) { const port = Number(form.port); if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("포트는 1–65535 범위입니다."); profile.port = port; }
   if (form.envText?.trim()) { const env = JSON.parse(form.envText); if (!env || Array.isArray(env) || typeof env !== "object" || Object.values(env).some(value => typeof value !== "string")) throw new Error("환경변수는 문자열 값의 JSON 객체로 입력하세요."); profile.env = env; }
   return profile;
