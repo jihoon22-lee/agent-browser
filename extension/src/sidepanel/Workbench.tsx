@@ -222,11 +222,13 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     const current = wb.captureScope();
     const ui = /^\/(new|sessions|models|skills|commands)\s*$/.exec(draft.trim());
     if (ui) {
-      if (ui[1] === "new") await perform(async () => { await createSession(); });
+      // Cleared before it runs: /new changes the session, and the command must not stay behind as the old session's draft.
+      setDraft(""); previousDraft.current = { ...previousDraft.current, draft: "" };
+      if (ui[1] === "new") { let created: Data | undefined; await perform(async () => { created = await createSession(); }); if (!created && current()) setDraft(value => value || draft); }
       if (ui[1] === "sessions") onViewChange("sessions");
       if (ui[1] === "models") { setDrawer(null); modelSelect.current?.focus(); }
       if (ui[1] === "skills" || ui[1] === "commands") { setPalette(ui[1]); openDrawer("tools"); }
-      if (current()) setDraft(""); return;
+      return;
     }
     if (!wb.sessionId) {
       // The first message creates its session; the typed draft moves with it and the effect below sends it there.

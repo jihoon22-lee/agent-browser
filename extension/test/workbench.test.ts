@@ -1037,4 +1037,24 @@ describe("review 2026-11-11", () => {
     await draftValue("다음 요청"); await act(async () => button("보내기").click());
     expect(test.post.mock.calls.filter(([path]) => path.endsWith("/prompt_async"))).toHaveLength(1);
   });
+
+  const previousSession = () => act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(el => el.querySelector("strong")?.textContent === "기존 대화")!.click());
+  it("B4 does not leave /new behind as the previous session's draft", async () => {
+    test.post.mockImplementation(async (path: string) => {
+      if (path === "/session") { const created = { id: "ses-new", title: "새로 만든 대화", directory: "/fixture", time: { updated: 2 } }; sessions.push(created); return created; }
+      return true;
+    });
+    await render(); await draftValue("/new"); await act(async () => button("보내기").click()); await settle(30);
+    expect(host.querySelector(".conversation h2")?.textContent).toBe("새로 만든 대화");
+    expect(composerValue().value).toBe("");
+    await previousSession();
+    expect(host.querySelector(".conversation h2")?.textContent).toBe("기존 대화");
+    expect(composerValue().value).toBe("");
+  });
+  it("B4 puts /new back when the session could not be created", async () => {
+    test.post.mockImplementation(async (path: string) => { if (path === "/session") throw new Error("세션 생성 실패"); return true; });
+    await render(); await draftValue("/new"); await act(async () => button("보내기").click()); await settle(30);
+    expect(host.textContent).toContain("세션 생성 실패");
+    expect(composerValue().value).toBe("/new");
+  });
 });
