@@ -231,7 +231,8 @@ mod tests {
     #[test]
     fn only_the_recorded_markers_of_a_plain_instance_are_listed_for_removal() {
         let directory = std::path::Path::new("/home/runtime");
-        let same = |path: &str| Some(path.to_string());
+        // Path::join uses the host separator; the mapped form is always a WSL path.
+        let same = |path: &str| Some(path.replace('\\', "/"));
         let names = |files: Vec<std::path::PathBuf>| files.into_iter().map(|file| file.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>();
         let both = [Some("/home/runtime/rid-1.owner"),Some("/home/runtime/rid-1.keeper")];
         assert_eq!(names(marker_files(directory,"rid-1",&both,same)),["rid-1.owner","rid-1.owner.tmp","rid-1.owner.start","rid-1.owner.ready","rid-1.owner.ready.tmp","rid-1.keeper","rid-1.keeper.tmp","rid-1.keeper.start","rid-1.keeper.ready","rid-1.keeper.ready.tmp"]);
