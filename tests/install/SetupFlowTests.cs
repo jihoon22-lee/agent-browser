@@ -70,7 +70,25 @@ namespace AgentBrowser.Installer {
      listed=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"}));
      Assert(((System.Collections.IEnumerable)listed["profiles"]).OfType<object>().Count()==1,"saving again on the page created a duplicate profile");
      form.Close();
-    }}finally{Uninstall(root);}
+    }
+    // Running the wizard again for the same OpenCode reuses the saved profile.
+    using(var again=new SetupForm(new[]{"--no-discover","--no-startup","--no-runtime-start","--install-dir",root,"--package-dir",package})){
+     again.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+     Field<ComboBox>(again,"RuntimeKind").SelectedIndex=0;Field<TextBox>(again,"RuntimeExecutable").Text=cmd;Field<TextBox>(again,"RuntimeDirectory").Text=fixture;
+     Invoke(again,"SaveRuntime");
+     var state=InstallerEngine.State(root);
+     var listed=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"}));
+     var profiles=((System.Collections.IEnumerable)listed["profiles"]).OfType<System.Collections.Generic.Dictionary<string,object>>().ToList();
+     Assert(profiles.Count==1,"a second wizard run added another profile for the same OpenCode: "+profiles.Count);
+     Assert((string)listed["defaultProfileId"]==(string)profiles[0]["id"]&&Field<TextBox>(again,"RuntimeResult").Text.Contains("저장했습니다"),"the reused profile is not reported as saved: "+Field<TextBox>(again,"RuntimeResult").Text);
+     again.Close();
+    }
+    var summary=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"profiles\":[{\"id\":\"mine\",\"name\":\"Mine\",\"kind\":\"wsl\",\"distribution\":\"Ubuntu\",\"executable\":\"/opt/opencode\",\"directory\":\"/srv/work\",\"envKeys\":[\"HTTPS_PROXY\"]}]}");
+    var wslCandidate=new OpenCodeCandidate{Kind="wsl",Distribution="ubuntu",Executable="/opt/opencode"};
+    var match=ManagedProfile.FindSame(summary,wslCandidate,"/srv/work");
+    Assert(match!=null&&(string)match["id"]=="mine"&&!ManagedProfile.WizardCanRewrite(match),"a profile with settings the wizard cannot show must be reused without rewriting it");
+    Assert(ManagedProfile.FindSame(summary,wslCandidate,"/srv/other")==null&&ManagedProfile.FindSame(summary,new OpenCodeCandidate{Kind="wsl",Distribution="Debian",Executable="/opt/opencode"},"/srv/work")==null,"a different work folder or distribution was treated as the same profile");
+    }finally{Uninstall(root);}
    });
    Case("the final page reports real connection checks with next actions",()=>{
     var status=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"pairedExtensionId\":\"icgmjjcpnaenpfjfoggnaodeaidbnihl\",\"browsers\":[{\"clientId\":\"c\",\"connected\":true,\"selected\":true}]}");

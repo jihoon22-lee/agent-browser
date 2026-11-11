@@ -29,6 +29,26 @@ namespace AgentBrowser.Installer {
             if(candidate.Kind=="wsl"){profile.Add("distribution",candidate.Distribution);if(!String.IsNullOrWhiteSpace(candidate.User))profile.Add("user",candidate.User);}
             return profile;
         }
+        static string Text(Dictionary<string,object> item,string key){object value;return item.TryGetValue(key,out value)?value as string:null;}
+        /// A saved profile with the same launch method, executable and work folder (and WSL distribution), or null.
+        /// The wizard reuses it instead of adding another managed-* profile on every run.
+        internal static Dictionary<string,object> FindSame(Dictionary<string,object> listed,OpenCodeCandidate candidate,string directory) {
+            object profiles;if(listed==null||!listed.TryGetValue("profiles",out profiles)||!(profiles is System.Collections.IEnumerable))return null;
+            var compare=candidate.Kind=="windows"?StringComparison.OrdinalIgnoreCase:StringComparison.Ordinal;
+            foreach(var item in ((System.Collections.IEnumerable)profiles).OfType<Dictionary<string,object>>()) {
+                if(Text(item,"kind")!=candidate.Kind||String.IsNullOrEmpty(Text(item,"id"))||!String.Equals(Text(item,"executable"),candidate.Executable,compare)||!String.Equals(Text(item,"directory"),directory,compare))continue;
+                if(candidate.Kind=="wsl"&&!String.Equals(Text(item,"distribution"),candidate.Distribution,StringComparison.OrdinalIgnoreCase))continue;
+                return item;
+            }
+            return null;
+        }
+        /// The list hides env values and the wizard has no port field: rewriting such a profile would drop them.
+        internal static bool WizardCanRewrite(Dictionary<string,object> summary) {
+            object keys,port;
+            bool hasEnv=summary.TryGetValue("envKeys",out keys)&&!(keys is string)&&keys is System.Collections.IEnumerable&&((System.Collections.IEnumerable)keys).Cast<object>().Any();
+            bool hasPort=summary.TryGetValue("port",out port)&&port!=null;
+            return !hasEnv&&!hasPort;
+        }
         /// replace=true rewrites the profile this wizard page saved earlier instead of adding another.
         public static void Save(InstallState state,Dictionary<string,object> profile,bool makeDefault=false,bool replace=false) {
             if(profile==null)throw new IOException("변경 내용을 먼저 확인하세요.");

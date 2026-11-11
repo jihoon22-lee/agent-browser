@@ -292,10 +292,23 @@ namespace AgentBrowser.Installer {
                 var state=Installed();var chosen=runtimeCandidates.SelectedItem as OpenCodeCandidate;
                 var candidate=new OpenCodeCandidate{Kind=runtimeKind.SelectedIndex==1?"wsl":"windows",Distribution=runtimeDistribution.Text.Trim(),Executable=runtimeExecutable.Text.Trim()};
                 candidate.User=RuntimeUser(chosen,candidate.Kind,candidate.Distribution,candidate.Executable);
-                bool replace=savedRuntimeId!=null;
-                string id=savedRuntimeId??"managed-"+Guid.NewGuid().ToString("N").Substring(0,8),name=candidate.Kind=="wsl"?"OpenCode ("+candidate.Distribution+")":"OpenCode (Windows)",directory=runtimeDirectory.Text.Trim();
+                bool replace=savedRuntimeId!=null,save=true;
+                string id=savedRuntimeId,name=candidate.Kind=="wsl"?"OpenCode ("+candidate.Distribution+")":"OpenCode (Windows)",directory=runtimeDirectory.Text.Trim();
+                if(id==null) {
+                    // An earlier wizard run may have saved this same runtime: reuse it instead of adding another.
+                    var listed=await Task.Run(()=>NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"})));
+                    var same=ManagedProfile.FindSame(listed,candidate,directory);
+                    if(same!=null) {
+                        id=(string)same["id"];replace=true;object value;
+                        if(same.TryGetValue("name",out value)&&!String.IsNullOrWhiteSpace(value as string))name=(string)value;
+                        if(String.IsNullOrEmpty(candidate.User)&&same.TryGetValue("user",out value))candidate.User=value as string;
+                        // Already the default: nothing to write. Otherwise rewrite only when no other setting would be lost.
+                        save=!(listed.TryGetValue("defaultProfileId",out value)&&value as string==id)&&ManagedProfile.WizardCanRewrite(same);
+                    } else id="managed-"+Guid.NewGuid().ToString("N").Substring(0,8);
+                }
                 var profile=await Task.Run(()=>ManagedProfile.Prepare(state,candidate,id,name,directory,replace));
-                await Task.Run(()=>ManagedProfile.Save(state,profile,makeDefault:true,replace:replace));savedRuntimeId=id;
+                if(save)await Task.Run(()=>ManagedProfile.Save(state,profile,makeDefault:true,replace:replace));
+                savedRuntimeId=id;
                 await RefreshSavedProfiles();
                 if(Has(args,"--no-runtime-start")){runtimeResult.Text="✓ 저장했습니다. (시작 확인 생략)";return;}
                 runtimeResult.Text="저장했습니다. OpenCode를 시작해 브라우저 연결을 확인하고 있습니다… (최대 1분)";
