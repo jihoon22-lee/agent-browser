@@ -147,7 +147,7 @@ impl Manager {
                 if !self.overlay_current(&record) { return Err(failure("The managed runtime needs its browser MCP configuration refreshed (Bridge endpoint or owned WSL keeper). Stop this profile in Options, then start it again. The existing runtime was left running.")); }
                 let version = health(&record.base_url, Some(&record.username), Some(&record.password), true, &self.verified_docs).await?;
                 browser_mcp(profile,&record).await?;
-                record.version = Some(version); self.persist(&record)?;
+                record.version = Some(version); self.persist_changed(&record)?;
                 return Ok(info(profile, &record, "ready", true,&self.home));
             }
             if inspection.owned { return Err(failure("The owned runtime is running but its listener cannot be verified; stop it before retrying")); }
@@ -202,6 +202,11 @@ impl Manager {
         Err(failure("OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment."))
     }
     fn persist(&self, record: &RuntimeRecord) -> Result<(), RpcError> { self.store.update(|config| { config.runtimes.insert(record.profile_id.clone(), record.clone()); Ok(()) }) }
+    /// Status polls and doctor run every few seconds: they publish runtime.json only when the record differs.
+    fn persist_changed(&self, record: &RuntimeRecord) -> Result<(), RpcError> {
+        let unchanged = self.store.read()?.runtimes.get(&record.profile_id).is_some_and(|stored| serde_json::to_value(stored).ok() == serde_json::to_value(record).ok());
+        if unchanged { Ok(()) } else { self.persist(record) }
+    }
     fn overlay(&self, profile: &Profile, env: &mut BTreeMap<String,String>) -> Result<(), RpcError> {
         let existing = env.get("OPENCODE_CONFIG_CONTENT").cloned().or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok());
         let mut overlay: Value = existing.map(|text| serde_json::from_str(&text).map_err(|_| invalid("OPENCODE_CONFIG_CONTENT must be a JSON object"))).transpose()?.unwrap_or_else(|| json!({}));
@@ -236,7 +241,7 @@ impl Manager {
     async fn verify_listener(&self, profile: &Profile, record: &mut RuntimeRecord) -> Result<bool, RpcError> {
         if !self.listener_owned(profile, record).await { return Ok(false); }
         // The listener's identity is cleanup data, even when the health endpoint fails.
-        self.persist(record)?;
+        self.persist_changed(record)?;
         Ok(true)
     }
     async fn listener_owned(&self, profile: &Profile, record: &mut RuntimeRecord) -> bool {
@@ -459,6 +464,10 @@ impl Manager {
     async fn diagnostic_api(&self, profile: &Profile, path: &str) -> Result<Value,RpcError> {
         let (base,username,password) = if profile.kind == Kind::External { (profile.external_url()?.to_string(),profile.username.clone(),profile.password.clone()) }
         else {
+            // Inspection can record the listener: never race Stop or a profile edit with that write.
+            let lock = self.lock(&profile.id);
+            let Ok(_guard) = lock.try_lock() else { return Err(failure("Another operation is managing this profile")); };
+            let Some(_operation) = self.try_operation_lock(&profile.id)? else { return Err(failure("Another operation is managing this profile")); };
             let mut record = self.store.read()?.runtimes.get(&profile.id).cloned().ok_or_else(|| failure("No managed runtime"))?;
             if !self.inspect(profile,&mut record).await?.listener { return Err(failure("Runtime ownership cannot be verified")); }
             (record.base_url,Some(record.username),Some(record.password))
@@ -916,6 +925,36 @@ mod stop_all_tests {
         process::terminate(&owned);
         assert!(result.is_err(),"Fixture must fail to persist the listener identity");
         assert!(alive,"A status/reuse check must not terminate the existing runtime when persistence fails");
+    }
+    #[tokio::test]
+    async fn read_paths_do_not_rewrite_an_unchanged_runtime_record() {
+        use std::os::unix::fs::MetadataExt;
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let own = process::identity(std::process::id()).unwrap();
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":home.path(),"executable":"/bin/sleep"})).unwrap();
+        let mut record = RuntimeRecord {profile_id:"fixture".into(),instance:"fixture".into(),base_url:"http://127.0.0.1:65531".into(),username:"opencode".into(),password:"fixture-private".into(),launcher:own.clone(),server:Some(own),wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None};
+        manager.persist(&record).unwrap();
+        let file = || std::fs::metadata(home.path().join("runtime.json")).unwrap().ino();
+        let before = file();
+        assert!(manager.verify_listener(&profile,&mut record).await.unwrap());
+        assert_eq!(file(),before,"a status poll must not republish runtime.json when nothing changed");
+        record.version = Some("1.18.29".into()); manager.persist_changed(&record).unwrap();
+        assert_ne!(file(),before,"a changed record is still written");
+        assert_eq!(manager.store.read().unwrap().runtimes["fixture"].version.as_deref(),Some("1.18.29"));
+    }
+    #[tokio::test]
+    async fn doctor_inspects_a_managed_runtime_only_under_the_profile_lock() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let own = process::identity(std::process::id()).unwrap();
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":home.path(),"executable":"/bin/sleep"})).unwrap();
+        manager.persist(&RuntimeRecord {profile_id:"fixture".into(),instance:"fixture".into(),base_url:"http://127.0.0.1:9".into(),username:"opencode".into(),password:"fixture-private".into(),launcher:own,server:None,wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None}).unwrap();
+        let held = manager.operation_lock("fixture").unwrap();
+        let busy = manager.diagnostic_api(&profile,"mcp").await.unwrap_err();
+        assert!(busy.message.contains("Another operation"),"{}",busy.message);
+        drop(held);
+        let unreachable = manager.diagnostic_api(&profile,"mcp").await.unwrap_err();
+        assert!(!unreachable.message.contains("Another operation"),"{}",unreachable.message);
+        assert!(manager.operation_lock("fixture").is_ok(),"the lock is released before the HTTP request returns");
     }
     #[tokio::test]
     async fn stop_all_terminates_owned_processes_and_preserves_external_profiles() {
