@@ -100,18 +100,19 @@ impl ServerState {
         self.registry.broadcast(&Envelope::evt("status.changed", self.status()).to_text());
     }
 
-    /// Writes the registry's current selection to config.json when it changed.
-    async fn persist_selection(&self) {
+    /// Writes the registry's current selection to config.json when it changed. On failure the
+    /// selection still holds for this run; the reason is returned for the caller to report.
+    async fn persist_selection(&self) -> Result<(), String> {
         let selected = self.registry.selected_client();
         let mut cfg = self.cfg.lock().await;
         if cfg.selected_client_id == selected {
-            return;
+            return Ok(());
         }
         let mut updated = cfg.clone();
         updated.selected_client_id = selected;
         match config::save(&self.home, &updated) {
-            Ok(()) => *cfg = updated,
-            Err(e) => tracing::error!("cannot save selected browser: {e:#}"),
+            Ok(()) => { *cfg = updated; Ok(()) }
+            Err(e) => { tracing::error!("cannot save selected browser: {e:#}"); Err(format!("{e:#}")) }
         }
     }
 }
@@ -200,7 +201,8 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
         Role::Extension => {
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             let conn = state.registry.register(&hello.client_id, tx);
-            state.persist_selection().await;
+            // An unsaved automatic selection is already logged; the browser stays selected for this run.
+            let _ = state.persist_selection().await;
             let selected = state.registry.selected_client().as_deref() == Some(hello.client_id.as_str());
             if send_hello_ok(&mut ws, hello_id, &connection_id, selected, &hello.client_id).await {
                 state.broadcast_status();
@@ -632,9 +634,13 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
                 if let Err(error) = state.ops.select_browser(client_id, || state.registry.use_browser(client_id)) {
                     return Envelope::err(id, error);
                 }
-                state.persist_selection().await;
+                let persisted = state.persist_selection().await;
                 state.broadcast_status();
-                Envelope::ok(id, json!({ "selected": client_id }))
+                // The selection holds for this run either way; an unsaved one is lost at the next start.
+                Envelope::ok(id, match persisted {
+                    Ok(()) => json!({ "selected": client_id, "persisted": true }),
+                    Err(reason) => json!({ "selected": client_id, "persisted": false, "persistError": reason }),
+                })
             }
             None => Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "clientId is required")),
         },
@@ -692,6 +698,28 @@ mod tests {
         let reply=extension_request(&state,"stop".into(),"request.end",&params).await;
         assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
         assert!(state.ops.request_target(Some("request-a"),"A",None).is_err());
+    }
+
+    #[tokio::test]
+    async fn browser_use_reports_a_selection_it_could_not_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config::load_or_init(dir.path()).unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        for (home, saved) in [(blocker.join("home"), false), (dir.path().to_path_buf(), true)] {
+            let state = ServerState::new(home, cfg.clone());
+            let (a, _from_a) = tokio::sync::mpsc::unbounded_channel();
+            let (b, _from_b) = tokio::sync::mpsc::unbounded_channel();
+            state.registry.register("A", a);
+            state.registry.register("B", b);
+            let reply = extension_request(&state, "use".into(), "browser.use", &json!({"clientId":"B"})).await;
+            let Envelope::Res { ok: true, result: Some(result), .. } = reply else { panic!("the selection itself must succeed: {reply:?}") };
+            assert_eq!(result["selected"], "B");
+            assert_eq!(result["persisted"], saved, "{result}");
+            assert_eq!(result["persistError"].as_str().is_some_and(|reason| !reason.is_empty()), !saved, "{result}");
+            assert_eq!(state.registry.selected_client().as_deref(), Some("B"));
+        }
+        assert_eq!(config::load_or_init(dir.path()).unwrap().selected_client_id.as_deref(), Some("B"));
     }
 
     #[tokio::test]

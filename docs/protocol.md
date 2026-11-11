@@ -73,6 +73,8 @@ Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 
 
 MCP 연결은 동일한 토큰으로 인증했더라도 프로필과 런타임 관리 메서드를 호출할 수 없다. Extension SW는 확장 내부 페이지에서 온 관리 요청만 전달한다. 관리 작업은 연결의 브라우저 응답 처리를 막지 않도록 비동기로 실행된다.
 
+`browser.use {clientId}`의 성공 결과는 `{selected, persisted}`다. 선택은 바로 적용되며, 설정 파일에 저장하지 못하면 `persisted:false`와 사유 `persistError`를 함께 돌려준다. 이 경우 선택은 Bridge를 다시 시작하면 사라진다.
+
 ## MCP 요청 취소
 
 MCP `notifications/cancelled`의 요청별 토큰은 mutex 대기·연결·전송·응답 대기를 중단한다.
