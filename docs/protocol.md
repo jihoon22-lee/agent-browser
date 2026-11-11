@@ -54,7 +54,7 @@ Rust `serde_json`과 JavaScript `JSON.stringify`가 같은 값을 생성한다. 
 `side`는 서버 증명에 `"server"`, 클라이언트 증명에 `"client"`를 사용한다. 두 방향의 증명을
 분리하고 역할·클라이언트 ID·두 nonce·재페어링 의도를 묶어 반사 공격과 다른 연결의 증명 재사용을 거부한다.
 Rust는 HMAC 라이브러리의 상수 시간 검증을, Extension은 WebCrypto의 `verify`를 사용한다.
-서버는 hello와 prove를 각각 5초 이내에 받아야 하고, Extension은 소켓 연결부터 prove 승인까지 총 10초를 제한한다.
+서버는 TCP 연결 뒤 WebSocket 업그레이드, hello, prove를 각각 5초 이내에 받아야 하고(넘기면 연결을 닫는다), Extension은 소켓 연결부터 prove 승인까지 총 10초를 제한한다.
 
 이전 `params.token` 방식이나 지원하지 않는 `authVersion`은 `AUTH_FAILED`로 거부한다.
 Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 자체는 계속 사용할 수 있다.

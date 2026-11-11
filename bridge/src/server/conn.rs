@@ -186,10 +186,15 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
             Ok(resp)
         }
     };
-    let mut ws = match accept_hdr_async(stream, callback).await {
-        Ok(ws) => ws,
-        Err(e) => {
+    // A socket that connects and never finishes the upgrade must not hold its task forever.
+    let mut ws = match tokio::time::timeout(HELLO_TIMEOUT, accept_hdr_async(stream, callback)).await {
+        Ok(Ok(ws)) => ws,
+        Ok(Err(e)) => {
             tracing::debug!("handshake refused: {e}");
+            return;
+        }
+        Err(_) => {
+            tracing::debug!("WebSocket upgrade did not complete in time");
             return;
         }
     };
