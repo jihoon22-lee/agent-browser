@@ -105,7 +105,7 @@ export class BridgeConnection {
       const authDeadline = this.later(() => this.closeSocket(ws), RESPONSE_TIMEOUT_MS);
       ws.onopen = () => {
         if (this.ws !== ws || this.stopped) return;
-        const helloParams = authHello(clientId!, repair);
+        const helloParams = authHello(clientId!, repair, this.deps.extensionVersion ?? "unknown");
         const hello = makeReq("auth.hello", helloParams);
         this.pending.set(hello.id, {
           fail: () => {},

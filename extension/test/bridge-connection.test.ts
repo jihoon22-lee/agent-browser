@@ -246,6 +246,14 @@ async function authenticated(conn: BridgeConnection) {
 describe("BridgeConnection lifecycle", () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+  it("reports the manifest version in auth.hello and still completes the mutual proof", async () => {
+    const { conn, statuses } = setup({ pairingToken: "tok", clientId: "cli-1" }, { extensionVersion: "0.4.1" });
+    await authenticatedWith(conn, { authVersion: 1 });
+    const hello = parseEnvelope(FakeWs.last.sent[0]!);
+    expect(hello.type === "req" && hello.params.clientVersion).toBe("0.4.1");
+    expect(statuses.at(-1)).toEqual({ state: "connected" });
+  });
+
   it("reloads at most once per newer Bridge version", async () => {
     const reload = vi.fn();
     const { conn, store } = setup({ pairingToken: "tok", clientId: "cli-1" }, { extensionVersion: "0.1.11", reload });
