@@ -40,6 +40,13 @@ export class RefTable {
     const original = entry!.record?.deref() ?? null;
     if(entry!.record && !original)return undefined;
     if(entry!.identity !== this.identity(el))return undefined;
+    // Unchanged text, or an authored key with the same key and link destinations. Without a key,
+    // changed row text is indistinguishable from a recycled record.
+    const sameRecord = (root: Element) => {
+      const observation = observeRecord(root);
+      const keyed = !!(root.getAttribute('data-id')?.trim() || root.getAttribute('data-key')?.trim());
+      return entry!.recordIdentity === observation.identity || (keyed && entry!.keyedIdentity === observation.keyedIdentity);
+    };
     if(scope !== 'record') {
       // Text changes may create/remove the heuristic small-card classification.
       // Verify structural membership in the original record, not that heuristic again.
@@ -50,14 +57,14 @@ export class RefTable {
         // A post-input value check may tolerate feedback. Authorizing another
         // event is stricter: without a stable authored key, changed row text is
         // indistinguishable from recycling the record. Destinations always bind.
-        const observation = observeRecord(original);
-        const keyed = !!(original.getAttribute('data-id')?.trim() || original.getAttribute('data-key')?.trim());
-        if (entry!.recordIdentity !== observation.identity && (!keyed || entry!.keyedIdentity !== observation.keyedIdentity)) return undefined;
+        if (!sameRecord(original)) return undefined;
       }
       return el;
     }
+    // The first resolve gives a keyed record the same allowance: a countdown or price in a row
+    // with an authored key must not leave every ref in it permanently stale.
     const root = recordRoot(el);
-    return root === original && (!root || entry!.recordIdentity === observeRecord(root).identity) ? el : undefined;
+    return root === original && (!root || sameRecord(root)) ? el : undefined;
   }
   static parse(ref: string) {
     const m = REF_RE.exec(ref);
