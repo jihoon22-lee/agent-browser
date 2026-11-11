@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computeUsage, availableModels } from "../src/agents/opencode-v1/usage";
+import { computeUsage } from "../src/agents/opencode-v1/usage";
+import * as usageModule from "../src/agents/opencode-v1/usage";
+import { availableModels } from "../src/sidepanel/workbench-state";
 import type { AssistantMessage, MessageRecord, Model, Part, ProviderCatalog, StepFinishPart, UserMessage } from "../src/agents/opencode-v1/types";
 const tokens = (input: number, output = 2) => ({ input, output, reasoning: 3, cache: { read: 4, write: 5 } });
 const user = (id: string, time: number): MessageRecord => ({ info: { id, sessionID: "ses_1", role: "user", time: { created: time }, agent: "build", model: { providerID: "test", modelID: "model" } } satisfies UserMessage, parts: [] });
@@ -49,5 +51,7 @@ describe("v1 usage accounting", () => {
     ], connected: ["test"], default: {} } as unknown as ProviderCatalog;
     expect(availableModels(catalog).map(m => m.id)).toEqual(["model"]);
     expect(availableModels({ ...catalog, connected: [] })).toEqual([]);
+    // The panel's function is the only one: a second copy here once drifted from it.
+    expect(usageModule).not.toHaveProperty("availableModels");
   });
 });

@@ -56,6 +56,7 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
   list[index] = message;
   return { ...next, messages: { ...state.messages, [sessionID]: list } };
 }
+/** The configured server is authoritative. Never supplement it from an external model catalogue. */
 export function availableModels(catalog: Data): Data[] {
   const connected = new Set(catalog.connected ?? []);
   return (catalog.all ?? []).filter((provider: Data) => connected.has(provider.id)).flatMap((provider: Data) => Object.entries(provider.models ?? {}).map(([id, model]) => ({ ...(model as Data), id: (model as Data).id ?? id, providerID: provider.id, providerName: provider.name ?? provider.id }))).filter((model: Data) => model.status !== "deprecated");
