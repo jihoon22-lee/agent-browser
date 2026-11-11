@@ -2,7 +2,7 @@ import { highlight } from "./highlight";
 import { clipText } from "./text";
 import { assertTrustedFallback, requestTrusted, trustedFrame, trustedDetails } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
+import { accessibleName, composedParent, isDisabled, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
@@ -75,6 +75,16 @@ function assertInteractable(el: Element): Point | undefined {
   }
   return points[0];
 }
+
+/** Focus the nearest focusable ancestor, as a real pointer press does before mouseup and click. */
+function focusFromPointer(el: Element) {
+  for (let node: Element | null = el; node; node = composedParent(node)) {
+    if (!(node instanceof HTMLElement) || node.tabIndex < 0 || isDisabled(node)) continue;
+    if (activeIn(node) !== node) node.focus({ preventScroll: true });
+    return;
+  }
+}
+const activeIn = (el: Element) => (el.getRootNode() as Document | ShadowRoot).activeElement;
 
 function observeChanges(ms: number, signal: AbortSignal): Promise<{ urlChanged: boolean; domChanged: boolean }> {
   const startUrl = location.href;
@@ -266,7 +276,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const press = (detail: number) => {
         for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
           const down=type.endsWith('down');
-          pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+          const accepted = pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+          // The browser moves focus as mousedown's default action; a page that cancels it keeps its focus.
+          if (type === "mousedown" && accepted) focusFromPointer(el);
           checkTarget();
         }
       };

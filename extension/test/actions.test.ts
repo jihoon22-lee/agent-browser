@@ -504,3 +504,22 @@ it('reports a select the page reverted as not matching', async () => {
   const result: any = await runAction('select', { ref: refOf('Locked'), option: 'Two', generation: 10 });
   expect(result.verified).toMatchObject({ matches: false, value: 'One', label: 'One' });
 });
+
+it('a synthetic click moves focus to the nearest focusable ancestor after mousedown, as a real click does', async () => {
+  document.body.innerHTML = '<input aria-label="Other"><div tabindex="0" id="card" aria-label="Card"><span onclick="void 0">Open card</span></div>';
+  const other = document.querySelector('input')!, card = document.querySelector<HTMLElement>('#card')!, span = document.querySelector('span')!;
+  other.focus();
+  const order: string[] = [];
+  for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) span.addEventListener(type, () => order.push(type));
+  other.addEventListener('blur', () => order.push('blur')); card.addEventListener('focus', () => order.push('focus'));
+  await runAction('click', { ref: refOf('Open card'), generation: 10 });
+  expect(document.activeElement).toBe(card);
+  expect(order).toEqual(['pointerdown', 'mousedown', 'blur', 'focus', 'mouseup', 'click']);
+});
+it('a cancelled mousedown keeps focus where it was', async () => {
+  document.body.innerHTML = '<input aria-label="Editor"><button>Bold</button>';
+  const editor = document.querySelector('input')!, button = document.querySelector('button')!;
+  editor.focus(); button.addEventListener('mousedown', event => event.preventDefault());
+  await runAction('click', { ref: refOf('Bold'), generation: 10 });
+  expect(document.activeElement).toBe(editor);
+});
