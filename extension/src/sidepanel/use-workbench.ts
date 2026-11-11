@@ -3,6 +3,11 @@ import { OpenCodeApiError, OpenCodeV1Client } from "../agents/opencode-v1/client
 import { initialWorkbench, workbenchReducer, bridgeRequest, operationBindings, type Data, type UiMessage } from "./workbench-state";
 import { bridgeUnavailable } from "./error-text";
 
+// An event stream that stays down this long is treated as a restarted or stopped server.
+const OFFLINE_RECOVERY_MS = 5_000;
+const STREAM_LOST = "OpenCode 서버와 연결이 끊겼습니다. 서버 상태를 확인한 뒤 다시 시도하세요.";
+const SERVER_STOPPED = "설정에서 이 실행 환경의 서버를 중지했습니다. 다시 사용하려면 [다시 시도]를 누르세요.";
+
 export function useWorkbench() {
   const [state, dispatch] = useReducer(workbenchReducer, initialWorkbench);
   const [profiles, setProfiles] = useState<Data[]>([]), [profilesLoaded, setProfilesLoaded] = useState(false), [profileId, setProfileId] = useState("");
@@ -29,6 +34,9 @@ export function useWorkbench() {
   const childQueue = useRef<string[]>([]), childRequested = useRef(new Set<string>()), childActive = useRef(0);
   const lastMessageEvent = useRef(new Map<string, number>()), rerunDetails = useRef(false), previousStatus = useRef({ id: "", type: undefined as string | undefined });
   const currentProfile = useRef(""), selectionRevision = useRef(0);
+  // A failed event stream gets one automatic runtime.ensure; a second failure before the stream is back waits for the user.
+  const autoRecovered = useRef(false), offlineTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), streamOnline = useRef(false);
+  const reconnect = useRef<(id: string, workdir?: string, restoreId?: string, automatic?: boolean) => Promise<void>>(async () => {});
   const captureScope = useCallback(() => { const revision = epoch.current, selection = selectionRevision.current; return () => revision === epoch.current && selection === selectionRevision.current; }, []);
   const fail = (value: unknown) => setError(value instanceof Error ? value.message : String(value));
   const mergeSessions = (items: Data[]) => setKnownSessions(previous => { const next = { ...previous }; for (const item of items) if (typeof item?.id === "string" && !deletedSessions.current.has(item.id)) next[item.id] = item; return next; });
@@ -185,10 +193,11 @@ export function useWorkbench() {
     document.addEventListener("visibilitychange", restore); window.addEventListener("focus", restore);
     return () => { document.removeEventListener("visibilitychange", restore); window.removeEventListener("focus", restore); };
   }, [resync]);
-  const connect = useCallback(async (id: string, workdir?: string, restoreId?: string) => {
+  const connect = useCallback(async (id: string, workdir?: string, restoreId?: string, automatic = false) => {
     let restored = restoreId ?? (id !== currentProfile.current ? recentSessions.current.get(id) : undefined) ?? "";
     if (currentProfile.current && selected.current) recentSessions.current.set(currentProfile.current, selected.current);
     const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); syncing.current = false; buffered.current = [];
+    clearTimeout(offlineTimer.current); offlineTimer.current = undefined; streamOnline.current = false; if (!automatic) autoRecovered.current = false;
     setLoading(true); setConnected(false); setError(""); setProfileId(id); currentProfile.current = id;
     sessionQuery.current = { search: "", limit: 50 }; sessionListRevision.current++; setKnownSessions({}); setHasMoreSessions(false); setSessionsLoading(false);
     invalidateChildren(); deletedSessions.current.clear(); lastMessageEvent.current.clear();
@@ -213,6 +222,15 @@ export function useWorkbench() {
       }
       client.current = api; setDirectory(actualDirectory); setRuntime({ profileId: id, state: info.state, baseUrl: info.baseUrl, version: info.version, owned: info.owned, attachCommand: info.attachCommand });
       const controller = new AbortController(); stream.current = controller;
+      // The server may have been stopped and started again with a new port or password: ask the Bridge once
+      // for the current connection and keep the selected session. A repeated failure stops with its error.
+      const recover = (reason: unknown) => {
+        if (revision !== epoch.current || controller.signal.aborted) return;
+        clearTimeout(offlineTimer.current); offlineTimer.current = undefined;
+        if (autoRecovered.current) { controller.abort(); streamOnline.current = false; setConnected(false); fail(reason); return; }
+        autoRecovered.current = true;
+        void reconnect.current(id, api.directory, selected.current || undefined, true);
+      };
       void api.events(event => {
         if (revision !== epoch.current) return;
         if (syncing.current) buffered.current.push(event);
@@ -237,7 +255,12 @@ export function useWorkbench() {
         }
         if (event.type === "session.deleted" && info?.id) removeSession(info.id);
         if (event.type === "todo.updated" && properties.sessionID === selected.current && Array.isArray(properties.todos)) setTodos(properties.todos);
-      }, online => { if (revision === epoch.current) { setConnected(online); if (online) { invalidateChildren(); void resync(); } } }, controller.signal).catch(value => { if (revision === epoch.current && !controller.signal.aborted) fail(value); });
+      }, online => {
+        if (revision !== epoch.current || controller.signal.aborted) return;
+        setConnected(online); streamOnline.current = online;
+        if (online) { clearTimeout(offlineTimer.current); offlineTimer.current = undefined; autoRecovered.current = false; invalidateChildren(); void resync(); }
+        else offlineTimer.current ??= setTimeout(() => recover(new Error(STREAM_LOST)), OFFLINE_RECOVERY_MS);
+      }, controller.signal).catch(value => recover(value));
       const results = await Promise.allSettled([api.get<Data>("/provider"), api.get<Data[]>("/agent"), api.get<Data[]>("/command"), api.get<Data[]>("/skill"), api.get<Data>("/mcp")]);
       if (revision !== epoch.current) return;
       const setters = [setCatalog, setAgents, setCommands, setSkills, setMcp] as Array<(value: any) => void>;
@@ -247,6 +270,7 @@ export function useWorkbench() {
     } catch (value) { if (revision === epoch.current) fail(value); }
     finally { if (revision === epoch.current) setLoading(false); }
   }, [resync, refreshSessions, updateSession, removeSession, invalidateChildren]);
+  reconnect.current = connect;
   const selectSession = useCallback(async (session: Data) => {
     selectionRevision.current++;
     if (session.directory && session.directory !== client.current?.directory) { await connect(currentProfile.current, session.directory, session.id); return; }
@@ -275,10 +299,20 @@ export function useWorkbench() {
     void load();
     const listener = (message: Data) => {
       if (message.kind === "conn-status" && message.status?.state === "connected") { setError(current => bridgeUnavailable(current) ? "" : current); void load(); }
+      if (message.kind === "profiles-changed" && message.runtime) {
+        // Options stopped or started this profile's server; the profile list itself is unchanged.
+        if (message.profileId !== currentProfile.current || !client.current) return;
+        if (message.runtime === "stopped") {
+          // The user stopped it on purpose: show that and wait, instead of starting it again.
+          stream.current?.abort(); clearTimeout(offlineTimer.current); offlineTimer.current = undefined; streamOnline.current = false;
+          setConnected(false); setError(SERVER_STOPPED);
+        } else if (!streamOnline.current) void connect(currentProfile.current, client.current.directory, selected.current || undefined);
+        return;
+      }
       if (message.kind === "profiles-changed") void load(message.profileId);
     };
     chrome.runtime.onMessage.addListener(listener);
-    return () => { active = false; epoch.current++; stream.current?.abort(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); chrome.runtime.onMessage.removeListener(listener); };
+    return () => { active = false; epoch.current++; stream.current?.abort(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); clearTimeout(offlineTimer.current); chrome.runtime.onMessage.removeListener(listener); };
   }, [connect]);
   // Which panel session owns a browser operation: its session ID, "other" for a different runtime, or undefined if unproven.
   const operationOwner = useCallback((operationId: string): string | undefined => {

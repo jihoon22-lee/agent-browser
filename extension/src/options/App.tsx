@@ -21,6 +21,8 @@ export function App() {
   const [profiles, setProfiles] = useState<Data[]>([]), [defaultId, setDefaultId] = useState("");
   const [form, setForm] = useState<ProfileForm>(blank), [editing, setEditing] = useState(false), [makeDefault, setMakeDefault] = useState(true);
   const [notice, setNotice] = useState(""), [error, setError] = useState(""), [busy, setBusy] = useState(false), [doctor, setDoctor] = useState<Data>();
+  // An open side panel hears this directly: it stops waiting on a stopped server or reconnects to a started one.
+  const runtimeChanged = (profileId: string, runtime: "started" | "stopped") => chrome.runtime.sendMessage({ kind: "profiles-changed", profileId, runtime }).catch(() => {});
   const refresh = async () => { const data = await bridgeRequest("profile.list"); setProfiles(data.profiles ?? []); setDefaultId(data.defaultProfileId ?? ""); };
   useEffect(() => {
     let active = true;
@@ -57,8 +59,8 @@ export function App() {
       {!connected && <p>Bridge에 먼저 연결하세요.</p>}
       <ul className="profiles">{profiles.map(profile => <li key={profile.id}><div><strong>{profile.name}</strong> <span>{profile.kind}{profile.id === defaultId ? " · 기본" : ""}</span><small>{profile.directory}</small></div><div className="row">
         <button disabled={busy} onClick={() => { setForm(formFromProfile(blank, profile as unknown as Record<string, unknown>)); setEditing(true); setMakeDefault(profile.id === defaultId); }}>편집</button>
-        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.ensure", { profileId: profile.id }); if (info.state !== "ready") throw new Error(info.error ?? "실행 환경을 준비하지 못했습니다."); setNotice(`${profile.name}: 준비됨 · OpenCode ${info.version ?? "버전 정보 없음"}`); })}>시작·연결 확인</button>
-        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.stop", { profileId: profile.id }); setNotice(info.stopped ? "Bridge가 시작한 서버를 종료했습니다." : "종료할 소유 서버가 없습니다. 기존 외부 서버는 유지됩니다."); })}>서버 중지</button>
+        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.ensure", { profileId: profile.id }); if (info.state !== "ready") throw new Error(info.error ?? "실행 환경을 준비하지 못했습니다."); await runtimeChanged(profile.id, "started"); setNotice(`${profile.name}: 준비됨 · OpenCode ${info.version ?? "버전 정보 없음"}`); })}>시작·연결 확인</button>
+        <button disabled={busy} onClick={() => void run(async () => { const info = await bridgeRequest("runtime.stop", { profileId: profile.id }); if (info.stopped) await runtimeChanged(profile.id, "stopped"); setNotice(info.stopped ? "Bridge가 시작한 서버를 종료했습니다." : "종료할 소유 서버가 없습니다. 기존 외부 서버는 유지됩니다."); })}>서버 중지</button>
         <button disabled={busy} onClick={() => { if (window.confirm(`프로필 '${profile.name}'을 삭제할까요? 기존 OpenCode 설정·대화는 유지됩니다.`)) void run(async () => { await bridgeRequest("profile.delete", { profileId: profile.id }); await chrome.runtime.sendMessage({ kind: "profiles-changed", profileId: profile.id }).catch(() => {}); await refresh(); setNotice("프로필을 삭제했습니다."); }); }}>삭제</button>
       </div></li>)}</ul>
       <form onSubmit={event => { event.preventDefault(); void run(async () => { const payload = profilePayload(editing ? form : withProfileId(form)); const original = editing ? profiles.find(item => item.id === form.id) as { kind: string; baseUrl?: string; username?: string; hasPassword?: boolean } | undefined : undefined; await bridgeRequest("profile.save", { profile: payload, makeDefault }); await chrome.runtime.sendMessage({ kind: "profiles-changed", profileId: payload.id }).catch(() => {}); setForm(blank); setEditing(false); await refresh(); setNotice(passwordDropped(original, payload) ? "실행 방식·서버 주소·인증 사용자 중 하나가 바뀌어 이전 비밀번호는 지웠습니다. 인증이 필요한 서버라면 새 비밀번호를 입력해 다시 저장하세요." : "실행 프로필을 저장했습니다."); }); }}>

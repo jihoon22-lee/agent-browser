@@ -400,6 +400,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const workspaceError = conn.state === "connected" ? wb.error : "";
   const openOptions = () => void chrome.runtime.openOptionsPage();
   const reconnectBridge = () => void chrome.runtime.sendMessage({ kind: "reconnect" }).catch(() => {});
+  const retryRuntime = () => { if (wb.profileId) void wb.connect(wb.profileId, undefined, wb.sessionId || undefined); else reconnectBridge(); };
   const start: { title: string; body?: string; tone: "problem" | "setup" | "waiting" | "ready"; actions?: StartAction[] } = {
     pair: { title: "Bridge 페어링이 필요합니다", body: conn.state === "auth_failed" ? "저장된 페어링 정보로 인증하지 못했습니다. 설정에서 다시 페어링하세요." : "설치 마법사에 표시된 6자리 코드나 페어링 토큰을 설정 화면에 입력하세요.", tone: "setup" as const, actions: [{ label: "설정에서 페어링", run: openOptions, primary: true }] },
     "bridge-offline": { title: "Bridge에 연결할 수 없습니다", body: "Windows에서 Bridge가 실행 중인지 확인하세요. 꺼져 있으면 설치 폴더의 start-bridge.cmd로 시작한 뒤 다시 연결하세요.", tone: "problem" as const, actions: [{ label: "다시 연결", run: reconnectBridge, primary: true }, { label: "설정 열기", run: openOptions }] },
@@ -408,7 +409,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     "no-profile": { title: "OpenCode 실행 환경을 추가하세요", body: "기존 OpenCode를 실행할 방법(Windows·WSL·실행 중인 서버)을 설정에서 한 번 등록하면 됩니다.", tone: "setup" as const, actions: [{ label: "실행 환경 추가", run: openOptions, primary: true }] },
     "choose-profile": { title: "실행 환경을 선택하세요", body: "실행 설정에서 사용할 OpenCode 실행 환경을 고르세요.", tone: "setup" as const, actions: [{ label: "실행 설정 열기", run: (trigger: HTMLButtonElement) => openDrawer("environment", trigger), primary: true }] },
     starting: { title: "OpenCode를 준비하는 중…", body: "처음 시작할 때는 1분 정도 걸릴 수 있습니다.", tone: "waiting" as const },
-    "runtime-failed": { title: "OpenCode에 연결하지 못했습니다", body: "위 안내를 확인한 뒤 다시 시도하세요.", tone: "problem" as const, actions: [{ label: "다시 시도", run: () => { if (wb.profileId) void wb.connect(wb.profileId, undefined, wb.sessionId || undefined); else reconnectBridge(); }, primary: true }, { label: "설정 열기", run: openOptions }] },
+    "runtime-failed": { title: "OpenCode에 연결하지 못했습니다", body: "위 안내를 확인한 뒤 다시 시도하세요.", tone: "problem" as const, actions: [{ label: "다시 시도", run: retryRuntime, primary: true }, { label: "설정 열기", run: openOptions }] },
     ready: { title: "브라우저에서 바로 시작하세요", body: "페이지를 읽고, 작업을 맡기고, 결과를 이곳에서 확인하세요.", tone: "ready" as const },
   }[stage];
   const environmentPanel = <section className="workspace-bar"><h3>OpenCode 연결</h3>
@@ -451,6 +452,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
         {currentSession?.id && <SessionMenu label="현재 세션 작업" actions={sessionActions(currentSession, "header")} />}</div>
       {currentSession?.parentID && <div className="session-breadcrumb"><button className="quiet" onClick={() => void perform(selectParent)}>상위 세션으로</button><span>{wb.knownSessions[currentSession.parentID]?.title ?? "하위 작업 대화"}</span></div>}
       {sessionError && <ErrorNotice message={sessionError} />}
+      {stage === "runtime-failed" && turns.length > 0 && <div className="notice" role="status">OpenCode와 연결이 끊겼습니다. 대화 내용은 그대로 있습니다. <button onClick={retryRuntime}>다시 시도</button></div>}
       {heldOperation?.paused && <div className="notice" role="status">브라우저를 직접 조작하는 중입니다. 끝나면 [이어서 진행]을 누르세요. 에이전트는 기다립니다.</div>}
       {currentSession?.revert && <div className="notice">이전 메시지로 되돌린 상태입니다. 새 메시지를 보내 이어갈 수 있습니다. <button onClick={() => void perform(async () => { await api().post(sessionPath() + "/unrevert"); await wb.resync(); })}>되돌리기 취소</button></div>}
       <div className="message-viewport" ref={messageViewport} onScroll={event => { if (view !== "chat" || drawer !== null) return; const el = event.currentTarget; followMessages.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} aria-label="대화 메시지">

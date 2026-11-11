@@ -67,3 +67,18 @@ it("shows diagnostics as a checklist with the raw result folded", async () => {
   expect(host.querySelector(".doctor-checks")?.textContent).toContain("인증된 Bridge가 실행 중입니다");
   expect(host.querySelector<HTMLDetailsElement>("details.doctor-raw")?.open).toBe(false);
 });
+it("tells an open side panel when a profile's server was stopped or started", async () => {
+  const original = send.getMockImplementation()!;
+  let stopped = true;
+  send.mockImplementation(async message => message.method === "runtime.stop" ? { ok: true, result: { stopped } } : message.method === "runtime.ensure" ? { ok: true, result: { state: "ready", version: "1.18.29" } } : original(message));
+  const notices = () => send.mock.calls.map(([message]) => message).filter(message => message.kind === "profiles-changed");
+  await render();
+  await act(async () => button("서버 중지").click());
+  expect(notices()).toEqual([{ kind: "profiles-changed", profileId: "native", runtime: "stopped" }]);
+  await act(async () => button("시작·연결 확인").click());
+  expect(notices().at(-1)).toEqual({ kind: "profiles-changed", profileId: "native", runtime: "started" });
+  // An external server that was not stopped leaves the panel's connection alone.
+  stopped = false;
+  await act(async () => button("서버 중지").click());
+  expect(notices()).toHaveLength(2);
+});
