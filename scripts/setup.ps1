@@ -211,7 +211,8 @@ try {
     $failure = $_
     if ($transaction -and -not $committed) {
         try {
-            if ($startedNew) { $null = Stop-OwnedBridge $state }
+            # Through the transaction: a marker cleaned up here must still roll back cleanly.
+            if ($startedNew) { $null = Stop-OwnedBridge $state $transaction }
             Undo-FileTransaction $transaction
             if ($stoppedOld) { $null = Start-OwnedBridge $old }
         } catch { $rollbackOk = $false; Write-Warning ('Rollback needs inspection: ' + $transaction.Stage + '. ' + $_.Exception.Message) }
