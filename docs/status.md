@@ -2,6 +2,15 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.4.1 Windows preview — 게시 완료 (2026-11-11)
+
+[v0.4.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.1)(prerelease)을 **2026-11-11 04:57:40 UTC / 13:57:40 KST**에 게시했다. 주석 태그는 [PR #43](https://github.com/jihoon22-lee/agent-browser/pull/43)의 main 병합 커밋 **`4e157ef46c3f3fb9cc5e139095c2c0b9cf018cae`**를 가리킨다.
+
+- **배포 ZIP:** **3,937,615 bytes / 37 files**, SHA256 **`edfcd2c8b383a5014f0dbdb4e72654e5fa84fc720cd7eeb20ecdffc8a12d8d62`**. `SHA256SUMS` 별도 게시. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/42960412791)의 Windows 작업이 만든 `windows-x64-package-4e157ef…` 아티팩트다. WSL interop 오류로 로컬 Windows 재빌드·설치 검증은 하지 않았다.
+- **소스·CI:** PR 최종 커밋 CI와 배포 커밋 main CI의 Linux·Windows 작업이 모두 성공했다.
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, GitHub 자산 크기·digest, ZIP 내부 **36개 manifest 해시와 전체 37개 파일**, 확장 버전 0.4.1을 확인했다. 릴리스 본문의 세 섹션도 다시 읽어 확인했다.
+- **정리:** 완료된 계획 문서, 작업 worktree와 로컬·원격 작업 브랜치를 삭제했다. 최종 파일은 `release/v0.4.1-main/`에 보관하고 다운로드·임시 파일을 지웠다.
+
 ## 2026-11-11 전체 코드 리뷰 수정 — v0.4.1 (2026-11-11)
 
 사용자 요청("전체 코드리뷰", 이어서 "모두 다 작업… 릴리스까지")에 따라 `fix/review-2026-11-11` 브랜치에서 진행했다. 리뷰는 코드 추적 기준이었고(높음 2·중간 15·낮음 약 30건과 개선 사항), 수정은 영역별 5개 묶음으로 나눠 항목마다 회귀 테스트와 함께 커밋했다. [PR #43](https://github.com/jihoon22-lee/agent-browser/pull/43).
