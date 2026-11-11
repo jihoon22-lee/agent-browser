@@ -67,3 +67,21 @@ it("re-marks after a navigation only in the marker queue, after pending refreshe
   release(); await queue;
   expect(applied).toEqual([]);
 });
+
+it("leaves the page untouched when the same marker is already shown", async () => {
+  markerScript(true, "AgentBrowser 작업 중");
+  const host = document.querySelector("#agent-browser-work-marker")!;
+  const records: MutationRecord[] = [];
+  const observer = new MutationObserver(found => records.push(...found));
+  observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+  markerScript(true, "AgentBrowser 작업 중");
+  records.push(...observer.takeRecords());
+  expect(records).toEqual([]);
+  expect(document.querySelector("#agent-browser-work-marker")).toBe(host);
+  // A different label, or a marker from an earlier instance without a recorded label, is replaced.
+  markerScript(true, "AgentBrowser · 사용자가 조작 중");
+  records.push(...observer.takeRecords()); observer.disconnect();
+  expect(records.length).toBeGreaterThan(0);
+  expect(document.querySelectorAll("#agent-browser-work-marker")).toHaveLength(1);
+  expect(document.querySelector("#agent-browser-work-marker")).not.toBe(host);
+});
