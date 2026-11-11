@@ -1,9 +1,9 @@
+import { OpenCodeV1Client } from "../src/agents/opencode-v1/client";
 import { initialWorkbench, workbenchReducer, availableModels, operationBindings, shouldSubmit, filePart, respondOnce } from "../src/sidepanel/workbench-state";
 
-it("updates parts by ID and ignores replayed deltas and other-session mixing", () => {
+it("updates parts by ID without mixing in another session", () => {
   let state = workbenchReducer(initialWorkbench, { type: "messages", sessionID: "ses-a", messages: [{ info: { id: "msg-a", sessionID: "ses-a", role: "assistant" }, parts: [{ id: "prt-a", messageID: "msg-a", sessionID: "ses-a", type: "text", text: "시작" }] }] });
   const delta = { id: "evt-one", type: "message.part.delta", properties: { sessionID: "ses-a", messageID: "msg-a", partID: "prt-a", field: "text", delta: " 끝" } };
-  state = workbenchReducer(state, { type: "event", event: delta });
   state = workbenchReducer(state, { type: "event", event: delta });
   state = workbenchReducer(state, { type: "event", event: { id: "evt-two", type: "message.part.updated", properties: { sessionID: "ses-b", part: { id: "prt-b", messageID: "msg-b", sessionID: "ses-b", type: "text", text: "다른 대화" } } } });
   expect(state.messages["ses-a"]![0]!.parts[0]!.text).toBe("시작 끝");
@@ -72,4 +72,19 @@ it("keeps session errors visible even when no assistant message was created", ()
 it("does not fabricate an assistant message from session metadata events", () => {
   const state = workbenchReducer(initialWorkbench, { type: "event", event: { id: "evt-session-meta", type: "session.updated", properties: { sessionID: "ses-one", info: { id: "ses-one", title: "합성 세션" } } } });
   expect(state.messages).toEqual({});
+});
+
+it("keeps no event history of its own: the stream client drops a replayed delta before the reducer", async () => {
+  const delta = { id: "evt-one", type: "message.part.delta", properties: { sessionID: "ses-a", messageID: "msg-a", partID: "prt-a", field: "text", delta: " 끝" } };
+  const controller = new AbortController(), wire = `data: ${JSON.stringify(delta)}\n\n`;
+  // The server sends the same event again after each reconnect.
+  const fetcher = vi.fn(async () => new Response(wire + wire, { headers: { "content-type": "text/event-stream" } }));
+  let state = workbenchReducer(initialWorkbench, { type: "messages", sessionID: "ses-a", messages: [{ info: { id: "msg-a", sessionID: "ses-a", role: "assistant" }, parts: [{ id: "prt-a", messageID: "msg-a", sessionID: "ses-a", type: "text", text: "시작" }] }] });
+  let connections = 0;
+  await new OpenCodeV1Client({ baseUrl: "http://127.0.0.1:4096", directory: "/fixture" }, fetcher, { retryDelayMs: 0 })
+    .events(event => { state = workbenchReducer(state, { type: "event", event }); }, online => { if (online && ++connections === 3) controller.abort(); }, controller.signal);
+  expect(fetcher.mock.calls.length).toBeGreaterThanOrEqual(2);
+  expect(state.messages["ses-a"]![0]!.parts[0]!.text).toBe("시작 끝");
+  expect(state).not.toHaveProperty("seen");
+  expect(initialWorkbench).not.toHaveProperty("seen");
 });

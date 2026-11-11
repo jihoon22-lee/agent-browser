@@ -1,8 +1,8 @@
 // View data stays keyed by server session/message/part IDs; it is never a second agent runtime.
 export type Data = Record<string, any>;
 export type UiMessage = { info: Data; parts: Data[] };
-export type WorkbenchState = { messages: Record<string, UiMessage[]>; questions: Data[]; permissions: Data[]; statuses: Record<string, Data>; errors: Record<string, string>; seen: string[] };
-export const initialWorkbench: WorkbenchState = { messages: {}, questions: [], permissions: [], statuses: {}, errors: {}, seen: [] };
+export type WorkbenchState = { messages: Record<string, UiMessage[]>; questions: Data[]; permissions: Data[]; statuses: Record<string, Data>; errors: Record<string, string> };
+export const initialWorkbench: WorkbenchState = { messages: {}, questions: [], permissions: [], statuses: {}, errors: {} };
 const byId = <T extends Data>(items: T[]) => [...new Map(items.map(item => [item.id, item])).values()];
 /** Whether a message fetched from the server is exactly what the view already holds. */
 export const sameMessage = (held: UiMessage | undefined, fetched: UiMessage) => !!held && JSON.stringify(held) === JSON.stringify({ ...fetched, parts: byId(fetched.parts ?? []) });
@@ -22,8 +22,8 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
   if (action.type === "statuses") return { ...state, statuses: action.statuses };
   if (action.type !== "event") return state;
   const event = action.event, p = event.properties ?? {};
-  if (event.id && state.seen.includes(event.id)) return state;
-  const next = { ...state, seen: event.id ? [...state.seen, event.id].slice(-5000) : state.seen };
+  // Replayed events are dropped by event ID in the stream client (OpenCodeV1Client.events), not here.
+  const next = state;
   if (event.type === "session.status") {
     const errors = { ...state.errors }; if (p.status?.type === "busy") delete errors[p.sessionID];
     return { ...next, errors, statuses: { ...state.statuses, [p.sessionID]: p.status } };
