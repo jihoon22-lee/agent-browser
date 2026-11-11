@@ -79,7 +79,8 @@ impl OperationGate {
         self.attach_request(tab_id, client_id, None)
     }
 
-    pub fn begin_request(&self, id: &str, client: &str, tab: Option<i64>) -> Result<(), RpcError> {
+    #[cfg(test)]
+    pub(crate) fn begin_request(&self, id: &str, client: &str, tab: Option<i64>) -> Result<(), RpcError> {
         self.begin_scoped_request(id,client,tab,None)
     }
 
@@ -201,7 +202,8 @@ impl OperationGate {
         Self::active(&g, id).cloned()
     }
 
-    pub fn check(&self, id: &str) -> Result<Operation, RpcError> {
+    #[cfg(test)]
+    pub(crate) fn check(&self, id: &str) -> Result<Operation, RpcError> {
         self.with_checked(id, true, |op| Ok(op.clone()))
     }
 
@@ -245,7 +247,8 @@ impl OperationGate {
         }
     }
 
-    pub fn add_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
+    #[cfg(test)]
+    pub(crate) fn add_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
         if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
         g.owned_tabs.insert(tab);
@@ -290,7 +293,8 @@ impl OperationGate {
         op.current_tab=tab;op.current_tab_closed=false;op.target_epoch+=1;
     }
 
-    pub fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
+    #[cfg(test)]
+    pub(crate) fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         let mut g=self.inner.lock().unwrap();let op=Self::active(&g,id)?;
         if !op.tabs.contains(&tab) {return Err(RpcError::new(ErrorCode::TabNotFound,Retry::Never,"Tab has not been verified for this operation"));}
         Self::select_tab(&mut g,tab);Ok(())
@@ -324,7 +328,8 @@ impl OperationGate {
         if let Some(op)=g.current.as_mut().filter(|op|op.id==origin.id && op.target_epoch==origin.target_epoch && op.current_tab==origin.current_tab && !op.current_tab_closed) {op.needs_observation=false;op.handed_back=false;}
     }
 
-    pub fn remove_tab(&self, tab: i64) {
+    #[cfg(test)]
+    pub(crate) fn remove_tab(&self, tab: i64) {
         let mut g=self.inner.lock().unwrap();
         if g.current.is_some() {Self::remove_current_tab(&mut g,tab);}
     }

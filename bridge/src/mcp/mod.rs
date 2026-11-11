@@ -51,8 +51,8 @@ pub(crate) fn bounded_text(name: &str, outcome: &serde_json::Value) -> (String, 
 
 /// How to ask this tool for less, naming only arguments its schema declares.
 fn narrowing_hint(name: &str) -> String {
-    let schema = tools::all().into_iter().find(|t| t.name == name).map(|t| t.schema);
-    let has = |key: &str| schema.as_ref().is_some_and(|s| s["properties"][key].is_object());
+    let schema = tools::find(name).map(|t| &t.schema);
+    let has = |key: &str| schema.is_some_and(|s| s["properties"][key].is_object());
     let mut hints = Vec::new();
     if has("maxChars") { hints.push("retry with a smaller maxChars".to_string()); }
     if has("limit") { hints.push("retry with a smaller limit".to_string()); }
@@ -78,7 +78,7 @@ impl ServerHandler for BridgeMcp {
 
     async fn list_tools(&self, _r: Option<PaginatedRequestParams>, _c: RequestContext<RoleServer>) -> Result<ListToolsResult, McpError> {
         let tools = tools::all()
-            .into_iter()
+            .iter()
             .map(|t| {
                 let schema = t.schema.as_object().cloned().expect("tool schema is an object");
                 Tool::new(t.name, t.description, schema)

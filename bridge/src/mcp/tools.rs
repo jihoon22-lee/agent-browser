@@ -11,7 +11,14 @@ fn wait_for() -> Value { json!({"type":"object","properties":{
     "urlIncludes":{"type":"string","minLength":1,"maxLength":2000},"match":{"type":"string","enum":["all","any"]},
     "timeoutMs":{"type":"integer","minimum":100,"maximum":30000}},"additionalProperties":false}) }
 
-pub fn all() -> Vec<ToolDef> {
+/// The tool list is fixed for the life of the process: build the schemas once, not per call.
+static TOOLS: std::sync::LazyLock<Vec<ToolDef>> = std::sync::LazyLock::new(build);
+
+pub fn all() -> &'static [ToolDef] { &TOOLS }
+
+pub fn find(name: &str) -> Option<&'static ToolDef> { TOOLS.iter().find(|tool| tool.name == name) }
+
+fn build() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
             "list/windows read tabs. In a panel request attach/new and page tools may omit requestId and operationId; otherwise attach (no tabId = request's tab) or new (url) with the Browser context requestId, then reuse operationId. Results include a snapshot and openTabs. about:blank tabs cannot be closed.",

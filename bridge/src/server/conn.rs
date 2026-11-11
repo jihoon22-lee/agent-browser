@@ -379,10 +379,6 @@ async fn authenticate(
             *cfg = updated;
         }
     }
-    if role == Role::Extension && hello.client_id.is_empty() {
-        send_err_and_close(ws, &id, ErrorCode::InvalidParams, "clientId is required for extensions").await;
-        return None;
-    }
     Some((id, hello))
 }
 
@@ -416,10 +412,6 @@ async fn parse_or_reject(ws: &mut Ws, text: &str) -> Result<Envelope, bool> {
 
 fn forbidden(id: String, method: &str) -> Envelope {
     Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, format!("{method} is not allowed for this connection")))
-}
-
-fn not_available(id: String) -> Envelope {
-    Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
 }
 
 /// Ends an operation whose creating call was cancelled or could not be answered. Like every
@@ -649,7 +641,7 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             }
             None => Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "clientId is required")),
         },
-        _ => not_available(id),
+        _ => forbidden(id, method),
     }
 }
 

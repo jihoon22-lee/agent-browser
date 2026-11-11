@@ -63,6 +63,12 @@ impl ToolOutcome {
     fn rejected(tool: &str, operation_id: Option<&str>, error: RpcError) -> Self {
         Self::failure(tool, operation_id, false, error)
     }
+
+    /// A failed browser command: delivered unless no browser was connected to receive it.
+    fn from_browser(tool: &str, operation_id: Option<&str>, error: RpcError) -> Self {
+        let delivered = error.code != ErrorCode::BrowserDisconnected;
+        Self::failure(tool, operation_id, delivered, error)
+    }
 }
 
 fn invalid(message: impl Into<String>) -> RpcError {
@@ -224,10 +230,8 @@ pub async fn call_tool(state: &ServerState, name: &str, args: Value) -> ToolOutc
 /// A null optional argument is an omitted one (free models often send them). Removing it once here
 /// keeps every later `get(..).is_some()` and `as_str()` agreeing; a null required argument stays and fails.
 fn without_null_options(name: &str, mut args: Value) -> Value {
-    let required: Vec<String> = tools::all().into_iter().find(|t| t.name == name)
-        .and_then(|t| t.schema["required"].as_array().map(|r| r.iter().filter_map(Value::as_str).map(str::to_string).collect()))
-        .unwrap_or_default();
-    if let Some(map) = args.as_object_mut() { map.retain(|key, value| !value.is_null() || required.contains(key)); }
+    let required = tools::find(name).and_then(|t| t.schema["required"].as_array());
+    if let Some(map) = args.as_object_mut() { map.retain(|key, value| !value.is_null() || required.is_some_and(|r| r.iter().any(|k| k == key))); }
     args
 }
 
@@ -310,7 +314,7 @@ async fn run(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> 
 /// `follow_up=false` skips the attached snapshot and tab list: an implicit attach in front of a
 /// read discards them, and the read itself reads the page.
 async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value, follow_up: bool) -> ToolOutcome {
-    let Some(def) = tools::all().into_iter().find(|t| t.name == name) else {
+    let Some(def) = tools::find(name) else {
         return ToolOutcome::rejected(name, None, invalid(format!("unknown tool `{name}`")));
     };
     let empty = json!({});
@@ -343,7 +347,7 @@ async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value
         let params = args.as_object().unwrap().iter().filter(|(key,_)|properties.contains_key(*key)).map(|(k,v)|(k.clone(),v.clone())).collect();
         match state.registry.send_command("browser.bookmarks",Value::Object(params),CommandClass::Read,DEFAULT_TIMEOUT).await {
             Ok(data) => ToolOutcome::success(name,None,true,Executed::No,Value::Null,data),
-            Err(error) => ToolOutcome::failure(name,None,true,error),
+            Err(error) => ToolOutcome::from_browser(name,None,error),
         }
     } else if name == "browser_tabs" {
         run_tabs(state, args).await
@@ -438,7 +442,8 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
                     if !aborted { adopted = state.ops.adopt_children(op_id,origin.generation,&origin.client_id,origin.current_tab,&ids).ok(); }
                     for child in children { if child.is_object() { child["adopted"] = json!(adopted.as_ref().is_some_and(|op| child["tabId"].as_i64().is_some_and(|id| ids.contains(&id) && op.tabs.contains(&id)))); } }
                 }
-                if let Some(op) = adopted { data["currentTab"] = json!(op.current_tab); data["operationTabs"] = json!(op.tabs); data["nextStep"] = json!("Take a fresh browser_snapshot in the current tab before acting; previous-tab refs do not transfer."); }
+                // Only a tab that actually joined changes the target; otherwise the page and its refs are as they were.
+                if let Some(op) = adopted.filter(|_| data["openedTabs"].as_array().is_some_and(|tabs| tabs.iter().any(|tab| tab["adopted"] == true))) { data["currentTab"] = json!(op.current_tab); data["operationTabs"] = json!(op.tabs); data["nextStep"] = json!("Take a fresh browser_snapshot in the current tab before acting; previous-tab refs do not transfer."); }
             }
             let verified = data.as_object_mut().and_then(|o| o.remove("verified")).unwrap_or(Value::Null);
             if aborted {
@@ -462,8 +467,7 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
                 details["abortedAfter"] = Value::Bool(true);
                 e.details = details;
             }
-            let delivered = e.code != ErrorCode::BrowserDisconnected;
-            ToolOutcome::failure(name, Some(op_id), delivered, e)
+            ToolOutcome::from_browser(name, Some(op_id), e)
         }
     }
 }
@@ -604,10 +608,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
     const NAME: &str = "browser_tabs";
     let action = args["action"].as_str().unwrap_or_default();
     let read = |method: &'static str, params: Value| state.registry.send_command(method, params, CommandClass::Read, DEFAULT_TIMEOUT);
-    let delivered_failure = |op: Option<&str>, e: RpcError| {
-        let delivered = e.code != ErrorCode::BrowserDisconnected;
-        ToolOutcome::failure(NAME, op, delivered, e)
-    };
+    let delivered_failure = |op: Option<&str>, e: RpcError| ToolOutcome::from_browser(NAME, op, e);
     // Tab actions inside an operation wait while the user holds the browser, like page tools.
     if let Some(op_id) = args["operationId"].as_str().filter(|_| matches!(action, "new" | "switch" | "close")) {
         if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(NAME, Some(op_id), error); }
@@ -713,7 +714,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                     Ok(()) => ToolOutcome::success(NAME, Some(op_id), true, Executed::No, Value::Null, json!({ "tab": tab })),
                     Err(e) => ToolOutcome::failure(NAME, Some(op_id), true, e),
                 },
-                Ok(_) => ToolOutcome::rejected(NAME,Some(op_id),RpcError::new(ErrorCode::UnsupportedPage,Retry::Never,"Select an ordinary HTTP(S) tab from browser_tabs list")),
+                Ok(_) => delivered_failure(Some(op_id),RpcError::new(ErrorCode::UnsupportedPage,Retry::Never,"Select an ordinary HTTP(S) tab from browser_tabs list")),
                 Err(e) => {
                     if e.code == ErrorCode::TabNotFound {
                         state.ops.forget_missing_tab(op_id, tab_id);
@@ -775,7 +776,7 @@ mod tests {
 
     #[test]
     fn null_optional_fields_are_omitted_but_required_ones_still_fail() {
-        let click = tools::all().into_iter().find(|t| t.name == "browser_click").unwrap().schema;
+        let click = &tools::find("browser_click").unwrap().schema;
         assert!(validate(&click, &json!({"ref":"a","mode":null,"toRef":null,"newTab":null})).is_ok());
         assert!(validate_action("browser_click", &json!({"ref":"a","mode":null,"toRef":null})).is_ok());
         assert!(validate(&click, &json!({"ref":null})).is_err());
@@ -1064,6 +1065,38 @@ mod tests {
         assert!(state.ops.check(&op.id).unwrap().needs_observation);
         failed(ErrorCode::UnsupportedPage);
         assert!(!state.ops.check(&op.id).unwrap().needs_observation, "a blank tab must stay navigable after a hand-back");
+    }
+
+    #[test]
+    fn a_click_whose_opened_tabs_are_not_adopted_does_not_claim_a_tab_change() {
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let op = state.ops.attach(1, "A").unwrap();
+        let result = finish(&state, "browser_click", &op.id, CommandClass::Write, &op, Ok(json!({"executed":true,"verified":{"urlChanged":false,"domChanged":false},
+            "openedTabs":[{"tabId":3,"url":"chrome://settings","sourceTabId":1,"sourceFrameId":0}]})));
+        assert_eq!(result.data["openedTabs"][0]["adopted"], false);
+        assert!(result.data.get("currentTab").is_none() && result.data.get("nextStep").is_none() && result.data.get("operationTabs").is_none(), "{}", result.data);
+        assert!(!wants_snapshot("browser_click", &json!({}), &result), "nothing changed, so the old refs stay valid");
+    }
+
+    #[tokio::test]
+    async fn delivered_is_false_only_when_no_browser_received_the_command() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let unreachable = call_tool(&state, "browser_bookmarks", json!({"action":"list"})).await;
+        assert_eq!((unreachable.error.as_ref().map(|e| e.code), unreachable.delivered), (Some(ErrorCode::BrowserDisconnected), false));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("A", tx);
+        let op = state.ops.attach(1, "A").unwrap();
+        let mut pending = Box::pin(call_tool(&state, "browser_tabs", json!({"action":"switch","operationId":op.id,"tabId":5})));
+        let refused = loop {
+            if let std::task::Poll::Ready(outcome) = futures_util::poll!(pending.as_mut()) { break outcome; }
+            let Envelope::Req { id, method, .. } = parse_envelope(&rx.try_recv().expect("a command is waiting")).unwrap() else { continue };
+            let reply = if method == "browser.tabs.get" { json!({"tabId":5,"url":"chrome://settings","attachable":false}) } else { json!({"tabs":[]}) };
+            state.registry.handle_response(conn, Envelope::ok(id, reply));
+        };
+        assert_eq!((refused.error.as_ref().map(|e| e.code), refused.delivered), (Some(ErrorCode::UnsupportedPage), true), "the browser answered this call");
     }
 
     #[test]
