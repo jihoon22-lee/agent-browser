@@ -95,3 +95,29 @@ it('rejects a recycled button with changed accessible identity', () => {
   document.querySelector('button')!.setAttribute('aria-label', 'Read post 2');
   expect(() => resolveRef(s.elements[0]!.ref)).toThrowError(expect.objectContaining({ code: 'STALE_ELEMENT' }));
 });
+
+it('flags a document the DOM cannot read, such as a PDF viewer', () => {
+  const type = vi.spyOn(document, 'contentType', 'get');
+  try {
+    type.mockReturnValue('application/pdf');
+    document.body.innerHTML = '<embed type="application/pdf" src="about:blank">';
+    expect(takeSnapshot({ snapshotId: 1, frameId: 0, maxChars: 1000, offset: 0, checkLayout: false }).limits).toContain('document-content-not-readable');
+    type.mockReturnValue('text/html');
+    expect(takeSnapshot({ snapshotId: 2, frameId: 0, maxChars: 1000, offset: 0, checkLayout: false }).limits).toEqual(['embedded-content-not-readable']);
+    document.body.innerHTML = '<p>plain</p>';
+    for (const readable of ['text/html', 'application/xhtml+xml', 'text/plain', 'image/svg+xml'])
+      { type.mockReturnValue(readable); expect(takeSnapshot({ snapshotId: 3, frameId: 0, maxChars: 1000, offset: 0, checkLayout: false }).limits).toEqual([]); }
+  } finally { type.mockRestore(); }
+});
+
+it('does not offer a control the browser reports as not rendered (collapsed details, content-visibility)', () => {
+  document.body.innerHTML = '<details><summary>More</summary><button>Folded</button></details>';
+  const button = document.querySelector('button')!, summary = document.querySelector('summary')!;
+  const rect = [{ left: 0, top: 0, right: 10, bottom: 10, width: 10, height: 10 }] as unknown as DOMRectList;
+  vi.spyOn(button, 'getClientRects').mockReturnValue(rect); vi.spyOn(summary, 'getClientRects').mockReturnValue(rect);
+  (button as any).checkVisibility = () => false; (summary as any).checkVisibility = () => true;
+  const names = () => takeSnapshot({ snapshotId: 1, frameId: 0, maxChars: 1000, offset: 0, checkLayout: true }).elements.map(e => e.name);
+  expect(names()).toEqual(['More']);
+  (button as any).checkVisibility = () => true;
+  expect(names()).toEqual(['More', 'Folded']);
+});

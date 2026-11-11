@@ -1,3 +1,4 @@
+import { clipText } from "./text";
 const INTERACTIVE = "a[href],button,input:not([type=hidden]),select,textarea,summary,[role=button],[role=link],[role=checkbox],[role=radio],[role=tab],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=switch],[role=combobox],[role=textbox],[role=searchbox],[role=spinbutton],[role=slider],[role=treeitem],[contenteditable=''],[contenteditable=true],[contenteditable=plaintext-only]";
 export const isInteractive = (el: Element) => el.matches(INTERACTIVE+', [onclick], [onmousedown], [onpointerdown], [draggable=true]') ||
   // A label that opens a hidden file input is the page's upload button.
@@ -38,7 +39,9 @@ export function isRendered(el: Element, opts: { checkLayout: boolean }): boolean
     const cs = getComputedStyle(n);
     if (cs.display === "none" || cs.visibility === "hidden") return false;
   }
-  return opts.checkLayout ? el.getClientRects().length > 0 : true;
+  if (!opts.checkLayout) return true;
+  // checkVisibility (Chrome 105+) also knows a collapsed <details> and content-visibility:hidden.
+  return el.getClientRects().length > 0 && (typeof el.checkVisibility !== "function" || el.checkVisibility());
 }
 
 export function roleOf(el: Element): string {
@@ -73,7 +76,7 @@ function nestedLabel(el: Element): string {
 
 export type NameCache = WeakMap<Node,Map<Element,string>>;
 export function accessibleName(el: Element, excludeEditableValue = false, maxLength = 80, labels?: NameCache): string {
-  return nameOf(el, excludeEditableValue, new Set(), labels).slice(0, maxLength);
+  return clipText(nameOf(el, excludeEditableValue, new Set(), labels), maxLength);
 }
 function nameOf(el: Element, excludeEditableValue: boolean, visiting: Set<Element>, cache?: NameCache): string {
   const by = el.getAttribute('aria-labelledby');

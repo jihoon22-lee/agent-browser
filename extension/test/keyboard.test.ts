@@ -167,3 +167,15 @@ describe("key combinations and editing keys", () => {
     expect(seen).toEqual(['C+Enter', '7']);
   });
 });
+
+it("a press without a ref is refused while focus is inside a frame instead of succeeding without effect", async () => {
+  document.body.innerHTML = '<iframe title="Embedded"></iframe><button>Outside</button>';
+  const frame = document.querySelector("iframe")!;
+  const spy = vi.spyOn(document, "activeElement", "get").mockReturnValue(frame);
+  const seen: string[] = [];
+  frame.addEventListener("keydown", event => seen.push(event.key));
+  try {
+    await expect(runAction("press", { key: "Enter", generation: 1 })).rejects.toMatchObject({ code: "ELEMENT_NOT_INTERACTABLE", message: expect.stringContaining("frame") });
+  } finally { spy.mockRestore(); }
+  expect(seen).toEqual([]);
+});

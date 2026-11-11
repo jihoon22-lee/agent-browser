@@ -1,6 +1,7 @@
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
 import { bindTarget, resolveRef } from "./refs";
+import { clipText } from "./text";
 
 const KEYS = new Set(["Enter", "Tab", "Escape", "Space", "Backspace", "Delete", "Home", "End", "PageUp", "PageDown", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"]);
 const MODIFIERS = ["Alt", "Control", "Meta", "Shift"];
@@ -70,6 +71,8 @@ function moveCaret(target: HTMLInputElement | HTMLTextAreaElement, key: string, 
 export function preparePress(p: Record<string, unknown>, validate: (element: Element) => void): HTMLElement {
   const { key, modifiers } = keyOf(p);
   const target = (p.ref ? resolveRef(String(p.ref)) : activeElement() ?? document.body) as HTMLElement;
+  // Focus inside a child document: a key sent to the frame element here would do nothing there.
+  if (!p.ref && (target.tagName === "IFRAME" || target.tagName === "FRAME")) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
   validate(target);
   const editableHost = target.closest("[contenteditable]");
   const rich = target.isContentEditable || (editableHost !== null && editableHost.getAttribute("contenteditable") !== "false");
@@ -198,8 +201,8 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
   if (keyupSkipped) verified.keyupSkipped = true;
   if (target instanceof HTMLInputElement) {
     if (["checkbox", "radio"].includes(target.type)) verified.checked = target.checked;
-    else if (target.type !== "password") verified.value = target.value.slice(0, 512);
-  } else if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) verified.value = target.value.slice(0, 512);
+    else if (target.type !== "password") verified.value = clipText(target.value, 512);
+  } else if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) verified.value = clipText(target.value, 512);
   if ((target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLInputElement && target.type !== "password")) && target.value.length > 512) verified.valueTruncated = true;
   return { executed: true, verified };
 }

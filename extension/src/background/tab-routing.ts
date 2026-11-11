@@ -1,5 +1,6 @@
 import type { ChromeApi } from './chrome-api';
 import { aborted, describeTab, isWeb } from './tabs';
+import { clipText } from '../content/text';
 
 type Target = chrome.webNavigation.WebNavigationSourceCallbackDetails;
 type Api = Pick<ChromeApi,'tabsGet'|'onTabUpdated'|'onTabRemoved'|'onCreatedNavigationTarget'>;
@@ -24,7 +25,7 @@ export function trackCreatedTabs(api: Api, sourceTabId: number, sourceFrameId: n
       const stop = () => { if (done) return; done = true; cleanup(); reject(signal.reason); };
       const check = (tab:chrome.tabs.Tab) => {
         if (closed.has(target.tabId)) return complete({tabId:target.tabId,reason:'closed'});
-        if (tab.status === 'complete' && isWeb(tab.url)) complete({...describeTab(tab),url:tab.url?.slice(0,2048)??'',title:tab.title?.slice(0,256)??'',sourceTabId,sourceFrameId});
+        if (tab.status === 'complete' && isWeb(tab.url)) complete({...describeTab(tab),url:clipText(tab.url??'',2048),title:clipText(tab.title??'',256),sourceTabId,sourceFrameId});
         else if (tab.url && tab.url !== 'about:blank' && !isWeb(tab.url)) complete({tabId:target.tabId,reason:'unsupported'});
       };
       const offUpdate = api.onTabUpdated((id,_change,tab) => { if (id === target.tabId) check(tab); });

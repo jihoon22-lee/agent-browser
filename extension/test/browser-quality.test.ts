@@ -142,3 +142,15 @@ it('keeps a clickable pointer card when its only child control is ARIA-disabled'
   await runAction('click',{ref:item!.ref,waitFor:{text:'Open order'}});
   expect(clicks).toBe(1);
 });
+
+it.each(['wrapping-label','for-label','labelledby'])('confirms an input whose own label text changes after its handler (%s)',async(kind)=>{
+  document.body.innerHTML=kind==='wrapping-label'?'<label>Amount <span id="hint">required</span><input></label>'
+    :kind==='for-label'?'<label for="amount">Amount <span id="hint">required</span></label><input id="amount">'
+    :'<span id="hint">Amount required</span><input aria-labelledby="hint">';
+  const el=document.querySelector('input')!;
+  el.addEventListener('input',()=>queueMicrotask(()=>{document.querySelector('#hint')!.textContent='Amount ok';}));
+  const ref=takeSnapshot(opts).elements[0]!.ref;
+  await expect(runAction('fill',{ref,text:'after'})).resolves.toMatchObject({verified:{matches:true,value:'after'}});
+  // The post-input check is not a new authorization: the renamed control needs a fresh snapshot.
+  expect(()=>resolveRef(ref)).toThrowError(expect.objectContaining({code:'STALE_ELEMENT'}));
+});

@@ -1,7 +1,8 @@
 import { highlight } from "./highlight";
+import { clipText } from "./text";
 import { assertTrustedFallback, requestTrusted, trustedFrame, trustedDetails } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
+import { accessibleName, composedParent, isDisabled, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
@@ -55,14 +56,19 @@ function reaches(top: Element | null, el: Element): boolean {
   return !!label && "labels" in el && [...((el as HTMLInputElement).labels ?? [])].includes(label);
 }
 
-function assertInteractable(el: Element): Point | undefined {
+const inViewport = (point: Point) => point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight;
+/** A reachable point of the element in viewport coordinates, scrolling it into view when needed.
+ * With `allowScroll` false the page is left where it is: the caller holds coordinates of another
+ * element that a scroll would invalidate. */
+function assertInteractable(el: Element, allowScroll = true): Point | undefined {
   if (!isRendered(el, { checkLayout: hasLayout() }) || isDisabled(el)) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is hidden or disabled.`);
   }
   if (!hasLayout()) return undefined;
   // Preserve an already usable position instead of recentering every field/button.
   for (const point of candidatePoints(el))
-    if (point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight && reaches(topAt(point),el)) return point;
+    if (inViewport(point) && reaches(topAt(point),el)) return point;
+  if (!allowScroll) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} cannot be reached without scrolling the page again.`);
   // "instant" defeats CSS smooth scrolling, so hit testing uses the new position.
   (el as HTMLElement).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   const points = candidatePoints(el);
@@ -72,25 +78,64 @@ function assertInteractable(el: Element): Point | undefined {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el)} is covered by another element.`, "never",
       { coveredBy: { tag: top.tagName.toLowerCase(), name: accessibleName(top) } });
   }
+  // Nothing is hit outside the viewport: the element could not be scrolled into it (fixed or
+  // clipped off screen). A visually hidden native control is used through its label instead.
+  const labelled = "labels" in el && ((el as HTMLInputElement).labels?.length ?? 0) > 0;
+  if (points[0] && !inViewport(points[0]) && !labelled)
+    throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is outside the viewport and cannot be scrolled into view.`);
   return points[0];
 }
 
-function observeChanges(ms: number, signal: AbortSignal): Promise<{ urlChanged: boolean; domChanged: boolean }> {
+/** Focus the nearest focusable ancestor, as a real pointer press does before mouseup and click. */
+function focusFromPointer(el: Element) {
+  for (let node: Element | null = el; node; node = composedParent(node)) {
+    if (!(node instanceof HTMLElement) || node.tabIndex < 0 || isDisabled(node)) continue;
+    if (activeIn(node) !== node) node.focus({ preventScroll: true });
+    return;
+  }
+}
+const activeIn = (el: Element) => (el.getRootNode() as Document | ShadowRoot).activeElement;
+
+type Changes = Promise<{ urlChanged: boolean; domChanged: boolean }> & { delivered(): void };
+/** Watches the page from now until `ms` after the input was delivered. DOM input is delivered at
+ * once. Trusted input makes a round trip through the debugger first: with `inTransit` the window
+ * is counted from `delivered()`, so a slow round trip cannot use it up before the page reacts. */
+function observeChanges(ms: number, signal: AbortSignal, inTransit = false): Changes {
   const startUrl = location.href;
-  let mutated = false;
-  return new Promise((resolve, reject) => {
+  let mutated = false, delivered = () => {};
+  const changes = new Promise<{ urlChanged: boolean; domChanged: boolean }>((resolve, reject) => {
     const mo = observePage(() => { mutated = true; });
-    const done = () => { mo.disconnect(); clearTimeout(timer); signal.removeEventListener("abort", abort); };
+    let timer: ReturnType<typeof setTimeout> | undefined, finished = false;
+    const done = () => { finished = true; mo.disconnect(); clearTimeout(timer); signal.removeEventListener("abort", abort); };
     const abort = () => { done(); reject(cancellationError(true)); };
-    const timer = setTimeout(() => { mutated = mo.refresh() || mutated; done(); resolve({ urlChanged: location.href !== startUrl, domChanged: mutated }); }, ms);
+    delivered = () => {
+      if (finished || timer !== undefined) return;
+      timer = setTimeout(() => { mutated = mo.refresh() || mutated; done(); resolve({ urlChanged: location.href !== startUrl, domChanged: mutated }); }, ms);
+    };
     signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
+    if (signal.aborted) abort(); else if (!inTransit) delivered();
   });
+  return Object.assign(changes, { delivered: () => delivered() });
 }
 
 function verificationValue(value: string) {
-  return { value: value.slice(0, 512), ...(value.length > 512 ? { valueTruncated: true } : {}) };
+  return { value: clipText(value, 512), ...(value.length > 512 ? { valueTruncated: true } : {}) };
 }
+
+const EDITOR_BLOCK = "p,div,li,h1,h2,h3,h4,h5,h6,pre,blockquote,tr";
+/** An editor's text with its line structure: innerText in a browser, a block walk without layout. */
+function editorText(host: HTMLElement): string {
+  if (typeof host.innerText === "string") return host.innerText;
+  let text = "";
+  const walker = host.ownerDocument.createTreeWalker(host, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeType === Node.TEXT_NODE) text += node.nodeValue ?? "";
+    else if ((node as Element).tagName === "BR" || ((node as Element).matches(EDITOR_BLOCK) && text && !text.endsWith("\n"))) text += "\n";
+  }
+  return text;
+}
+/** Lines as a person reads them: editors add blank lines between paragraphs and use no-break spaces. */
+const shownLines = (value: string) => value.replace(/\r\n?/g, "\n").split("\n").map(line => line.replace(/\u00a0/g, " ").trimEnd()).filter(Boolean).join("\n");
 
 function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
   const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
@@ -132,18 +177,22 @@ export async function runAction(method: string, p: P, signal?: AbortSignal): Pro
 /** Drag ref onto toRef: trusted mouse input when allowed and the source is not an HTML5 drag source,
  * otherwise pointer events followed, for HTML5 sources, by a drag sequence sharing one DataTransfer. */
 async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal): Promise<Record<string, unknown>> {
-  const from = assertInteractable(el) ?? clickPoint(el);
+  assertInteractable(el);
   const to = assertInteractable(target) ?? clickPoint(target);
+  // Bringing the target into view may have moved the source: read its position again, without
+  // scrolling. Two ends that cannot be on screen together fail here, before any input.
+  const from = assertInteractable(el, false) ?? clickPoint(el);
   // The browser drags the nearest draggable ancestor (a card holding the link the ref names).
   const source = el.closest('[draggable=true], a[href]:not([draggable=false]), img:not([draggable=false])');
   const html5 = source !== null;
   const unmark = highlight(el);
-  const changes = observeChanges(p.waitFor ? 0 : 500, signal);
+  const viaDebugger = p.trusted === true && (trustedFrame() || p.trustedFrames === true) && !html5;
+  const changes = observeChanges(p.waitFor ? 0 : 500, signal, viaDebugger);
   void changes.then(unmark, unmark);
   void changes.catch(() => {});
   let trustedReason: string | undefined;
-  if (p.trusted === true && (trustedFrame() || p.trustedFrames === true) && !html5) {
-    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", {ref:p.ref,toRef:p.toRef, x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
+  if (viaDebugger) {
+    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", {ref:p.ref,toRef:p.toRef, x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY }).finally(changes.delivered);
     if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...trustedDetails(answer), ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
     assertTrustedFallback(answer, p, signal);
     trustedReason = answer.reason;
@@ -223,11 +272,12 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const modeNote = mode === "click" ? {} : { mode };
       const point = assertInteractable(el) ?? clickPoint(el);
       const unmark = highlight(el);
-      const changes = observeChanges(p.waitFor ? 0 : 500, signal);
+      const viaDebugger = p.trusted === true && (trustedFrame() || p.trustedFrames === true);
+      const changes = observeChanges(p.waitFor ? 0 : 500, signal, viaDebugger);
       void changes.then(unmark, unmark);
       let trustedReason: string | undefined;
-      if (p.trusted === true && (trustedFrame() || p.trustedFrames === true)) {
-        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { ref:p.ref, x: point.clientX, y: point.clientY, ...modeNote });
+      if (viaDebugger) {
+        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { ref:p.ref, x: point.clientX, y: point.clientY, ...modeNote }).finally(changes.delivered);
         if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...trustedDetails(answer), ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         assertTrustedFallback(answer, p, signal);
         if (!answer.ok) trustedReason = answer.reason;
@@ -265,7 +315,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const press = (detail: number) => {
         for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) {
           const down=type.endsWith('down');
-          pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+          const accepted = pointer(type, { button, buttons: down ? (button === 2 ? 2 : 1) : 0, pressure: down ? 0.5 : 0, detail });
+          // The browser moves focus as mousedown's default action; a page that cancels it keeps its focus.
+          if (type === "mousedown" && accepted) focusFromPointer(el);
           checkTarget();
         }
       };
@@ -326,8 +378,10 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
           host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
         }
         await afterInput(String(p.ref),signal);
-        const value = host.textContent ?? "";
-        return { executed: true, verified: { ...verificationValue(value), matches: value === text, method: inserted ? "insertText" : "replace", trusted:usedTrusted,...trustedResult } };
+        // An editor renders each line as its own block, which textContent runs together.
+        const multiline = /[\r\n]/.test(text);
+        const value = multiline ? editorText(host) : host.textContent ?? "";
+        return { executed: true, verified: { ...verificationValue(value), matches: value === text || host.textContent === text || (multiline && shownLines(value) === shownLines(text)), method: inserted ? "insertText" : "replace", trusted:usedTrusted,...trustedResult } };
       }
       throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "browser_fill only works on text inputs, textareas and editable areas.");
     }
@@ -339,20 +393,24 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         const opt = [...el.options].find((o) => o.value === want) ?? [...el.options].find((o) => o.text.trim() === want);
         if (!opt) {
           const labels = [...el.options].slice(0, 20).map(option => option.text.trim());
-          throw new ProtocolError("ELEMENT_NOT_FOUND", `No option "${want.slice(0, 128)}${want.length > 128 ? "…" : ""}".`, "never", {
-            options: labels.map(label => label.slice(0, 128)), optionsTotal: el.options.length,
+          throw new ProtocolError("ELEMENT_NOT_FOUND", `No option "${clipText(want, 128)}${want.length > 128 ? "…" : ""}".`, "never", {
+            options: labels.map(label => clipText(label, 128)), optionsTotal: el.options.length,
             optionsTruncated: el.options.length > labels.length || labels.some(label => label.length > 128),
           });
         }
         if (opt.disabled || (opt.parentElement instanceof HTMLOptGroupElement && opt.parentElement.disabled)) {
           throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The requested option is disabled.");
         }
-        nativeSet(el, opt.value);
+        // Select the option itself: assigning its value would pick the first option sharing that
+        // value, and would clear the other choices of a multiple select.
+        if (el.multiple) opt.selected = true; else el.selectedIndex = opt.index;
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
         await afterInput(String(p.ref),signal);
-        const label = el.selectedOptions[0]?.text.trim() ?? "";
-        return { executed: true, verified: { ...verificationValue(el.value), matches: el.value === opt.value, label: label.slice(0, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
+        const matches = el.multiple ? opt.selected : el.selectedOptions[0] === opt;
+        const shown = el.multiple && opt.selected ? opt : el.selectedOptions[0];
+        const label = shown?.text.trim() ?? "";
+        return { executed: true, verified: { ...verificationValue(shown?.value ?? el.value), matches, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
@@ -369,12 +427,11 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     case "press": {
       if (p.trusted === true && (trustedFrame() || p.trustedFrames === true)) {
         // The same checks as a DOM key press run first: a real key must not reach another element.
-        const target = preparePress(p, assertInteractable);
-        if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
-        const changes = observeChanges(p.waitFor ? 0 : 500, signal);
+        preparePress(p, assertInteractable);
+        const changes = observeChanges(p.waitFor ? 0 : 500, signal, true);
         void changes.catch(() => {});
         const { key, modifiers } = keyOf(p);
-        const answer = await requestTrusted(String(p.requestId ?? ""), "key", {ref:p.ref, key, ...(modifiers.length ? { modifiers } : {}) });
+        const answer = await requestTrusted(String(p.requestId ?? ""), "key", {ref:p.ref, key, ...(modifiers.length ? { modifiers } : {}) }).finally(changes.delivered);
         // The browser itself performs the key's default action; nothing is emulated here.
         if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...trustedDetails(answer), ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
@@ -419,7 +476,7 @@ async function upload(p: P, signal: AbortSignal) {
   if (!input) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'No single file input belongs to this ref. Use the file input, its label, or a button in a form with one file input.');
   if (input.disabled) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'The file input is disabled.');
   const name = String(p.name), mime = String(p.mime ?? '');
-  if (!accepts(input, name, mime)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', `This file input accepts ${input.accept.slice(0, 120)}; ${name} does not match.`);
+  if (!accepts(input, name, mime)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', `This file input accepts ${clipText(input.accept, 120)}; ${name} does not match.`);
   const dataUrl = String(p.dataUrl), comma = dataUrl.indexOf(','), body = dataUrl.slice(comma + 1);
   const bytes = dataUrl.slice(0, comma).endsWith(';base64') ? Uint8Array.from(atob(body), c => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(body));
   const file = new File([bytes], name, { type: mime });

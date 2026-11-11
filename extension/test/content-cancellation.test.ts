@@ -40,12 +40,15 @@ it("marks cancellation during click observation as already executed", async () =
   const ref = takeSnapshot({ snapshotId: 20, frameId: 0, maxChars: 100, offset: 0, checkLayout: false }).elements[0]!.ref;
   const clicked = vi.fn();
   document.querySelector("button")!.addEventListener("click", clicked);
+  // jsdom's own focus() schedules a timer; focus first so only the action's timers are counted.
+  document.querySelector("button")!.focus();
+  const timersBefore = vi.getTimerCount();
   const pending = runAction("click", { operationId: "click-stop", requestId: "click-1", generation: 1, ref });
   const rejected = expect(pending).rejects.toMatchObject({ code: "CANCELLED", details: { executed: true } });
   cancelCommands({ requestId: "click-1" });
   await rejected;
   expect(clicked).toHaveBeenCalledTimes(1);
-  expect(vi.getTimerCount()).toBe(0);
+  expect(vi.getTimerCount()).toBe(timersBefore);
 });
 
 it("propagates an external AbortSignal and never starts an already-aborted command", async () => {
