@@ -189,7 +189,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (status?.operation && status.operation.clientId !== clientId) throw new Error("현재 작업은 다른 브라우저에 연결되어 있습니다.");
       const tab = status?.operation ? await chrome.tabs.get(status.operation.currentTab) : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
       if (!tab?.id || !tab.url || !["http:", "https:"].includes(new URL(tab.url).protocol)) throw new Error("일반 HTTP(S) 페이지에서만 브라우저 참조를 첨부할 수 있습니다.");
-      const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [msg.reference], func: (reference: string) => { const text = reference === "selection" ? getSelection()?.toString() ?? "" : document.body?.innerText ?? ""; return { title: document.title, url: location.href, text: text.slice(0, 16000), length: text.length }; } });
+      const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [msg.reference], func: (reference: string) => { const text = reference === "selection" ? getSelection()?.toString() ?? "" : document.body?.innerText ?? ""; return { title: document.title, url: location.href, text: text.slice(0, text.length > 16000 && /[\ud800-\udbff]/.test(text[15999]!) ? 15999 : 16000), length: text.length }; } });
       if (!result?.result || (msg.reference === "selection" && !result.result.text)) throw new Error("선택한 텍스트가 없습니다.");
       sendResponse({ ok: true, result: { ...result.result, tabId: tab.id, reference: msg.reference } });
     })().catch(error => sendResponse({ ok: false, error: { code: "UNSUPPORTED_PAGE", message: error instanceof Error ? error.message : "페이지 참조를 읽지 못했습니다.", retry: "never" } }));

@@ -6,6 +6,7 @@ import type { SessionStore, Outcome } from './dedupe';
 import type { ChromeApi, FrameInfo } from './chrome-api';
 import { frameRouter, type FrameError } from './frames';
 import { RefTable, snapshotToken } from '../content/refs';
+import { clipText } from '../content/text';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
@@ -281,7 +282,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                     results.push(withDocument);bindings.push(f);used+=length;
                 }catch(e){
                     if(signal.aborted||asError(e).code==='CANCELLED')throw e;
-                    const error:FrameError={frameId:f.frameId,url:f.url.slice(0,2048),code:'FRAME_UNAVAILABLE',message:asError(e).message.slice(0,500)};
+                    const error:FrameError={frameId:f.frameId,url:clipText(f.url,2048),code:'FRAME_UNAVAILABLE',message:clipText(asError(e).message,500)};
                     const errorSize=jsonBytes(error);
                     if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
                     errors.push(error);used+=errorSize;
@@ -307,7 +308,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // Totals count every match, not just the page returned (elementOffset/offset).
                 ? results.some((f: any) => (f.elementsTotal ?? f.elements?.length ?? 0) > 0 || (f.text?.totalChars ?? (f.text?.content ? 1 : 0)) > 0) : undefined;
             if (queryMatched) for (const f of results as any[]) if (Array.isArray(f.limits)) f.limits = f.limits.filter((l: string) => l !== 'query-no-match');
-            return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
+            return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url===undefined?undefined:clipText(tab.url,2048),title:tab.title===undefined?undefined:clipText(tab.title,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
                 note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results. Pass query to read only matching lines, rows and elements.'};
@@ -362,7 +363,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             // Resolve the attachment before touching the page: an unknown name never reaches it.
             const file = req.method === 'browser.upload' ? await attachment?.(String(p.file ?? ''), typeof p.panelRequestId === 'string' ? p.panelRequestId : undefined) : undefined;
             if (req.method === 'browser.upload' && !file)
-                throw new ProtocolError('INVALID_PARAMS', `This request has no attachment named ${JSON.stringify(String(p.file ?? '').slice(0, 80))}; attach the file in the panel and send the request again.`);
+                throw new ProtocolError('INVALID_PARAMS', `This request has no attachment named ${JSON.stringify(clipText(String(p.file ?? ''), 80))}; attach the file in the panel and send the request again.`);
             const ref = typeof p.ref === 'string' ? p.ref : typeof p.refGone === 'string' ? p.refGone : undefined;
             const frameRef=req.method==='browser.wait'&&typeof p.frameRef==='string'?p.frameRef:undefined;
             if(frameRef!==undefined)await frames.bound(tabId,ref,String(p.operationId),frameRef);

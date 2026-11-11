@@ -1,5 +1,6 @@
 import { accessibleName, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
 import { newTable } from "./refs";
+import { clipText, safeRange, safeSlice } from "./text";
 import { recordText, recordObservation, type RecordObservation } from './record-context';
 
 export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean; state?: string[]; context?: string };
@@ -7,9 +8,10 @@ export type TextSlice = { content: string; totalChars: number; offset: number; r
 export type FrameSnapshot = { frameId: number; url: string; title: string; text: TextSlice; elements: SnapElement[]; elementsTruncated: boolean; elementsTotal: number; elementsOffset: number; elementsNextOffset: number | null; limits: string[]; query?: string };
 
 export function sliceText(full: string, offset: number, maxChars: number): TextSlice {
-  const content = full.slice(offset, offset + maxChars);
-  const end = offset + content.length;
-  return { content, totalChars: full.length, offset, returnedChars: content.length, truncated: end < full.length, nextOffset: end < full.length ? end : null };
+  // The reported offset and nextOffset are the positions actually cut, so pages join into the original.
+  const { start, end } = safeRange(full, offset, offset + maxChars);
+  const content = full.slice(start, end);
+  return { content, totalChars: full.length, offset: start, returnedChars: content.length, truncated: end < full.length, nextOffset: end < full.length ? end : null };
 }
 
 export function pageText(doc: Document): string {
@@ -68,7 +70,7 @@ function contextOf(el: Element, lookAlikes: Element[]): string {
     best = ancestor;
   }
   if (!best) return "";
-  return ((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  return clipText(((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim(), 80);
 }
 
 const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -106,7 +108,7 @@ function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,R
       rows.set(candidate,''); return '';
     }
     const full = row ? recordObservation(row,records).search : renderedText(candidate);
-    text = row || full.length <= 300 ? full.slice(0, 300) : "";
+    text = row || full.length <= 300 ? clipText(full, 300) : "";
     rows.set(candidate, text);
   }
   return text;
@@ -117,11 +119,11 @@ function aroundMatch(line: string, query: string): string {
   if (line.length <= 300) return line;
   const at = Math.max(0, line.toLowerCase().replace(/\s+/g, " ").indexOf(query));
   const start = Math.max(0, Math.min(at - 100, line.length - 298));
-  return `${start > 0 ? "…" : ""}${line.slice(start, start + 298)}${start + 298 < line.length ? "…" : ""}`;
+  return `${start > 0 ? "…" : ""}${safeSlice(line, start, start + 298)}${start + 298 < line.length ? "…" : ""}`;
 }
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number; query?: string }): FrameSnapshot {
-  const query = o.query ? fold(o.query).slice(0, 80) : "";
+  const query = o.query ? clipText(fold(o.query), 80) : "";
   const rows = new Map<Element, string>();
   const records = new Map<Element, RecordObservation>();
   const names: NameCache = new WeakMap();
@@ -132,7 +134,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   const nodes: Element[] = [];
   const limits = new Set<string>();
   const clip = (value: string, size: number) => {
-    if (value.length > size) { limits.add("element-fields-truncated"); return value.slice(0, size); }
+    if (value.length > size) { limits.add("element-fields-truncated"); return clipText(value, size); }
     return value;
   };
   // A query keeps only the lines that mention it, so a long page costs only what was asked for.

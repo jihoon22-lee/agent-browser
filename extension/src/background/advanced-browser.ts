@@ -4,6 +4,7 @@ import type { Req } from '../protocol/envelope';
 import type { ChromeApi } from './chrome-api';
 import type { DebuggerApi, TrustedInput } from './trusted-input';
 import { aborted, interruptible } from './tabs';
+import { clipText } from '../content/text';
 export type CaptureGeometry={operationId:string;generation:number;targetEpoch?:number;tabId:number;documentId:string;scrollX:number;scrollY:number;width:number;height:number;scale:number;dpr:number;created:number;region:{x:number;y:number;width:number;height:number};imageWidth:number;imageHeight:number};
 const stale=()=>new ProtocolError('STALE_ELEMENT','The captured screen changed or expired. Take a new viewport screenshot before using coordinates.','safe');
 export function capturePoint(c:CaptureGeometry,x:number,y:number) {
@@ -28,7 +29,7 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
    if(method!=='Page.javascriptDialogOpening'||!enabled()||!advancedAvailable()||!trusted.isAttached(tabId))return;
    const observer=observers.get(tabId),op=current();
    if(!observer&&!op?.tabs?.includes(tabId))return;
-   const dialog:Dialog={dialogId:crypto.randomUUID(),type:String(p.type),message:String(p.message??'').slice(0,2000),requestId:observer?.req.id,operationId:String(observer?.req.params.operationId??op?.id),generation:Number(observer?.req.params.generation??op?.generation),tabId,owned:!!observer,state:'open'};
+   const dialog:Dialog={dialogId:crypto.randomUUID(),type:String(p.type),message:clipText(String(p.message??''),2000),requestId:observer?.req.id,operationId:String(observer?.req.params.operationId??op?.id),generation:Number(observer?.req.params.generation??op?.generation),tabId,owned:!!observer,state:'open'};
    pending.set(tabId,dialog);
    if(p.type==='alert'&&observer){
      dialog.state='responding';void debug.send(tabId,'Page.handleJavaScriptDialog',{accept:true}).catch(()=>{if(pending.get(tabId)===dialog){dialog.state='uncertain';observer.notify(dialog);}});

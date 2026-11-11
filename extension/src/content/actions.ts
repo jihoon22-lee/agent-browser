@@ -1,4 +1,5 @@
 import { highlight } from "./highlight";
+import { clipText } from "./text";
 import { assertTrustedFallback, requestTrusted, trustedFrame, trustedDetails } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
 import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
@@ -89,7 +90,7 @@ function observeChanges(ms: number, signal: AbortSignal): Promise<{ urlChanged: 
 }
 
 function verificationValue(value: string) {
-  return { value: value.slice(0, 512), ...(value.length > 512 ? { valueTruncated: true } : {}) };
+  return { value: clipText(value, 512), ...(value.length > 512 ? { valueTruncated: true } : {}) };
 }
 
 function nativeSet(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, value: string) {
@@ -339,8 +340,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         const opt = [...el.options].find((o) => o.value === want) ?? [...el.options].find((o) => o.text.trim() === want);
         if (!opt) {
           const labels = [...el.options].slice(0, 20).map(option => option.text.trim());
-          throw new ProtocolError("ELEMENT_NOT_FOUND", `No option "${want.slice(0, 128)}${want.length > 128 ? "…" : ""}".`, "never", {
-            options: labels.map(label => label.slice(0, 128)), optionsTotal: el.options.length,
+          throw new ProtocolError("ELEMENT_NOT_FOUND", `No option "${clipText(want, 128)}${want.length > 128 ? "…" : ""}".`, "never", {
+            options: labels.map(label => clipText(label, 128)), optionsTotal: el.options.length,
             optionsTruncated: el.options.length > labels.length || labels.some(label => label.length > 128),
           });
         }
@@ -352,7 +353,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         el.dispatchEvent(new Event("change", { bubbles: true }));
         await afterInput(String(p.ref),signal);
         const label = el.selectedOptions[0]?.text.trim() ?? "";
-        return { executed: true, verified: { ...verificationValue(el.value), matches: el.value === opt.value, label: label.slice(0, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
+        return { executed: true, verified: { ...verificationValue(el.value), matches: el.value === opt.value, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
@@ -419,7 +420,7 @@ async function upload(p: P, signal: AbortSignal) {
   if (!input) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'No single file input belongs to this ref. Use the file input, its label, or a button in a form with one file input.');
   if (input.disabled) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'The file input is disabled.');
   const name = String(p.name), mime = String(p.mime ?? '');
-  if (!accepts(input, name, mime)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', `This file input accepts ${input.accept.slice(0, 120)}; ${name} does not match.`);
+  if (!accepts(input, name, mime)) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', `This file input accepts ${clipText(input.accept, 120)}; ${name} does not match.`);
   const dataUrl = String(p.dataUrl), comma = dataUrl.indexOf(','), body = dataUrl.slice(comma + 1);
   const bytes = dataUrl.slice(0, comma).endsWith(';base64') ? Uint8Array.from(atob(body), c => c.charCodeAt(0)) : new TextEncoder().encode(decodeURIComponent(body));
   const file = new File([bytes], name, { type: mime });

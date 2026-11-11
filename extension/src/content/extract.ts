@@ -8,6 +8,7 @@ function boundedSlice(full: string, offset: number, maxChars: number) {
   return slice;
 }
 import { resolveRef } from "./refs";
+import { clipText } from "./text";
 
 const cellText = (c: Element) => (c.textContent ?? "").replace(/\s+/g, " ").trim();
 
@@ -72,7 +73,7 @@ function tablePage(table: HTMLTableElement, maxChars: number, offset: number) {
     let longest: { row: string[]; index: number; length: number } | undefined;
     for (const row of groups) row.forEach((value, index) => { if (value.length > (longest?.length ?? 0)) longest = { row, index, length: value.length }; });
     if (!longest) return false;
-    longest.row[longest.index] = longest.row[longest.index]!.slice(0, Math.floor(longest.length / 2));
+    longest.row[longest.index] = clipText(longest.row[longest.index]!, Math.floor(longest.length / 2));
     limits.add("table-cells-truncated");
     return true;
   };
