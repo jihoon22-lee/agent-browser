@@ -37,6 +37,7 @@ export class BridgeConnection {
   private ws?: WebSocket;
   private backoff = 1_000;
   private timers = new Set<number>();
+  private reconnectTimer?: number;
   private pending = new Map<string, Pending>();
   private current: ConnStatus = { state: "disconnected" };
   private stopped = false;
@@ -72,14 +73,19 @@ export class BridgeConnection {
     if (!this.stopped && !this.halted && !this.ws && !this.connecting) this.schedule(0);
   }
 
-  private clearTimers() { for (const t of this.timers) this.deps.clearTimer(t); this.timers.clear(); }
+  private clearTimers() { for (const t of this.timers) this.deps.clearTimer(t); this.timers.clear(); this.reconnectTimer = undefined; }
   private cancelTimer(id: number) { this.deps.clearTimer(id); this.timers.delete(id); }
   private later(fn: () => void, ms: number) {
     const id = this.deps.setTimer(() => { this.timers.delete(id); fn(); }, ms);
     this.timers.add(id);
     return id;
   }
-  private schedule(ms: number) { this.clearTimers(); this.later(() => void this.connect(), ms); }
+  /** Replaces only a pending reconnect: heartbeat, request and pairing deadlines keep running. */
+  private schedule(ms: number) {
+    if (this.reconnectTimer !== undefined) this.cancelTimer(this.reconnectTimer);
+    const id = this.later(() => { if (this.reconnectTimer === id) this.reconnectTimer = undefined; void this.connect(); }, ms);
+    this.reconnectTimer = id;
+  }
 
   private async connect() {
     if (this.stopped || this.halted || this.connecting || this.ws) return;
