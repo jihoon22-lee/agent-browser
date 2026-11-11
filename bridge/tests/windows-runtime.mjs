@@ -322,6 +322,41 @@ server.listen(port,'127.0.0.1'); setTimeout(()=>process.exit(0),90000).unref();`
     assert.equal(alive,false,'R03 failed ensure left the synthetic child server listening');
     assert(!JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes[profile.id]);
     outcome.checks.push('R03-unhealthy-cmd-child-recorded-and-terminated');
+  } else if (scenario === 'cmd-tree-stop') {
+    // A .cmd launcher whose server never listens: no listener is ever recorded, so Stop
+    // has only the launcher (cmd.exe) to start from and must still end its whole tree.
+    assert.equal(kind, 'cmd');
+    const file = join(home, 'silent-tree.mjs'), launcher = join(home, 'silent-tree.cmd'), pidFile = join(home, 'silent-tree.json');
+    writeFileSync(file, `import {spawn} from 'node:child_process'; import {writeFileSync} from 'node:fs';
+setTimeout(()=>process.exit(0),150000);
+if (process.argv[2] !== 'leaf') {
+  const leaf = spawn(process.execPath,[process.argv[1],'leaf'],{stdio:'ignore'});
+  writeFileSync(process.env.AB_FIXTURE_PIDS,JSON.stringify({server:process.pid,leaf:leaf.pid}));
+}`);
+    profile.env.AB_FIXTURE_NODE = process.execPath; profile.env.AB_FIXTURE_FILE = file; profile.env.AB_FIXTURE_PIDS = pidFile;
+    writeFileSync(launcher, '@echo off\r\n"%AB_FIXTURE_NODE%" "%AB_FIXTURE_FILE%" %*\r\n');
+    profile.executable = launcher;
+    const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    await call('profile.save', {profile});
+    const ready = call('runtime.ensure', {profileId:profile.id});
+    let tree, recordedServer = false;
+    for (let i = 0; i < 100 && !tree; i++) { await sleep(100); try { tree = JSON.parse(readFileSync(pidFile)); } catch {} }
+    assert(tree, 'Synthetic .cmd tree never started');
+    await sleep(500);
+    const before = { server: alive(tree.server), leaf: alive(tree.leaf) };
+    try { recordedServer = Boolean(JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes[profile.id]?.server); } catch {}
+    // The fixtures end themselves after 150 seconds; they are never killed by PID from here.
+    const result = await ready;
+    await sleep(300);
+    const after = { server: alive(tree.server), leaf: alive(tree.leaf) };
+    outcome.observed = { before, after, recordedServer };
+    assert.equal(result.state, 'error');
+    assert(before.server && before.leaf, 'Fixture tree must be running before the failed start is cleaned up');
+    assert.equal(recordedServer, false, 'This scenario requires a stop without a recorded listener');
+    assert(!after.server && !after.leaf, 'Stop left processes of the .cmd launcher tree running');
+    assert(!JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes[profile.id]);
+    assert.equal((await call('runtime.status', {profileId:profile.id})).state, 'stopped', 'The resident Bridge must survive stopping the tree');
+    await call('profile.delete', {profileId:profile.id}); outcome.checks.push('D1-cmd-launcher-tree-stopped-without-recorded-listener');
   } else if (scenario === 'wsl-start-failure') {
     assert.equal(kind,'wsl'); profile.executable = '/bin/true'; profile.directory = '/nonexistent-agent-browser-' + randomBytes(10).toString('hex');
     await call('profile.save',{profile});

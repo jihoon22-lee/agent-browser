@@ -298,8 +298,12 @@ impl Manager {
     }
     async fn terminate(&self, profile: &Profile, record: &RuntimeRecord) -> bool {
         if profile.kind == Kind::Wsl { return self.terminate_wsl(profile, record).await.unwrap_or(false); }
-        let stopped = record.server.as_ref().is_some_and(process::terminate);
-        process::terminate(&record.launcher) || stopped
+        // The Bridge itself can be inside the tree: an MCP proxy of this runtime starts a
+        // resident serve when none answers. It must survive the runtime it manages.
+        let mut spare: Vec<String> = record.bridge_executable.iter().cloned().collect();
+        if let Ok(current) = std::env::current_exe() { spare.push(current.to_string_lossy().into_owned()); }
+        let stopped = process::terminate_tree(&record.launcher,&spare);
+        record.server.as_ref().is_some_and(|server| process::terminate_tree(server,&spare)) || stopped
     }
     async fn stop_inner(&self, profile: &Profile) -> Result<Value, RpcError> {
         if profile.kind == Kind::External { return Ok(json!({"stopped":false})); }
