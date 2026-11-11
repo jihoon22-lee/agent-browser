@@ -10,12 +10,14 @@ type RefScope = 'record' | 'target' | 'dispatch';
 const formOf = (el: Element) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || el instanceof HTMLButtonElement ? el.form : null;
 
 export class RefTable {
-  private els: { node: WeakRef<Element>; parent: WeakRef<Node> | null; form: WeakRef<HTMLFormElement> | null; identity: string; record: WeakRef<Element> | null; recordIdentity: string; keyedIdentity: string; recordKey: string }[] = [];
+  private els: { node: WeakRef<Element>; parent: WeakRef<Node> | null; form: WeakRef<HTMLFormElement> | null; identity: string; ownIdentity: string; record: WeakRef<Element> | null; recordIdentity: string; keyedIdentity: string; recordKey: string }[] = [];
   // Identity, not array position, protects recycled list rows. Editable values are
   // deliberately excluded so fill/select do not invalidate their own controls.
-  private identity(el: Element, names?: NameCache): string {
+  private identity(el: Element, names?: NameCache, own = false): string {
     const form = formOf(el);
-    return JSON.stringify([roleOf(el), accessibleName(el, true, Infinity, names),
+    // `own` is the control's authored identity: its naming attributes, not text computed from a
+    // label or labelledby element, which the page may update as feedback to the input itself.
+    return JSON.stringify([roleOf(el), own ? ['aria-label', 'aria-labelledby', 'placeholder', 'title', 'id'].map(name => el.getAttribute(name)) : accessibleName(el, true, Infinity, names),
       // Native fill changes value, not authored default text. A changed default
       // signals that a reused textarea now belongs to another record.
       el instanceof HTMLTextAreaElement ? el.defaultValue : null,
@@ -30,7 +32,7 @@ export class RefTable {
     const root = recordRoot(el);
     const form = formOf(el);
     const observation = root ? recordObservation(root,records) : undefined;
-    this.els.push({ node: new WeakRef(el), parent: el.parentNode ? new WeakRef(el.parentNode) : null, form: form ? new WeakRef(form) : null, identity: this.identity(el,names), record: root ? new WeakRef(root) : null, recordIdentity: observation?.identity ?? '', keyedIdentity: observation?.keyedIdentity ?? '', recordKey: recordKey(root) });
+    this.els.push({ node: new WeakRef(el), parent: el.parentNode ? new WeakRef(el.parentNode) : null, form: form ? new WeakRef(form) : null, identity: this.identity(el,names), ownIdentity: this.identity(el,names,true), record: root ? new WeakRef(root) : null, recordIdentity: observation?.identity ?? '', keyedIdentity: observation?.keyedIdentity ?? '', recordKey: recordKey(root) });
     return `s${snapshotToken(this.snapshotId)}f${this.frameId}e${this.els.length}`;
   }
   get(index: number, allowChanged = false, scope: RefScope = 'record'): Element | undefined {
@@ -39,7 +41,9 @@ export class RefTable {
     if ((entry!.form && !entry!.form.deref()) || (entry!.form?.deref() ?? null) !== formOf(el)) return undefined;
     const original = entry!.record?.deref() ?? null;
     if(entry!.record && !original)return undefined;
-    if(entry!.identity !== this.identity(el))return undefined;
+    // After an input the control is judged by itself (element, authored attributes, record key
+    // below); every other scope also binds its full accessible name.
+    if(scope === 'target' ? entry!.ownIdentity !== this.identity(el,undefined,true) : entry!.identity !== this.identity(el))return undefined;
     // Unchanged text, or an authored key with the same key and link destinations. Without a key,
     // changed row text is indistinguishable from a recycled record.
     const sameRecord = (root: Element) => {
