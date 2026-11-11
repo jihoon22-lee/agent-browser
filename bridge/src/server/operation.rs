@@ -331,6 +331,13 @@ impl OperationGate {
         if g.current.as_ref().is_some_and(|op|op.id==id) {Self::remove_current_tab(&mut g,tab);}
     }
 
+    /// The browser no longer has a tab this operation asked for. Only a tab the operation held is
+    /// recorded as closed: an id it never held may be a guess that Chrome assigns later.
+    pub fn forget_missing_tab(&self, id: &str, tab: i64) {
+        let mut g=self.inner.lock().unwrap();
+        if g.current.as_ref().is_some_and(|op|op.id==id && op.tabs.contains(&tab)) {Self::remove_current_tab(&mut g,tab);}
+    }
+
     /// A close event from another browser must not change this request's target.
     pub fn remove_tab_for_client(&self, client_id: &str, tab: i64) {
         let mut g=self.inner.lock().unwrap();
@@ -596,6 +603,17 @@ mod tests {
         gate.remove_tab(9);assert_eq!(gate.check(&op.id).unwrap_err().code,ErrorCode::TabClosed);
         gate.visit_verified_tab(&op.id,10).unwrap();assert_eq!(gate.check(&op.id).unwrap().current_tab,10);
         assert_eq!(gate.visit_verified_tab(&op.id,9).unwrap_err().code,ErrorCode::TabClosed);
+    }
+
+    #[test]
+    fn a_missing_tab_the_operation_never_held_is_not_remembered_as_closed() {
+        let gate=OperationGate::default();let op=gate.attach(1,"A").unwrap();
+        gate.forget_missing_tab(&op.id,99);
+        assert!(gate.visit_verified_tab(&op.id,99).is_ok(),"a mistyped id that Chrome later assigns must stay selectable");
+        gate.add_tab(&op.id,2).unwrap();gate.forget_missing_tab(&op.id,2);
+        assert_eq!(gate.check(&op.id).unwrap().tabs,vec![1,99]);
+        assert_eq!(gate.visit_verified_tab(&op.id,2).unwrap_err().code,ErrorCode::TabClosed,"a held tab that is gone stays closed");
+        gate.forget_missing_tab("op-other",99);assert_eq!(gate.check(&op.id).unwrap().current_tab,99);
     }
 
     #[test]

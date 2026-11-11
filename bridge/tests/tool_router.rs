@@ -560,6 +560,24 @@ async fn a_long_tab_list_is_clipped_and_cut_to_fit_the_output_limit() {
 }
 
 #[tokio::test]
+async fn switching_to_a_tab_that_does_not_exist_yet_does_not_ban_its_id() {
+    static EXISTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    fn late_tab(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+        if method == "browser.tabs.get" && p["tabId"] == 555 && !EXISTS.load(std::sync::atomic::Ordering::SeqCst) { return Err(("TAB_NOT_FOUND", "No such tab")); }
+        tabs_reply(method, p)
+    }
+    let (_h, serve, cfg) = start_test_serve().await;
+    let _ext = fake_extension(serve.port, cfg.token.clone(), late_tab).await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let op = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await["operationId"].as_str().unwrap().to_string();
+    let missed = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":555})).await;
+    assert_eq!(missed["error"]["code"], "TAB_NOT_FOUND");
+    EXISTS.store(true, std::sync::atomic::Ordering::SeqCst);
+    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":555})).await;
+    assert_eq!(switched["ok"], true, "a tab the operation never held is not remembered as closed: {switched}");
+}
+
+#[tokio::test]
 async fn follow_up_snapshots_ask_for_fewer_elements_than_a_full_read() {
     let (_h, serve, cfg) = start_test_serve().await;
     let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();

@@ -703,7 +703,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 Ok(_) => ToolOutcome::rejected(NAME,Some(op_id),RpcError::new(ErrorCode::UnsupportedPage,Retry::Never,"Select an ordinary HTTP(S) tab from browser_tabs list")),
                 Err(e) => {
                     if e.code == ErrorCode::TabNotFound {
-                        state.ops.remove_tab_for_operation(op_id, tab_id);
+                        state.ops.forget_missing_tab(op_id, tab_id);
                     }
                     delivered_failure(Some(op_id), e)
                 }
