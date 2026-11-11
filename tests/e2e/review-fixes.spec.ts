@@ -121,3 +121,14 @@ test("A6: a subframe showing Chrome's error page does not prevent closing the ta
   expect(closed.ok, JSON.stringify(closed)).toBe(true);
   await expect.poll(() => page.isClosed()).toBe(true);
 });
+
+test("A9: navigating to a host that cannot be reached is reported as a failure", async () => {
+  const { page, operationId } = await attach(async () => {});
+  const result = await world.mcp.call("browser_navigate", { operationId, url: UNREACHABLE });
+  expect(result.ok, JSON.stringify(result)).toBe(false);
+  expect(JSON.stringify(result.error)).toMatch(/ERR_|could not be loaded|error page/i);
+  // The failure is final: nothing asks the agent to keep retrying snapshots of an error page.
+  const snapshot = await world.mcp.call("browser_snapshot", { operationId });
+  if (!snapshot.ok) expect(snapshot.error?.retry).not.toBe("safe");
+  expect(page.isClosed()).toBe(false);
+});

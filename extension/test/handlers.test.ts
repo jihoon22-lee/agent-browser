@@ -974,3 +974,50 @@ describe('closing a tab with a frame that cannot be checked', () => {
     await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({ code: 'FRAME_UNAVAILABLE' });
   });
 });
+
+describe("Chrome's error page", () => {
+  it('reports a navigation that ended on it as failed, once, without resending', async () => {
+    const w = world(); let updates = 0;
+    w.api.inject = async (_id, frame) => { if (frame.documentId === 'error-page') throw Error('Frame with ID 0 is showing error page'); return frame; };
+    w.api.tabsUpdate = async (id, p) => { updates++; Object.assign(w.tabs.get(id)!, p, { status: 'loading' }); return { ...w.tabs.get(id)! }; };
+    const h = createHandlers(w.api, memorySessionStore());
+    await firstRef(h);
+    const id = 'goto-down', work = h(request('browser.navigate', { url: 'https://down.test/' }, id)).catch(error => error);
+    await vi.waitFor(() => expect(w.tabs.get(1)!.status).toBe('loading'));
+    w.frames.set(1, [{ frameId: 0, documentId: 'error-page', url: 'https://down.test/', errorOccurred: true }]);
+    Object.assign(w.tabs.get(1)!, { status: 'complete', title: 'down.test' });
+    for (const f of w.updates) f(1, { status: 'complete' }, w.tabs.get(1)!);
+    expect(await work).toMatchObject({ code: 'UNSUPPORTED_PAGE', retry: 'never', details: { executed: true, errorPage: true, url: 'https://down.test/' } });
+    // The same request ID returns the stored failure instead of navigating again.
+    await expect(h(request('browser.navigate', { url: 'https://down.test/' }, id))).rejects.toMatchObject({ code: 'UNSUPPORTED_PAGE' });
+    expect(updates).toBe(1);
+  });
+  it('a snapshot of it fails at once and does not invite a retry', async () => {
+    const w = world(); let injections = 0;
+    w.frames.set(1, [{ frameId: 0, documentId: 'error-page', url: 'https://example.test/1', errorOccurred: true }]);
+    w.api.inject = async () => { injections++; throw Error('Frame with ID 0 is showing error page'); };
+    const h = createHandlers(w.api, memorySessionStore());
+    await expect(h(request('browser.snapshot'))).rejects.toMatchObject({ code: 'UNSUPPORTED_PAGE', retry: 'never', details: { errorPage: true } });
+    expect(injections).toBe(1);
+  });
+  it('a top document that is merely slow to become readable is still retried as before', async () => {
+    const w = world(); let injections = 0;
+    w.api.inject = async () => { injections++; throw Error('not yet'); };
+    const h = createHandlers(w.api, memorySessionStore());
+    await expect(h(request('browser.snapshot'))).rejects.toMatchObject({ code: 'FRAME_UNAVAILABLE', retry: 'safe' });
+    expect(injections).toBe(3);
+  });
+});
+
+it('a navigation whose flagged document is still readable is not mistaken for an error page', async () => {
+  const w = world();
+  w.api.tabsUpdate = async (id, p) => { Object.assign(w.tabs.get(id)!, p, { status: 'loading' }); return { ...w.tabs.get(id)! }; };
+  const h = createHandlers(w.api, memorySessionStore());
+  await firstRef(h);
+  const work = h(request('browser.navigate', { url: 'https://example.test/new' }));
+  await vi.waitFor(() => expect(w.tabs.get(1)!.status).toBe('loading'));
+  w.frames.set(1, [{ frameId: 0, documentId: 'kept', url: 'https://example.test/new', errorOccurred: true }]);
+  Object.assign(w.tabs.get(1)!, { status: 'complete', title: 'Arrived' });
+  for (const f of w.updates) f(1, { status: 'complete' }, w.tabs.get(1)!);
+  expect(await work).toMatchObject({ executed: true, verified: { url: 'https://example.test/new' } });
+});

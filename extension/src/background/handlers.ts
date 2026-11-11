@@ -18,6 +18,10 @@ const SNAPSHOT_RESPONSE_BYTES = 28_000;
 const LATE_NAVIGATION_MS = 1000;
 const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
+/** The tab shows Chrome's own error page (unreachable host, refused connection): final, not a page still loading. */
+const errorPage = (url: string | undefined, executed: boolean) => new ProtocolError('UNSUPPORTED_PAGE',
+    'Chrome could not load this address and shows its own error page. Check the address or navigate elsewhere; another snapshot will not help.',
+    'never', { errorPage: true, ...(url === undefined ? {} : { url: clipText(url, 2048) }), ...(executed ? { executed: true } : {}) });
 const asError = (e: unknown) => e instanceof ProtocolError ? e : new ProtocolError('INTERNAL', String(e));
 const unpack = (outcome: Outcome): unknown => { if (outcome.ok)
     return outcome.result; const e = outcome.error; throw new ProtocolError(e.code, e.message, e.retry, e.details); };
@@ -301,6 +305,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                     results.push(withDocument);bindings.push(f);used+=length;
                 }catch(e){
                     if(signal.aborted||asError(e).code==='CANCELLED')throw e;
+                    if(f.frameId===0&&f.errorOccurred)throw errorPage(tab.url,false);
                     const error:FrameError={frameId:f.frameId,url:clipText(f.url,2048),code:'FRAME_UNAVAILABLE',message:clipText(asError(e).message,500)};
                     const errorSize=jsonBytes(error);
                     if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
@@ -343,6 +348,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
             const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true, action==='back'||action==='forward');
+            // A load that "completed" on the error page did not reach the site. A failed navigation
+            // that left a working document in place still injects, and is not an error page.
+            const landed = (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).find(f => f.frameId === 0);
+            if (landed?.errorOccurred && !await interruptible(api.inject(tabId, landed).then(() => true, () => false), signal)) throw errorPage(result.url, true);
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
         if (req.method === 'browser.screenshot') {
