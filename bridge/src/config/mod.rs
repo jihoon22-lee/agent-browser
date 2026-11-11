@@ -19,9 +19,15 @@ pub struct Config {
 
 pub fn home_dir() -> anyhow::Result<PathBuf> {
     if let Some(p) = std::env::var_os("AGENT_BROWSER_HOME") {
-        return Ok(PathBuf::from(p));
+        return Ok(absolute_home(PathBuf::from(p)));
     }
     Ok(dirs::data_local_dir().context("no local data directory for this user")?.join("AgentBrowser"))
+}
+
+/// The home is handed to processes with another working directory (the MCP proxy runs in
+/// the OpenCode project directory), so a relative `--home` must be resolved here, once.
+pub fn absolute_home(home: PathBuf) -> PathBuf {
+    std::path::absolute(&home).unwrap_or(home)
 }
 
 fn new_token() -> String {
@@ -34,7 +40,14 @@ const INIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn read_config(path: &Path) -> anyhow::Result<Option<Config>> {
     match std::fs::read_to_string(path) {
-        Ok(text) => serde_json::from_str(&text).map(Some).with_context(|| format!("invalid config at {}", path.display())),
+        Ok(text) => {
+            let cfg: Config = serde_json::from_str(&text).with_context(|| format!("invalid config at {}", path.display()))?;
+            // A newer layout must not be half-read and written back, and an empty token would
+            // make the pairing proof computable by anyone.
+            anyhow::ensure!(cfg.version == 1, "unsupported config version {} at {}; its contents were preserved", cfg.version, path.display());
+            anyhow::ensure!(!cfg.token.trim().is_empty(), "config at {} has no pairing token; its contents were preserved", path.display());
+            Ok(Some(cfg))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
     }
@@ -142,6 +155,15 @@ mod tests {
     }
 
     #[test]
+    fn a_relative_home_is_resolved_against_the_current_directory() {
+        let resolved = absolute_home(PathBuf::from("relative-home"));
+        assert!(resolved.is_absolute(), "{}", resolved.display());
+        assert_eq!(resolved, std::env::current_dir().unwrap().join("relative-home"));
+        let absolute = std::env::temp_dir().join("absolute-home");
+        assert_eq!(absolute_home(absolute.clone()), absolute);
+    }
+
+    #[test]
     fn save_preserves_pairing_fields() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = load_or_init(dir.path()).unwrap();
@@ -234,6 +256,17 @@ mod tests {
         load_or_init(dir.path()).unwrap();
         let mode = std::fs::metadata(dir.path().join("config.json")).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn another_version_or_an_empty_token_is_refused_and_left_untouched() {
+        for text in [r#"{"version":2,"token":"0123456789abcdef","port":4317}"#, r#"{"version":1,"token":"","port":4317}"#, r#"{"version":1,"token":"  ","port":4317}"#] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("config.json"), text).unwrap();
+            let error = load_or_init(dir.path()).unwrap_err().to_string();
+            assert!(error.contains("unsupported config version") || error.contains("no pairing token"), "{error}");
+            assert_eq!(std::fs::read_to_string(dir.path().join("config.json")).unwrap(), text);
+        }
     }
 
     #[test]

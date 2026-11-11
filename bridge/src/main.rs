@@ -53,7 +53,7 @@ enum ProfileCommand {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     // CLI initialization runs before creating any threads or asynchronous runtimes.
-    if let Some(home) = &cli.home { unsafe { std::env::set_var("AGENT_BROWSER_HOME",home); } }
+    if let Some(home) = &cli.home { unsafe { std::env::set_var("AGENT_BROWSER_HOME",agent_browser_bridge::config::absolute_home(home.clone())); } }
     let log_file = match cli.command {
         Command::Serve { .. } => agent_browser_bridge::config::home_dir().ok().map(|h| h.join("logs").join("serve.log")),
         _ => None,

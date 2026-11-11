@@ -254,3 +254,21 @@ async fn runtime_fixture_records_bind_failure_and_stderr_without_authentication_
     assert!(evidence.contains("EADDRINUSE") && evidence.contains("stderr"));
     assert!(!evidence.contains("must-not-appear-in-fixture-diagnostics"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_launcher_that_exits_without_a_server_fails_without_the_startup_wait() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir().unwrap(); let executable = home.path().join("exits.sh");
+    std::fs::write(&executable,"#!/bin/sh\nsleep 0.3\n").unwrap(); std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+    let manager = Manager::new(home.path().into(),4317);
+    let profile: Profile = serde_json::from_value(json!({"id":"exits","name":"Exits","kind":"windows","directory":home.path(),"executable":executable})).unwrap();
+    manager.save(profile.clone(),false).unwrap();
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15),manager.ensure("exits","chrome-extension://abcdefghijklmnopabcdefghijklmnop")).await
+        .expect("an exited launcher must not wait for the 60-second startup deadline").unwrap();
+    assert_eq!(result["state"],"error"); assert!(result["error"].as_str().unwrap().contains("exited"),"{result}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    assert_eq!(manager.status("exits").await.unwrap()["state"],"stopped");
+    manager.save(profile,false).expect("no ownership record may remain");
+}

@@ -14,7 +14,8 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 const START_WAIT: Duration = Duration::from_secs(10);
 const RETRY_EVERY: Duration = Duration::from_millis(200);
 const START_COOLDOWN: Duration = Duration::from_secs(30);
-/// Longest tool timeout serve applies (navigate, 30s) plus headroom for its own bookkeeping.
+/// Must exceed the longest reply serve can take: its navigate/new-tab wait plus the snapshot and
+/// tab-list reads attached to the result (35s + 2 × 8s today; asserted in `server::router` tests).
 pub(crate) const REPLY_WAIT: Duration = Duration::from_secs(60);
 
 /// Returns true when an agent-browser serve answers on `port`.
@@ -38,14 +39,14 @@ pub async fn probe(port: u16) -> bool {
 /// Authenticate an existing Bridge for diagnostics, without starting a process.
 pub async fn probe_authenticated(home: &Path, port: u16) -> bool {
     let Ok(cfg) = config::load_or_init(home) else { return false; };
-    let client = ServeClient { port, exe: Path::new("").into(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
+    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
     client.open().await.is_ok()
 }
 
 /// One authenticated request to a running serve for local tools such as the installer. Never starts serve.
 pub async fn admin_request(home: &Path, port: u16, method: &str, params: Value) -> anyhow::Result<Value> {
     let cfg = config::load_or_init(home)?;
-    let client = ServeClient { port, exe: Path::new("").into(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
+    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
     let mut ws = client.open().await.map_err(|error| anyhow::anyhow!("No authenticated Bridge at 127.0.0.1:{port}: {error}"))?;
     auth_exchange(&mut ws, &Envelope::req(method, params)).await.map_err(|error| anyhow::anyhow!(error))
 }
@@ -64,17 +65,44 @@ async fn auth_exchange(ws: &mut Ws, request: &Envelope) -> Result<Value, String>
     }).await.map_err(|_| "authentication timed out".to_string())?
 }
 
+/// A managed runtime lists here, comma-separated, the environment keys its profile added on
+/// top of the Bridge's own environment. OpenCode hands them to this proxy with everything
+/// else, and a serve started from the proxy would keep them for its whole life and pass them
+/// to every runtime it launches later, of any profile. The runtime sets this variable in the
+/// MCP environment of its overlay; `serve_environment` reads it and drops the listed keys.
+pub(crate) const PROFILE_ENV_KEYS: &str = "AGENT_BROWSER_PROFILE_ENV_KEYS";
+/// What a managed runtime injects into its OpenCode process, and so into this proxy.
+const RUNTIME_ENV: [&str; 5] = ["OPENCODE_SERVER_PASSWORD", "OPENCODE_SERVER_USERNAME", "OPENCODE_CONFIG_CONTENT", "AGENT_BROWSER_RUNTIME_ID", PROFILE_ENV_KEYS];
+/// The overlay sets these for the proxy itself; they locate the Bridge and are never dropped.
+const SERVE_ENV: [&str; 2] = ["AGENT_BROWSER_HOME", "AGENT_BROWSER_PORT"];
+
+/// The environment for a serve started from this proxy: the proxy's own, without what the
+/// launching runtime injected. Windows compares variable names without case.
+pub(crate) fn serve_environment(vars: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>, ignore_case: bool) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    let vars: Vec<_> = vars.collect();
+    let same = |a: &str, b: &str| if ignore_case { a.eq_ignore_ascii_case(b) } else { a == b };
+    let listed: Vec<String> = vars.iter().find(|(key, _)| key.to_str().is_some_and(|key| same(key, PROFILE_ENV_KEYS)))
+        .and_then(|(_, value)| value.to_str()).map(|value| value.split(',').filter(|key| !key.is_empty()).map(str::to_owned).collect()).unwrap_or_default();
+    vars.into_iter().filter(|(key, _)| {
+        let Some(key) = key.to_str() else { return true };
+        SERVE_ENV.iter().any(|kept| same(key, kept)) || !(RUNTIME_ENV.iter().any(|dropped| same(key, dropped)) || listed.iter().any(|dropped| same(key, dropped)))
+    }).collect()
+}
+
 /// Starts `exe serve --port <port>` so that it keeps running after this process exits.
-pub fn spawn_detached_serve(exe: &Path, port: u16) -> std::io::Result<()> {
+/// It runs in the Bridge home, not in the caller's (project) directory, and without the
+/// variables a managed runtime injected into the caller.
+pub fn spawn_detached_serve(exe: &Path, port: u16, home: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        spawn_windows_without_handles(exe, port)
+        spawn_windows_without_handles(exe, port, home)
     }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         let mut cmd = std::process::Command::new(exe);
         cmd.arg("serve").arg("--port").arg(port.to_string())
+            .env_clear().envs(serve_environment(std::env::vars_os(), false)).current_dir(home)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -88,7 +116,7 @@ pub fn spawn_detached_serve(exe: &Path, port: u16) -> std::io::Result<()> {
 /// it logs to its own file and communicates over WebSocket. Explicitly inherit zero handles
 /// so closing MCP stdin also lets the WSL parent observe process exit while serve survives.
 #[cfg(windows)]
-fn spawn_windows_without_handles(exe: &Path, port: u16) -> std::io::Result<()> {
+fn spawn_windows_without_handles(exe: &Path, port: u16, home: &Path) -> std::io::Result<()> {
     use std::{io, os::windows::ffi::OsStrExt, ptr};
     use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::{
         CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW,
@@ -107,6 +135,17 @@ fn spawn_windows_without_handles(exe: &Path, port: u16) -> std::io::Result<()> {
     command_line.extend(format!("\" serve --port {port}").encode_utf16());
     command_line.push(0);
     application.push(0);
+    let directory: Vec<u16> = home.as_os_str().encode_wide().chain([0]).collect();
+    if directory.iter().filter(|unit| **unit == 0).count() != 1 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "detached serve requires a Bridge home without NUL"));
+    }
+    // A Unicode block of NAME=value entries, each NUL terminated, sorted by name without case.
+    let mut sorted = std::collections::BTreeMap::new();
+    for (key, value) in serve_environment(std::env::vars_os(), true) { sorted.insert(key.to_string_lossy().to_ascii_uppercase(), (key, value)); }
+    let mut environment = Vec::<u16>::new();
+    for (key, value) in sorted.values() { environment.extend(key.encode_wide()); environment.push(u16::from(b'=')); environment.extend(value.encode_wide()); environment.push(0); }
+    if environment.is_empty() { environment.push(0); }
+    environment.push(0);
     // Do not combine DETACHED_PROCESS with CREATE_NO_WINDOW: Windows ignores
     // the latter, allowing launcher descendants to create visible consoles.
     let base = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
@@ -115,11 +154,12 @@ fn spawn_windows_without_handles(exe: &Path, port: u16) -> std::io::Result<()> {
         let startup = STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..Default::default() };
         let mut process = PROCESS_INFORMATION::default();
         // SAFETY: UTF-16 buffers are NUL terminated and live for the call; command is writable.
-        // Null security/environment/directory pointers select documented defaults. No stdio
-        // handles or STARTF_USESTDHANDLES are supplied, and bInheritHandles is FALSE.
+        // The environment block ends with an empty entry and CREATE_UNICODE_ENVIRONMENT is set.
+        // Null security pointers select documented defaults. No stdio handles or
+        // STARTF_USESTDHANDLES are supplied, and bInheritHandles is FALSE.
         let created = unsafe {
             CreateProcessW(application.as_ptr(), command.as_mut_ptr(), ptr::null(), ptr::null(),
-                0, base | extra, ptr::null(), ptr::null(), &startup, &mut process)
+                0, base | extra, environment.as_ptr().cast(), directory.as_ptr(), &startup, &mut process)
         };
         if created != 0 {
             // SAFETY: successful CreateProcessW returned these owned kernel handles. Closing
@@ -136,6 +176,7 @@ fn spawn_windows_without_handles(exe: &Path, port: u16) -> std::io::Result<()> {
 pub struct ServeClient {
     port: u16,
     exe: PathBuf,
+    home: PathBuf,
     token: String,
     conn: tokio::sync::Mutex<Option<Ws>>,
     last_error: std::sync::Mutex<Option<String>>,
@@ -152,6 +193,7 @@ impl ServeClient {
         let client = ServeClient {
             port,
             exe: exe.to_path_buf(),
+            home: home.to_path_buf(),
             token: cfg.token,
             conn: tokio::sync::Mutex::new(None),
             last_error: std::sync::Mutex::new(None),
@@ -211,7 +253,7 @@ impl ServeClient {
             *self.last_error.lock().unwrap() = Some(cause);
             return;
         }
-        if let Err(e) = spawn_detached_serve(&self.exe, self.port) {
+        if let Err(e) = spawn_detached_serve(&self.exe, self.port, &self.home) {
             *self.last_error.lock().unwrap() = Some(format!("cannot launch {}: {e}", self.exe.display()));
             return;
         }
@@ -390,6 +432,21 @@ pub(crate) fn hello_params(client_id: &str, client_nonce: &str, runtime_id: Opti
 mod auth_tests {
     use super::*;
     #[test]
+    fn serve_environment_drops_what_the_runtime_injected_and_nothing_else() {
+        let vars = |pairs: &[(&str, &str)]| pairs.iter().map(|(key, value)| (std::ffi::OsString::from(key), std::ffi::OsString::from(value))).collect::<Vec<_>>();
+        let names = |kept: Vec<(std::ffi::OsString, std::ffi::OsString)>| kept.into_iter().map(|(key, _)| key.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let inherited = vars(&[("PATH", "/bin"), ("OPENCODE_SERVER_PASSWORD", "private"), ("OPENCODE_SERVER_USERNAME", "opencode"), ("OPENCODE_CONFIG_CONTENT", "{}"),
+            ("AGENT_BROWSER_RUNTIME_ID", "rid"), (PROFILE_ENV_KEYS, "AB_TOKEN,,AGENT_BROWSER_HOME,AGENT_BROWSER_PORT"), ("AB_TOKEN", "profile-private"), ("ab_token", "other"),
+            ("AGENT_BROWSER_HOME", "/home"), ("AGENT_BROWSER_PORT", "4317"), ("AGENT_BROWSER_LOG", "debug")]);
+        assert_eq!(names(serve_environment(inherited.clone().into_iter(), false)), ["PATH", "ab_token", "AGENT_BROWSER_HOME", "AGENT_BROWSER_PORT", "AGENT_BROWSER_LOG"]);
+        assert_eq!(names(serve_environment(inherited.into_iter(), true)), ["PATH", "AGENT_BROWSER_HOME", "AGENT_BROWSER_PORT", "AGENT_BROWSER_LOG"], "Windows names have no case");
+        let windows = vars(&[("Path", "C:\\Windows"), ("opencode_server_password", "private"), ("agent_browser_profile_env_keys", "Ab_Token"), ("AB_TOKEN", "x"), ("=C:", "C:\\work")]);
+        assert_eq!(names(serve_environment(windows.into_iter(), true)), ["Path", "=C:"]);
+        let plain = vars(&[("PATH", "/bin"), ("HOME", "/home/fixture")]);
+        assert_eq!(serve_environment(plain.clone().into_iter(), false), plain, "an ordinary environment passes unchanged");
+    }
+
+    #[test]
     fn hello_names_the_runtime_and_directory_only_when_known() {
         let named = super::hello_params("mcp-1","00",Some("rid".into()),Some("/work".into()));
         assert_eq!(named["runtimeId"],"rid"); assert_eq!(named["cwd"],"/work"); assert_eq!(named["role"],"mcp");
@@ -410,7 +467,7 @@ mod auth_tests {
         });
         let (ws,_) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}")).await.unwrap();
         let mut peer = server.await.unwrap();
-        let client = ServeClient {port,exe:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(Some(ws)),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
+        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(Some(ws)),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
         let mut polls = 0;
         // First poll: before the mutex. Second: before the cached connection.
         // Third: the send select, before its send future has ever been polled.
@@ -444,7 +501,7 @@ mod auth_tests {
             // The client must drop auth instead of waiting for its five-second timeout.
             assert!(tokio::time::timeout(Duration::from_secs(1),ws.next()).await.is_ok());
         });
-        let client = ServeClient {port,exe:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
+        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
         let outcome = tokio::time::timeout(Duration::from_secs(1), client.call_tool_cancellable("browser_tabs",json!({"action":"list"}),async {let _ = cancel.await;})).await.unwrap().unwrap();
         assert_eq!(outcome["error"]["code"],"CANCELLED"); assert_eq!(outcome["delivered"],false);
         fake.await.unwrap();
@@ -464,7 +521,7 @@ mod auth_tests {
             assert!(!matches!(ws.next().await, Some(Ok(Message::Text(_)))));
         });
         let client = ServeClient {
-            port, exe: PathBuf::new(), token: "secret-test-token".into(),
+            port, exe: PathBuf::new(), home: PathBuf::new(), token: "secret-test-token".into(),
             conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None),
         };
         assert!(client.open().await.unwrap_err().contains("server proof is invalid"));
