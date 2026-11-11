@@ -181,19 +181,36 @@ fn windows_quote(value: &str) -> String {
     result.extend(std::iter::repeat_n('\\',slashes * 2)); result.push('"'); result
 }
 
+/// Owning PIDs of every listener row on `port`. Several rows can share a port (another
+/// address, a reused socket), so the caller decides which owner belongs to its runtime.
+#[cfg(any(windows,test))]
+fn owners_of_port(rows: impl Iterator<Item = (u32,u32)>, port: u16) -> Vec<u32> {
+    let mut owners = Vec::new();
+    // dwLocalPort keeps the port in network byte order in its low 16 bits.
+    for (local_port,pid) in rows { if u16::from_be(local_port as u16) == port && !owners.contains(&pid) { owners.push(pid); } }
+    owners
+}
 #[cfg(windows)]
-pub fn listener(port: u16) -> Option<Identity> {
-    use windows_sys::Win32::{NetworkManagement::IpHelper::*, Networking::WinSock::AF_INET};
+pub fn listeners(port: u16) -> Vec<Identity> {
+    use windows_sys::Win32::{Foundation::ERROR_INSUFFICIENT_BUFFER, NetworkManagement::IpHelper::*, Networking::WinSock::AF_INET};
     unsafe {
-        let mut len = 0u32;
-        GetExtendedTcpTable(std::ptr::null_mut(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0);
-        let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
-        if GetExtendedTcpTable(buffer.as_mut_ptr().cast(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0) != 0 { return None; }
-        let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
-        for row in std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize) {
-            if u16::from_be(row.dwLocalPort as u16) == port { return identity(row.dwOwningPid); }
+        // The table can grow between the size query and the read: ask once more.
+        for _ in 0..2 {
+            let mut len = 0u32;
+            GetExtendedTcpTable(std::ptr::null_mut(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0);
+            let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
+            match GetExtendedTcpTable(buffer.as_mut_ptr().cast(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0) {
+                0 => {
+                    if buffer.is_empty() { return Vec::new(); }
+                    let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+                    let rows = std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
+                    return owners_of_port(rows.iter().map(|row| (row.dwLocalPort,row.dwOwningPid)),port).into_iter().filter_map(identity).collect();
+                }
+                ERROR_INSUFFICIENT_BUFFER => continue,
+                _ => return Vec::new(),
+            }
         }
-        None
+        Vec::new()
     }
 }
 #[cfg(windows)]
@@ -221,6 +238,17 @@ pub fn wsl_executable() -> String {
 pub fn windows_to_wsl(path: &str) -> Option<String> {
     let bytes = path.as_bytes();
     (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':').then(|| format!("/mnt/{}/{}", (bytes[0] as char).to_ascii_lowercase(), path[2..].trim_start_matches(['\\','/']).replace('\\', "/")))
+}
+
+#[cfg(test)]
+mod listener_tests {
+    #[test]
+    fn every_owner_of_a_port_is_reported_once() {
+        let row = |port: u16, pid: u32| (u32::from(port.to_be()),pid);
+        let rows = [row(4096,700),row(4097,701),row(4096,702),row(4096,700)];
+        assert_eq!(super::owners_of_port(rows.into_iter(),4096),vec![700,702]);
+        assert!(super::owners_of_port(rows.into_iter(),5000).is_empty());
+    }
 }
 
 #[cfg(test)]

@@ -253,18 +253,14 @@ impl Manager {
     }
     async fn listener_owned(&self, profile: &Profile, record: &mut RuntimeRecord) -> bool {
         #[cfg(windows)] {
+            let _ = profile;
             let Some(port) = reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()) else { return false; };
-            let Some(listener) = process::listener(port) else { return false; };
-            if profile.kind == Kind::Wsl {
-                let image = listener.image.to_ascii_lowercase();
-                let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()).to_ascii_lowercase();
-                return wsl_control(profile,record,"listener").await && (image.starts_with(&format!("{root}\\system32\\")) || image.starts_with("c:\\program files\\wsl\\") || image.starts_with("c:\\program files\\windowsapps\\microsoftcorporationii.windowssubsystemforlinux_"))
-                    && (image.ends_with("\\wslrelay.exe") || image.ends_with("\\wslhost.exe"));
-            }
-            if record.server.as_ref().is_some_and(|server| server.pid == listener.pid && server.created == listener.created && server.image == listener.image) || process::descendant(&listener, &record.launcher) {
-                record.server = Some(listener); return true;
-            }
-            false
+            // Another process may hold the same port number on another address: take the row
+            // that is the recorded server, or else one started by our launcher.
+            let listeners = process::listeners(port);
+            let known = listeners.iter().find(|listener| record.server.as_ref().is_some_and(|server| server.pid == listener.pid && server.created == listener.created && server.image == listener.image));
+            let Some(listener) = known.or_else(|| listeners.iter().find(|listener| process::descendant(listener, &record.launcher))) else { return false; };
+            record.server = Some(listener.clone()); true
         }
         #[cfg(not(windows))] { let _ = profile; process::matches(&record.launcher) }
     }
@@ -636,11 +632,10 @@ async fn wsl_state(profile: &Profile, record: &RuntimeRecord) -> WslState {
 fn wsl_forwarder(record: &RuntimeRecord) -> bool {
     #[cfg(windows)] {
         let Some(port) = reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()) else { return false; };
-        let Some(listener) = process::listener(port) else { return false; };
         let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
         // A 32-bit view would name "Program Files (x86)"; WSL is installed in the native one.
         let programs = std::env::var("ProgramW6432").or_else(|_| std::env::var("ProgramFiles")).unwrap_or_else(|_| "C:\\Program Files".into());
-        wsl_relay_image(&listener.image,&root,&programs)
+        process::listeners(port).iter().any(|listener| wsl_relay_image(&listener.image,&root,&programs))
     }
     #[cfg(not(windows))] { let _ = record; true }
 }
