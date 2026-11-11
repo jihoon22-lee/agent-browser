@@ -777,9 +777,9 @@ mod tests {
     #[test]
     fn null_optional_fields_are_omitted_but_required_ones_still_fail() {
         let click = &tools::find("browser_click").unwrap().schema;
-        assert!(validate(&click, &json!({"ref":"a","mode":null,"toRef":null,"newTab":null})).is_ok());
+        assert!(validate(click, &json!({"ref":"a","mode":null,"toRef":null,"newTab":null})).is_ok());
         assert!(validate_action("browser_click", &json!({"ref":"a","mode":null,"toRef":null})).is_ok());
-        assert!(validate(&click, &json!({"ref":null})).is_err());
+        assert!(validate(click, &json!({"ref":null})).is_err());
     }
 
     #[tokio::test]
