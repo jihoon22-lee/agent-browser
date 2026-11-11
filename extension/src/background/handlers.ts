@@ -247,8 +247,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 if (liveDocuments.length !== documents.length || documents.some(frame => !liveDocuments.some(live => live.frameId === frame.frameId && live.documentId === frame.documentId)))
                     throw new ProtocolError('FRAME_UNAVAILABLE', 'A document changed during the close check. Preserve the tab and inspect a fresh snapshot.');
             };
+            // Chrome's error page in a subframe (unreachable host) cannot be injected and holds
+            // nothing a person could have edited. Only that case is skipped: a failed navigation
+            // that left the old document in place still injects and is checked like any frame.
+            const checkable: FrameInfo[] = [];
             for (const frame of documents) {
-                await frames.inject(tabId, frame);
+                try { await frames.inject(tabId, frame); }
+                catch (error) { if (frame.frameId !== 0 && frame.errorOccurred) continue; throw error; }
+                checkable.push(frame);
                 await checkClean(frame);
             }
             await checkDocuments();
@@ -262,7 +268,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // and checked without changing documentId. Re-read every form once
                 // after preflight, concurrently to avoid another sequential sweep.
                 // This is bounded validation, never a retry of the close action.
-                await Promise.all(documents.map(checkClean));
+                await Promise.all(checkable.map(checkClean));
                 await checkDocuments();
                 aborted(signal);
                 run.started = true;

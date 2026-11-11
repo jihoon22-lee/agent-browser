@@ -944,3 +944,33 @@ it('a child frame that only disappeared is still an unknown outcome', async () =
   const h = createHandlers(w.api, memorySessionStore()), snapshot: any = await h(request('browser.snapshot'));
   await expect(h(request('browser.click', { ref: snapshot.frames[1].elements[0].ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe' });
 }, 10_000);
+
+describe('closing a tab with a frame that cannot be checked', () => {
+  const closing = (errorOccurred: boolean, injectable = false) => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'broken', url: 'https://down.test/', ...(errorOccurred ? { errorOccurred: true } : {}) });
+    const checked: number[] = []; let remove!: (id: number) => void;
+    w.api.inject = async (_id, frame) => { if (frame.frameId === 7 && !injectable) throw Error('Frame with ID 7 is showing error page'); return frame; };
+    const base = w.api.sendToFrame;
+    w.api.sendToFrame = async (tab, frame, msg: any) => { if (msg.method === 'close-check') { checked.push(frame.frameId); return { ok: true, result: { executed: false } }; } return base(tab, frame, msg); };
+    w.api.onTabRemoved = fn => { remove = fn; return () => {}; };
+    w.api.tabsRemove = async id => { remove(id); };
+    return { w, checked, h: createHandlers(w.api, memorySessionStore()) };
+  };
+  it("skips a subframe showing Chrome's error page", async () => {
+    const { h, checked } = closing(true);
+    await h(request('browser.snapshot'));
+    await expect(h(request('browser.tabs.close'))).resolves.toEqual({ closed: true });
+    expect(new Set(checked)).toEqual(new Set([0]));
+  });
+  it('still checks a frame whose failed navigation left its document in place', async () => {
+    const { h, checked } = closing(true, true);
+    await h(request('browser.snapshot'));
+    await expect(h(request('browser.tabs.close'))).resolves.toEqual({ closed: true });
+    expect(new Set(checked)).toEqual(new Set([0, 7]));
+  });
+  it('keeps the tab when an ordinary frame cannot be checked', async () => {
+    const { h } = closing(false);
+    await h(request('browser.snapshot'));
+    await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({ code: 'FRAME_UNAVAILABLE' });
+  });
+});

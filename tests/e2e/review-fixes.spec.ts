@@ -106,3 +106,18 @@ test("A11: an element that cannot be brought into the viewport is not clicked", 
   expect(result.error?.code).toBe("ELEMENT_NOT_INTERACTABLE");
   expect(await page.evaluate(() => (window as any).__offscreen)).toBe(0);
 });
+
+test("A6: a subframe showing Chrome's error page does not prevent closing the tab", async () => {
+  const { page, operationId } = await attach(async page => {
+    await page.evaluate(async url => {
+      const frame = document.createElement("iframe"); frame.src = url; frame.title = "broken";
+      const settled = new Promise(resolve => { frame.addEventListener("load", resolve); setTimeout(resolve, 3000); });
+      document.body.append(frame); await settled;
+    }, UNREACHABLE);
+  });
+  const snapshot = await world.ok("browser_snapshot", { operationId });
+  expect(snapshot.data.frameErrors.length, JSON.stringify(snapshot.data.frameErrors)).toBeGreaterThan(0);
+  const closed = await world.mcp.call("browser_tabs", { action: "close", operationId });
+  expect(closed.ok, JSON.stringify(closed)).toBe(true);
+  await expect.poll(() => page.isClosed()).toBe(true);
+});

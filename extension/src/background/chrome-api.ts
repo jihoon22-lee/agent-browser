@@ -22,6 +22,8 @@ export type FrameInfo = {
     frameId: number;
     documentId: string;
     url: string;
+    /** The frame's last navigation failed: it normally shows Chrome's own error page. */
+    errorOccurred?: boolean;
 };
 export interface ChromeApi {
     bookmarks?: BookmarkAccess;
@@ -67,7 +69,7 @@ export const realChromeApi: ChromeApi = {
         return result?.result;
     },
     captureVisibleTab: windowId => chrome.tabs.captureVisibleTab(windowId, { format: 'png' }),
-    listFrames: async (tabId) => (await chrome.webNavigation.getAllFrames({ tabId }) ?? []).map(f => ({ frameId: f.frameId, documentId: f.documentId, url: f.url })),
+    listFrames: async (tabId) => (await chrome.webNavigation.getAllFrames({ tabId }) ?? []).map(f => ({ frameId: f.frameId, documentId: f.documentId, url: f.url, ...(f.errorOccurred ? { errorOccurred: true } : {}) })),
     inject: async (tabId, frame) => {
         const [injected] = await chrome.scripting.executeScript({ target: { tabId, documentIds: [frame.documentId] }, files: ['content.js'] });
         if (!injected || injected.documentId !== frame.documentId)
