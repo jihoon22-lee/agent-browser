@@ -4,5 +4,5 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'installer-common.ps1')
 $root = Assert-InstallRoot $InstallDir
 $state = Read-InstallState $root
-if (-not $state) { throw 'AgentBrowser is not installed in this directory. Run setup.ps1 from the release package.' }
+if (-not $state) { throw 'AgentBrowser is not installed in this directory. From the extracted release package, run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1' }
 Start-OwnedBridge $state

@@ -1,4 +1,5 @@
 import type { InputRecovery, InputDocument } from './input-recovery';
+import { clipText } from '../content/text';
 /** Chrome's debugger, attached only to this browser's operation tabs while the user enabled
  * trusted input, so clicks and keys arrive as real user input (review B3, handoff §10 R10). */
 export type DebuggerApi = {
@@ -99,6 +100,8 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
   api.onDetach((tabId, reason) => {
     const held=heldInputs.get(tabId);if(held)void markUnresolved(held);
     attached.delete(tabId);sessions.delete(tabId);
+    // No closed event follows a detach: a remembered dialog would outlive the session.
+    openDialogs.delete(tabId);dialogs.delete(tabId);
     if (reason === "canceled_by_user") cancelled = { operationId, reason };
   });
   api.onEvent((tabId, method, params) => {
@@ -109,7 +112,7 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
     if (!((inputUntil.get(tabId) ?? 0) >= Date.now())) return;
     // An alert only informs; a confirm, prompt or leave-page question is the user's decision.
     const accept = params?.type === "alert";
-    dialogs.set(tabId, { type: String(params?.type ?? "unknown"), message: String(params?.message ?? "").slice(0, 200) });
+    dialogs.set(tabId, { type: String(params?.type ?? "unknown"), message: clipText(String(params?.message ?? ""), 200) });
     void api.send(tabId, "Page.handleJavaScriptDialog", { accept }).catch(() => {});
   });
 

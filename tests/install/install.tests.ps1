@@ -17,7 +17,7 @@ $activeInstalls = New-Object 'System.Collections.Generic.List[string]'
 function Assert($Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
 function Assert-Throws([scriptblock]$Action, [string]$Message) { $caught=$false; try { $null = & $Action } catch { $caught=$true }; Assert $caught $Message }
 function Case([string]$Name, [scriptblock]$Action) { & $Action; $script:passed++; Write-Output ('PASS ' + $Name) }
-function New-TestPackage([string]$Name, [string]$Version) {
+function New-TestPackage([string]$Name, [string]$Version, [string[]]$ExtraFiles=@()) {
     $package = Join-Path $testRoot $Name
     $null = New-Item -ItemType Directory -Path (Join-Path $package 'extension') -Force
     foreach ($name in @('setup.ps1','uninstall.ps1','installer-common.ps1','start-bridge.ps1','start-bridge.cmd','show-pairing.ps1')) { Copy-Item -LiteralPath (Join-Path $Scripts $name) -Destination (Join-Path $package $name) }
@@ -27,6 +27,7 @@ function New-TestPackage([string]$Name, [string]$Version) {
     Write-Utf8Atomic (Join-Path $package 'README-install.md') 'Synthetic installation fixture, not a release package.'
     foreach ($name in @('CHANGELOG.md','LICENSE','SECURITY.md','docs/user-guide.md','docs/troubleshooting.md')) { Write-Utf8Atomic (Join-Path $package $name) 'Synthetic release documentation.' }
     Write-Utf8Atomic (Join-Path $package 'THIRD_PARTY_NOTICES') 'Synthetic installer test only.'
+    foreach ($extra in $ExtraFiles) { Write-Utf8Atomic (Join-Path $package $extra) ('// synthetic asset ' + $Version) }
     $files = @(Get-ChildItem -LiteralPath $package -Recurse -File | ForEach-Object { [pscustomobject]@{ Path=$_.FullName.Substring($package.Length+1).Replace('\','/'); Sha256=(Get-FileSha256 $_.FullName) } })
     Write-Utf8Atomic (Join-Path $package 'package-manifest.json') (ConvertTo-Json @{Product='agent-browser';Platform='windows-x64';Version=$Version;Files=$files} -Depth 10)
     return $package
@@ -77,6 +78,46 @@ try {
         $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $privateInstall -RemoveData -Quiet
         Assert ([IO.Directory]::GetAccessControl($parent).GetSecurityDescriptorSddlForm('Access,Owner,Group') -eq $parentAcl) 'Managed path lifecycle changed parent directory policy'
         if(-not $SkipProcessTests){Assert (-not (Get-Process -Id ([int]$managed.Running.pid) -ErrorAction SilentlyContinue)) 'Managed path uninstall left its Bridge running'}
+    }
+    Case 'update removes unshipped owned files and keeps the current and previous executables' {
+        $pruneA=New-TestPackage 'prune a' '0.5.0' @('extension\assets\index-old.js')
+        $pruneB=New-TestPackage 'prune b' '0.6.0' @('extension\assets\index-new.js')
+        $pruneC=New-TestPackage 'prune c' '0.7.0'
+        $pruneD=New-TestPackage 'prune d' '0.8.0'
+        $pruneInstall=Join-Path $testRoot 'prune install'; $activeInstalls.Add($pruneInstall)
+        $null=& (Join-Path $pruneA 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateA=Read-InstallState $pruneInstall
+        $oldAsset=Join-Path $pruneInstall 'extension\assets\index-old.js'; $userFile=Join-Path $pruneInstall 'extension\assets\user-note.txt'
+        Assert (Test-Path -LiteralPath $oldAsset) 'Fixture asset was not installed'
+        Write-Utf8Atomic $userFile 'mine'
+        # A file the user edited is never deleted: the update is refused and nothing changes.
+        $shipped=Read-Utf8Text $oldAsset; Write-Utf8Atomic $oldAsset 'user edit'
+        Assert-Throws { & (Join-Path $pruneB 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet } 'Update accepted a modified owned file'
+        Assert ((Read-Utf8Text $oldAsset) -eq 'user edit' -and (Read-InstallState $pruneInstall).Version -eq '0.5.0') 'A modified owned file was not preserved'
+        Write-Utf8Atomic $oldAsset $shipped
+        $null=& (Join-Path $pruneB 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateB=Read-InstallState $pruneInstall
+        Assert (-not (Test-Path -LiteralPath $oldAsset)) 'An unshipped owned asset was left behind'
+        Assert (@($stateB.OwnedFiles | Where-Object { $_.Path.Replace('\','/') -eq 'extension/assets/index-old.js' }).Count -eq 0) 'A removed asset is still recorded as owned'
+        Assert ((Test-Path -LiteralPath (Join-Path $pruneInstall 'extension\assets\index-new.js')) -and (Read-Utf8Text $userFile) -eq 'mine') 'Cleanup touched a current or user file'
+        Assert ((Test-Path -LiteralPath $stateA.CurrentExe) -and (Test-Path -LiteralPath $stateB.CurrentExe)) 'The previous executable was not kept'
+        # An executable recorded by runtime.json stays even when it is neither current nor previous.
+        $runtimePath=Join-Path $stateB.DataDir 'runtime.json'
+        Write-Utf8Atomic $runtimePath (ConvertTo-Json @{ version=1; profiles=@{ ext=@{ kind='external' } }; runtimes=@{ ext=@{ baseUrl='https://external.invalid'; bridgeExecutable=$stateA.CurrentExe } } } -Depth 6)
+        $null=& (Join-Path $pruneC 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateC=Read-InstallState $pruneInstall
+        Assert ((Test-Path -LiteralPath $stateA.CurrentExe) -and (Test-Path -LiteralPath $stateB.CurrentExe)) 'A referenced or previous executable was removed'
+        Remove-Item -LiteralPath $runtimePath
+        $null=& (Join-Path $pruneD 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        $stateD=Read-InstallState $pruneInstall
+        Assert (-not (Test-Path -LiteralPath $stateA.CurrentExe) -and -not (Test-Path -LiteralPath $stateB.CurrentExe)) 'Unused old executables were left behind'
+        Assert (-not (Test-Path -LiteralPath ([IO.Path]::GetDirectoryName($stateA.CurrentExe)))) 'An emptied executable folder was left behind'
+        Assert ((Test-Path -LiteralPath $stateC.CurrentExe) -and (Test-Path -LiteralPath $stateD.CurrentExe)) 'The current or previous executable was removed'
+        Assert (@($stateD.OwnedFiles | Where-Object { $_.Path -like 'app/*' }).Count -eq 2) 'Removed executables are still recorded as owned'
+        $null=& (Join-Path $pruneD 'setup.ps1') -InstallDir $pruneInstall -NoStartup -NoStart -Quiet
+        Assert (Test-Path -LiteralPath $stateC.CurrentExe) 'Reapplying the same version removed the previous executable'
+        $null=& (Join-Path $pruneD 'uninstall.ps1') -InstallDir $pruneInstall -RemoveData -Quiet
+        Assert (Test-Path -LiteralPath $userFile) 'Uninstall removed a user file'
     }
     $install = Join-Path $testRoot '사용자 설치 & 공백'
     # Include a character outside legacy Windows ANSI code pages on every locale.
@@ -267,8 +308,14 @@ try {
                 $fakeMarker=$savedMarker | ConvertFrom-Json; $fakeMarker.Pid=$unrelated.Id
                 $fakeProcess=Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $unrelated.Id); $fakeMarker.CreatedAt=$fakeProcess.CreationDate.ToUniversalTime().ToString('o')
                 Write-Utf8Atomic $markerPath (ConvertTo-Json $fakeMarker)
-                Assert-Throws { Stop-OwnedBridge $liveState } 'A different process matched a stale PID marker'
+                Assert (-not (Stop-OwnedBridge $liveState)) 'A different process matched a stale PID marker'
+                Assert (-not (Test-Path -LiteralPath $markerPath)) 'A stale PID marker was not cleaned up'
                 $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'Ownership check killed an unrelated process'
+                Assert ($null -ne (Get-Process -Id $firstPid -ErrorAction SilentlyContinue)) 'Stale marker cleanup stopped a process'
+                $foreignMarker=$savedMarker | ConvertFrom-Json; $foreignMarker.InstallId=('0' * 32)
+                Write-Utf8Atomic $markerPath (ConvertTo-Json $foreignMarker)
+                Assert-Throws { Stop-OwnedBridge $liveState } 'A marker of another installation was accepted'
+                Assert (Test-Path -LiteralPath $markerPath) 'A marker of another installation was removed'
             } finally { Write-Utf8Atomic $markerPath $savedMarker; if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
             $occupied=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $occupied.Start()
             try {
@@ -286,6 +333,36 @@ try {
             Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'NoStart update retained the old Bridge process'
             $null=& (Join-Path $package2 'uninstall.ps1') -InstallDir $liveInstall -RemoveData -Quiet
             Assert (-not (Get-Process -Id $newPid -ErrorAction SilentlyContinue)) 'Owned process survived uninstall'
+        }
+        Case 'stale marker with a reused PID does not block start, update or uninstall' {
+            $staleInstall=Join-Path $testRoot 'stale marker install'; $activeInstalls.Add($staleInstall); $stalePort=Free-Port
+            $null=& (Join-Path $package1 'setup.ps1') -InstallDir $staleInstall -NoStartup -Port $stalePort -NoStart -Quiet
+            $unrelated=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 180') -PassThru -WindowStyle Hidden
+            $writeStale={
+                $staleState=Read-InstallState $staleInstall
+                Write-Utf8Atomic (Join-Path $staleState.DataDir '.installer-bridge-process.json') (ConvertTo-Json ([ordered]@{ Product=$staleState.Product; InstallId=$staleState.InstallId; Pid=[int]$stalePid; Executable=$staleState.CurrentExe; Port=[int]$staleState.Port; CreatedAt=[DateTime]::UtcNow.ToString('o') }))
+            }
+            try {
+                $stalePackages=@($package2,$package1); $staleIndex=0
+                # PID 4 is the System process: Win32_Process reports no ExecutablePath for it.
+                foreach ($stalePid in @([int]$unrelated.Id, 4)) {
+                    & $writeStale
+                    $started=& (Join-Path $staleInstall 'start-bridge.ps1')
+                    Assert ($started.running -and [int]$started.pid -ne $stalePid) 'Start was blocked by a stale PID marker'
+                    Assert (Stop-OwnedBridge (Read-InstallState $staleInstall)) 'Bridge started over a stale marker could not be stopped'
+                    & $writeStale
+                    $updated=& (Join-Path $stalePackages[$staleIndex] 'setup.ps1') -InstallDir $staleInstall -NoStartup -Quiet
+                    $staleIndex++
+                    Assert ($updated.Running.running -and [int]$updated.Running.pid -ne $stalePid) 'Update was blocked by a stale PID marker'
+                    Assert (Stop-OwnedBridge (Read-InstallState $staleInstall)) 'Updated Bridge could not be stopped'
+                    $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'A stale PID marker terminated an unrelated process'
+                }
+                $stalePid=[int]$unrelated.Id
+                & $writeStale
+                $removed=& (Join-Path $package1 'uninstall.ps1') -InstallDir $staleInstall -RemoveData -Quiet
+                Assert $removed.Removed 'Uninstall was blocked by a stale PID marker'
+                $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'Uninstall terminated an unrelated process'
+            } finally { if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
         }
         Case 'occupied port rolls back assets, Startup and user config' {
             $listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $listener.Start(); $blockedPort=$listener.LocalEndpoint.Port

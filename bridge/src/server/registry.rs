@@ -169,6 +169,21 @@ impl Registry {
         };
         let _ = p.tx.send(r);
     }
+
+    /// A reply that named this connection's command but could not be read: end the command now
+    /// instead of at its timeout. A write may have run, so it is reported like a lost reply.
+    pub fn fail_unreadable_response(&self, conn: ConnId, id: &str, reason: &str) {
+        let mut g = self.inner.lock().unwrap();
+        if g.pending.get(id).is_none_or(|p| p.conn != conn) { return; }
+        let p = g.pending.remove(id).unwrap();
+        drop(g);
+        tracing::warn!(%id, reason, "unreadable browser reply");
+        let _ = p.tx.send(Err(match p.class {
+            CommandClass::Read => RpcError::new(ErrorCode::Internal, Retry::Safe, "The browser's reply could not be read. Try again, with a smaller maxChars for a read."),
+            CommandClass::Write => RpcError::new(ErrorCode::ExecutionUnknown, Retry::Unsafe,
+                "The browser's reply could not be read. The action may or may not have happened. Take a snapshot to check before retrying."),
+        }));
+    }
 }
 
 /// The newest connection of the selected client. Never falls back to a different client.

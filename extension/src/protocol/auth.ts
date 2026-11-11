@@ -14,8 +14,9 @@ const encoder = new TextEncoder();
 const hex = (bytes: Uint8Array) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 const isHex = (value: unknown): value is string => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 
-export function authHello(clientId: string, repair: boolean): AuthHello {
-  return { authVersion: AUTH_VERSION, role: "extension", clientId, clientNonce: hex(crypto.getRandomValues(new Uint8Array(32))), clientVersion: "0.1.0", repair };
+/** `clientVersion` is the extension's manifest version. It is informational: it is not part of the proof transcript. */
+export function authHello(clientId: string, repair: boolean, clientVersion: string): AuthHello {
+  return { authVersion: AUTH_VERSION, role: "extension", clientId, clientNonce: hex(crypto.getRandomValues(new Uint8Array(32))), clientVersion, repair };
 }
 
 export function authTranscript(side: "server" | "client", hello: AuthHello, serverNonce: string): Uint8Array<ArrayBuffer> {

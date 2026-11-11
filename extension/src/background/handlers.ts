@@ -6,6 +6,7 @@ import type { SessionStore, Outcome } from './dedupe';
 import type { ChromeApi, FrameInfo } from './chrome-api';
 import { frameRouter, type FrameError } from './frames';
 import { RefTable, snapshotToken } from '../content/refs';
+import { clipText } from '../content/text';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
@@ -17,6 +18,10 @@ const SNAPSHOT_RESPONSE_BYTES = 28_000;
 const LATE_NAVIGATION_MS = 1000;
 const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
+/** The tab shows Chrome's own error page (unreachable host, refused connection): final, not a page still loading. */
+const errorPage = (url: string | undefined, executed: boolean) => new ProtocolError('UNSUPPORTED_PAGE',
+    'Chrome could not load this address and shows its own error page. Check the address or navigate elsewhere; another snapshot will not help.',
+    'never', { errorPage: true, ...(url === undefined ? {} : { url: clipText(url, 2048) }), ...(executed ? { executed: true } : {}) });
 const asError = (e: unknown) => e instanceof ProtocolError ? e : new ProtocolError('INTERNAL', String(e));
 const unpack = (outcome: Outcome): unknown => { if (outcome.ok)
     return outcome.result; const e = outcome.error; throw new ProtocolError(e.code, e.message, e.retry, e.details); };
@@ -89,7 +94,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         };
         const inputBefore = tracksTabs ? await inputState() : null;
         const startUrl = tracksTabs ? (await api.tabsGet(tabId).catch(() => undefined))?.url : undefined;
-        if(tracksTabs && frame.frameId!==0 && run.req.params.waitFor)
+        if(tracksTabs && frame.frameId!==0)
             run.sourceTopDocument=(await interruptible(frames.list(tabId),run.controller.signal)).find(f=>f.frameId===0)?.documentId;
         // Off by default: only an enabled, attached debugger turns the content command into trusted input.
         if ((tracksTabs || (advanced?.enabled() && WRITE.has(run.req.method))) && (frame.frameId === 0 || advanced?.enabled()) && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true, ...(advanced?.enabled()?{trustedFrames:true}:{}) };
@@ -193,8 +198,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             const created = await api.tabsCreate({ url, active: false, ...(windowId === undefined ? {} : {windowId}) });
             if (!created.id)
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'Chrome did not return a new tab ID.', 'unsafe');
-            const tab = await loadedTab(api, created.id, async () => { }, signal);
-            return describeTab(tab);
+            try { return describeTab(await loadedTab(api, created.id, async () => { }, signal)); }
+            catch (error) {
+                // The tab exists: a slow page must not cost the operation its tab ID. Stop keeps its own outcome.
+                if (signal.aborted || !(error instanceof ProtocolError) || error.code !== 'TIMEOUT') throw error;
+                const current = await api.tabsGet(created.id).catch(() => undefined);
+                if (!current?.id) throw error;
+                return { ...describeTab(current), loadIncomplete: true, note: 'The tab is still loading after 30 seconds. Wait for its content or take a snapshot before acting.' };
+            }
         }
         const tab = await getTab(api, Number(p.tabId));
         const goto = req.method === 'browser.navigate' && (p.action ?? 'goto') === 'goto';
@@ -211,7 +222,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const tabId = tab.id!;
         if(WRITE.has(req.method)&&req.method!=='browser.dialog'){if(goto)await recovery?.assertWritable(tabId,true);else await recovery?.assertWritable(tabId);if(trusted?.stopping?.(tabId))throw new ProtocolError('BROWSER_BUSY','The previous debugger session is still stopping. Inspect the page manually.');}
         if(WRITE.has(req.method)&&req.method!=='browser.dialog'&&advanced?.busy(tabId))throw new ProtocolError('BROWSER_BUSY','The previous input is still settling. Observe before another action.','safe');
-        if(advanced?.pending(tabId)&&req.method!=='browser.dialog')throw new ProtocolError('BROWSER_BUSY','A browser dialog is open. Use browser_dialog or respond in Chrome first.');
+        if(advanced?.pending(tabId)&&req.method!=='browser.dialog'){
+            // A dialog whose debugger detached sends no closed event. Reading the page is the way
+            // back: a write is never let through on the strength of this probe alone.
+            const recovered=!WRITE.has(req.method)&&await interruptible(advanced.recover(tabId),signal);
+            if(!recovered)throw advanced.pending(tabId)?.detached
+                ? new ProtocolError('BROWSER_BUSY','A browser dialog was open when the debugger detached. Respond in Chrome if it is still open, then take a snapshot before another action.','safe')
+                : new ProtocolError('BROWSER_BUSY','A browser dialog is open. Use browser_dialog or respond in Chrome first.');
+        }
         const advancedCapture=advanced?.enabled()&&req.method==='browser.screenshot'&&await trusted?.ensure(tabId).catch(()=>false);
         if(advancedMethod(req.method,p,!!advancedCapture)) {
           if(!advanced?.enabled())throw new ProtocolError('FORBIDDEN_METHOD','Advanced browser features require Chrome 125+ and Settings activation.');
@@ -233,8 +251,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 if (liveDocuments.length !== documents.length || documents.some(frame => !liveDocuments.some(live => live.frameId === frame.frameId && live.documentId === frame.documentId)))
                     throw new ProtocolError('FRAME_UNAVAILABLE', 'A document changed during the close check. Preserve the tab and inspect a fresh snapshot.');
             };
+            // Chrome's error page in a subframe (unreachable host) cannot be injected and holds
+            // nothing a person could have edited. Only that case is skipped: a failed navigation
+            // that left the old document in place still injects and is checked like any frame.
+            const checkable: FrameInfo[] = [];
             for (const frame of documents) {
-                await frames.inject(tabId, frame);
+                try { await frames.inject(tabId, frame); }
+                catch (error) { if (frame.frameId !== 0 && frame.errorOccurred) continue; throw error; }
+                checkable.push(frame);
                 await checkClean(frame);
             }
             await checkDocuments();
@@ -248,7 +272,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // and checked without changing documentId. Re-read every form once
                 // after preflight, concurrently to avoid another sequential sweep.
                 // This is bounded validation, never a retry of the close action.
-                await Promise.all(documents.map(checkClean));
+                await Promise.all(checkable.map(checkClean));
                 await checkDocuments();
                 aborted(signal);
                 run.started = true;
@@ -281,7 +305,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                     results.push(withDocument);bindings.push(f);used+=length;
                 }catch(e){
                     if(signal.aborted||asError(e).code==='CANCELLED')throw e;
-                    const error:FrameError={frameId:f.frameId,url:f.url.slice(0,2048),code:'FRAME_UNAVAILABLE',message:asError(e).message.slice(0,500)};
+                    if(f.frameId===0&&f.errorOccurred)throw errorPage(tab.url,false);
+                    const error:FrameError={frameId:f.frameId,url:clipText(f.url,2048),code:'FRAME_UNAVAILABLE',message:clipText(asError(e).message,500)};
                     const errorSize=jsonBytes(error);
                     if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
                     errors.push(error);used+=errorSize;
@@ -307,7 +332,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // Totals count every match, not just the page returned (elementOffset/offset).
                 ? results.some((f: any) => (f.elementsTotal ?? f.elements?.length ?? 0) > 0 || (f.text?.totalChars ?? (f.text?.content ? 1 : 0)) > 0) : undefined;
             if (queryMatched) for (const f of results as any[]) if (Array.isArray(f.limits)) f.limits = f.limits.filter((l: string) => l !== 'query-no-match');
-            return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url?.slice(0,2048),title:tab.title?.slice(0,256),tabId,frames:results,frameErrors:errors,
+            return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url===undefined?undefined:clipText(tab.url,2048),title:tab.title===undefined?undefined:clipText(tab.title,256),tabId,frames:results,frameErrors:errors,
                 framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
                 limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
                 note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results. Pass query to read only matching lines, rows and elements.'};
@@ -323,6 +348,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (!act)
                 throw new ProtocolError('INVALID_PARAMS', 'Unknown navigation action.');
             const result = await loadedTab(api, tabId, async () => { await check(req, signal); run.started = true; return act(); }, signal, true, action==='back'||action==='forward');
+            // A load that "completed" on the error page did not reach the site. A failed navigation
+            // that left a working document in place still injects, and is not an error page.
+            const landed = (await api.listFrames(tabId).catch(() => [] as FrameInfo[])).find(f => f.frameId === 0);
+            if (landed?.errorOccurred && !await interruptible(api.inject(tabId, landed).then(() => true, () => false), signal)) throw errorPage(result.url, true);
             return { executed: true, verified: { url: result.url, title: result.title } };
         }
         if (req.method === 'browser.screenshot') {
@@ -362,7 +391,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             // Resolve the attachment before touching the page: an unknown name never reaches it.
             const file = req.method === 'browser.upload' ? await attachment?.(String(p.file ?? ''), typeof p.panelRequestId === 'string' ? p.panelRequestId : undefined) : undefined;
             if (req.method === 'browser.upload' && !file)
-                throw new ProtocolError('INVALID_PARAMS', `This request has no attachment named ${JSON.stringify(String(p.file ?? '').slice(0, 80))}; attach the file in the panel and send the request again.`);
+                throw new ProtocolError('INVALID_PARAMS', `This request has no attachment named ${JSON.stringify(clipText(String(p.file ?? ''), 80))}; attach the file in the panel and send the request again.`);
             const ref = typeof p.ref === 'string' ? p.ref : typeof p.refGone === 'string' ? p.refGone : undefined;
             const frameRef=req.method==='browser.wait'&&typeof p.frameRef==='string'?p.frameRef:undefined;
             if(frameRef!==undefined)await frames.bound(tabId,ref,String(p.operationId),frameRef);

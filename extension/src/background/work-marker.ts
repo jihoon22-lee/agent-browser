@@ -1,11 +1,15 @@
 /** Runs in the page: a fixed, click-through, closed-shadow frame that snapshots cannot read. */
 export function markerScript(on: boolean, label: string): void {
   const id = "agent-browser-work-marker";
+  const existing = document.querySelectorAll(`#${id}`);
+  // Every status event calls this. The same marker already in place is left alone, so the page
+  // sees no mutation (a click's change observation would count it) and nothing flickers.
+  if (on && existing.length === 1 && existing[0]!.parentNode === document.documentElement && existing[0]!.getAttribute("data-label") === label) return;
   // Replace every earlier marker, including ones left by a previous extension instance.
-  document.querySelectorAll(`#${id}`).forEach(element => element.remove());
+  existing.forEach(element => element.remove());
   if (!on) return;
   const host = document.createElement("div");
-  host.id = id; host.setAttribute("aria-hidden", "true");
+  host.id = id; host.setAttribute("aria-hidden", "true"); host.setAttribute("data-label", label);
   // Important, so page CSS (div{pointer-events:auto!important}) cannot make it block clicks.
   for (const [name, value] of ([["all", "initial"], ["position", "fixed"], ["inset", "0"], ["pointer-events", "none"], ["z-index", "2147483647"], ["display", "block"]] as [string, string][]))
     host.style.setProperty(name, value, "important");

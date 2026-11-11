@@ -62,7 +62,7 @@ fn review_previous_boot_is_stopped_even_when_keeper_is_also_gone() {
 fn orphan_group_result(child_nonce: &str) -> (Option<i32>,Option<i32>,bool) {
     let home=tempfile::tempdir().unwrap(); let owner=home.path().join("owner"); let child_file=home.path().join("child");
     std::fs::write(home.path().join("owner.start"),"fixture").unwrap();
-    let mut leader=std::process::Command::new("/usr/bin/setsid").args(["--wait","/bin/sh","-c",WSL_LAUNCH,"fixture",home.path().to_str().unwrap(),owner.to_str().unwrap(),"fixture","/bin/sh","-c","AGENT_BROWSER_RUNTIME_ID=\"$2\" /bin/sleep 20 & printf '%s\\n' \"$!\" > \"$1\"; exit 0","fixture",child_file.to_str().unwrap(),child_nonce])
+    let mut leader=std::process::Command::new("/usr/bin/setsid").args(["--wait","/bin/sh","-c",WSL_LAUNCH,"fixture",home.path().to_str().unwrap(),owner.to_str().unwrap(),"fixture","/bin/sh","-c","AGENT_BROWSER_RUNTIME_ID=\"$2\" /bin/sleep 90 & printf '%s\\n' \"$!\" > \"$1\"; exit 0","fixture",child_file.to_str().unwrap(),child_nonce])
         .env("AGENT_BROWSER_RUNTIME_ID","fixture").spawn().unwrap();
     leader.wait().unwrap();
     let pid=std::fs::read_to_string(child_file).unwrap().trim().parse::<u32>().unwrap();

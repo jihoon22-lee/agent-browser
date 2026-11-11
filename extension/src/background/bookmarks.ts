@@ -1,4 +1,5 @@
 import {ProtocolError} from '../protocol/errors';
+import {clipText} from '../content/text';
 export interface BookmarkAccess {
   granted():Promise<boolean>;
   children(id:string):Promise<chrome.bookmarks.BookmarkTreeNode[]>;
@@ -21,7 +22,7 @@ export async function readBookmarks(api:BookmarkAccess|undefined,p:Record<string
   if (!await api.granted()) throw new ProtocolError('FORBIDDEN_METHOD','Bookmarks access was revoked during the read.');
   const entries:Record<string,unknown>[]=[];let bytes=0;
   for (const node of nodes.slice(offset,offset+limit)) {
-    const entry={id:node.id,parentId:node.parentId,title:node.title.slice(0,512),type:node.url===undefined?'folder':'bookmark',
+    const entry={id:node.id,parentId:node.parentId,title:clipText(node.title,512),type:node.url===undefined?'folder':'bookmark',
       ...(node.title.length>512?{titleTruncated:true}:{}),
       ...(node.url===undefined?{}:node.url.length<=4096?{url:node.url}:{urlOmitted:true}),
       ...(node.url ? {openable:node.url.length<=4096 && /^https?:\/\//i.test(node.url)} : {})};

@@ -381,10 +381,58 @@ function Get-VerifiedBridgeProcess($State) {
     if ($known.Count -ne 1) { throw 'Bridge process executable is not owned by this installation.' }
     $process = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + [int]$marker.Pid)
     if (-not $process) { return $null }
-    $created = $process.CreationDate.ToUniversalTime().ToString('o')
+    # Windows reuses PIDs. A live process with another identity (including a
+    # protected process whose path cannot be read) is not this Bridge: report
+    # "not running" so the stale marker can be cleaned up. Nothing is terminated.
+    $actualExe = $null
+    if ($process.ExecutablePath) { $actualExe = Get-FullPath $process.ExecutablePath }
+    $created = $null
+    if ($process.CreationDate) { $created = $process.CreationDate.ToUniversalTime().ToString('o') }
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$marker.Port) + '(?:\s|$)'
-    if ((Get-FullPath $process.ExecutablePath) -ne $expectedExe -or $process.CommandLine -notmatch $role -or $created -ne $marker.CreatedAt) { throw 'Recorded PID identity changed; no process was terminated.' }
+    if ($actualExe -ne $expectedExe -or -not $process.CommandLine -or $process.CommandLine -notmatch $role -or $created -ne $marker.CreatedAt) { return $null }
     return [pscustomobject]@{ Process=$process; Marker=$marker }
+}
+function Remove-StaleBridgeMarker($State, $Transaction=$null) {
+    # Only called after Get-VerifiedBridgeProcess accepted the marker as this
+    # installation's own and found no matching live process.
+    $path = Join-Path $State.DataDir '.installer-bridge-process.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+    Assert-PlainPath $path
+    $before = Get-FileSha256 $path
+    # A concurrent start may have published a fresh marker; keep that one.
+    if (Get-VerifiedBridgeProcess $State) { return }
+    if ($Transaction) { Remove-TransactionFile $Transaction $path; return }
+    if ((Test-Path -LiteralPath $path -PathType Leaf) -and (Get-FileSha256 $path) -eq $before) { Remove-Item -LiteralPath $path -Force }
+}
+function Get-ReferencedAppDirectories($State) {
+    # Directories under app\ whose executables may still be in use: recorded by
+    # runtime.json or the Bridge marker, or running right now. Returns $null when
+    # that cannot be determined; callers then keep every old executable.
+    $used = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    try {
+        $appRoot = (Get-FullPath (Join-Path $State.InstallDir 'app')) + '\'
+        $runtimePath = Join-Path $State.DataDir 'runtime.json'
+        if (Test-Path -LiteralPath $runtimePath) {
+            Assert-PlainPath $runtimePath
+            $runtime = (Read-Utf8Text $runtimePath) | ConvertFrom-Json
+            if ($null -eq $runtime -or $null -eq $runtime.runtimes) { return $null }
+            foreach ($entry in $runtime.runtimes.PSObject.Properties) {
+                $recordedExe = [string]$entry.Value.bridgeExecutable
+                if ($recordedExe) { $null = $used.Add([IO.Path]::GetDirectoryName((Get-FullPath $recordedExe))); continue }
+                $runtimeProfile = $null
+                if ($null -ne $runtime.profiles) { $runtimeProfile = $runtime.profiles.PSObject.Properties[$entry.Name] }
+                if (-not $runtimeProfile -or $runtimeProfile.Value.kind -ne 'external') { return $null }
+            }
+        }
+        $marker = Get-BridgeProcessMarker $State.DataDir
+        if ($marker -and $marker.Executable) { $null = $used.Add([IO.Path]::GetDirectoryName((Get-FullPath ([string]$marker.Executable)))) }
+        foreach ($process in @(Get-CimInstance Win32_Process -Property ProcessId,ExecutablePath -ErrorAction Stop)) {
+            if (-not $process.ExecutablePath) { continue }
+            $processExe = Get-FullPath $process.ExecutablePath
+            if ($processExe.StartsWith($appRoot, [StringComparison]::OrdinalIgnoreCase)) { $null = $used.Add([IO.Path]::GetDirectoryName($processExe)) }
+        }
+    } catch { return $null }
+    return ,$used
 }
 function Assert-NoManagedRuntimeForScriptUpdate($State) {
     $path=Join-Path $State.DataDir 'runtime.json'
@@ -399,12 +447,12 @@ function Assert-NoManagedRuntimeForScriptUpdate($State) {
         }
     }
 }
-function Stop-OwnedBridge($State) {
+function Stop-OwnedBridge($State, $Transaction=$null) {
     $verified = Get-VerifiedBridgeProcess $State
-    if (-not $verified) { return $false }
+    if (-not $verified) { Remove-StaleBridgeMarker $State $Transaction; return $false }
     # Re-read identity immediately before acting; never kill by image name.
     $again = Get-VerifiedBridgeProcess $State
-    if (-not $again) { return $false }
+    if (-not $again) { Remove-StaleBridgeMarker $State $Transaction; return $false }
     Stop-Process -Id ([int]$again.Marker.Pid) -Force -ErrorAction Stop
     for ($i=0; $i -lt 50; $i++) {
         if (-not (Get-Process -Id ([int]$again.Marker.Pid) -ErrorAction SilentlyContinue)) { return $true }
@@ -528,7 +576,7 @@ function Start-OwnedBridge($State, $Transaction=$null) {
     if (-not (Test-Path -LiteralPath $pidFile) -or [int](Read-Utf8Text $pidFile).Trim() -ne [int]$started.pid) { throw 'Bridge startup PID does not match serve.pid.' }
     $process = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + [int]$started.pid)
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$State.Port) + '(?:\s|$)'
-    if (-not $process -or (Get-FullPath $process.ExecutablePath) -ne $expectedExe -or $process.CommandLine -notmatch $role) { throw 'Started Bridge process identity could not be verified.' }
+    if (-not $process -or -not $process.ExecutablePath -or (Get-FullPath $process.ExecutablePath) -ne $expectedExe -or -not $process.CommandLine -or $process.CommandLine -notmatch $role) { throw 'Started Bridge process identity could not be verified.' }
     $marker = [ordered]@{ Product=$script:AgentBrowserProduct; InstallId=$State.InstallId; Pid=[int]$started.pid; Executable=$expectedExe; Port=[int]$State.Port; CreatedAt=$process.CreationDate.ToUniversalTime().ToString('o') }
     $markerPath=Join-Path $State.DataDir '.installer-bridge-process.json'
     if($Transaction){Set-TransactionText $Transaction $markerPath (ConvertTo-Json $marker -Depth 5)}

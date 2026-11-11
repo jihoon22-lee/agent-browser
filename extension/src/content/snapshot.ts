@@ -1,5 +1,6 @@
 import { accessibleName, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
 import { newTable } from "./refs";
+import { clipText, safeRange, safeSlice } from "./text";
 import { recordText, recordObservation, type RecordObservation } from './record-context';
 
 export type SnapElement = { ref: string; role: string; name: string; tag: string; value?: string; checked?: boolean; disabled?: boolean; options?: string[]; href?: string; inShadow?: boolean; state?: string[]; context?: string };
@@ -7,9 +8,10 @@ export type TextSlice = { content: string; totalChars: number; offset: number; r
 export type FrameSnapshot = { frameId: number; url: string; title: string; text: TextSlice; elements: SnapElement[]; elementsTruncated: boolean; elementsTotal: number; elementsOffset: number; elementsNextOffset: number | null; limits: string[]; query?: string };
 
 export function sliceText(full: string, offset: number, maxChars: number): TextSlice {
-  const content = full.slice(offset, offset + maxChars);
-  const end = offset + content.length;
-  return { content, totalChars: full.length, offset, returnedChars: content.length, truncated: end < full.length, nextOffset: end < full.length ? end : null };
+  // The reported offset and nextOffset are the positions actually cut, so pages join into the original.
+  const { start, end } = safeRange(full, offset, offset + maxChars);
+  const content = full.slice(start, end);
+  return { content, totalChars: full.length, offset: start, returnedChars: content.length, truncated: end < full.length, nextOffset: end < full.length ? end : null };
 }
 
 export function pageText(doc: Document): string {
@@ -24,12 +26,15 @@ export function pageText(doc: Document): string {
   const normalize = (text: string) => text.replace(/\s+/g, " ").trim();
   const base = plain(body), parts = [base];
   function shadows(root: Document | ShadowRoot, ancestorText: string) {
+    // Normalized once per root, and only if it holds a shadow host: not once per chunk per host.
+    let padded: string | undefined;
+    const ancestors = () => padded ??= ` ${normalize(ancestorText)} `;
     for (const host of root.querySelectorAll("*")) {
       if (!host.shadowRoot || !isRendered(host, { checkLayout: false })) continue;
       const chunks = [...host.shadowRoot.childNodes].map(plain).filter((text) => normalize(text));
       // Some renderers include shadow text in an ancestor's innerText. Compare
       // only against ancestors, so identical independent shadow roots stay distinct.
-      for (const chunk of chunks) if (!` ${normalize(ancestorText)} `.includes(` ${normalize(chunk)} `)) parts.push(chunk);
+      for (const chunk of chunks) if (!ancestors().includes(` ${normalize(chunk)} `)) parts.push(chunk);
       shadows(host.shadowRoot, `${ancestorText}\n${chunks.join("\n")}`);
     }
   }
@@ -68,7 +73,7 @@ function contextOf(el: Element, lookAlikes: Element[]): string {
     best = ancestor;
   }
   if (!best) return "";
-  return ((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  return clipText(((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim(), 80);
 }
 
 const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -79,14 +84,15 @@ const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
  * a space, and words split by inline tags (<mark>A-10</mark>02) kept together. */
 const SKIP = "script,style,template,noscript,[hidden]";
 const BREAK = "td,th,tr,li,div,p,br,section,article,header,footer,h1,h2,h3,h4,h5,h6,dt,dd,[role=cell],[role=gridcell],[role=row]";
-function renderedText(root: Element): string {
+export function renderedText(root: Element, o: { limit: number; skipUndisplayed: boolean } = { limit: 600, skipUndisplayed: false }): string {
   let text = "";
+  const skipped = (el: Element) => el.matches(SKIP) || (o.skipUndisplayed && getComputedStyle(el).display === "none");
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     // Rejecting an element skips its whole subtree.
-    acceptNode: node => node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    acceptNode: node => node.nodeType === Node.ELEMENT_NODE && skipped(node as Element) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
-  // A row longer than this is cut at 300 characters anyway; stop reading early.
-  for (let node = walker.nextNode(); node && text.length < 600; node = walker.nextNode()) {
+  // A row longer than the default limit is cut at 300 characters anyway; stop reading early.
+  for (let node = walker.nextNode(); node && text.length < o.limit; node = walker.nextNode()) {
     if (node.nodeType === Node.TEXT_NODE) text += node.nodeValue ?? "";
     else if ((node as Element).matches(BREAK)) text += " ";
   }
@@ -106,7 +112,7 @@ function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,R
       rows.set(candidate,''); return '';
     }
     const full = row ? recordObservation(row,records).search : renderedText(candidate);
-    text = row || full.length <= 300 ? full.slice(0, 300) : "";
+    text = row || full.length <= 300 ? clipText(full, 300) : "";
     rows.set(candidate, text);
   }
   return text;
@@ -117,11 +123,11 @@ function aroundMatch(line: string, query: string): string {
   if (line.length <= 300) return line;
   const at = Math.max(0, line.toLowerCase().replace(/\s+/g, " ").indexOf(query));
   const start = Math.max(0, Math.min(at - 100, line.length - 298));
-  return `${start > 0 ? "…" : ""}${line.slice(start, start + 298)}${start + 298 < line.length ? "…" : ""}`;
+  return `${start > 0 ? "…" : ""}${safeSlice(line, start, start + 298)}${start + 298 < line.length ? "…" : ""}`;
 }
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number; query?: string }): FrameSnapshot {
-  const query = o.query ? fold(o.query).slice(0, 80) : "";
+  const query = o.query ? clipText(fold(o.query), 80) : "";
   const rows = new Map<Element, string>();
   const records = new Map<Element, RecordObservation>();
   const names: NameCache = new WeakMap();
@@ -132,7 +138,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   const nodes: Element[] = [];
   const limits = new Set<string>();
   const clip = (value: string, size: number) => {
-    if (value.length > size) { limits.add("element-fields-truncated"); return value.slice(0, size); }
+    if (value.length > size) { limits.add("element-fields-truncated"); return clipText(value, size); }
     return value;
   };
   // A query keeps only the lines that mention it, so a long page costs only what was asked for.
@@ -151,8 +157,11 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   };
   let budgetFull = false;
   let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
+  // A PDF or image tab is a viewer around content the DOM does not hold.
+  if (document.contentType && !/^text\/|html|xml/i.test(document.contentType)) limits.add("document-content-not-readable");
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
+    if ((el.tagName === "EMBED" || el.tagName === "OBJECT") && /pdf/i.test(el.getAttribute("type") ?? "")) limits.add("embedded-content-not-readable");
     const interactive = isInteractive(el);
     const pointer = !interactive && el.tagName !== "TABLE" && isPointerTarget(el);
     if ((!interactive && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;

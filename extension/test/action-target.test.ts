@@ -163,3 +163,22 @@ it('does not send a final keyup to a control replaced by its confirmed default a
   await expect(runAction('press', { ref, key: 'Enter' })).resolves.toMatchObject({ executed: true, verified: { defaultApplied: true, keyupSkipped: true } });
   expect(clicked).toHaveBeenCalledTimes(1); expect(keyup).not.toHaveBeenCalled();
 });
+
+it('a ref in a keyed record survives text that changes between the snapshot and the action', async () => {
+  document.body.innerHTML = '<ul><li data-id="A"><span>남은 시간 10초</span><a href="/order-A">Details</a><button>Cancel order</button></li></ul>';
+  const button = document.querySelector('button')!, ref = refOf('Cancel order'), clicked = vi.fn();
+  button.addEventListener('click', clicked);
+  document.querySelector('span')!.textContent = '남은 시간 9초';
+  await expect(runAction('click', { ref, waitFor: { text: 'x' } })).resolves.toMatchObject({ executed: true });
+  expect(clicked).toHaveBeenCalledTimes(1);
+});
+it.each(['unkeyed', 'rekeyed', 'relinked'])('a changed record still invalidates the ref on first use (%s)', async kind => {
+  document.body.innerHTML = `<ul><li ${kind === 'unkeyed' ? '' : 'data-id="A"'}><span>Order A</span><a href="/order-A">Details</a><button>Cancel order</button></li></ul>`;
+  const button = document.querySelector('button')!, ref = refOf('Cancel order'), clicked = vi.fn();
+  button.addEventListener('click', clicked);
+  document.querySelector('span')!.textContent = 'Order B';
+  if (kind === 'rekeyed') document.querySelector('li')!.setAttribute('data-id', 'B');
+  if (kind === 'relinked') document.querySelector('a')!.href = '/order-B';
+  await expect(runAction('click', { ref, waitFor: { text: 'x' } })).rejects.toMatchObject({ code: 'STALE_ELEMENT' });
+  expect(clicked).not.toHaveBeenCalled();
+});

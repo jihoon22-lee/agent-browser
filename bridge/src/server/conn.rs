@@ -100,18 +100,19 @@ impl ServerState {
         self.registry.broadcast(&Envelope::evt("status.changed", self.status()).to_text());
     }
 
-    /// Writes the registry's current selection to config.json when it changed.
-    async fn persist_selection(&self) {
+    /// Writes the registry's current selection to config.json when it changed. On failure the
+    /// selection still holds for this run; the reason is returned for the caller to report.
+    async fn persist_selection(&self) -> Result<(), String> {
         let selected = self.registry.selected_client();
         let mut cfg = self.cfg.lock().await;
         if cfg.selected_client_id == selected {
-            return;
+            return Ok(());
         }
         let mut updated = cfg.clone();
         updated.selected_client_id = selected;
         match config::save(&self.home, &updated) {
-            Ok(()) => *cfg = updated,
-            Err(e) => tracing::error!("cannot save selected browser: {e:#}"),
+            Ok(()) => { *cfg = updated; Ok(()) }
+            Err(e) => { tracing::error!("cannot save selected browser: {e:#}"); Err(format!("{e:#}")) }
         }
     }
 }
@@ -185,10 +186,15 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
             Ok(resp)
         }
     };
-    let mut ws = match accept_hdr_async(stream, callback).await {
-        Ok(ws) => ws,
-        Err(e) => {
+    // A socket that connects and never finishes the upgrade must not hold its task forever.
+    let mut ws = match tokio::time::timeout(HELLO_TIMEOUT, accept_hdr_async(stream, callback)).await {
+        Ok(Ok(ws)) => ws,
+        Ok(Err(e)) => {
             tracing::debug!("handshake refused: {e}");
+            return;
+        }
+        Err(_) => {
+            tracing::debug!("WebSocket upgrade did not complete in time");
             return;
         }
     };
@@ -200,7 +206,8 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
         Role::Extension => {
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             let conn = state.registry.register(&hello.client_id, tx);
-            state.persist_selection().await;
+            // An unsaved automatic selection is already logged; the browser stays selected for this run.
+            let _ = state.persist_selection().await;
             let selected = state.registry.selected_client().as_deref() == Some(hello.client_id.as_str());
             if send_hello_ok(&mut ws, hello_id, &connection_id, selected, &hello.client_id).await {
                 state.broadcast_status();
@@ -372,10 +379,6 @@ async fn authenticate(
             *cfg = updated;
         }
     }
-    if role == Role::Extension && hello.client_id.is_empty() {
-        send_err_and_close(ws, &id, ErrorCode::InvalidParams, "clientId is required for extensions").await;
-        return None;
-    }
     Some((id, hello))
 }
 
@@ -411,8 +414,13 @@ fn forbidden(id: String, method: &str) -> Envelope {
     Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, format!("{method} is not allowed for this connection")))
 }
 
-fn not_available(id: String) -> Envelope {
-    Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "not available yet"))
+/// Ends an operation whose creating call was cancelled or could not be answered. Like every
+/// other abort, the browser that owns it is told so it stops that operation's work.
+fn abort_created_operation(state: &ServerState, operation_id: &str) {
+    if let Some(op) = state.ops.abort(Some(operation_id)) {
+        state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation }));
+    }
+    state.broadcast_status();
 }
 
 async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
@@ -440,7 +448,7 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
                         if let Some(handle) = running.get(request) { handle.abort(); }
                         if attached.as_ref().is_some_and(|(id, _)| id == request) {
                             let (_, op) = attached.take().unwrap();
-                            state.ops.abort(Some(&op)); state.broadcast_status();
+                            abort_created_operation(state, &op);
                         }
                     }
                     if !send(ws, &Envelope::ok(id, json!({"cancelled":true}))).await { break; }
@@ -485,7 +493,7 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
                 if created { attached = outcome.operation_id.clone().map(|op| (id.clone(), op)); }
                 let reply = Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"));
                 if !send(ws, &reply).await {
-                    if created && let Some((_, op)) = attached.take() { state.ops.abort(Some(&op)); state.broadcast_status(); }
+                    if created && let Some((_, op)) = attached.take() { abort_created_operation(state, &op); }
                     break;
                 }
             }
@@ -509,6 +517,10 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                     Some(Ok(_)) => continue,
                 };
+                // A reply that cannot be read still names its command: fail it now, not at its timeout.
+                if let Err(error) = parse_envelope(&text) && let Some(id) = crate::rpc::response_id_of_unreadable(&text) {
+                    state.registry.fail_unreadable_response(conn, &id, &error.message);
+                }
                 let env = match parse_or_reject(ws, &text).await {
                     Ok(env) => env,
                     Err(true) => break,
@@ -619,13 +631,17 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
                 if let Err(error) = state.ops.select_browser(client_id, || state.registry.use_browser(client_id)) {
                     return Envelope::err(id, error);
                 }
-                state.persist_selection().await;
+                let persisted = state.persist_selection().await;
                 state.broadcast_status();
-                Envelope::ok(id, json!({ "selected": client_id }))
+                // The selection holds for this run either way; an unsaved one is lost at the next start.
+                Envelope::ok(id, match persisted {
+                    Ok(()) => json!({ "selected": client_id, "persisted": true }),
+                    Err(reason) => json!({ "selected": client_id, "persisted": false, "persistError": reason }),
+                })
             }
             None => Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "clientId is required")),
         },
-        _ => not_available(id),
+        _ => forbidden(id, method),
     }
 }
 
@@ -679,6 +695,28 @@ mod tests {
         let reply=extension_request(&state,"stop".into(),"request.end",&params).await;
         assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
         assert!(state.ops.request_target(Some("request-a"),"A",None).is_err());
+    }
+
+    #[tokio::test]
+    async fn browser_use_reports_a_selection_it_could_not_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config::load_or_init(dir.path()).unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        for (home, saved) in [(blocker.join("home"), false), (dir.path().to_path_buf(), true)] {
+            let state = ServerState::new(home, cfg.clone());
+            let (a, _from_a) = tokio::sync::mpsc::unbounded_channel();
+            let (b, _from_b) = tokio::sync::mpsc::unbounded_channel();
+            state.registry.register("A", a);
+            state.registry.register("B", b);
+            let reply = extension_request(&state, "use".into(), "browser.use", &json!({"clientId":"B"})).await;
+            let Envelope::Res { ok: true, result: Some(result), .. } = reply else { panic!("the selection itself must succeed: {reply:?}") };
+            assert_eq!(result["selected"], "B");
+            assert_eq!(result["persisted"], saved, "{result}");
+            assert_eq!(result["persistError"].as_str().is_some_and(|reason| !reason.is_empty()), !saved, "{result}");
+            assert_eq!(state.registry.selected_client().as_deref(), Some("B"));
+        }
+        assert_eq!(config::load_or_init(dir.path()).unwrap().selected_client_id.as_deref(), Some("B"));
     }
 
     #[tokio::test]

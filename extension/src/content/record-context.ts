@@ -1,4 +1,5 @@
 import { composedParent } from './dom';
+import { clipText } from './text';
 
 const RECORD = 'tr,li,article,[role=row],[role=listitem],[data-id],[data-key]';
 const OMIT = 'script,style,template,noscript,input,textarea,select,button,[contenteditable],'
@@ -62,7 +63,7 @@ export function observeRecord(root: Element): RecordObservation {
   }
   text = text.replace(/\s+/g,' ').trim();
   const keys = [root.getAttribute('data-id'), root.getAttribute('data-key'), links];
-  return { text, search:search.replace(/\s+/g,' ').trim().slice(0,300), identity:JSON.stringify([text,...keys]), keyedIdentity:JSON.stringify(keys) };
+  return { text, search:clipText(search.replace(/\s+/g,' ').trim(),300), identity:JSON.stringify([text,...keys]), keyedIdentity:JSON.stringify(keys) };
 }
 export function recordObservation(root: Element, cache: Map<Element,RecordObservation>): RecordObservation {
   let data = cache.get(root);

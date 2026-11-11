@@ -481,3 +481,66 @@ describe("upload", () => {
     await expect(runAction('upload', { ref: refOf('둘'), ...png, generation: 10 })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
   });
 });
+
+it('selects the option named by its label even when another option shares its value', async () => {
+  document.body.innerHTML = '<select aria-label="Plan"><option value="">Choose</option><option value="x">Basic</option><option value="x">Premium</option></select>';
+  const el = document.querySelector('select')!, events: string[] = [];
+  el.addEventListener('input', () => events.push('input')); el.addEventListener('change', () => events.push('change'));
+  const result: any = await runAction('select', { ref: refOf('Plan'), option: 'Premium', generation: 10 });
+  expect(el.selectedIndex).toBe(2);
+  expect(result.verified).toMatchObject({ matches: true, value: 'x', label: 'Premium' });
+  expect(events).toEqual(['input', 'change']);
+});
+it('adds an option to a multiple select without clearing the other selections', async () => {
+  document.body.innerHTML = '<select multiple aria-label="Tags"><option selected>Red</option><option>Green</option><option>Blue</option></select>';
+  const el = document.querySelector('select')!;
+  const result: any = await runAction('select', { ref: refOf('Tags'), option: 'Blue', generation: 10 });
+  expect([...el.selectedOptions].map(o => o.text)).toEqual(['Red', 'Blue']);
+  expect(result.verified).toMatchObject({ matches: true, value: 'Blue', label: 'Blue' });
+});
+it('reports a select the page reverted as not matching', async () => {
+  document.body.innerHTML = '<select aria-label="Locked"><option>One</option><option>Two</option></select>';
+  const el = document.querySelector('select')!; el.addEventListener('change', () => { el.selectedIndex = 0; });
+  const result: any = await runAction('select', { ref: refOf('Locked'), option: 'Two', generation: 10 });
+  expect(result.verified).toMatchObject({ matches: false, value: 'One', label: 'One' });
+});
+
+it('a synthetic click moves focus to the nearest focusable ancestor after mousedown, as a real click does', async () => {
+  document.body.innerHTML = '<input aria-label="Other"><div tabindex="0" id="card" aria-label="Card"><span onclick="void 0">Open card</span></div>';
+  const other = document.querySelector('input')!, card = document.querySelector<HTMLElement>('#card')!, span = document.querySelector('span')!;
+  other.focus();
+  const order: string[] = [];
+  for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) span.addEventListener(type, () => order.push(type));
+  other.addEventListener('blur', () => order.push('blur')); card.addEventListener('focus', () => order.push('focus'));
+  await runAction('click', { ref: refOf('Open card'), generation: 10 });
+  expect(document.activeElement).toBe(card);
+  expect(order).toEqual(['pointerdown', 'mousedown', 'blur', 'focus', 'mouseup', 'click']);
+});
+it('a cancelled mousedown keeps focus where it was', async () => {
+  document.body.innerHTML = '<input aria-label="Editor"><button>Bold</button>';
+  const editor = document.querySelector('input')!, button = document.querySelector('button')!;
+  editor.focus(); button.addEventListener('mousedown', event => event.preventDefault());
+  await runAction('click', { ref: refOf('Bold'), generation: 10 });
+  expect(document.activeElement).toBe(editor);
+});
+
+it('confirms multi-line text in a rich editor that renders each line as its own block', async () => {
+  document.body.innerHTML = '<div contenteditable="true" aria-label="Note">old</div>';
+  const editor = document.querySelector<HTMLElement>('div')!;
+  Object.defineProperty(editor, 'isContentEditable', { get: () => true });
+  (document as any).execCommand = (_command: string, _ui: boolean, value: string) => { editor.innerHTML = ''; for (const line of value.split('\n')) { const p = document.createElement('p'); p.textContent = line; editor.append(p); } return true; };
+  try {
+    const result: any = await runAction('fill', { ref: refOf('Note'), text: 'first line\nsecond line', generation: 10 });
+    expect(result.verified).toMatchObject({ matches: true, method: 'insertText', value: 'first line\nsecond line' });
+  } finally { delete (document as any).execCommand; }
+});
+it('a rich editor that drops part of multi-line text is reported as not matching', async () => {
+  document.body.innerHTML = '<div contenteditable="true" aria-label="Note">old</div>';
+  const editor = document.querySelector<HTMLElement>('div')!;
+  Object.defineProperty(editor, 'isContentEditable', { get: () => true });
+  (document as any).execCommand = (_command: string, _ui: boolean, value: string) => { editor.textContent = value.split('\n')[0]!; return true; };
+  try {
+    const result: any = await runAction('fill', { ref: refOf('Note'), text: 'first line\nsecond line', generation: 10 });
+    expect(result.verified).toMatchObject({ matches: false });
+  } finally { delete (document as any).execCommand; }
+});

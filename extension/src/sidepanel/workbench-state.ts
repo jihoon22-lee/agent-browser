@@ -1,9 +1,11 @@
 // View data stays keyed by server session/message/part IDs; it is never a second agent runtime.
 export type Data = Record<string, any>;
 export type UiMessage = { info: Data; parts: Data[] };
-export type WorkbenchState = { messages: Record<string, UiMessage[]>; questions: Data[]; permissions: Data[]; statuses: Record<string, Data>; errors: Record<string, string>; seen: string[] };
-export const initialWorkbench: WorkbenchState = { messages: {}, questions: [], permissions: [], statuses: {}, errors: {}, seen: [] };
+export type WorkbenchState = { messages: Record<string, UiMessage[]>; questions: Data[]; permissions: Data[]; statuses: Record<string, Data>; errors: Record<string, string> };
+export const initialWorkbench: WorkbenchState = { messages: {}, questions: [], permissions: [], statuses: {}, errors: {} };
 const byId = <T extends Data>(items: T[]) => [...new Map(items.map(item => [item.id, item])).values()];
+/** Whether a message fetched from the server is exactly what the view already holds. */
+export const sameMessage = (held: UiMessage | undefined, fetched: UiMessage) => !!held && JSON.stringify(held) === JSON.stringify({ ...fetched, parts: byId(fetched.parts ?? []) });
 export function workbenchReducer(state: WorkbenchState, action: Data): WorkbenchState {
   if (action.type === "reset") return initialWorkbench;
   if (action.type === "messages") {
@@ -11,7 +13,7 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
     const previous = new Map((state.messages[action.sessionID] ?? []).map(message => [message.info.id, message]));
     const next = action.messages.map((m: UiMessage) => {
       const message = { ...m, parts: byId(m.parts) }, old = previous.get(m.info?.id);
-      return old && JSON.stringify(old) === JSON.stringify(message) ? old : message;
+      return old && sameMessage(old, message) ? old : message;
     });
     return { ...state, messages: { ...state.messages, [action.sessionID]: next } };
   }
@@ -20,8 +22,8 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
   if (action.type === "statuses") return { ...state, statuses: action.statuses };
   if (action.type !== "event") return state;
   const event = action.event, p = event.properties ?? {};
-  if (event.id && state.seen.includes(event.id)) return state;
-  const next = { ...state, seen: event.id ? [...state.seen, event.id].slice(-5000) : state.seen };
+  // Replayed events are dropped by event ID in the stream client (OpenCodeV1Client.events), not here.
+  const next = state;
   if (event.type === "session.status") {
     const errors = { ...state.errors }; if (p.status?.type === "busy") delete errors[p.sessionID];
     return { ...next, errors, statuses: { ...state.statuses, [p.sessionID]: p.status } };
@@ -54,6 +56,7 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
   list[index] = message;
   return { ...next, messages: { ...state.messages, [sessionID]: list } };
 }
+/** The configured server is authoritative. Never supplement it from an external model catalogue. */
 export function availableModels(catalog: Data): Data[] {
   const connected = new Set(catalog.connected ?? []);
   return (catalog.all ?? []).filter((provider: Data) => connected.has(provider.id)).flatMap((provider: Data) => Object.entries(provider.models ?? {}).map(([id, model]) => ({ ...(model as Data), id: (model as Data).id ?? id, providerID: provider.id, providerName: provider.name ?? provider.id }))).filter((model: Data) => model.status !== "deprecated");
@@ -90,9 +93,14 @@ export async function respondOnce(inflight: Set<string>, id: string, list: () =>
   catch (error) { if (error && typeof error === "object" && "status" in error && error.status === 404) return false; throw error; }
   finally { inflight.delete(id); }
 }
+/** A failed Bridge request with its protocol code and retry class, so callers classify it without reading the English text. */
+export class BridgeRequestError extends Error {
+  constructor(message: string, readonly code?: string, readonly retry?: string) { super(message); this.name = "BridgeRequestError"; }
+}
+export const codeOf = (error: unknown): string | undefined => error instanceof BridgeRequestError ? error.code : undefined;
 export async function bridgeRequest<T = any>(method: string, params: Data = {}): Promise<T> {
   const response = await chrome.runtime.sendMessage({ kind: "bridge", method, params });
-  if (!response?.ok) throw new Error(response?.error?.message ?? response?.error?.code ?? "Bridge 응답을 받지 못했습니다.");
+  if (!response?.ok) { const error = response?.error; throw new BridgeRequestError(error?.message ?? error?.code ?? "Bridge 응답을 받지 못했습니다.", typeof error?.code === "string" ? error.code : undefined, typeof error?.retry === "string" ? error.retry : undefined); }
   return response.result;
 }
 export function download(name: string, content: string, mime = "text/plain") {

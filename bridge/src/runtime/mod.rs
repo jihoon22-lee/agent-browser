@@ -13,7 +13,7 @@ use process::Identity;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
-use storage::{failure, Store};
+use storage::{failure, os_failure, Store};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,7 +64,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub fn new(home: PathBuf, port: u16) -> Self { Self { store: Store::new(home.clone()), home, port, locks: Default::default(), verified_docs: Default::default() } }
+    pub fn new(home: PathBuf, port: u16) -> Self { let home = crate::config::absolute_home(home); Self { store: Store::new(home.clone()), home, port, locks: Default::default(), verified_docs: Default::default() } }
     fn lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> { self.locks.lock().unwrap().entry(id.into()).or_default().clone() }
     fn reserve_port(&self, profile: &str, requested: Option<u16>) -> Result<ReservedPort<'_>,RpcError> {
         let controller = process::identity(std::process::id()).ok_or_else(|| failure("Cannot verify the Bridge process identity"))?;
@@ -92,6 +92,8 @@ impl Manager {
         let _operation = self.operation_lock(&profile.id)?;
         self.store.update(|config| {
             if create_only && config.profiles.contains_key(&profile.id) { return Err(invalid("This profile id already exists; no profile was changed")); }
+            // After a reboot or crash the record of a native runtime outlives its processes.
+            if config.runtimes.get(&profile.id).is_some_and(ended) { config.runtimes.remove(&profile.id); }
             if config.runtimes.contains_key(&profile.id) { return Err(invalid("Stop the managed runtime before editing its profile")); }
             if let Some(old) = config.profiles.get(&profile.id) { profile.preserve_secrets(old); }
             if make_default || config.default_profile_id.is_none() { config.default_profile_id = Some(profile.id.clone()); }
@@ -105,14 +107,14 @@ impl Manager {
     }
     fn try_operation_lock(&self, id: &str) -> Result<Option<storage::FileLock>,RpcError> {
         if id.is_empty() || id.len() > 64 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)) { return Err(invalid("Invalid profile id")); }
-        let directory = self.home.join("runtime"); std::fs::create_dir_all(&directory).map_err(|_| failure("Cannot create runtime directory"))?;
+        let directory = self.home.join("runtime"); std::fs::create_dir_all(&directory).map_err(os_failure("Cannot create runtime directory"))?;
         let mut options = std::fs::OpenOptions::new(); options.read(true).write(true).create(true).truncate(false);
         #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
-        let file = options.open(directory.join(format!("{id}.lock"))).map_err(|_| failure("Cannot open profile operation lock"))?;
+        let file = options.open(directory.join(format!("{id}.lock"))).map_err(os_failure("Cannot open profile operation lock"))?;
         match file.try_lock() {
             Ok(()) => Ok(Some(storage::FileLock(file))),
             Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(_) => Err(failure("Cannot lock profile operation")),
+            Err(std::fs::TryLockError::Error(error)) => Err(os_failure("Cannot lock profile operation")(error)),
         }
     }
     pub async fn delete(&self, id: &str) -> Result<Value, RpcError> {
@@ -147,7 +149,7 @@ impl Manager {
                 if !self.overlay_current(&record) { return Err(failure("The managed runtime needs its browser MCP configuration refreshed (Bridge endpoint or owned WSL keeper). Stop this profile in Options, then start it again. The existing runtime was left running.")); }
                 let version = health(&record.base_url, Some(&record.username), Some(&record.password), true, &self.verified_docs).await?;
                 browser_mcp(profile,&record).await?;
-                record.version = Some(version); self.persist(&record)?;
+                record.version = Some(version); self.persist_changed(&record)?;
                 return Ok(info(profile, &record, "ready", true,&self.home));
             }
             if inspection.owned { return Err(failure("The owned runtime is running but its listener cannot be verified; stop it before retrying")); }
@@ -156,6 +158,7 @@ impl Manager {
             }
             if profile.kind == Kind::Wsl && self.terminate_wsl(profile,&record).await.is_none() { return Err(failure("Cannot safely stop the previous WSL interop keeper; retry Stop")); }
             self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
+            self.remove_wsl_markers(&record);
         }
         let reservation = self.reserve_port(&profile.id,profile.port)?;
         let port = reservation.port;
@@ -173,7 +176,7 @@ impl Manager {
             self.launch_wsl(profile,port,instance,password,env,command).await?
         } else {
             let (program, args) = native_command(executable, serve_args);
-            let launcher = process::spawn(&program, &args, Some(&profile.directory), &env).map_err(|_| failure("Cannot launch OpenCode; check the executable, working directory, and environment"))?;
+            let launcher = process::spawn(&program, &args, Some(&profile.directory), &env).map_err(os_failure("Cannot launch OpenCode; check the executable, working directory, and environment"))?;
             RuntimeRecord {profile_id:profile.id.clone(),instance,base_url:format!("http://127.0.0.1:{port}"),username:"opencode".into(),password,launcher,server:None,wsl_owner_file:None,version:None,bridge_port:Some(self.port),bridge_executable:std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),wsl_keeper:None}
         };
         if profile.kind != Kind::Wsl {
@@ -181,6 +184,7 @@ impl Manager {
         }
         drop(reservation);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let mut exited = false;
         loop {
             let inspection = match self.inspect(profile,&mut record).await {
                 Ok(value) => value,
@@ -195,13 +199,22 @@ impl Manager {
                 }
             }
             if profile.kind == Kind::Wsl && matches!(inspection.state,WslState::Stopped | WslState::NotStarted) { break; }
+            // A listener is only adopted through its live launcher, so once the launcher has
+            // positively exited without a recorded server nothing can become ready any more.
+            if profile.kind != Kind::Wsl && ended(&record) { exited = true; break; }
             if tokio::time::Instant::now() >= deadline { break; }
             tokio::time::sleep(Duration::from_millis(if profile.kind == Kind::Wsl {1500} else {400})).await;
         }
         self.stop_inner(profile).await?;
+        if exited { return Err(failure("OpenCode exited before its server became ready. Check the executable/version, port, directory, and environment.")); }
         Err(failure("OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment."))
     }
     fn persist(&self, record: &RuntimeRecord) -> Result<(), RpcError> { self.store.update(|config| { config.runtimes.insert(record.profile_id.clone(), record.clone()); Ok(()) }) }
+    /// Status polls and doctor run every few seconds: they publish runtime.json only when the record differs.
+    fn persist_changed(&self, record: &RuntimeRecord) -> Result<(), RpcError> {
+        let unchanged = self.store.read()?.runtimes.get(&record.profile_id).is_some_and(|stored| serde_json::to_value(stored).ok() == serde_json::to_value(record).ok());
+        if unchanged { Ok(()) } else { self.persist(record) }
+    }
     fn overlay(&self, profile: &Profile, env: &mut BTreeMap<String,String>) -> Result<(), RpcError> {
         let existing = env.get("OPENCODE_CONFIG_CONTENT").cloned().or_else(|| std::env::var("OPENCODE_CONFIG_CONTENT").ok());
         let mut overlay: Value = existing.map(|text| serde_json::from_str(&text).map_err(|_| invalid("OPENCODE_CONFIG_CONTENT must be a JSON object"))).transpose()?.unwrap_or_else(|| json!({}));
@@ -213,8 +226,13 @@ impl Manager {
         // The proxy names this launch so the server can bind a guarded panel request.
         let runtime_id = env.get("AGENT_BROWSER_RUNTIME_ID").cloned();
         if let Some(id) = &runtime_id { mcp_env["AGENT_BROWSER_RUNTIME_ID"] = json!(id); }
+        // A serve started by the proxy must not keep this profile's variables (see PROFILE_ENV_KEYS).
+        // Keys the Bridge already has are not listed: the proxy cannot restore their original value.
+        let added: Vec<&str> = profile.env.iter().flatten().map(|(key,_)| key.as_str()).filter(|key| *key != "OPENCODE_CONFIG_CONTENT" && std::env::var_os(key).is_none()).collect();
+        if !added.is_empty() { mcp_env[crate::mcp::client::PROFILE_ENV_KEYS] = json!(added.join(",")); }
         if profile.kind == Kind::Wsl {
-            mcp_env["WSLENV"] = json!(if runtime_id.is_some() { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w:AGENT_BROWSER_RUNTIME_ID/w" } else { "AGENT_BROWSER_HOME/w:AGENT_BROWSER_PORT/w" });
+            let forwarded: Vec<String> = mcp_env.as_object().into_iter().flatten().map(|(key,_)| format!("{key}/w")).collect();
+            mcp_env["WSLENV"] = json!(forwarded.join(":"));
         }
         mcp.insert("browser".into(), json!({"type":"local","command":[exe,"mcp"],"environment":mcp_env,"enabled":true}));
         env.insert("OPENCODE_CONFIG_CONTENT".into(), overlay.to_string()); Ok(())
@@ -236,23 +254,19 @@ impl Manager {
     async fn verify_listener(&self, profile: &Profile, record: &mut RuntimeRecord) -> Result<bool, RpcError> {
         if !self.listener_owned(profile, record).await { return Ok(false); }
         // The listener's identity is cleanup data, even when the health endpoint fails.
-        self.persist(record)?;
+        self.persist_changed(record)?;
         Ok(true)
     }
     async fn listener_owned(&self, profile: &Profile, record: &mut RuntimeRecord) -> bool {
         #[cfg(windows)] {
+            let _ = profile;
             let Some(port) = reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()) else { return false; };
-            let Some(listener) = process::listener(port) else { return false; };
-            if profile.kind == Kind::Wsl {
-                let image = listener.image.to_ascii_lowercase();
-                let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()).to_ascii_lowercase();
-                return wsl_control(profile,record,"listener").await && (image.starts_with(&format!("{root}\\system32\\")) || image.starts_with("c:\\program files\\wsl\\") || image.starts_with("c:\\program files\\windowsapps\\microsoftcorporationii.windowssubsystemforlinux_"))
-                    && (image.ends_with("\\wslrelay.exe") || image.ends_with("\\wslhost.exe"));
-            }
-            if record.server.as_ref().is_some_and(|server| server.pid == listener.pid && server.created == listener.created && server.image == listener.image) || process::descendant(&listener, &record.launcher) {
-                record.server = Some(listener); return true;
-            }
-            false
+            // Another process may hold the same port number on another address: take the row
+            // that is the recorded server, or else one started by our launcher.
+            let listeners = process::listeners(port);
+            let known = listeners.iter().find(|listener| record.server.as_ref().is_some_and(|server| server.pid == listener.pid && server.created == listener.created && server.image == listener.image));
+            let Some(listener) = known.or_else(|| listeners.iter().find(|listener| process::descendant(listener, &record.launcher))) else { return false; };
+            record.server = Some(listener.clone()); true
         }
         #[cfg(not(windows))] { let _ = profile; process::matches(&record.launcher) }
     }
@@ -271,7 +285,7 @@ impl Manager {
         // Revoke before inspecting: a delayed WSL launch can publish ownership
         // after a timeout or after its Windows launcher has already exited.
         let revoked = self.revoke_wsl_permit(record);
-        let mut stopped = false;
+        let mut stopped = false; let mut running = 0;
         // A pending owner is a launch in progress, including during persistence failure.
         for _ in 0..20 {
             match wsl_state(profile, record).await {
@@ -280,7 +294,7 @@ impl Manager {
                     process::terminate(&record.launcher);
                     return Some(stopped);
                 }
-                WslState::Running => { stopped |= wsl_control(profile, record, "stop").await; }
+                WslState::Running => { stopped |= wsl_control(profile, record, wsl_stop_mode(running)).await; running += 1; }
                 WslState::Starting => {}
                 WslState::Unknown => break,
             }
@@ -290,8 +304,12 @@ impl Manager {
     }
     async fn terminate(&self, profile: &Profile, record: &RuntimeRecord) -> bool {
         if profile.kind == Kind::Wsl { return self.terminate_wsl(profile, record).await.unwrap_or(false); }
-        let stopped = record.server.as_ref().is_some_and(process::terminate);
-        process::terminate(&record.launcher) || stopped
+        // The Bridge itself can be inside the tree: an MCP proxy of this runtime starts a
+        // resident serve when none answers. It must survive the runtime it manages.
+        let mut spare: Vec<String> = record.bridge_executable.iter().cloned().collect();
+        if let Ok(current) = std::env::current_exe() { spare.push(current.to_string_lossy().into_owned()); }
+        let stopped = process::terminate_tree(&record.launcher,&spare);
+        record.server.as_ref().is_some_and(|server| process::terminate_tree(server,&spare)) || stopped
     }
     async fn stop_inner(&self, profile: &Profile) -> Result<Value, RpcError> {
         if profile.kind == Kind::External { return Ok(json!({"stopped":false})); }
@@ -299,6 +317,7 @@ impl Manager {
         if profile.kind == Kind::Wsl {
             if let Some(stopped) = self.terminate_wsl(profile, &record).await {
                 self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
+                self.remove_wsl_markers(&record);
                 return Ok(json!({"stopped": stopped}));
             }
             let code=wsl_control_status(profile,&record,"state").await;
@@ -396,8 +415,21 @@ impl Manager {
                 let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Owned runtime failed its authenticated v1 HTTP or browser MCP readiness check"); return Ok(value);
             }
             if inspection.owned { let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Owned process is running, but its listener ownership cannot be verified"); return Ok(value); }
+            self.forget_ended(&profile,&record,&inspection.state).await;
         }
         Ok(json!({"profileId":id,"state":"stopped","directory":profile.directory,"owned":false}))
+    }
+    /// Drops a record once nothing it owns is left, so a reboot does not keep blocking profile
+    /// edits. WSL only on a confirmed Stopped/NotStarted state (its keeper is stopped first);
+    /// an unknown state never reaches this and keeps the record.
+    async fn forget_ended(&self, profile: &Profile, record: &RuntimeRecord, state: &WslState) {
+        let confirmed = if profile.kind == Kind::Wsl { matches!(state,WslState::NotStarted | WslState::Stopped) && self.terminate_wsl(profile,record).await.is_some() } else { ended(record) };
+        if !confirmed { return; }
+        let removed = self.store.update(|config| { if config.runtimes.get(&profile.id).is_some_and(|stored| stored.instance == record.instance) { config.runtimes.remove(&profile.id); } Ok(()) });
+        match removed {
+            Ok(()) => self.remove_wsl_markers(record),
+            Err(error) => tracing::warn!(profile_id = %profile.id, error = %error.message, "cannot remove the record of an ended runtime"),
+        }
     }
     /// Extension-only connection discovery. Never launches a stopped runtime;
     /// ordinary status and doctor continue to omit credentials.
@@ -459,6 +491,10 @@ impl Manager {
     async fn diagnostic_api(&self, profile: &Profile, path: &str) -> Result<Value,RpcError> {
         let (base,username,password) = if profile.kind == Kind::External { (profile.external_url()?.to_string(),profile.username.clone(),profile.password.clone()) }
         else {
+            // Inspection can record the listener: never race Stop or a profile edit with that write.
+            let lock = self.lock(&profile.id);
+            let Ok(_guard) = lock.try_lock() else { return Err(failure("Another operation is managing this profile")); };
+            let Some(_operation) = self.try_operation_lock(&profile.id)? else { return Err(failure("Another operation is managing this profile")); };
             let mut record = self.store.read()?.runtimes.get(&profile.id).cloned().ok_or_else(|| failure("No managed runtime"))?;
             if !self.inspect(profile,&mut record).await?.listener { return Err(failure("Runtime ownership cannot be verified")); }
             (record.base_url,Some(record.username),Some(record.password))
@@ -502,6 +538,11 @@ impl Manager {
     }
 }
 
+/// Positive evidence that no process of a native runtime record is left; an inspection
+/// failure (access denied) is not evidence. WSL records are judged by their owner markers.
+fn ended(record: &RuntimeRecord) -> bool {
+    record.wsl_owner_file.is_none() && process::exited(&record.launcher) && record.server.as_ref().is_none_or(process::exited)
+}
 fn starting(id: &str, profile: &Profile) -> Value { json!({"profileId":id,"state":"starting","directory":profile.directory,"owned":false,"reason":"PROFILE_OPERATION_IN_PROGRESS"}) }
 fn info(profile: &Profile, record: &RuntimeRecord, state: &str, secrets: bool, home: &std::path::Path) -> Value {
     let mut value = json!({"profileId":profile.id,"state":state,"baseUrl":record.base_url,"directory":profile.directory,"version":record.version,"owned":true,"attachCommand":attach(&profile.id,home)});
@@ -559,14 +600,25 @@ async fn installation_check(profile: &Profile) -> Value {
     }
     command.envs(env).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] { command.creation_flags(0x08000000); }
-    let version = match tokio::time::timeout(Duration::from_secs(8),command.output()).await {
-        Ok(Ok(output)) if output.status.success() => String::from_utf8(output.stdout).ok().map(|value| value.trim().to_string()).filter(|value| value.len() < 40 && value.starts_with("1.") && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))),
+    let version = match tokio::time::timeout(Duration::from_secs(8),limited_stdout(command,4096)).await {
+        Ok(Some(output)) => Some(output.trim().to_string()).filter(|value| value.len() < 40 && value.starts_with("1.") && value.bytes().all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))),
         _ => None,
     };
     match version {
         Some(version) => json!({"id":"executable","profileId":profile.id,"status":"ok","version":version,"message":"Configured OpenCode v1 executable and working directory are available"}),
         None => json!({"id":"executable","profileId":profile.id,"status":"error","message":"Cannot verify OpenCode v1; check the executable, working directory, WSL distribution/user, and interop availability"}),
     }
+}
+/// Standard output of a successful run, refused beyond `limit` bytes: a version probe prints
+/// one short line, and whatever else the configured file writes is never buffered. The
+/// command must be kill-on-drop, which also ends it when the caller's deadline passes.
+async fn limited_stdout(mut command: tokio::process::Command, limit: u64) -> Option<String> {
+    use tokio::io::AsyncReadExt;
+    let mut child = command.spawn().ok()?;
+    let mut bytes = Vec::new();
+    child.stdout.take()?.take(limit + 1).read_to_end(&mut bytes).await.ok()?;
+    if bytes.len() as u64 > limit { return None; }
+    child.wait().await.ok()?.success().then(|| String::from_utf8(bytes).ok())?
 }
 const WSL_LAUNCH: &str = r#"set -eu
 directory=$1; owner=$2; instance=$3; shift 3
@@ -605,14 +657,28 @@ async fn wsl_state(profile: &Profile, record: &RuntimeRecord) -> WslState {
 fn wsl_forwarder(record: &RuntimeRecord) -> bool {
     #[cfg(windows)] {
         let Some(port) = reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()) else { return false; };
-        let Some(listener) = process::listener(port) else { return false; };
-        let image = listener.image.to_ascii_lowercase();
-        let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into()).to_ascii_lowercase();
-        (image.starts_with(&format!("{root}\\system32\\")) || image.starts_with("c:\\program files\\wsl\\") || image.starts_with("c:\\program files\\windowsapps\\microsoftcorporationii.windowssubsystemforlinux_"))
-            && (image.ends_with("\\wslrelay.exe") || image.ends_with("\\wslhost.exe"))
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        // A 32-bit view would name "Program Files (x86)"; WSL is installed in the native one.
+        let programs = std::env::var("ProgramW6432").or_else(|_| std::env::var("ProgramFiles")).unwrap_or_else(|_| "C:\\Program Files".into());
+        process::listeners(port).iter().any(|listener| wsl_relay_image(&listener.image,&root,&programs))
     }
     #[cfg(not(windows))] { let _ = record; true }
 }
+/// The Windows process that holds a WSL2 localhost-forwarded port: wslrelay/wslhost of the
+/// inbox WSL, the MSI package, or the Store package, on whichever drive Windows is installed.
+#[cfg(any(windows,test))]
+fn wsl_relay_image(image: &str, system_root: &str, program_files: &str) -> bool {
+    let image = image.to_ascii_lowercase();
+    let under = |directory: String| image.starts_with(&directory.to_ascii_lowercase());
+    let (root,programs) = (system_root.trim_end_matches('\\'),program_files.trim_end_matches('\\'));
+    (under(format!("{root}\\system32\\")) || under(format!("{programs}\\wsl\\")) || under(format!("{programs}\\windowsapps\\microsoftcorporationii.windowssubsystemforlinux_")))
+        && (image.ends_with("\\wslrelay.exe") || image.ends_with("\\wslhost.exe"))
+}
+/// Stop asks the group to end with SIGTERM while it is seen running this many times (each
+/// time costs a probe plus 100 ms), then kills it: a server that ignores or hangs in SIGTERM
+/// would otherwise keep its record, and Stop and profile deletion would fail for good.
+const WSL_TERM_ATTEMPTS: u32 = 10;
+fn wsl_stop_mode(running: u32) -> &'static str { if running < WSL_TERM_ATTEMPTS { "stop" } else { "kill" } }
 async fn wsl_control(profile: &Profile, record: &RuntimeRecord, mode: &str) -> bool {
     wsl_control_status(profile, record, mode).await == Some(0)
 }
@@ -665,7 +731,6 @@ validate_owner() {
   tr '\000' '\n' </proc/$pid/environ | grep -Fqx "AGENT_BROWSER_RUNTIME_ID=$2" || return 12
 }
 if validate_owner "$1" "$2"; then code=0; else code=$?; fi
-if [ "$3" = dead ]; then [ "$code" = 11 ]; exit $?; fi
 if [ "$code" != 0 ]; then
   case $3 in state|inspect) exit "$code";; *) exit 12;; esac
 fi
@@ -675,8 +740,8 @@ if [ "$3" = inspect ] && [ -n "${5:-}" ]; then
     [ "$nonce" = "$2" ] && [ "$socket" = "${6:-}" ] && [ -S "$socket" ]
   ) || exit 25
 fi
-if [ "$3" = listener ] || [ "$3" = inspect ]; then
-  missing=1; [ "$3" != inspect ] || missing=20
+if [ "$3" = inspect ]; then
+  missing=20
   inode=$(awk -v addr="0100007F:$4" '$2 == addr && $4 == "0A" {print $10; exit}' /proc/net/tcp)
   [ -n "$inode" ] || exit "$missing"
   for fd in /proc/$pid/fd/*; do
@@ -696,7 +761,10 @@ if [ "$3" = listener ] || [ "$3" = inspect ]; then
   done
   exit "$missing"
 fi
-if [ "$3" = stop ]; then /bin/kill -TERM -- -$pid; fi"#;
+if [ "$3" = stop ]; then /bin/kill -TERM -- -$pid; fi
+if [ "$3" = kill ]; then /bin/kill -KILL -- -$pid; fi"#;
+/// A probe may be the call that boots the WSL VM, which takes well over five seconds when cold.
+const WSL_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &str) -> Option<i32> {
     tracing::debug!(profile_id = %profile.id, mode, "WSL control probe");
     let Some(owner) = &record.wsl_owner_file else { return None; };
@@ -704,7 +772,7 @@ async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &st
     let mut args = wsl_args(profile); args.extend(["--exec".into(),"/bin/sh".into(),"-c".into(),script.into(),"agent-browser".into(),owner.clone(),record.instance.clone(),mode.into(),format!("{:04X}",reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()).unwrap_or(0)),record.wsl_keeper.as_ref().map(|keeper| keeper.owner_file.clone()).unwrap_or_default(),record.wsl_keeper.as_ref().map(|keeper| keeper.socket.clone()).unwrap_or_default()]);
     let mut command = tokio::process::Command::new(process::wsl_executable()); command.args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] { command.creation_flags(0x08000000); }
-    match tokio::time::timeout(Duration::from_secs(5),command.status()).await {
+    match tokio::time::timeout(WSL_PROBE_TIMEOUT,command.status()).await {
         Err(_) => Some(-2),
         Ok(Err(_)) => Some(-3),
         Ok(Ok(status)) => status.code(),
@@ -823,6 +891,47 @@ mod tests {
         assert_eq!(docs.load(Ordering::SeqCst), 1);
     }
 
+    fn native_record(launcher: Identity) -> RuntimeRecord {
+        RuntimeRecord{profile_id:"p".into(),instance:"rid".into(),base_url:"http://127.0.0.1:65531".into(),username:"opencode".into(),password:"private".into(),launcher,server:None,wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None}
+    }
+    // No process can have this id: Linux caps PIDs far below it and Windows PIDs are multiples of four.
+    fn gone() -> Identity { Identity{pid:4_000_000_001,created:1,image:"ended-fixture".into()} }
+
+    #[tokio::test]
+    async fn status_forgets_a_native_runtime_whose_processes_ended() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"windows","directory":home.path(),"executable":std::env::current_exe().unwrap()})).unwrap();
+        manager.save(profile.clone(),false).unwrap();
+        manager.persist(&native_record(gone())).unwrap();
+        assert_eq!(manager.status("p").await.unwrap()["state"],"stopped");
+        assert!(manager.store.read().unwrap().runtimes.is_empty(),"a record of ended processes must not keep blocking profile edits");
+        manager.save(profile,false).unwrap();
+    }
+
+    #[test]
+    fn profile_edit_drops_an_ended_native_record_but_not_a_live_one() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"windows","directory":home.path(),"executable":std::env::current_exe().unwrap()})).unwrap();
+        manager.save(profile.clone(),false).unwrap();
+        manager.persist(&native_record(process::identity(std::process::id()).unwrap())).unwrap();
+        assert!(manager.save(profile.clone(),false).is_err(),"a live runtime still has to be stopped first");
+        manager.persist(&native_record(gone())).unwrap();
+        manager.save(profile,false).unwrap();
+        assert!(manager.store.read().unwrap().runtimes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unverifiable_wsl_record_is_retained_by_status_and_profile_edit() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"wsl","distribution":"agent-browser-absent-fixture","directory":"/tmp","executable":"/bin/true"})).unwrap();
+        manager.save(profile.clone(),false).unwrap();
+        let mut record = native_record(gone()); record.wsl_owner_file = Some("/mnt/c/agent-browser-absent-fixture/rid.owner".into());
+        manager.persist(&record).unwrap();
+        assert_eq!(manager.status("p").await.unwrap()["state"],"error");
+        assert!(manager.save(profile,false).is_err());
+        assert_eq!(manager.store.read().unwrap().runtimes["p"].instance,"rid","unknown WSL state keeps the ownership record");
+    }
+
     #[test]
     fn installer_create_only_does_not_replace_an_existing_profile() {
         let home=tempfile::tempdir().unwrap();
@@ -878,6 +987,35 @@ mod tests {
         assert_eq!(value["mcp"]["browser"]["environment"]["AGENT_BROWSER_PORT"],"54321");
     }
     #[test]
+    fn overlay_hands_the_mcp_proxy_an_absolute_home() {
+        let manager = Manager::new("relative-home".into(),54321);
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":"/fixture","executable":"/fixture/opencode"})).unwrap();
+        let mut env = BTreeMap::new(); manager.overlay(&profile,&mut env).unwrap();
+        let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+        let home = value["mcp"]["browser"]["environment"]["AGENT_BROWSER_HOME"].as_str().unwrap();
+        assert!(std::path::Path::new(home).is_absolute(),"the proxy runs in the project directory: {home}");
+    }
+    #[test]
+    fn overlay_names_the_profile_variables_the_proxy_must_not_pass_on() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),54321);
+        let kinds: &[&str] = if cfg!(windows) { &["windows","wsl"] } else { &["windows"] };
+        for kind in kinds {
+            let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":kind,"distribution":"Ubuntu","directory":"/fixture","executable":"/fixture/opencode",
+                "env":{"AB_FIXTURE_ADDED_ONE":"1","AB_FIXTURE_ADDED_TWO":"2","PATH":"/profile/bin","OPENCODE_CONFIG_CONTENT":"{}"}})).unwrap();
+            assert!(std::env::var_os("PATH").is_some() && std::env::var_os("AB_FIXTURE_ADDED_ONE").is_none());
+            let mut env = profile.env.clone().unwrap(); env.insert("AGENT_BROWSER_RUNTIME_ID".into(),"rid-1".into());
+            manager.overlay(&profile,&mut env).unwrap();
+            let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+            let environment = &value["mcp"]["browser"]["environment"];
+            assert_eq!(environment["AGENT_BROWSER_PROFILE_ENV_KEYS"],"AB_FIXTURE_ADDED_ONE,AB_FIXTURE_ADDED_TWO","an inherited key such as PATH cannot be restored and is not listed");
+            if *kind == "wsl" { assert!(environment["WSLENV"].as_str().unwrap().split(':').any(|entry| entry == "AGENT_BROWSER_PROFILE_ENV_KEYS/w")); }
+        }
+        let plain: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":"/fixture","executable":"/fixture/opencode"})).unwrap();
+        let mut env = BTreeMap::new(); manager.overlay(&plain,&mut env).unwrap();
+        let value: Value = serde_json::from_str(&env["OPENCODE_CONFIG_CONTENT"]).unwrap();
+        assert!(value["mcp"]["browser"]["environment"].get("AGENT_BROWSER_PROFILE_ENV_KEYS").is_none());
+    }
+    #[test]
     fn overlay_hands_the_runtime_id_to_the_browser_mcp() {
         let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),54321);
         let kinds: &[(&str,bool)] = if cfg!(windows) { &[("windows",false),("wsl",true)] } else { &[("windows",false)] };
@@ -909,6 +1047,36 @@ mod stop_all_tests {
         assert!(alive,"A status/reuse check must not terminate the existing runtime when persistence fails");
     }
     #[tokio::test]
+    async fn read_paths_do_not_rewrite_an_unchanged_runtime_record() {
+        use std::os::unix::fs::MetadataExt;
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let own = process::identity(std::process::id()).unwrap();
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":home.path(),"executable":"/bin/sleep"})).unwrap();
+        let mut record = RuntimeRecord {profile_id:"fixture".into(),instance:"fixture".into(),base_url:"http://127.0.0.1:65531".into(),username:"opencode".into(),password:"fixture-private".into(),launcher:own.clone(),server:Some(own),wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None};
+        manager.persist(&record).unwrap();
+        let file = || std::fs::metadata(home.path().join("runtime.json")).unwrap().ino();
+        let before = file();
+        assert!(manager.verify_listener(&profile,&mut record).await.unwrap());
+        assert_eq!(file(),before,"a status poll must not republish runtime.json when nothing changed");
+        record.version = Some("1.18.29".into()); manager.persist_changed(&record).unwrap();
+        assert_ne!(file(),before,"a changed record is still written");
+        assert_eq!(manager.store.read().unwrap().runtimes["fixture"].version.as_deref(),Some("1.18.29"));
+    }
+    #[tokio::test]
+    async fn doctor_inspects_a_managed_runtime_only_under_the_profile_lock() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let own = process::identity(std::process::id()).unwrap();
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"Fixture","kind":"windows","directory":home.path(),"executable":"/bin/sleep"})).unwrap();
+        manager.persist(&RuntimeRecord {profile_id:"fixture".into(),instance:"fixture".into(),base_url:"http://127.0.0.1:9".into(),username:"opencode".into(),password:"fixture-private".into(),launcher:own,server:None,wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None}).unwrap();
+        let held = manager.operation_lock("fixture").unwrap();
+        let busy = manager.diagnostic_api(&profile,"mcp").await.unwrap_err();
+        assert!(busy.message.contains("Another operation"),"{}",busy.message);
+        drop(held);
+        let unreachable = manager.diagnostic_api(&profile,"mcp").await.unwrap_err();
+        assert!(!unreachable.message.contains("Another operation"),"{}",unreachable.message);
+        assert!(manager.operation_lock("fixture").is_ok(),"the lock is released before the HTTP request returns");
+    }
+    #[tokio::test]
     async fn stop_all_terminates_owned_processes_and_preserves_external_profiles() {
         let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
         let owned = process::spawn("/bin/sleep",&["60".into()],None,&BTreeMap::new()).unwrap();
@@ -933,6 +1101,16 @@ mod overlay_identity_tests {
         let first = one.reserve_port("first",None).unwrap(); let second = two.reserve_port("second",None).unwrap();
         assert_ne!(first.port,second.port); assert_eq!(one.store.read().unwrap().reservations.len(),2);
         drop(first); drop(second); assert!(one.store.read().unwrap().reservations.is_empty());
+    }
+    #[test]
+    fn wsl_relay_is_recognised_under_the_actual_windows_and_program_files_folders() {
+        for image in [r"D:\Program Files\WSL\wslrelay.exe",r"d:\program files\wsl\WSLHOST.EXE",r"D:\Windows\System32\wslhost.exe",r"D:\Program Files\WindowsApps\MicrosoftCorporationII.WindowsSubsystemForLinux_2.7.12.0_x64__8wekyb3d8bbwe\wslrelay.exe"] {
+            assert!(wsl_relay_image(image,r"D:\Windows",r"D:\Program Files"),"{image}");
+        }
+        assert!(wsl_relay_image(r"C:\Program Files\WSL\wslrelay.exe",r"C:\Windows\",r"C:\Program Files\"));
+        for image in [r"C:\Program Files\WSL\wslrelay.exe",r"D:\Users\fixture\wslrelay.exe",r"D:\Program Files\WSL\other.exe",r"D:\Program Files\WSLX\wslrelay.exe"] {
+            assert!(!wsl_relay_image(image,r"D:\Windows",r"D:\Program Files"),"{image}");
+        }
     }
     #[test]
     fn overlay_reuse_requires_same_port_and_an_existing_original_bridge_executable() {
@@ -1007,6 +1185,42 @@ mod wsl_start_tests {
         assert_eq!(control(&owner,"fixture","state"),Some(0));
         assert_eq!(control(&owner,"fixture","stop"),Some(0)); child.wait().unwrap();
         assert_eq!(control(&owner,"fixture","state"),Some(11));
+    }
+    #[test]
+    fn a_group_that_ignores_sigterm_is_only_ended_by_the_kill_stage() {
+        let home = tempfile::tempdir().unwrap(); let owner = home.path().join("owner");
+        std::fs::write(home.path().join("owner.start"),"fixture").unwrap();
+        let mut child = std::process::Command::new("/usr/bin/setsid").args(["--wait", "/bin/sh", "-c", WSL_LAUNCH, "fixture", home.path().to_str().unwrap(), owner.to_str().unwrap(), "fixture", "/bin/sh", "-c", "trap '' TERM; n=0; while [ $n -lt 30 ]; do /bin/sleep 1; n=$((n+1)); done"])
+            .env("AGENT_BROWSER_RUNTIME_ID", "fixture").spawn().unwrap();
+        for _ in 0..200 { if control(&owner,"fixture","state") == Some(0) { break; } std::thread::sleep(Duration::from_millis(10)); }
+        assert_eq!(control(&owner,"fixture","state"),Some(0));
+        assert_eq!(control(&owner,"fixture","stop"),Some(0));
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(control(&owner,"fixture","state"),Some(0),"premise: SIGTERM alone leaves this group running");
+        assert_ne!(control(&owner,"wrong","kill"),Some(0),"a foreign nonce is never killed");
+        assert_eq!(control(&owner,"fixture","state"),Some(0));
+        assert_eq!(control(&owner,"fixture","kill"),Some(0));
+        // The fixture ends itself after 30 seconds; a missing kill stage must fail, not hang.
+        let mut ended = false;
+        for _ in 0..500 { if child.try_wait().unwrap().is_some() { ended = true; break; } std::thread::sleep(Duration::from_millis(10)); }
+        assert!(ended,"SIGKILL must end the group");
+        assert_eq!(control(&owner,"fixture","state"),Some(11));
+    }
+    #[test]
+    fn stop_escalates_to_sigkill_only_after_the_grace_period() {
+        assert_eq!(wsl_stop_mode(0),"stop"); assert_eq!(wsl_stop_mode(WSL_TERM_ATTEMPTS-1),"stop");
+        assert_eq!(wsl_stop_mode(WSL_TERM_ATTEMPTS),"kill"); assert_eq!(wsl_stop_mode(19),"kill");
+    }
+    #[tokio::test]
+    async fn version_probe_refuses_unbounded_output_without_waiting_for_the_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap(); let executable = home.path().join("noisy.sh");
+        std::fs::write(&executable, "#!/bin/sh\nhead -c 3000000 /dev/zero | tr '\\000' 1\nexec sleep 30\n").unwrap();
+        std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+        let profile: Profile = serde_json::from_value(json!({"id":"fixture","name":"fixture","kind":"windows","directory":home.path(),"executable":executable})).unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(installation_check(&profile).await["status"],"error");
+        assert!(started.elapsed() < Duration::from_secs(4),"the probe must stop at its output limit: {:?}",started.elapsed());
     }
     #[tokio::test]
     async fn d01_doctor_uses_profile_env_and_directory() {

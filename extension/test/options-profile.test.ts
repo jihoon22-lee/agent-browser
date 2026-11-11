@@ -15,3 +15,17 @@ it("requires explicit string environment values and never silently converts them
 it("rejects an external server path prefix unsupported by the v1 client", () => {
   expect(() => profilePayload({ id: "external", name: "External", kind: "external", directory: "/work", baseUrl: "https://server.test/prefix" })).toThrow();
 });
+it("trims pasted profile fields but sends the password as typed", () => {
+  const profile = profilePayload({ id: "wsl", name: "WSL", kind: "wsl", directory: "/work", executable: " /usr/bin/opencode\t", distribution: " Ubuntu ", user: " dev ", username: " opencode ", password: " secret " });
+  expect(profile).toMatchObject({ executable: "/usr/bin/opencode", distribution: "Ubuntu", user: "dev", username: "opencode", password: " secret " });
+});
+it("explains a malformed address or environment JSON in Korean with an example", () => {
+  expect(() => validatePairing("127.0.0.1:4317", "")).toThrow("ws://127.0.0.1:4317/extension");
+  expect(() => validatePairing("", "")).toThrow(/Bridge 주소/);
+  const external = { id: "external", name: "External", kind: "external", directory: "/work" };
+  expect(() => profilePayload({ ...external, baseUrl: "server.test" })).toThrow(/서버 주소.*http:\/\/127\.0\.0\.1:4096/);
+  expect(() => profilePayload({ ...external, baseUrl: "" })).toThrow(/서버 주소/);
+  const wsl = { id: "wsl", name: "WSL", kind: "wsl", directory: "/work", executable: "/usr/bin/opencode" };
+  for (const envText of ["NAME=value", "{NAME:1}", "[1]", "null"]) expect(() => profilePayload({ ...wsl, envText })).toThrow(/환경변수.*\{"NAME":"value"\}/);
+  expect(profilePayload({ ...external, baseUrl: " http://127.0.0.1:4096 " }).baseUrl).toBe("http://127.0.0.1:4096/");
+});

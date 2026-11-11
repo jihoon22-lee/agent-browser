@@ -30,6 +30,15 @@ try {
     $state.DataDir=Join-Path $install 'data';$state.InstallId='not-an-install-id'
     Write-Utf8Atomic (Join-Path $install $script:AgentBrowserStateName) ($state|ConvertTo-Json)
     Reject 'malformed installation identity was accepted' {Read-InstallState $install}
+    # Guidance must be runnable under a restrictive execution policy (AGENTS.md).
+    $guidance='powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1'
+    $empty=Join-Path $root 'not-installed'
+    $null=New-Item -ItemType Directory -Path $empty
+    foreach($name in @('show-pairing.ps1','start-bridge.ps1')) {
+        $message=''
+        try { $null=& (Join-Path $Scripts $name) -InstallDir $empty } catch { $message=[string]$_.Exception.Message }
+        if(-not $message.Contains($guidance)){$failures+=($name+' does not show the supported setup command')}
+    }
     if($failures.Count){throw ($failures -join '; ')}
     Write-Output 'PASS script accepts Windows-authorized paths without changing ACLs and rejects invalid installation records'
 } finally {Remove-Item -LiteralPath $root -Recurse -Force}

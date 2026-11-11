@@ -2,6 +2,19 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## 2026-11-11 전체 코드 리뷰 수정 — v0.4.1 (2026-11-11)
+
+사용자 요청("전체 코드리뷰", 이어서 "모두 다 작업… 릴리스까지")에 따라 `fix/review-2026-11-11` 브랜치에서 진행했다. 리뷰는 코드 추적 기준이었고(높음 2·중간 15·낮음 약 30건과 개선 사항), 수정은 영역별 5개 묶음으로 나눠 항목마다 회귀 테스트와 함께 커밋했다. [PR #43](https://github.com/jihoon22-lee/agent-browser/pull/43).
+
+- **고친 것:** 변경 내용은 `CHANGELOG.md` 0.4.1, 결과 계약 변화는 `docs/protocol.md`의 "2026-11-11 리뷰 보완"에 있다. Bridge 응답 필드 추가: `browser.use`의 `persisted`/`persistError`, 탭 목록의 `omittedTabs`/`note`, 새 탭의 `loadIncomplete`, 대화상자의 `detached`.
+- **실행한 검증(Linux):** `tsc --noEmit`, 확장 단위 **71파일/852개**, `cargo test -p agent-browser-bridge` 전체 통과(lib 161개), clippy는 기존 스타일 경고 17건만, Playwright E2E **243 통과/5 제외**, Node 합성 **38개**, 문서·도우미 **3개**.
+- **실행한 검증(CI):** [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/42956154971)의 Linux·Windows 작업이 모두 성공했다. Windows 작업은 MSVC 빌드, Rust 테스트(이번에 `pairing_window`·`request_binding`·`snapshot_paging` 추가), 설치된 Chrome E2E, PowerShell 5.1 설치·업데이트·제거 회귀, C# 설치 엔진·마법사 회귀(이번에 `NativeCoreTests` 추가)를 포함한다. 첫 실행은 새 테스트 하나가 Windows 경로 구분자를 가정해 실패했고 테스트를 고쳐 다시 통과했다.
+- **로컬 Windows 미실행:** WSL interop 오류(`UtilAcceptVsock accept4 failed 110`)로 로컬 Windows 프로세스 검증을 하지 못했다. PowerShell·C# 변경과 Windows 전용 Rust 경로는 CI의 hosted runner 실행이 유일한 Windows 증거다. `windows-runtime.mjs`의 새 `cmd-tree-stop` 시나리오와 기존 cmd·wsl 시나리오, WSL 전용 ignored 테스트는 실행하지 않았다.
+- **화면 미확인:** 설치 마법사의 고급 설정 대화상자 크기 계산과 확장 감지 타이머 변경은 화면으로 확인하지 않았다(`SetupDisplayTests`·`SetupFlowTests`만 통과).
+- **전제를 확인하지 못해 적용하지 않은 것:** WSL mirrored 네트워킹의 준비 판정(하드코딩 경로만 `%ProgramFiles%` 기준으로 변경), 등록 해제된 WSL 배포판의 복구 경로, 설정 파일 교체 시 ACL 명시 복사, 재분석 지점을 통한 OpenCode shim 탐색, snapshot의 프레임별 페이징 커서(계약 결정 필요).
+- **전제가 달랐던 것:** 접힌 `<details>` 내부는 Chromium 156에서 이미 제외되고 있었다(`checkVisibility()` 보강만 추가). WSL 프로브 15초·콜드 부팅, 신뢰 입력 왕복 시간은 측정하지 않고 적용했다.
+- **부분 적용:** 오류 분류의 코드 기준 전환은 `BROWSER_DISCONNECTED`·`TIMEOUT`·`AUTH_*`·`NOT_PAIRED`만 해당한다. 런타임 실패는 Bridge가 일반 코드로 보내므로 메시지 규칙이 남아 있다. 실행 중 폴링의 `limit=1` 조회는 실제 서버에서 확인하지 않았고, 응답이 여러 건이면 전체 스냅샷으로 쓰며 5회마다 전체를 받는다.
+
 ## v0.4.0 Windows preview — 게시 완료 (2026-11-01)
 
 [v0.4.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.0)(prerelease)을 **2026-11-01 14:50:15 UTC / 2026-11-01 23:50:15 KST**에 게시했다. 주석 태그는 [PR #41](https://github.com/jihoon22-lee/agent-browser/pull/41)의 main 병합 커밋 **`52bd2ef1adf3c8a3b56d1fe62a80bee81902027b`**를 가리킨다. 사용자 지시("푸시 pr 릴리스 배포까지 알아서")에 따라 push·PR·병합·게시를 이어서 진행했다.

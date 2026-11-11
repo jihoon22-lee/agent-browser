@@ -16,7 +16,6 @@ concurrency:
 
 env:
   CI: 'true'
-  RUSTUP_TOOLCHAIN: '1.98.1'
   CARGO_TERM_COLOR: always
 
 jobs:
@@ -40,7 +39,10 @@ jobs:
           node-version: 24.18.0
           cache: pnpm
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target x86_64-pc-windows-msvc
+        # No version here: rust-toolchain.toml is the single source for the channel, components and targets.
+        run: |
+          rustup toolchain install --profile minimal --no-self-update
+          rustup show active-toolchain
       - name: Cache locked Rust build dependencies
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
@@ -134,7 +136,10 @@ jobs:
           node-version: 24.18.0
           cache: pnpm
       - name: Install pinned Rust toolchain
-        run: rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt --target x86_64-pc-windows-msvc
+        # No version here: rust-toolchain.toml is the single source for the channel, components and targets.
+        run: |
+          rustup toolchain install --profile minimal --no-self-update
+          rustup show active-toolchain
       - name: Cache locked Rust build dependencies
         uses: Swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1 # v2.8.1
         with:
@@ -145,7 +150,8 @@ jobs:
         run: cargo fetch --locked
       - name: Native Windows Rust unit and portable integration tests
         # mcp_stdio has a Unix-only cleanup command; Windows MCP lifecycle is covered by native Chrome E2E below.
-        run: cargo test --offline --locked -p agent-browser-bridge --target x86_64-pc-windows-msvc --lib --test protocol_contract --test config_concurrent --test runtime_management --test serve_auth --test serve_port_conflict --test tool_router
+        # Every other integration test is portable (loopback sockets and temp directories only).
+        run: cargo test --offline --locked -p agent-browser-bridge --target x86_64-pc-windows-msvc --lib --test protocol_contract --test config_concurrent --test runtime_management --test serve_auth --test serve_port_conflict --test tool_router --test pairing_window --test request_binding --test snapshot_paging
       - name: Build native Windows release Bridge
         run: cargo build --offline --locked --release -p agent-browser-bridge --target x86_64-pc-windows-msvc
       - name: Build extension
@@ -235,6 +241,13 @@ jobs:
             & $extraExe (Join-Path $fixture $name) $package
             if ($LASTEXITCODE -ne 0) { throw ($name + ' failed') }
           }
+          $coreExe=Join-Path $fixture 'NativeCoreTests.exe'
+          & $compiler /nologo /codepage:65001 /target:exe /main:AgentBrowser.Installer.NativeCoreTests ('/out:' + $coreExe) /r:System.Web.Extensions.dll /r:System.Core.dll /r:System.Management.dll /r:System.IO.Compression.FileSystem.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll @sources (Join-Path $env:GITHUB_WORKSPACE 'tests\install\NativeCoreTests.cs')
+          if ($LASTEXITCODE -ne 0) { throw 'NativeCoreTests compilation failed' }
+          # No distribution argument: a hosted runner is not evidence of WSL. The cmd launcher probe and
+          # OpenCode discovery (including the wsl.exe listing, whatever it prints here) must still complete.
+          & $coreExe
+          if ($LASTEXITCODE -ne 0) { throw 'NativeCoreTests failed' }
       - name: Upload Windows package and checksum
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

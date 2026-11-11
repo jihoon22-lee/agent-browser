@@ -13,6 +13,7 @@ export function frameRouter(api: ChromeApi, store: SessionStore) {
         tabId: number;
         frame: FrameInfo;
     }>();
+    api.onTabRemoved(tabId => { for (const [key, known] of injected) if (known.tabId === tabId) injected.delete(key); });
     async function list(tabId: number) { try {
         return await api.listFrames(tabId);
     }
@@ -22,6 +23,8 @@ export function frameRouter(api: ChromeApi, store: SessionStore) {
     async function inject(tabId: number, frame: FrameInfo) {
         try {
             const actual = await api.inject(tabId, frame);
+            // A frame holds one document at a time: the one it replaced can no longer run commands.
+            for (const [key, known] of injected) if (known.tabId === tabId && known.frame.frameId === actual.frameId) injected.delete(key);
             injected.set(`${tabId}:${actual.documentId}`, { tabId, frame: actual });
             return actual;
         }

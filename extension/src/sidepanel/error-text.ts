@@ -1,10 +1,20 @@
 // Bridge, runtime and network failures arrive as English protocol text. The panel and Options show a
 // Korean explanation with the next step and keep the original text for support.
+const BRIDGE_DOWN = "Bridge에 연결되어 있지 않습니다. Windows에서 Bridge가 실행 중인지 확인한 뒤 다시 연결하세요.";
+const BRIDGE_TIMEOUT = "Bridge가 제한 시간 안에 응답하지 않았습니다. 잠시 후 다시 시도하세요.";
+const BRIDGE_AUTH = "Bridge와 상호 인증하지 못했습니다. 설정에서 다시 페어링하세요.";
+// A Bridge request failure carries a protocol code. These codes name their cause, so the English text is not read.
+const CODES: Readonly<Record<string, string>> = { BROWSER_DISCONNECTED: BRIDGE_DOWN, TIMEOUT: BRIDGE_TIMEOUT, AUTH_FAILED: BRIDGE_AUTH, NOT_PAIRED: BRIDGE_AUTH, AUTH_REQUIRED: BRIDGE_AUTH };
+// The same causes for errors that arrive without a code (connection status detail, older callers).
+const UNCODED: ReadonlyArray<readonly [RegExp, string]> = [
+  [/^Bridge is not connected|^Bridge connection closed/, BRIDGE_DOWN],
+  [/^Bridge did not answer /, BRIDGE_TIMEOUT],
+  [/mutual authentication|authentication verification failed|server proof is invalid/, BRIDGE_AUTH],
+];
+// Runtime failures share the generic INTERNAL/INVALID_PARAMS codes, and OpenCode HTTP and network errors
+// have no code at all: only their text tells them apart.
 const RULES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^Bridge is not connected|^Bridge connection closed/, "Bridge에 연결되어 있지 않습니다. Windows에서 Bridge가 실행 중인지 확인한 뒤 다시 연결하세요."],
-  [/^Bridge did not answer /, "Bridge가 제한 시간 안에 응답하지 않았습니다. 잠시 후 다시 시도하세요."],
   [/^Bridge returned an error without details/, "Bridge가 오류 내용을 보내지 않았습니다. 설정의 연결 진단을 실행하세요."],
-  [/mutual authentication|authentication verification failed|server proof is invalid/, "Bridge와 상호 인증하지 못했습니다. 설정에서 다시 페어링하세요."],
   [/did not become ready within 60 seconds/, "OpenCode가 60초 안에 준비되지 않았습니다. 설정의 연결 진단으로 실행 파일·버전, 포트, WSL localhost 전달, 작업 디렉터리를 확인하세요."],
   [/^Cannot launch OpenCode;/, "OpenCode를 실행하지 못했습니다. 설정에서 실행 파일 경로·작업 디렉터리·추가 환경변수를 확인하세요."],
   [/browser MCP is not connected/, "OpenCode는 실행됐지만 브라우저 MCP가 연결되지 않았습니다. WSL interop과 Bridge 실행 파일 위치를 확인하세요."],
@@ -28,9 +38,10 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
 ];
 
 /** A lost or unanswered Bridge connection: such an error is stale once the Bridge is connected again. */
-export const bridgeUnavailable = (message: string) => /^Bridge is not connected|^Bridge connection closed|^Bridge did not answer /.test(message);
+export const bridgeUnavailable = (message: string, code?: string) => code ? code === "BROWSER_DISCONNECTED" || code === "TIMEOUT" : /^Bridge is not connected|^Bridge connection closed|^Bridge did not answer /.test(message);
 
-export function friendlyError(message: string): { text: string; original?: string } {
-  for (const [pattern, text] of RULES) if (pattern.test(message)) return { text, original: message };
+export function friendlyError(message: string, code?: string): { text: string; original?: string } {
+  if (code && CODES[code]) return { text: CODES[code], original: message };
+  for (const [pattern, text] of code ? RULES : [...UNCODED, ...RULES]) if (pattern.test(message)) return { text, original: message };
   return { text: message };
 }

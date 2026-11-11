@@ -70,8 +70,10 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const draftCache = useRef(new Map<string, { draft: string; attachments: Data[] }>()), previousDraft = useRef({ key: "", draft: "", attachments: [] as Data[] });
   // Draft text is also kept in chrome.storage.session; a key is written only after its saved text was read.
   const draftRestored = useRef(""), consumedDraft = useRef("");
+  // Until the runtime answers, the directory part of a draft key is empty: such a key is provisional.
+  const provisional = (key: string) => JSON.parse(key)[1] === "";
   const storeDraft = (key: string, text: string) => {
-    if (draftRestored.current !== key || !chrome.storage.session) return;
+    if (draftRestored.current !== key || !chrome.storage.session || provisional(key)) return;
     void (text.trim() && text.length <= MAX_STORED_DRAFT ? chrome.storage.session.set({ [`draft:${key}`]: text }) : chrome.storage.session.remove(`draft:${key}`)).catch(() => {});
   };
   const messageViewport = useRef<HTMLDivElement>(null), followMessages = useRef(true);
@@ -81,7 +83,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const composer = useRef<HTMLTextAreaElement>(null);
   const modelSelect = useRef<HTMLSelectElement>(null);
   const selectedControls = useRef({ key: "", dirty: false });
-  const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef(false);
+  const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef<object | undefined>(undefined);
   const submission=useRef<{key:string;cancelled:boolean;requestId?:string;submitted:boolean}|undefined>(undefined);
   const models = useMemo(() => availableModels(wb.catalog), [wb.catalog]);
   const model = models.find(item => `${item.providerID}/${item.id}` === modelKey);
@@ -110,8 +112,12 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
         // The first message moved to the session it created; it must not return as the next new conversation's draft.
         consumedDraft.current = ""; draftCache.current.delete(previous.key); void chrome.storage.session?.remove(`draft:${previous.key}`).catch(() => {});
       } else if (previous.key) { draftCache.current.set(previous.key, { draft: previous.draft, attachments: previous.attachments }); storeDraft(previous.key, previous.draft); }
-      const next = draftCache.current.get(draftKey) ?? { draft: "", attachments: [] };
-      setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = false; previousDraft.current = { key: draftKey, ...next };
+      // Text typed while the runtime was connecting belongs to the conversation that connection opens.
+      const previousProfile = previous.key ? JSON.parse(previous.key)[0] as string : "";
+      const carried = previous.key && provisional(previous.key) && (previous.draft || previous.attachments.length) && (!previousProfile || previousProfile === wb.profileId);
+      if (carried) draftCache.current.delete(previous.key);
+      const next = carried ? { draft: previous.draft, attachments: previous.attachments } : draftCache.current.get(draftKey) ?? { draft: "", attachments: [] };
+      setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = undefined; previousDraft.current = { key: draftKey, ...next };
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
   // Draft text survives closing the panel for this browser session. Attachments stay in memory only:
@@ -169,7 +175,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     const timer = setTimeout(() => { void wb.client.current!.findFiles(mention, 12).then(next => { if (active) setFiles(next); }).catch(() => { if (active) setFiles([]); }); }, 200);
     return () => { active = false; clearTimeout(timer); };
   }, [mention, wb.runtime]);
-  async function perform(action: () => Promise<void>) { const current = wb.captureScope(); wb.setError(""); try { await action(); } catch (error) { if (current()) wb.setError(error instanceof Error ? error.message : String(error)); } }
+  async function perform(action: () => Promise<void>) { const current = wb.captureScope(); wb.setError(""); try { await action(); } catch (error) { if (current()) wb.fail(error); } }
   const api = () => { if (!wb.client.current) throw new Error("먼저 실행 환경을 연결하세요."); return wb.client.current; };
   const sessionPath = () => { if (!wb.sessionId) throw new Error("세션을 선택하거나 새로 만드세요."); return `/session/${encodeURIComponent(wb.sessionId)}`; };
   async function createSession(carry?: { draft: string; attachments: Data[] }): Promise<Data | undefined> { const current = wb.captureScope(); const session = await api().post<Data>("/session", { ...(agent ? { agent } : {}), ...(model ? { model: { id: model.id, providerID: model.providerID, ...(variant ? { variant } : {}) } } : {}) }); if (!current()) return undefined; if (carry) { draftCache.current.set(JSON.stringify([wb.profileId, wb.directory, session.id]), carry); consumedDraft.current = draftKey; } await wb.refreshSessions(); if (!current()) return undefined; const selection = wb.selectSession(session), destination = wb.captureScope(); await selection; if (destination()) { setNotice(""); onViewChange("chat"); setDrawer(null); } return session; }
@@ -216,11 +222,13 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     const current = wb.captureScope();
     const ui = /^\/(new|sessions|models|skills|commands)\s*$/.exec(draft.trim());
     if (ui) {
-      if (ui[1] === "new") await perform(async () => { await createSession(); });
+      // Cleared before it runs: /new changes the session, and the command must not stay behind as the old session's draft.
+      setDraft(""); previousDraft.current = { ...previousDraft.current, draft: "" };
+      if (ui[1] === "new") { let created: Data | undefined; await perform(async () => { created = await createSession(); }); if (!created && current()) setDraft(value => value || draft); }
       if (ui[1] === "sessions") onViewChange("sessions");
       if (ui[1] === "models") { setDrawer(null); modelSelect.current?.focus(); }
       if (ui[1] === "skills" || ui[1] === "commands") { setPalette(ui[1]); openDrawer("tools"); }
-      if (current()) setDraft(""); return;
+      return;
     }
     if (!wb.sessionId) {
       // The first message creates its session; the typed draft moves with it and the effect below sends it there.
@@ -232,7 +240,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
       if (created && typeof created.id === "string") { autoSend.current = created.id; setAutoTick(tick => tick + 1); }
       return;
     }
-    sendLock.current = true; setSending(true); wb.setError("");
+    const lock = {}; sendLock.current = lock; setSending(true); wb.setError("");
     const attempt={key:draftKey,cancelled:false,submitted:false,requestId:undefined as string|undefined};
     submission.current=attempt;
     const canSubmit=()=>current()&&!attempt.cancelled;
@@ -301,9 +309,10 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
           }
         }catch{/* Keep the uncertain identity when storage itself is unavailable. */}
       }
-      if (current()&&!attempt.cancelled) wb.setError(error instanceof Error ? error.message : String(error));
+      if (current()&&!attempt.cancelled) wb.fail(error);
     }
-    finally { if (current()) { sendLock.current = false; setSending(false); } }
+    // A reselected session changes the scope but not the draft key; this attempt still releases the lock it took, never a later attempt's.
+    finally { if (sendLock.current === lock) { sendLock.current = undefined; setSending(false); } }
   }
   async function addBrowserReference(reference: string) {
     const current = wb.captureScope();
@@ -391,6 +400,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const workspaceError = conn.state === "connected" ? wb.error : "";
   const openOptions = () => void chrome.runtime.openOptionsPage();
   const reconnectBridge = () => void chrome.runtime.sendMessage({ kind: "reconnect" }).catch(() => {});
+  const retryRuntime = () => { if (wb.profileId) void wb.connect(wb.profileId, undefined, wb.sessionId || undefined); else reconnectBridge(); };
   const start: { title: string; body?: string; tone: "problem" | "setup" | "waiting" | "ready"; actions?: StartAction[] } = {
     pair: { title: "Bridge 페어링이 필요합니다", body: conn.state === "auth_failed" ? "저장된 페어링 정보로 인증하지 못했습니다. 설정에서 다시 페어링하세요." : "설치 마법사에 표시된 6자리 코드나 페어링 토큰을 설정 화면에 입력하세요.", tone: "setup" as const, actions: [{ label: "설정에서 페어링", run: openOptions, primary: true }] },
     "bridge-offline": { title: "Bridge에 연결할 수 없습니다", body: "Windows에서 Bridge가 실행 중인지 확인하세요. 꺼져 있으면 설치 폴더의 start-bridge.cmd로 시작한 뒤 다시 연결하세요.", tone: "problem" as const, actions: [{ label: "다시 연결", run: reconnectBridge, primary: true }, { label: "설정 열기", run: openOptions }] },
@@ -399,7 +409,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     "no-profile": { title: "OpenCode 실행 환경을 추가하세요", body: "기존 OpenCode를 실행할 방법(Windows·WSL·실행 중인 서버)을 설정에서 한 번 등록하면 됩니다.", tone: "setup" as const, actions: [{ label: "실행 환경 추가", run: openOptions, primary: true }] },
     "choose-profile": { title: "실행 환경을 선택하세요", body: "실행 설정에서 사용할 OpenCode 실행 환경을 고르세요.", tone: "setup" as const, actions: [{ label: "실행 설정 열기", run: (trigger: HTMLButtonElement) => openDrawer("environment", trigger), primary: true }] },
     starting: { title: "OpenCode를 준비하는 중…", body: "처음 시작할 때는 1분 정도 걸릴 수 있습니다.", tone: "waiting" as const },
-    "runtime-failed": { title: "OpenCode에 연결하지 못했습니다", body: "위 안내를 확인한 뒤 다시 시도하세요.", tone: "problem" as const, actions: [{ label: "다시 시도", run: () => { if (wb.profileId) void wb.connect(wb.profileId, undefined, wb.sessionId || undefined); else reconnectBridge(); }, primary: true }, { label: "설정 열기", run: openOptions }] },
+    "runtime-failed": { title: "OpenCode에 연결하지 못했습니다", body: "위 안내를 확인한 뒤 다시 시도하세요.", tone: "problem" as const, actions: [{ label: "다시 시도", run: retryRuntime, primary: true }, { label: "설정 열기", run: openOptions }] },
     ready: { title: "브라우저에서 바로 시작하세요", body: "페이지를 읽고, 작업을 맡기고, 결과를 이곳에서 확인하세요.", tone: "ready" as const },
   }[stage];
   const environmentPanel = <section className="workspace-bar"><h3>OpenCode 연결</h3>
@@ -442,6 +452,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
         {currentSession?.id && <SessionMenu label="현재 세션 작업" actions={sessionActions(currentSession, "header")} />}</div>
       {currentSession?.parentID && <div className="session-breadcrumb"><button className="quiet" onClick={() => void perform(selectParent)}>상위 세션으로</button><span>{wb.knownSessions[currentSession.parentID]?.title ?? "하위 작업 대화"}</span></div>}
       {sessionError && <ErrorNotice message={sessionError} />}
+      {stage === "runtime-failed" && turns.length > 0 && <div className="notice" role="status">OpenCode와 연결이 끊겼습니다. 대화 내용은 그대로 있습니다. <button onClick={retryRuntime}>다시 시도</button></div>}
       {heldOperation?.paused && <div className="notice" role="status">브라우저를 직접 조작하는 중입니다. 끝나면 [이어서 진행]을 누르세요. 에이전트는 기다립니다.</div>}
       {currentSession?.revert && <div className="notice">이전 메시지로 되돌린 상태입니다. 새 메시지를 보내 이어갈 수 있습니다. <button onClick={() => void perform(async () => { await api().post(sessionPath() + "/unrevert"); await wb.resync(); })}>되돌리기 취소</button></div>}
       <div className="message-viewport" ref={messageViewport} onScroll={event => { if (view !== "chat" || drawer !== null) return; const el = event.currentTarget; followMessages.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }} aria-label="대화 메시지">
@@ -507,7 +518,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   return <div className="workbench" aria-label="OpenCode 작업 공간" hidden={view === "browser"}>
     <div className="workspace-summary"><div className="workspace-identity"><button className="control-chip" aria-label="실행 설정" title={`${profileName ?? "실행 환경 선택"} · ${wb.directory || "작업 디렉터리 정보 없음"}`} onClick={event => openDrawer("environment", event.currentTarget)}><strong>{profileName ?? "실행 환경 선택"}</strong><span aria-hidden="true">▾</span></button><span className="connection-line" role="status">{wb.loading ? "실행 환경 준비 중…" : wb.connected ? `OpenCode ${wb.runtime?.version ?? ""} 연결됨` : "OpenCode 연결 대기"}</span></div>
       <div className="workspace-actions"><button className="quiet" onClick={event => openDrawer("tools", event.currentTarget)}>작업 도구</button><button className="quiet" onClick={event => openDrawer("theme", event.currentTarget)} aria-label="화면 테마 선택">테마</button></div></div>
-    {(workspaceError || notice) && <div className="workspace-notices">{workspaceError && <ErrorNotice message={workspaceError} />}{notice && <p role="status" className="notice">{notice}<button className="quiet" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></p>}</div>}
+    {(workspaceError || notice) && <div className="workspace-notices">{workspaceError && <ErrorNotice message={workspaceError} code={wb.errorCode} />}{notice && <p role="status" className="notice">{notice}<button className="quiet" aria-label="알림 닫기" onClick={() => setNotice("")}>×</button></p>}</div>}
     <div id="view-chat" className="chat-view" role="tabpanel" aria-labelledby="tab-chat" hidden={view !== "chat"}>
       {conversationPanel}
       <aside className="control-panel view-scroll" aria-label={`${drawerTitle} 패널`} hidden={drawer === null} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setDrawer(null); } }}>

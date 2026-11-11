@@ -9,6 +9,14 @@ internal static class InstallerReviewTests {
   finally{var state=InstallerEngine.State(options.InstallDir);if(state!=null)try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=options.InstallDir}),CancellationToken.None,s=>{});}catch(Exception e){Console.WriteLine("REVIEW cleanup: "+e.Message);}}
  }
  static void Apply(SetupOptions options){InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,s=>{});}
+ // A copy of the fixture package under another version, optionally shipping one extra file.
+ static string VersionedPackage(string name,string version,string extra){
+  string target=Path.Combine(root,name);Directory.CreateDirectory(target);var manifest=InstallerEngine.Read<PackageManifest>(Path.Combine(package,"package-manifest.json"));
+  foreach(var file in manifest.Files){string dest=NativeIO.SafePath(target,file.Path);Directory.CreateDirectory(Path.GetDirectoryName(dest));File.Copy(NativeIO.SafePath(package,file.Path),dest);}
+  manifest.Version=version;string extensionPath=Path.Combine(target,"extension","manifest.json");var extension=InstallerEngine.Read<Dictionary<string,object>>(extensionPath);extension["version"]=version;NativeIO.WriteText(extensionPath,NativeIO.Json.Serialize(extension));manifest.Files.Single(f=>f.Path=="extension/manifest.json").Sha256=NativeIO.FileHash(extensionPath);
+  if(extra!=null){string added=NativeIO.SafePath(target,extra);Directory.CreateDirectory(Path.GetDirectoryName(added));File.WriteAllText(added,"// synthetic asset "+version,NativeIO.Utf8);manifest.Files=manifest.Files.Concat(new[]{new OwnedFile{Path=extra,Sha256=NativeIO.FileHash(added)}}).ToArray();}
+  NativeIO.WriteText(Path.Combine(target,"package-manifest.json"),NativeIO.Json.Serialize(manifest));return target;
+ }
  public static int? SyntheticBridge(string[] args){string probe=Environment.GetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE");if(args.Length==1&&args[0]=="--version"&&probe!=null){File.WriteAllText(probe,"ran");Console.WriteLine("1.18.29");return 0;}string data=Environment.GetEnvironmentVariable("AGENT_BROWSER_HOME");if(data==null)return null;var update=UpdateSynthetic(args,data);if(update.HasValue)return update.Value;if(args.Length>0&&args[0]=="start"&&File.Exists(Path.Combine(data,".review-unowned-fixture"))){File.WriteAllText(Path.Combine(data,"unowned-ran.txt"),"ran");return 0;}if(args.Length>1&&args[0]=="runtime"&&File.Exists(Path.Combine(data,".review-runtime-fixture"))){if(args[1]=="stop-all"){Console.WriteLine("{\"stoppedProfiles\":[\"broken\",\"healthy\"],\"errors\":[\"synthetic failure\"]}");return 1;}if(args[1]=="start"){string id=args.Last();File.AppendAllText(Path.Combine(data,"restart-attempts.txt"),id+"\n");return id=="broken"?1:0;}}return null;}
 
  static int? UpdateSynthetic(string[] args,string data) {
@@ -115,11 +123,85 @@ internal static class InstallerReviewTests {
   });
 
   Case("managed-install-ancestor",o=>{string parent=o.InstallDir,child=Path.Combine(parent,"nested");InstallerEngine.PrivateDirectory(child);var acl=Directory.GetAccessControl(parent);byte[] original=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.DeleteSubdirectoriesAndFiles,AccessControlType.Allow));Directory.SetAccessControl(parent,acl);try{InstallerEngine.Root(child);}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(original,AccessControlSections.Access);Directory.SetAccessControl(parent,restore);}});
+  Case("command-output-decoding-never-throws",o=>{
+   string listing="Ubuntu\r\n우분투\r\n";var utf16=System.Text.Encoding.Unicode;
+   Assert(NativeIO.DecodeOutput(utf16.GetBytes(listing),utf16)==listing,"UTF-16LE wsl --list was not decoded");
+   Assert(NativeIO.DecodeOutput(NativeIO.Utf8.GetBytes(listing),utf16)==listing,"WSL_UTF8=1 wsl --list was decoded as UTF-16");
+   Assert(NativeIO.DecodeOutput(utf16.GetPreamble().Concat(utf16.GetBytes(listing)).ToArray(),null)==listing,"UTF-16 byte order mark was kept or misread");
+   Assert(NativeIO.DecodeOutput(new byte[]{0xEF,0xBB,0xBF}.Concat(NativeIO.Utf8.GetBytes(listing)).ToArray(),utf16)==listing,"UTF-8 byte order mark was kept or misread");
+   Assert(NativeIO.DecodeOutput(utf16.GetBytes("There is no distribution with the supplied name.\r\n"),null).StartsWith("There is no distribution"),"a UTF-16LE wsl.exe message was read as UTF-8");
+   Assert(NativeIO.DecodeOutput(NativeIO.Utf8.GetBytes("USER\tsynthetic\nHOME\t/home/사용자\n"),null)=="USER\tsynthetic\nHOME\t/home/사용자\n","UTF-8 --exec output changed");
+   string lenient=NativeIO.DecodeOutput(new byte[]{0x41,0xFF,0x42},null);Assert(lenient.StartsWith("A")&&lenient.EndsWith("B"),"invalid UTF-8 output threw or lost its readable part");
+   Assert(NativeIO.DecodeOutput(new byte[0],null)==""&&NativeIO.DecodeOutput(System.Text.Encoding.ASCII.GetBytes("1.18.29\r\n"),System.Text.Encoding.Default)=="1.18.29\r\n","empty or cmd output changed");
+   // End to end: bytes that are not valid UTF-8 no longer fail the command capture.
+   string script=Path.Combine(o.InstallDir,"invalid-output.cmd");File.WriteAllBytes(script,System.Text.Encoding.ASCII.GetBytes("@echo off\r\necho A").Concat(new byte[]{0xFF}).Concat(System.Text.Encoding.ASCII.GetBytes("B\r\n")).ToArray());
+   var captured=NativeIO.Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe"),new[]{"/d","/c",script},null,null,15000);
+   Assert(captured.ExitCode==0&&captured.Output.StartsWith("A")&&captured.Output.EndsWith("B"),"capturing non-UTF-8 output failed: "+captured.Output);
+  });
   Case("mapped-network-drive-policy",o=>{bool rejected=false;try{InstallerEngine.RequireLocalInstallDrive(DriveType.Network);}catch(IOException){rejected=true;}Assert(rejected,"mapped network drive type accepted");InstallerEngine.RequireLocalInstallDrive(DriveType.Fixed);});
   Case("relative-wsl-executable-contract",o=>{bool rejected=false;try{ManagedProfile.ValidateWslPaths(new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",Executable="opencode"},"/tmp");}catch(IOException){rejected=true;}Assert(rejected,"relative WSL executable accepted by confirmation");ManagedProfile.ValidateWslPaths(new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",Executable="/opt/opencode"},"/tmp");});
   Case("package-captured-bytes-verified",o=>{string path=Path.Combine(o.InstallDir,"captured.js");File.WriteAllText(path,"original",NativeIO.Utf8);var file=new OwnedFile{Path="captured.js",Sha256=NativeIO.FileHash(path)};File.WriteAllText(path,"changed after manifest validation",NativeIO.Utf8);bool rejected=false;try{InstallerEngine.CapturePackageFile(o.InstallDir,file);}catch(IOException){rejected=true;}Assert(rejected,"changed bytes were captured under the original manifest hash");});
   foreach(bool enabled in new[]{false,true})Case("form-restores-startup-"+enabled,o=>{o.Startup=enabled;o.StartupDir=Path.Combine(o.InstallDir,"custom-startup");Apply(o);using(var form=new SetupForm(new[]{"--no-discover","--install-dir",o.InstallDir,"--startup-dir",Path.Combine(o.InstallDir,"wrong-default")})){typeof(SetupForm).GetMethod("LoadState",BindingFlags.NonPublic|BindingFlags.Instance).Invoke(form,null);var box=(System.Windows.Forms.CheckBox)form.Controls.Find("EnableStartup",true).Single();var path=(System.Windows.Forms.TextBox)form.Controls.Find("StartupFolder",true).Single();Assert(box.Checked==enabled,"loading the installation changed startup preference");if(enabled)Assert(path.Text==o.StartupDir,"loading the installation changed its owned Startup folder");}});
   Case("stop-clears-already-exited-owned-marker",o=>{var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();o.Port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();Apply(o);var state=InstallerEngine.State(o.InstallDir);BridgeControl.Start(state);string path=Path.Combine(state.DataDir,".installer-bridge-process.json");var marker=InstallerEngine.Read<Dictionary<string,object>>(path);using(var child=Process.GetProcessById(Convert.ToInt32(marker["Pid"]))){Assert(String.Equals(child.MainModule.FileName,state.CurrentExe,StringComparison.OrdinalIgnoreCase),"unexpected fixture process");child.Kill();Assert(child.WaitForExit(5000),"fixture child did not exit");}Assert(!BridgeControl.Stop(state),"already exited Bridge reported as live");Assert(!File.Exists(path),"already exited owned marker still blocks version rollback");});
+  Case("stale-marker-reused-pid-is-not-running",o=>{
+   var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();o.Port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();Apply(o);var state=InstallerEngine.State(o.InstallDir);string path=Path.Combine(state.DataDir,".installer-bridge-process.json");
+   using(var unrelated=Process.Start(new ProcessStartInfo(Assembly.GetExecutingAssembly().Location,"--hold"){UseShellExecute=false,CreateNoWindow=true})){
+    try{
+     // PID 4 is the System process: Win32_Process reports no ExecutablePath for it.
+     foreach(int pid in new[]{unrelated.Id,4}){
+      Action stale=()=>NativeIO.WriteText(path,NativeIO.Json.Serialize(new {Product=InstallerEngine.Product,InstallId=state.InstallId,Pid=pid,Executable=state.CurrentExe,Port=state.Port,CreatedAt=DateTime.UtcNow.ToString("o")}));
+      stale();Assert(!BridgeControl.Stop(state),"a reused PID was reported as the owned Bridge");Assert(!File.Exists(path),"stale marker was not cleaned up by stop");
+      stale();BridgeControl.Start(state);var started=InstallerEngine.Read<Dictionary<string,object>>(path);Assert(Convert.ToInt32(started["Pid"])!=pid,"start kept the stale marker");
+      Assert(BridgeControl.Stop(state),"Bridge started over a stale marker could not be stopped");
+      stale();o.Operation="update";Apply(o);Assert(InstallerEngine.State(o.InstallDir)!=null,"update was blocked by a stale marker");o.Operation="install";
+      unrelated.Refresh();Assert(!unrelated.HasExited,"an unrelated process was terminated");
+     }
+     NativeIO.WriteText(path,NativeIO.Json.Serialize(new {Product=InstallerEngine.Product,InstallId=state.InstallId,Pid=unrelated.Id,Executable=state.CurrentExe,Port=state.Port,CreatedAt=DateTime.UtcNow.ToString("o")}));
+     InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=o.InstallDir}),CancellationToken.None,s=>{});
+     Assert(InstallerEngine.State(o.InstallDir)==null&&!File.Exists(path),"uninstall was blocked by a stale marker");
+     unrelated.Refresh();Assert(!unrelated.HasExited,"uninstall terminated an unrelated process");
+     // A marker of another installation is still refused.
+     Apply(o);state=InstallerEngine.State(o.InstallDir);
+     NativeIO.WriteText(path,NativeIO.Json.Serialize(new {Product=InstallerEngine.Product,InstallId=new String('0',32),Pid=unrelated.Id,Executable=state.CurrentExe,Port=state.Port,CreatedAt=DateTime.UtcNow.ToString("o")}));
+     bool refused=false;try{BridgeControl.Stop(state);}catch(IOException){refused=true;}Assert(refused&&File.Exists(path),"a marker of another installation was accepted");File.Delete(path);
+    }finally{if(!unrelated.HasExited){unrelated.Kill();unrelated.WaitForExit(5000);}}
+   }
+  });
+  Case("update-prunes-obsolete-owned-files",o=>{
+   string a=VersionedPackage("prune-package-a","0.9.1-prune","extension/assets/index-old.js"),b=VersionedPackage("prune-package-b","0.9.2-prune","extension/assets/index-new.js"),c=VersionedPackage("prune-package-c","0.9.3-prune",null),d=VersionedPackage("prune-package-d","0.9.4-prune",null);
+   o.PackageDir=a;Apply(o);var first=InstallerEngine.State(o.InstallDir);
+   string oldAsset=Path.Combine(o.InstallDir,"extension","assets","index-old.js"),userFile=Path.Combine(o.InstallDir,"extension","assets","user-note.txt");File.WriteAllText(userFile,"mine");
+   o.Operation="update";o.PackageDir=b;
+   // A cancelled update restores what the cleanup removed.
+   var plan=InstallerEngine.Prepare(o);Assert(plan.Prune.Any(f=>f.Path=="extension/assets/index-old.js"),"obsolete asset is not planned for cleanup");
+   var cancel=new CancellationTokenSource();int writes=0;bool cancelled=false;
+   try{InstallerEngine.Apply(plan,cancel.Token,s=>{if(s.StartsWith("파일 적용")&&++writes==plan.Changes.Count)cancel.Cancel();});}catch(OperationCanceledException){cancelled=true;}
+   Assert(cancelled&&File.Exists(oldAsset)&&InstallerEngine.State(o.InstallDir).Version==first.Version,"cancelled update did not restore a cleaned-up file");
+   Apply(o);var second=InstallerEngine.State(o.InstallDir);
+   Assert(!File.Exists(oldAsset)&&!second.OwnedFiles.Any(f=>f.Path=="extension/assets/index-old.js"),"obsolete owned asset was left behind");
+   Assert(File.Exists(Path.Combine(o.InstallDir,"extension","assets","index-new.js"))&&File.ReadAllText(userFile)=="mine","cleanup touched a current or user file");
+   Assert(File.Exists(first.CurrentExe)&&second.OwnedFiles.Any(f=>InstallerEngine.Same(NativeIO.SafePath(o.InstallDir,f.Path),first.CurrentExe)),"previous executable was not kept");
+   // An old executable folder that is in use stays, even when it is neither current nor previous.
+   string holder=Path.Combine(Path.GetDirectoryName(first.CurrentExe),"holder.exe");File.Copy(Assembly.GetExecutingAssembly().Location,holder);
+   using(var running=Process.Start(new ProcessStartInfo(holder,"--hold"){UseShellExecute=false,CreateNoWindow=true})){
+    try{o.PackageDir=c;Apply(o);Assert(File.Exists(first.CurrentExe)&&File.Exists(second.CurrentExe),"an executable folder in use, or the previous version, was removed");}
+    finally{if(!running.HasExited){running.Kill();running.WaitForExit(5000);}}
+   }
+   for(int attempt=0;;attempt++){try{File.Delete(holder);break;}catch(Exception){if(attempt>=50)throw;Thread.Sleep(100);}}
+   var third=InstallerEngine.State(o.InstallDir);string runtime=Path.Combine(third.DataDir,"runtime.json");
+   try{
+    File.WriteAllText(runtime,NativeIO.Json.Serialize(new {profiles=new Dictionary<string,object>{{"ext",new{kind="external"}}},runtimes=new Dictionary<string,object>{{"ext",new{baseUrl="https://external.invalid",bridgeExecutable=first.CurrentExe}}}}));
+    var referenced=BridgeControl.ReferencedAppDirectories(third);Assert(referenced!=null&&referenced.Contains(Path.GetDirectoryName(first.CurrentExe)),"an executable recorded by runtime.json is not protected");
+    File.WriteAllText(runtime,"{\"profiles\":{},\"runtimes\":{\"managed\":{}}}");Assert(BridgeControl.ReferencedAppDirectories(third)==null,"an unverifiable runtime record did not keep every executable");
+    File.WriteAllText(runtime,"{ broken");Assert(BridgeControl.ReferencedAppDirectories(third)==null,"unreadable runtime data did not keep every executable");
+   }finally{File.Delete(runtime);}
+   o.PackageDir=d;Apply(o);var fourth=InstallerEngine.State(o.InstallDir);
+   Assert(!File.Exists(first.CurrentExe)&&!Directory.Exists(Path.GetDirectoryName(first.CurrentExe))&&!File.Exists(second.CurrentExe),"unused old executables were left behind");
+   Assert(File.Exists(third.CurrentExe)&&File.Exists(fourth.CurrentExe)&&File.Exists(third.SetupExe),"current or previous executable was removed");
+   Assert(!fourth.OwnedFiles.Any(f=>InstallerEngine.Same(NativeIO.SafePath(o.InstallDir,f.Path),first.CurrentExe)),"a removed executable is still recorded as owned");
+   // Reapplying the same version removes nothing under app.
+   Apply(o);Assert(File.Exists(third.CurrentExe),"reapplying the same version removed the previous executable");
+  });
   Case("cancel-version-update-restores-old-bridge",o=>{
    var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();o.Port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();o.Start=true;Apply(o);var old=InstallerEngine.State(o.InstallDir);string nextPackage=Path.Combine(root,"changed-version-package");Directory.CreateDirectory(nextPackage);var manifest=InstallerEngine.Read<PackageManifest>(Path.Combine(package,"package-manifest.json"));foreach(var file in manifest.Files){string dest=NativeIO.SafePath(nextPackage,file.Path);Directory.CreateDirectory(Path.GetDirectoryName(dest));File.Copy(NativeIO.SafePath(package,file.Path),dest);}manifest.Version="0.1.5-review-next";string extensionPath=Path.Combine(nextPackage,"extension","manifest.json");var extension=InstallerEngine.Read<Dictionary<string,object>>(extensionPath);extension["version"]=manifest.Version;NativeIO.WriteText(extensionPath,NativeIO.Json.Serialize(extension));manifest.Files.Single(f=>f.Path=="extension/manifest.json").Sha256=NativeIO.FileHash(extensionPath);NativeIO.WriteText(Path.Combine(nextPackage,"package-manifest.json"),NativeIO.Json.Serialize(manifest));o.PackageDir=nextPackage;o.Operation="update";var cancel=new CancellationTokenSource();bool cancelled=false;string error=null;
    try{try{InstallerEngine.Apply(InstallerEngine.Prepare(o),cancel.Token,msg=>{if(msg.StartsWith("Bridge "))cancel.Cancel();});}catch(OperationCanceledException){cancelled=true;}catch(Exception e){error=e.Message;}

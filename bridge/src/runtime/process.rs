@@ -181,36 +181,106 @@ fn windows_quote(value: &str) -> String {
     result.extend(std::iter::repeat_n('\\',slashes * 2)); result.push('"'); result
 }
 
+/// Owning PIDs of every listener row on `port`. Several rows can share a port (another
+/// address, a reused socket), so the caller decides which owner belongs to its runtime.
+#[cfg(any(windows,test))]
+fn owners_of_port(rows: impl Iterator<Item = (u32,u32)>, port: u16) -> Vec<u32> {
+    let mut owners = Vec::new();
+    // dwLocalPort keeps the port in network byte order in its low 16 bits.
+    for (local_port,pid) in rows { if u16::from_be(local_port as u16) == port && !owners.contains(&pid) { owners.push(pid); } }
+    owners
+}
 #[cfg(windows)]
-pub fn listener(port: u16) -> Option<Identity> {
-    use windows_sys::Win32::{NetworkManagement::IpHelper::*, Networking::WinSock::AF_INET};
+pub fn listeners(port: u16) -> Vec<Identity> {
+    use windows_sys::Win32::{Foundation::ERROR_INSUFFICIENT_BUFFER, NetworkManagement::IpHelper::*, Networking::WinSock::AF_INET};
     unsafe {
-        let mut len = 0u32;
-        GetExtendedTcpTable(std::ptr::null_mut(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0);
-        let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
-        if GetExtendedTcpTable(buffer.as_mut_ptr().cast(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0) != 0 { return None; }
-        let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
-        for row in std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize) {
-            if u16::from_be(row.dwLocalPort as u16) == port { return identity(row.dwOwningPid); }
+        // The table can grow between the size query and the read: ask once more.
+        for _ in 0..2 {
+            let mut len = 0u32;
+            GetExtendedTcpTable(std::ptr::null_mut(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0);
+            let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
+            match GetExtendedTcpTable(buffer.as_mut_ptr().cast(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0) {
+                0 => {
+                    if buffer.is_empty() { return Vec::new(); }
+                    let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+                    let rows = std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
+                    return owners_of_port(rows.iter().map(|row| (row.dwLocalPort,row.dwOwningPid)),port).into_iter().filter_map(identity).collect();
+                }
+                ERROR_INSUFFICIENT_BUFFER => continue,
+                _ => return Vec::new(),
+            }
         }
-        None
+        Vec::new()
+    }
+}
+/// (process id, parent process id) of every live process.
+#[cfg(windows)]
+fn snapshot() -> Option<Vec<(u32,u32)>> {
+    use windows_sys::Win32::{Foundation::{CloseHandle, INVALID_HANDLE_VALUE}, System::Diagnostics::ToolHelp::*};
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); if snapshot == INVALID_HANDLE_VALUE { return None; }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed(); entry.dwSize = std::mem::size_of_val(&entry) as u32;
+        let mut links = Vec::new(); let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more { links.push((entry.th32ProcessID, entry.th32ParentProcessID)); more = Process32NextW(snapshot, &mut entry) != 0; }
+        CloseHandle(snapshot);
+        Some(links)
     }
 }
 #[cfg(windows)]
 pub fn descendant(child: &Identity, parent: &Identity) -> bool {
-    use windows_sys::Win32::{Foundation::{CloseHandle, INVALID_HANDLE_VALUE}, System::Diagnostics::ToolHelp::*};
     if !matches(parent) || child.created < parent.created { return false; }
     if child.pid == parent.pid { return child.created == parent.created && child.image == parent.image; }
-    unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0); if snapshot == INVALID_HANDLE_VALUE { return false; }
-        let mut entry: PROCESSENTRY32W = std::mem::zeroed(); entry.dwSize = std::mem::size_of_val(&entry) as u32;
-        let mut parents = BTreeMap::new(); let mut more = Process32FirstW(snapshot, &mut entry) != 0;
-        while more { parents.insert(entry.th32ProcessID, entry.th32ParentProcessID); more = Process32NextW(snapshot, &mut entry) != 0; }
-        CloseHandle(snapshot);
-        let mut pid = child.pid;
-        for _ in 0..64 { let Some(next) = parents.get(&pid) else { return false }; if *next == parent.pid { return true; } if *next == pid { break; } pid = *next; }
-        false
+    let Some(links) = snapshot() else { return false; };
+    let parents: BTreeMap<u32,u32> = links.into_iter().collect();
+    let mut pid = child.pid;
+    for _ in 0..64 { let Some(next) = parents.get(&pid) else { return false }; if *next == parent.pid { return true; } if *next == pid { break; } pid = *next; }
+    false
+}
+
+/// Live processes started, directly or indirectly, by `root`: parents before their children.
+/// A parent id alone proves nothing, because the id of an exited parent is reused: a process
+/// created before the process its parent id now names is not that process's child, and it is
+/// skipped together with everything below it. `spare` prunes a process and its own tree.
+#[cfg(any(windows,test))]
+fn descendants_in(root: &Identity, links: &[(u32,u32)], inspect: impl Fn(u32) -> Option<Identity>, spare: impl Fn(&Identity) -> bool) -> Vec<Identity> {
+    let mut found = Vec::<Identity>::new();
+    let mut seen = std::collections::BTreeSet::from([root.pid]);
+    let mut parents = std::collections::VecDeque::from([(root.pid,root.created)]);
+    while let Some((parent,parent_created)) = parents.pop_front() {
+        for (pid,_) in links.iter().filter(|(pid,parent_pid)| *parent_pid == parent && *pid != parent) {
+            if !seen.insert(*pid) { continue; }
+            let Some(process) = inspect(*pid) else { continue; };
+            if process.pid != *pid || process.created < parent_created || spare(&process) { continue; }
+            parents.push_back((process.pid,process.created)); found.push(process);
+        }
     }
+    found
+}
+#[cfg(any(windows,test))]
+fn same_program(image: &str, other: &str) -> bool {
+    let name = |path: &str| path.rsplit(['\\','/']).next().unwrap_or_default().to_ascii_lowercase();
+    !name(image).is_empty() && name(image) == name(other)
+}
+
+/// Stops `owner` and the processes it started. A `.cmd` launcher is only cmd.exe: the server
+/// it runs, and that server's children, would otherwise outlive Stop whenever the listener
+/// was never recorded. Every process is terminated through `terminate`, which re-reads its
+/// creation time and image at that moment. Programs named like one of `spare` (the Bridge:
+/// a resident serve started by an MCP proxy lives inside this tree) are left running.
+pub fn terminate_tree(owner: &Identity, spare: &[String]) -> bool {
+    #[cfg(windows)] {
+        let mut stopped = false;
+        // Descendants first: once the launcher is gone its tree can no longer be attributed.
+        for _ in 0..3 {
+            if !matches(owner) { break; }
+            let Some(links) = snapshot() else { break; };
+            let found = descendants_in(owner,&links,identity,|process| process.pid == std::process::id() || spare.iter().any(|kept| same_program(&process.image,kept)));
+            if found.is_empty() { break; }
+            for process in &found { stopped |= terminate(process); }
+        }
+        terminate(owner) || stopped
+    }
+    #[cfg(unix)] { let _ = spare; terminate(owner) }
 }
 
 pub fn wsl_executable() -> String {
@@ -221,6 +291,56 @@ pub fn wsl_executable() -> String {
 pub fn windows_to_wsl(path: &str) -> Option<String> {
     let bytes = path.as_bytes();
     (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':').then(|| format!("/mnt/{}/{}", (bytes[0] as char).to_ascii_lowercase(), path[2..].trim_start_matches(['\\','/']).replace('\\', "/")))
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::{Identity,descendants_in,same_program};
+    fn process(pid: u32, created: u64, image: &str) -> Identity { Identity { pid, created, image: image.into() } }
+
+    #[test]
+    fn only_verified_descendants_of_the_launcher_are_collected() {
+        let root = process(10,100,r"C:\Windows\System32\cmd.exe");
+        let live = [
+            process(11,110,r"C:\node\node.exe"), process(12,120,r"C:\node\node.exe"),
+            // Parent id 10 belonged to an earlier process: created before the launcher.
+            process(13,50,r"C:\other\old.exe"), process(14,130,r"C:\other\child-of-old.exe"),
+            // The resident Bridge started by an MCP proxy, and what it started.
+            process(15,125,r"C:\App\browser-bridge.exe"), process(16,140,r"C:\opencode\other-runtime.exe"),
+            // Created before the process its parent id now names (12 was reused).
+            process(18,115,r"C:\other\reused-parent.exe"),
+            process(20,200,r"C:\unrelated\app.exe"),
+        ];
+        let links = [(10,4),(11,10),(12,11),(13,10),(14,13),(15,11),(16,15),(17,12),(18,12),(20,99),(0,0),(4,0)];
+        let inspect = |pid: u32| live.iter().find(|process| process.pid == pid).cloned();
+        let spare = |process: &Identity| same_program(&process.image,r"c:\app\Browser-Bridge.exe");
+        let found: Vec<u32> = descendants_in(&root,&links,inspect,spare).iter().map(|process| process.pid).collect();
+        assert_eq!(found,vec![11,12],"parents first; reused ids, the Bridge, its tree, and exited processes are left alone");
+    }
+
+    #[test]
+    fn a_launcher_without_children_or_with_a_parent_cycle_terminates_the_search() {
+        let root = process(10,100,"launcher");
+        assert!(descendants_in(&root,&[(10,10),(11,12),(12,11)],|pid| Some(process(pid,200,"x")),|_| false).is_empty());
+    }
+
+    #[test]
+    fn programs_are_compared_by_file_name_without_case() {
+        assert!(same_program(r"C:\A\Browser-Bridge.EXE",r"D:\b\browser-bridge.exe"));
+        assert!(!same_program(r"C:\A\node.exe",r"C:\A\browser-bridge.exe"));
+        assert!(!same_program("",""));
+    }
+}
+
+#[cfg(test)]
+mod listener_tests {
+    #[test]
+    fn every_owner_of_a_port_is_reported_once() {
+        let row = |port: u16, pid: u32| (u32::from(port.to_be()),pid);
+        let rows = [row(4096,700),row(4097,701),row(4096,702),row(4096,700)];
+        assert_eq!(super::owners_of_port(rows.into_iter(),4096),vec![700,702]);
+        assert!(super::owners_of_port(rows.into_iter(),5000).is_empty());
+    }
 }
 
 #[cfg(test)]

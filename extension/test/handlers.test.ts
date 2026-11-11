@@ -884,3 +884,140 @@ it('a still-pending debugger detach cannot fall through to DOM input',async()=>{
  const w=world(),h=createHandlers(w.api,memorySessionStore(),{ensure:async()=>false,screenshot:async()=>'',stopping:()=>true});const ref=await firstRef(h);w.sent.length=0;
  await expect(h(request('browser.click',{ref}))).rejects.toMatchObject({code:'BROWSER_BUSY'});expect(w.sent).toHaveLength(0);
 });
+
+describe('browser.tabs.create load timeout', () => {
+  afterEach(() => vi.useRealTimers());
+  const slowTab = (w: ReturnType<typeof world>) => { w.api.tabsCreate = async p => { const t = { id: 9, windowId: 10, active: false, url: p.url, title: '', status: 'loading' } as chrome.tabs.Tab; w.tabs.set(9, t); return t; }; };
+  it('returns the tab marked as still loading instead of losing its ID', async () => {
+    vi.useFakeTimers();
+    const w = world(); slowTab(w);
+    const h = createHandlers(w.api, memorySessionStore());
+    const pending = h(request('browser.tabs.create', { url: 'https://example.test/slow' }));
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await pending).toMatchObject({ tabId: 9, url: 'https://example.test/slow', status: 'loading', loadIncomplete: true });
+  });
+  it('still reports a tab that closed while loading as a failure', async () => {
+    vi.useFakeTimers();
+    const w = world(); slowTab(w);
+    const h = createHandlers(w.api, memorySessionStore());
+    const pending = h(request('browser.tabs.create', { url: 'https://example.test/slow' })).catch(error => error);
+    await vi.advanceTimersByTimeAsync(1_000); w.tabs.delete(9);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await pending).toMatchObject({ code: expect.stringMatching(/TAB_NOT_FOUND|TIMEOUT/) });
+  });
+  it('keeps the existing outcome when stopped during the load', async () => {
+    vi.useFakeTimers();
+    const w = world(); slowTab(w);
+    const h = createHandlers(w.api, memorySessionStore());
+    const pending = h(request('browser.tabs.create', { url: 'https://example.test/slow' }, 'create-stop')).catch(error => error);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h(request('browser.cancel', { requestId: 'create-stop' }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await pending).toMatchObject({ code: 'EXECUTION_UNKNOWN' });
+  });
+});
+
+it('reports a child-frame click that replaced the top document as navigation without waitFor', async () => {
+  const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://example.test/child' });
+  const base = w.api.sendToFrame; let clicks = 0;
+  w.api.sendToFrame = async (tab, frame, msg: any) => {
+    if (msg.method === 'click') {
+      clicks++;
+      // A target=_top link: the whole page, and with it the frame, is replaced before the reply.
+      w.frames.set(1, [{ frameId: 0, documentId: 'landing', url: 'https://example.test/landing' }]); w.tabs.get(1)!.url = 'https://example.test/landing';
+      throw Error('The message port closed before a response was received.');
+    }
+    return base(tab, frame, msg);
+  };
+  const h = createHandlers(w.api, memorySessionStore()), snapshot: any = await h(request('browser.snapshot'));
+  const result: any = await h(request('browser.click', { ref: snapshot.frames[1].elements[0].ref }));
+  expect(result).toMatchObject({ executed: true, verified: { navigated: true, urlChanged: true } });
+  expect(clicks).toBe(1);
+});
+it('a child frame that only disappeared is still an unknown outcome', async () => {
+  const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'child', url: 'https://example.test/child' });
+  const base = w.api.sendToFrame;
+  w.api.sendToFrame = async (tab, frame, msg: any) => {
+    if (msg.method === 'click') { w.frames.set(1, [w.frames.get(1)![0]!]); throw Error('The message port closed before a response was received.'); }
+    return base(tab, frame, msg);
+  };
+  const h = createHandlers(w.api, memorySessionStore()), snapshot: any = await h(request('browser.snapshot'));
+  await expect(h(request('browser.click', { ref: snapshot.frames[1].elements[0].ref }))).rejects.toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe' });
+}, 10_000);
+
+describe('closing a tab with a frame that cannot be checked', () => {
+  const closing = (errorOccurred: boolean, injectable = false) => {
+    const w = world(); w.frames.get(1)!.push({ frameId: 7, documentId: 'broken', url: 'https://down.test/', ...(errorOccurred ? { errorOccurred: true } : {}) });
+    const checked: number[] = []; let remove!: (id: number) => void;
+    w.api.inject = async (_id, frame) => { if (frame.frameId === 7 && !injectable) throw Error('Frame with ID 7 is showing error page'); return frame; };
+    const base = w.api.sendToFrame;
+    w.api.sendToFrame = async (tab, frame, msg: any) => { if (msg.method === 'close-check') { checked.push(frame.frameId); return { ok: true, result: { executed: false } }; } return base(tab, frame, msg); };
+    w.api.onTabRemoved = fn => { remove = fn; return () => {}; };
+    w.api.tabsRemove = async id => { remove(id); };
+    return { w, checked, h: createHandlers(w.api, memorySessionStore()) };
+  };
+  it("skips a subframe showing Chrome's error page", async () => {
+    const { h, checked } = closing(true);
+    await h(request('browser.snapshot'));
+    await expect(h(request('browser.tabs.close'))).resolves.toEqual({ closed: true });
+    expect(new Set(checked)).toEqual(new Set([0]));
+  });
+  it('still checks a frame whose failed navigation left its document in place', async () => {
+    const { h, checked } = closing(true, true);
+    await h(request('browser.snapshot'));
+    await expect(h(request('browser.tabs.close'))).resolves.toEqual({ closed: true });
+    expect(new Set(checked)).toEqual(new Set([0, 7]));
+  });
+  it('keeps the tab when an ordinary frame cannot be checked', async () => {
+    const { h } = closing(false);
+    await h(request('browser.snapshot'));
+    await expect(h(request('browser.tabs.close'))).rejects.toMatchObject({ code: 'FRAME_UNAVAILABLE' });
+  });
+});
+
+describe("Chrome's error page", () => {
+  it('reports a navigation that ended on it as failed, once, without resending', async () => {
+    const w = world(); let updates = 0;
+    w.api.inject = async (_id, frame) => { if (frame.documentId === 'error-page') throw Error('Frame with ID 0 is showing error page'); return frame; };
+    w.api.tabsUpdate = async (id, p) => { updates++; Object.assign(w.tabs.get(id)!, p, { status: 'loading' }); return { ...w.tabs.get(id)! }; };
+    const h = createHandlers(w.api, memorySessionStore());
+    await firstRef(h);
+    const id = 'goto-down', work = h(request('browser.navigate', { url: 'https://down.test/' }, id)).catch(error => error);
+    await vi.waitFor(() => expect(w.tabs.get(1)!.status).toBe('loading'));
+    w.frames.set(1, [{ frameId: 0, documentId: 'error-page', url: 'https://down.test/', errorOccurred: true }]);
+    Object.assign(w.tabs.get(1)!, { status: 'complete', title: 'down.test' });
+    for (const f of w.updates) f(1, { status: 'complete' }, w.tabs.get(1)!);
+    expect(await work).toMatchObject({ code: 'UNSUPPORTED_PAGE', retry: 'never', details: { executed: true, errorPage: true, url: 'https://down.test/' } });
+    // The same request ID returns the stored failure instead of navigating again.
+    await expect(h(request('browser.navigate', { url: 'https://down.test/' }, id))).rejects.toMatchObject({ code: 'UNSUPPORTED_PAGE' });
+    expect(updates).toBe(1);
+  });
+  it('a snapshot of it fails at once and does not invite a retry', async () => {
+    const w = world(); let injections = 0;
+    w.frames.set(1, [{ frameId: 0, documentId: 'error-page', url: 'https://example.test/1', errorOccurred: true }]);
+    w.api.inject = async () => { injections++; throw Error('Frame with ID 0 is showing error page'); };
+    const h = createHandlers(w.api, memorySessionStore());
+    await expect(h(request('browser.snapshot'))).rejects.toMatchObject({ code: 'UNSUPPORTED_PAGE', retry: 'never', details: { errorPage: true } });
+    expect(injections).toBe(1);
+  });
+  it('a top document that is merely slow to become readable is still retried as before', async () => {
+    const w = world(); let injections = 0;
+    w.api.inject = async () => { injections++; throw Error('not yet'); };
+    const h = createHandlers(w.api, memorySessionStore());
+    await expect(h(request('browser.snapshot'))).rejects.toMatchObject({ code: 'FRAME_UNAVAILABLE', retry: 'safe' });
+    expect(injections).toBe(3);
+  });
+});
+
+it('a navigation whose flagged document is still readable is not mistaken for an error page', async () => {
+  const w = world();
+  w.api.tabsUpdate = async (id, p) => { Object.assign(w.tabs.get(id)!, p, { status: 'loading' }); return { ...w.tabs.get(id)! }; };
+  const h = createHandlers(w.api, memorySessionStore());
+  await firstRef(h);
+  const work = h(request('browser.navigate', { url: 'https://example.test/new' }));
+  await vi.waitFor(() => expect(w.tabs.get(1)!.status).toBe('loading'));
+  w.frames.set(1, [{ frameId: 0, documentId: 'kept', url: 'https://example.test/new', errorOccurred: true }]);
+  Object.assign(w.tabs.get(1)!, { status: 'complete', title: 'Arrived' });
+  for (const f of w.updates) f(1, { status: 'complete' }, w.tabs.get(1)!);
+  expect(await work).toMatchObject({ executed: true, verified: { url: 'https://example.test/new' } });
+});

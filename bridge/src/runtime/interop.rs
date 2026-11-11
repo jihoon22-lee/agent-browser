@@ -23,6 +23,9 @@ version=$(/usr/bin/timeout -k 1 5 "$6" --version 2>/dev/null) || exit 36
 case "$version" in 'browser-bridge '*) ;; *) exit 36;; esac
 "#;
 
+/// Covers a cold WSL boot plus the Windows canary (five seconds inside the script).
+const WSL_PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(20);
+
 pub(super) async fn preflight_code(profile: &Profile, owner: &str, instance: &str, diagnostic: bool) -> Option<i32> {
     // Unit-test harness executables do not implement the Bridge CLI. Native
     // persistence tests use the separately built real Bridge for this canary.
@@ -37,7 +40,7 @@ pub(super) async fn preflight_code(profile: &Profile, owner: &str, instance: &st
     let mut probe=tokio::process::Command::new(process::wsl_executable());
     probe.env_remove("WSL_INTEROP").args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] {probe.creation_flags(0x08000000);}
-    match tokio::time::timeout(Duration::from_secs(10),probe.status()).await {
+    match tokio::time::timeout(WSL_PREFLIGHT_TIMEOUT,probe.status()).await {
         Err(_) => Some(-2), Ok(Err(_)) => Some(-3), Ok(Ok(status)) => status.code(),
     }
 }
@@ -51,29 +54,50 @@ impl Manager {
             let owner=directory.join(format!("{}.{suffix}",record.instance));
             if process::windows_to_wsl(&owner.to_string_lossy()).as_deref() != record.wsl_owner_file.as_deref() { continue; }
             let permit=directory.join(format!("{}.{suffix}.start",record.instance));
-            return match std::fs::remove_file(permit) { Ok(()) => true, Err(error) => error.kind() == std::io::ErrorKind::NotFound };
+            return match std::fs::remove_file(&permit) {
+                Ok(()) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(error) => { tracing::warn!(%error, permit = %permit.display(), "cannot revoke the WSL start permit"); false }
+            };
         }
         false
     }
 
+    /// After a confirmed stop and the removal of its record nothing reads this instance's
+    /// owner, keeper, permit and readiness files again; without this they pile up for good.
+    pub(super) fn remove_wsl_markers(&self, record: &RuntimeRecord) {
+        let known = [record.wsl_owner_file.as_deref(),record.wsl_keeper.as_ref().map(|keeper| keeper.owner_file.as_str())];
+        for marker in marker_files(&self.home.join("runtime"),&record.instance,&known,process::windows_to_wsl) {
+            match std::fs::remove_file(&marker) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => tracing::warn!(%error, marker = %marker.display(), "cannot remove a WSL runtime marker"),
+            }
+        }
+    }
+
     async fn spawn_wsl_owned(&self, profile: &Profile, instance: &str, suffix: &str, command: Vec<String>, env: &BTreeMap<String,String>) -> Result<(Identity,String),RpcError> {
         let owner = self.home.join("runtime").join(format!("{instance}.{suffix}"));
-        std::fs::create_dir_all(owner.parent().unwrap()).map_err(|_| failure("Cannot create WSL ownership directory"))?;
+        std::fs::create_dir_all(owner.parent().unwrap()).map_err(os_failure("Cannot create WSL ownership directory"))?;
         let mapped = process::windows_to_wsl(&owner.to_string_lossy()).ok_or_else(|| invalid("WSL runtimes require a Windows Bridge home on a drive mounted by WSL"))?;
-        std::fs::write(&owner,format!("pending {instance}\n")).map_err(|_| failure("Cannot initialize WSL ownership marker"))?;
+        std::fs::write(&owner,format!("pending {instance}\n")).map_err(os_failure("Cannot initialize WSL ownership marker"))?;
         let code=preflight_code(profile,&mapped,instance,false).await;
-        if code != Some(0) {return Err(failure(format!("{}: WSL launch prerequisites could not be verified.",diagnostics::wsl_probe_reason(code))));}
+        if code != Some(0) {
+            // Nothing was launched for this marker, and no record will ever point at it.
+            let _ = std::fs::remove_file(&owner);
+            return Err(failure(format!("{}: WSL launch prerequisites could not be verified.",diagnostics::wsl_probe_reason(code))));
+        }
         let mut args = wsl_args(profile);
         args.extend(["--exec".into(),"/usr/bin/setsid".into(),"--wait".into(),"/bin/sh".into(),"-c".into(),WSL_LAUNCH.into(),"agent-browser".into(),profile.directory.clone(),mapped.clone(),instance.into()]);
         args.extend(command);
         let mut env = env.clone(); forward_wsl_env(&mut env);
-        let launcher = process::spawn(&process::wsl_executable(),&args,None,&env).map_err(|_| failure("Cannot launch the owned WSL runtime"))?;
+        let launcher = process::spawn(&process::wsl_executable(),&args,None,&env).map_err(os_failure("Cannot launch the owned WSL runtime"))?;
         Ok((launcher,mapped))
     }
 
     fn permit_wsl(&self, instance: &str, suffix: &str) -> Result<(),RpcError> {
         std::fs::write(self.home.join("runtime").join(format!("{instance}.{suffix}.start")),instance)
-            .map_err(|_| failure("Cannot authorize the persisted WSL runtime to start"))
+            .map_err(os_failure("Cannot authorize the persisted WSL runtime to start"))
     }
 
     pub(super) async fn launch_wsl(&self, profile: &Profile, port: u16, instance: String, password: String, mut env: BTreeMap<String,String>, command: Vec<String>) -> Result<RuntimeRecord,RpcError> {
@@ -85,7 +109,10 @@ impl Manager {
         let (launcher,owner_file) = self.spawn_wsl_owned(profile,&instance,"keeper",vec!["/bin/sh".into(),"-c".into(),script,"agent-browser-keeper".into(),mapped,instance.clone(),probe.clone()],&env).await?;
         // This provisional record also covers a crash between keeper and server launch.
         let mut record = RuntimeRecord {profile_id:profile.id.clone(),instance:instance.clone(),base_url:format!("http://127.0.0.1:{port}"),username:"opencode".into(),password,launcher:launcher.clone(),server:None,wsl_owner_file:Some(owner_file.clone()),version:None,bridge_port:Some(self.port),bridge_executable:Some(bridge),wsl_keeper:Some(Keeper {launcher,owner_file,socket:String::new()})};
-        if let Err(error) = self.persist(&record) { self.terminate_wsl(profile,&record).await; return Err(error); }
+        if let Err(error) = self.persist(&record) {
+            if self.terminate_wsl(profile,&record).await.is_some() { self.remove_wsl_markers(&record); }
+            return Err(error);
+        }
         let result = async {
             self.permit_wsl(&instance,"keeper")?;
             let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
@@ -117,10 +144,26 @@ impl Manager {
             // Use the in-memory record too: server spawn may have preceded a failed write.
             if self.terminate_wsl(profile,&record).await.is_some() {
                 self.store.update(|config| {config.runtimes.remove(&profile.id); Ok(())})?;
+                self.remove_wsl_markers(&record);
             }
         }
         result
     }
+}
+
+/// Marker files of one instance. A path is derived from the instance name only when that
+/// name is plain and the marker is the very file the record points at: never follow an
+/// unchecked runtime.json field to a file to delete.
+fn marker_files(directory: &std::path::Path, instance: &str, known: &[Option<&str>], map: impl Fn(&str) -> Option<String>) -> Vec<std::path::PathBuf> {
+    if instance.is_empty() || !instance.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-') { return Vec::new(); }
+    let mut files = Vec::new();
+    for suffix in ["owner","keeper"] {
+        let marker = directory.join(format!("{instance}.{suffix}"));
+        let Some(mapped) = map(&marker.to_string_lossy()) else { continue; };
+        if !known.contains(&Some(mapped.as_str())) { continue; }
+        for extra in ["",".tmp",".start",".ready",".ready.tmp"] { files.push(directory.join(format!("{instance}.{suffix}{extra}"))); }
+    }
+    files
 }
 
 fn ready_socket(value: &str, instance: &str) -> Option<String> {
@@ -186,6 +229,19 @@ exec "$bridge" mcp"#;
 mod tests {
     use super::*;
     #[test]
+    fn only_the_recorded_markers_of_a_plain_instance_are_listed_for_removal() {
+        let directory = std::path::Path::new("/home/runtime");
+        // Path::join uses the host separator; the mapped form is always a WSL path.
+        let same = |path: &str| Some(path.replace('\\', "/"));
+        let names = |files: Vec<std::path::PathBuf>| files.into_iter().map(|file| file.file_name().unwrap().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let both = [Some("/home/runtime/rid-1.owner"),Some("/home/runtime/rid-1.keeper")];
+        assert_eq!(names(marker_files(directory,"rid-1",&both,same)),["rid-1.owner","rid-1.owner.tmp","rid-1.owner.start","rid-1.owner.ready","rid-1.owner.ready.tmp","rid-1.keeper","rid-1.keeper.tmp","rid-1.keeper.start","rid-1.keeper.ready","rid-1.keeper.ready.tmp"]);
+        assert_eq!(names(marker_files(directory,"rid-1",&[Some("/home/runtime/rid-1.keeper"),None],same)).first().map(String::as_str),Some("rid-1.keeper"),"a provisional record owns only its keeper");
+        assert!(marker_files(directory,"rid-1",&[Some("/elsewhere/rid-1.owner"),None],same).is_empty(),"a record pointing elsewhere removes nothing");
+        assert!(marker_files(directory,"rid-1",&both,|_| None).is_empty(),"an unmappable home removes nothing");
+        for instance in ["","../rid-1","rid/1","rid 1"] { assert!(marker_files(directory,instance,&[Some("/home/runtime/../rid-1.owner"),None],same).is_empty(),"{instance:?}"); }
+    }
+    #[test]
     fn keeper_readiness_rejects_init_foreign_nonce_and_malformed_paths() {
         assert_eq!(ready_socket("nonce /run/WSL/123_interop\n","nonce"),Some("/run/WSL/123_interop".into()));
         for value in ["other /run/WSL/123_interop","nonce /run/WSL/1_interop","nonce /run/WSL/2_interop","nonce /tmp/123_interop","nonce /run/WSL/123_interop extra"] {
@@ -208,7 +264,7 @@ mod persistence_tests {
         let error=match manager.launch_wsl(&profile,65531,instance.clone(),"fixture".into(),env,vec![profile.executable.clone().unwrap()]).await {Err(error)=>error,Ok(_)=>panic!("Missing executable launched")};
         assert!(error.message.starts_with("WSL_EXECUTABLE_UNAVAILABLE"),"{}",error.message);
         assert!(manager.store.read().unwrap().runtimes.is_empty());
-        assert_eq!(std::fs::read_to_string(home.path().join("runtime").join(format!("{instance}.keeper"))).unwrap(),format!("pending {instance}\n"),"No keeper process may publish ownership before executable validation");
+        assert!(!home.path().join("runtime").join(format!("{instance}.keeper")).exists(),"No keeper may publish ownership before executable validation, and the unused marker is removed");
     }
     #[tokio::test]
     #[ignore = "Requires local WSL Ubuntu; only launches isolated failing fixtures"]

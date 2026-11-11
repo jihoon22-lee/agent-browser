@@ -64,3 +64,25 @@ it.each(['press','fill','click'])('preserves incomplete trusted %s metadata',asy
  const r=await runAction(action,{requestId:'partial-'+action,ref,...(action==='press'?{key:'Enter'}:{text:''}),trusted:true,trustedFrames:true,waitFor:{text:'done'}});
  expect(r.verified).toMatchObject({incomplete:true,inputRecoveryRequired:true,keysReleased:false});
 });
+
+it.each(['click', 'press', 'drag'])('observes the page after a slow trusted %s was delivered, not only while it was in transit', async action => {
+  vi.useFakeTimers();
+  try {
+    const [ref, toRef] = refs();
+    // The debugger round trip outlasts the 500 ms window; the page reacts just after delivery.
+    vi.stubGlobal('chrome', { runtime: { sendMessage: () => new Promise(resolve => setTimeout(() => {
+      setTimeout(() => { document.body.append(document.createElement('p')); }, 200);
+      resolve({ ok: true });
+    }, 800)) } });
+    const pending = runAction(action === 'drag' ? 'click' : action, { ref, trusted: true, operationId: `slow-${action}`,
+      ...(action === 'press' ? { key: 'Enter' } : action === 'drag' ? { mode: 'drag', toRef } : {}) });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(await pending).toMatchObject({ executed: true, verified: { trusted: true, domChanged: true } });
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it('still reports a change that happened while trusted input was in transit', async () => {
+  const [ref] = refs();
+  vi.stubGlobal('chrome', { runtime: { sendMessage: async () => { document.body.append(document.createElement('p')); return { ok: true }; } } });
+  await expect(runAction('click', { ref, trusted: true, operationId: 'fast-click' })).resolves.toMatchObject({ verified: { trusted: true, domChanged: true } });
+});

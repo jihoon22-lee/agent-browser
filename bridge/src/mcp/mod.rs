@@ -34,7 +34,7 @@ pub(crate) fn bounded_text(name: &str, outcome: &serde_json::Value) -> (String, 
             "ok": false, "tool": name, "operationId": outcome["operationId"], "delivered": outcome["delivered"],
             "executed": "no", "verified": serde_json::Value::Null, "data": serde_json::Value::Null,
             "error": {"code": "INVALID_PARAMS", "retry": "safe",
-                "message": "The result exceeded the tool output limit and was not returned. Retry with a smaller maxChars, or continue with offset/elementOffset/frameOffset.",
+                "message": format!("The result exceeded the tool output limit and was not returned. {}", narrowing_hint(name)),
                 "details": {"tooLarge": true, "bytes": text.len(), "limitBytes": MAX_TOOL_TEXT_BYTES}},
         })
     } else {
@@ -47,6 +47,22 @@ pub(crate) fn bounded_text(name: &str, outcome: &serde_json::Value) -> (String, 
     };
     let ok = replacement["ok"].as_bool().unwrap_or(false);
     (replacement.to_string(), ok)
+}
+
+/// How to ask this tool for less, naming only arguments its schema declares.
+fn narrowing_hint(name: &str) -> String {
+    let schema = tools::find(name).map(|t| &t.schema);
+    let has = |key: &str| schema.is_some_and(|s| s["properties"][key].is_object());
+    let mut hints = Vec::new();
+    if has("maxChars") { hints.push("retry with a smaller maxChars".to_string()); }
+    if has("limit") { hints.push("retry with a smaller limit".to_string()); }
+    if has("windowId") { hints.push("pass windowId to read one window".to_string()); }
+    let cursors: Vec<&str> = ["offset", "elementOffset", "frameOffset"].into_iter().filter(|key| has(key)).collect();
+    if !cursors.is_empty() { hints.push(format!("continue with {}", cursors.join("/"))); }
+    if hints.is_empty() { return "Ask for less, or read the page with browser_snapshot.".into(); }
+    let mut text = hints.join(", or ") + ".";
+    text[..1].make_ascii_uppercase();
+    text
 }
 
 pub struct BridgeMcp {
@@ -62,7 +78,7 @@ impl ServerHandler for BridgeMcp {
 
     async fn list_tools(&self, _r: Option<PaginatedRequestParams>, _c: RequestContext<RoleServer>) -> Result<ListToolsResult, McpError> {
         let tools = tools::all()
-            .into_iter()
+            .iter()
             .map(|t| {
                 let schema = t.schema.as_object().cloned().expect("tool schema is an object");
                 Tool::new(t.name, t.description, schema)
@@ -117,6 +133,26 @@ mod tests {
         assert_eq!(parsed["error"]["details"]["tooLarge"], true);
         let small = serde_json::json!({"ok":true});
         assert_eq!(bounded_text("browser_tabs", &small), (small.to_string(), true));
+    }
+
+    #[test]
+    fn the_too_large_notice_names_only_arguments_the_tool_has() {
+        let message = |name: &str| {
+            let outcome = serde_json::json!({"ok":true,"tool":name,"delivered":true,"executed":"no","data":{"text":"가".repeat(20_000)}});
+            let parsed: serde_json::Value = serde_json::from_str(&bounded_text(name, &outcome).0).unwrap();
+            assert_eq!(parsed["error"]["details"]["tooLarge"], true);
+            parsed["error"]["message"].as_str().unwrap().to_string()
+        };
+        let tabs = message("browser_tabs");
+        assert!(tabs.contains("windowId") && !tabs.contains("maxChars") && !tabs.contains("ffset"), "{tabs}");
+        let snapshot = message("browser_snapshot");
+        assert!(snapshot.contains("maxChars") && snapshot.contains("offset/elementOffset/frameOffset") && !snapshot.contains("windowId"), "{snapshot}");
+        let extract = message("browser_extract");
+        assert!(extract.contains("maxChars") && extract.contains("offset") && !extract.contains("elementOffset"), "{extract}");
+        let bookmarks = message("browser_bookmarks");
+        assert!(bookmarks.contains("limit") && !bookmarks.contains("maxChars"), "{bookmarks}");
+        let dialog = message("browser_dialog");
+        assert!(!dialog.contains("maxChars") && !dialog.contains("ffset") && !dialog.contains("windowId"), "{dialog}");
     }
 
     #[test]

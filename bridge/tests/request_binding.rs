@@ -293,3 +293,21 @@ async fn a_concurrent_write_joining_the_new_operation_is_held_like_a_first_write
     assert_eq!((write["ok"].clone(), write["executed"].clone(), write["error"]["code"].clone()), (json!(false), json!("no"), json!("STALE_ELEMENT")), "{write}");
     assert!(!f.ext.methods().iter().any(|m| m == "browser.navigate"), "nothing navigated an unseen page");
 }
+
+#[tokio::test]
+async fn invalid_arguments_are_rejected_before_an_implicit_attach() {
+    let f = setup(false).await;
+    let mut mcp = proxy(&f, Some("rid-now"), DIR).await;
+    let before = f.ext.methods().len();
+    for (name, args) in [("browser_snapshot", json!({"maxChars": 5})), ("browser_navigate", json!({"url":"javascript:alert(1)"})),
+        ("browser_click", json!({"ref":"s1f0e1","mode":"drag"})), ("browser_fill", json!({"ref":"s1f0e1"}))] {
+        let rejected = tool(&mut mcp, name, args).await;
+        assert!(matches!(rejected["error"]["code"].as_str(), Some("INVALID_PARAMS" | "UNSUPPORTED_PAGE")), "{name}: {rejected}");
+        assert_eq!((rejected["delivered"].clone(), rejected["operationId"].clone()), (json!(false), Value::Null), "{name}: {rejected}");
+    }
+    assert_eq!(f.ext.methods().len(), before, "a call that cannot run must not attach the tab: {:?}", f.ext.methods());
+    let unbound = tool(&mut proxy(&f, Some("rid-old"), DIR).await, "browser_fill", json!({"ref":"s1f0e1"})).await;
+    assert_eq!(unbound["error"]["code"], "OPERATION_REQUIRED", "an unbound caller is still told to attach first: {unbound}");
+    let read = tool(&mut mcp, "browser_snapshot", json!({})).await;
+    assert_eq!(read["ok"], true, "the request is still free for a valid first call: {read}");
+}
