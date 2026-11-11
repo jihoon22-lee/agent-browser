@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { OpenCodeApiError, OpenCodeV1Client } from "../agents/opencode-v1/client";
-import { initialWorkbench, workbenchReducer, bridgeRequest, operationBindings, type Data, type UiMessage } from "./workbench-state";
+import { initialWorkbench, workbenchReducer, bridgeRequest, operationBindings, sameMessage, type Data, type UiMessage } from "./workbench-state";
 import { bridgeUnavailable } from "./error-text";
 
 // An event stream that stays down this long is treated as a restarted or stopped server.
 const OFFLINE_RECOVERY_MS = 5_000;
+const FULL_POLL_EVERY = 5;
 const STREAM_LOST = "OpenCode 서버와 연결이 끊겼습니다. 서버 상태를 확인한 뒤 다시 시도하세요.";
 const SERVER_STOPPED = "설정에서 이 실행 환경의 서버를 중지했습니다. 다시 사용하려면 [다시 시도]를 누르세요.";
 
@@ -25,7 +26,7 @@ export function useWorkbench() {
   const syncing = useRef(false), buffered = useRef<Data[]>([]), refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), listTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const bindings = useRef(new Map<string, { client: OpenCodeV1Client; sessionID: string; profileId: string; directory: string }>());
   const recentSessions = useRef(new Map<string, string>()), metadataRevision = useRef(0);
-  const responseWatch = useRef({ epoch: 0, sessionID: "", until: 0 }), latestState = useRef(state);
+  const responseWatch = useRef({ epoch: 0, sessionID: "", until: 0 }), latestState = useRef(state), lightPolls = useRef(0);
   latestState.current = state;
   const [watchRevision, setWatchRevision] = useState(0);
   // Child lists keyed by parent ID. A missing key means "not checked yet", so the tree shows no toggle.
@@ -111,7 +112,9 @@ export function useWorkbench() {
     }
   }, []);
   const remember = (messages: UiMessage[], api: OpenCodeV1Client) => { for (const [operationID, sessionID] of Object.entries(operationBindings(messages))) bindings.current.set(operationID, { client: api, sessionID, profileId: currentProfile.current, directory: api.directory }); };
-  const resync = useCallback(async (refreshDetails = true) => {
+  // `light` is the poll of a running response: it reads the status and the last message, and fetches the
+  // whole conversation only when one of them changed or, as a safeguard, on every FULL_POLL_EVERY-th poll.
+  const resync = useCallback(async (refreshDetails = true, light = false) => {
     const api = client.current, revision = epoch.current, id = selected.current;
     if (!api) return;
     // A detailed refresh requested mid-sync (e.g. the run just finished) must not be dropped.
@@ -128,8 +131,19 @@ export function useWorkbench() {
       for (const [session, status] of Object.entries(latestState.current.statuses)) {
         if (!(session in statuses) && (status.type === "busy" || status.type === "retry")) authoritative[session] = { type: "idle" };
       }
+      const statusChanged = !!id && authoritative[id]?.type !== latestState.current.statuses[id]?.type;
       dispatch({ type: "pending", questions, permissions }); dispatch({ type: "statuses", statuses: authoritative });
       if (id) {
+        const path = `/session/${encodeURIComponent(id)}/message`;
+        let snapshot: UiMessage[] | undefined;
+        if (light && !statusChanged && ++lightPolls.current % FULL_POLL_EVERY !== 0) {
+          const latest = await api.get<UiMessage[]>(path, { limit: 1 });
+          if (revision !== epoch.current || id !== selected.current) return;
+          const held = latestState.current.messages[id] ?? [], last = latest[0];
+          // More than one message means the server ignored the limit: that answer is the whole conversation.
+          if (latest.length > 1) snapshot = latest;
+          else if (last ? sameMessage(held.find(message => message.info.id === last.info?.id), last) : !held.length) return;
+        }
         // Optional metadata must not hold the message snapshot or the SSE buffer open.
         // A diff can stay pending while OpenCode is working, even as text is streaming.
         const metadata = refreshDetails ? ++metadataRevision.current : metadataRevision.current;
@@ -141,7 +155,7 @@ export function useWorkbench() {
             if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) update(path === "children" ? value.filter(child => !deletedSessions.current.has(child.id)) : value);
           }).catch(value => { if (revision === epoch.current && id === selected.current && metadata === metadataRevision.current) fail(value); });
         }
-        const messages = await api.get<UiMessage[]>(`/session/${encodeURIComponent(id)}/message`);
+        const messages = snapshot ?? await api.get<UiMessage[]>(path);
         if (revision !== epoch.current || id !== selected.current) return;
         dispatch({ type: "messages", sessionID: id, messages }); remember(messages, api);
       }
@@ -173,7 +187,7 @@ export function useWorkbench() {
     const tick = async () => {
       if (!active || revision !== epoch.current || id !== selected.current) return;
       // Streaming already delivers this session's messages; poll only when the stream has gone quiet.
-      if (document.visibilityState !== "hidden" && Date.now() - (lastMessageEvent.current.get(id) ?? 0) > 1_500) await resync(false);
+      if (document.visibilityState !== "hidden" && Date.now() - (lastMessageEvent.current.get(id) ?? 0) > 1_500) await resync(false, true);
       if (active && needsRefresh()) timer = setTimeout(() => void tick(), 2_000);
     };
     timer = setTimeout(() => void tick(), 2_000);

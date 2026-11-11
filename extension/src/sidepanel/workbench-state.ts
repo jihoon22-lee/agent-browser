@@ -4,6 +4,8 @@ export type UiMessage = { info: Data; parts: Data[] };
 export type WorkbenchState = { messages: Record<string, UiMessage[]>; questions: Data[]; permissions: Data[]; statuses: Record<string, Data>; errors: Record<string, string>; seen: string[] };
 export const initialWorkbench: WorkbenchState = { messages: {}, questions: [], permissions: [], statuses: {}, errors: {}, seen: [] };
 const byId = <T extends Data>(items: T[]) => [...new Map(items.map(item => [item.id, item])).values()];
+/** Whether a message fetched from the server is exactly what the view already holds. */
+export const sameMessage = (held: UiMessage | undefined, fetched: UiMessage) => !!held && JSON.stringify(held) === JSON.stringify({ ...fetched, parts: byId(fetched.parts ?? []) });
 export function workbenchReducer(state: WorkbenchState, action: Data): WorkbenchState {
   if (action.type === "reset") return initialWorkbench;
   if (action.type === "messages") {
@@ -11,7 +13,7 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
     const previous = new Map((state.messages[action.sessionID] ?? []).map(message => [message.info.id, message]));
     const next = action.messages.map((m: UiMessage) => {
       const message = { ...m, parts: byId(m.parts) }, old = previous.get(m.info?.id);
-      return old && JSON.stringify(old) === JSON.stringify(message) ? old : message;
+      return old && sameMessage(old, message) ? old : message;
     });
     return { ...state, messages: { ...state.messages, [action.sessionID]: next } };
   }

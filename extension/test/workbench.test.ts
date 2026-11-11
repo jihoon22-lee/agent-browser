@@ -22,14 +22,14 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); test.calls = []; test.scopes = []; test.streamDirectories = []; test.baseUrls = []; test.autoOnline = true; listeners.clear();
   sessions = [{ id: "ses-one", title: "기존 대화", directory: "/fixture", time: { updated: 1 }, agent: "build" }];
   messages = [{ info, parts: [{ id: "prt-one", type: "text", text: "기존 질문" }] }]; questions = [];
-  test.get.mockReset().mockImplementation(async (path: string) => {
+  test.get.mockReset().mockImplementation(async (path: string, query?: any) => {
     if (path === "/provider") return { all: [{ id: "internal", name: "업무", models: { company: model } }], connected: ["internal"], default: { internal: "company" } };
     if (path === "/agent") return [{ name: "build", mode: "primary" }];
     if (path === "/session") return sessions;
     if (sessions.some(session => path === `/session/${session.id}`)) return sessions.find(session => path === `/session/${session.id}`);
     if (path === "/session/status") return { "ses-one": { type: "idle" } };
     if (path === "/question") return questions;
-    if (path.endsWith("/message")) return messages;
+    if (path.endsWith("/message")) return query?.limit ? messages.slice(-query.limit) : messages;
     if (path === "/mcp") return { browser: { status: "connected" } };
     return [];
   });
@@ -1056,6 +1056,50 @@ describe("review 2026-11-11", () => {
     await render(); await draftValue("/new"); await act(async () => button("보내기").click()); await settle(30);
     expect(host.textContent).toContain("세션 생성 실패");
     expect(composerValue().value).toBe("/new");
+  });
+
+  describe("B7 busy polling", () => {
+    // Called under fake timers: the busy event restarts the poll so that its timer is a fake one.
+    const busy = async () => { const original = test.get.getMockImplementation()!; test.get.mockImplementation(async (path: string, query: any) => path === "/session/status" ? { "ses-one": { type: "busy" } } : original(path, query)); await act(async () => test.stream({ type: "session.status", properties: { sessionID: "ses-one", status: { type: "busy" } } })); };
+    const lists = (full: boolean) => test.get.mock.calls.filter(([path, query]) => path === "/session/ses-one/message" && !query?.limit === full).length;
+    const answer = (text: string) => ({ info: { ...info, id: "msg-answer", role: "assistant", time: { created: 2 } }, parts: [{ id: "prt-answer", type: "text", text }] });
+
+    it("checks only the status and the last message while nothing changes", async () => {
+      messages.push(answer("도구 실행을 기다리는 중")); await render(); vi.useFakeTimers();
+      try {
+        await busy(); const before = lists(true);
+        await act(async () => vi.advanceTimersByTimeAsync(6_500));
+        expect(lists(false)).toBeGreaterThanOrEqual(2);
+        expect(lists(true)).toBe(before);
+        expect(test.get.mock.calls.filter(([path, query]) => path === "/session/ses-one/message" && query?.limit).every(([, query]) => query.limit === 1)).toBe(true);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("fetches the conversation when the last message grew without any event", async () => {
+      messages.push(answer("처음 조각")); await render(); vi.useFakeTimers();
+      try {
+        await busy(); const before = lists(true);
+        messages[1] = answer("처음 조각과 이벤트 없이 늘어난 조각");
+        await act(async () => vi.advanceTimersByTimeAsync(2_500));
+        expect(host.textContent).toContain("이벤트 없이 늘어난 조각");
+        expect(lists(true)).toBe(before + 1);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("still refetches the conversation periodically if the last-message check tells nothing", async () => {
+      await render(); vi.useFakeTimers();
+      try {
+        await busy();
+        // A server that answers the bounded request with the oldest message never reports the new one.
+        const original = test.get.getMockImplementation()!;
+        test.get.mockImplementation(async (path: string, query: any) => path.endsWith("/message") && query?.limit ? messages.slice(0, 1) : original(path, query));
+        messages.push(answer("주기적 전체 조회로 복원한 응답"));
+        await act(async () => vi.advanceTimersByTimeAsync(4_500));
+        expect(host.textContent).not.toContain("주기적 전체 조회로 복원한 응답");
+        await act(async () => vi.advanceTimersByTimeAsync(8_000));
+        expect(host.textContent).toContain("주기적 전체 조회로 복원한 응답");
+      } finally { vi.useRealTimers(); }
+    });
   });
 
   describe("B3 runtime recovery", () => {
