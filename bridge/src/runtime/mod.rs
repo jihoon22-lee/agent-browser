@@ -285,7 +285,7 @@ impl Manager {
         // Revoke before inspecting: a delayed WSL launch can publish ownership
         // after a timeout or after its Windows launcher has already exited.
         let revoked = self.revoke_wsl_permit(record);
-        let mut stopped = false;
+        let mut stopped = false; let mut running = 0;
         // A pending owner is a launch in progress, including during persistence failure.
         for _ in 0..20 {
             match wsl_state(profile, record).await {
@@ -294,7 +294,7 @@ impl Manager {
                     process::terminate(&record.launcher);
                     return Some(stopped);
                 }
-                WslState::Running => { stopped |= wsl_control(profile, record, "stop").await; }
+                WslState::Running => { stopped |= wsl_control(profile, record, wsl_stop_mode(running)).await; running += 1; }
                 WslState::Starting => {}
                 WslState::Unknown => break,
             }
@@ -674,6 +674,11 @@ fn wsl_relay_image(image: &str, system_root: &str, program_files: &str) -> bool 
     (under(format!("{root}\\system32\\")) || under(format!("{programs}\\wsl\\")) || under(format!("{programs}\\windowsapps\\microsoftcorporationii.windowssubsystemforlinux_")))
         && (image.ends_with("\\wslrelay.exe") || image.ends_with("\\wslhost.exe"))
 }
+/// Stop asks the group to end with SIGTERM while it is seen running this many times (each
+/// time costs a probe plus 100 ms), then kills it: a server that ignores or hangs in SIGTERM
+/// would otherwise keep its record, and Stop and profile deletion would fail for good.
+const WSL_TERM_ATTEMPTS: u32 = 10;
+fn wsl_stop_mode(running: u32) -> &'static str { if running < WSL_TERM_ATTEMPTS { "stop" } else { "kill" } }
 async fn wsl_control(profile: &Profile, record: &RuntimeRecord, mode: &str) -> bool {
     wsl_control_status(profile, record, mode).await == Some(0)
 }
@@ -756,7 +761,8 @@ if [ "$3" = inspect ]; then
   done
   exit "$missing"
 fi
-if [ "$3" = stop ]; then /bin/kill -TERM -- -$pid; fi"#;
+if [ "$3" = stop ]; then /bin/kill -TERM -- -$pid; fi
+if [ "$3" = kill ]; then /bin/kill -KILL -- -$pid; fi"#;
 /// A probe may be the call that boots the WSL VM, which takes well over five seconds when cold.
 const WSL_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &str) -> Option<i32> {
@@ -1179,6 +1185,31 @@ mod wsl_start_tests {
         assert_eq!(control(&owner,"fixture","state"),Some(0));
         assert_eq!(control(&owner,"fixture","stop"),Some(0)); child.wait().unwrap();
         assert_eq!(control(&owner,"fixture","state"),Some(11));
+    }
+    #[test]
+    fn a_group_that_ignores_sigterm_is_only_ended_by_the_kill_stage() {
+        let home = tempfile::tempdir().unwrap(); let owner = home.path().join("owner");
+        std::fs::write(home.path().join("owner.start"),"fixture").unwrap();
+        let mut child = std::process::Command::new("/usr/bin/setsid").args(["--wait", "/bin/sh", "-c", WSL_LAUNCH, "fixture", home.path().to_str().unwrap(), owner.to_str().unwrap(), "fixture", "/bin/sh", "-c", "trap '' TERM; n=0; while [ $n -lt 30 ]; do /bin/sleep 1; n=$((n+1)); done"])
+            .env("AGENT_BROWSER_RUNTIME_ID", "fixture").spawn().unwrap();
+        for _ in 0..200 { if control(&owner,"fixture","state") == Some(0) { break; } std::thread::sleep(Duration::from_millis(10)); }
+        assert_eq!(control(&owner,"fixture","state"),Some(0));
+        assert_eq!(control(&owner,"fixture","stop"),Some(0));
+        std::thread::sleep(Duration::from_millis(1500));
+        assert_eq!(control(&owner,"fixture","state"),Some(0),"premise: SIGTERM alone leaves this group running");
+        assert_ne!(control(&owner,"wrong","kill"),Some(0),"a foreign nonce is never killed");
+        assert_eq!(control(&owner,"fixture","state"),Some(0));
+        assert_eq!(control(&owner,"fixture","kill"),Some(0));
+        // The fixture ends itself after 30 seconds; a missing kill stage must fail, not hang.
+        let mut ended = false;
+        for _ in 0..500 { if child.try_wait().unwrap().is_some() { ended = true; break; } std::thread::sleep(Duration::from_millis(10)); }
+        assert!(ended,"SIGKILL must end the group");
+        assert_eq!(control(&owner,"fixture","state"),Some(11));
+    }
+    #[test]
+    fn stop_escalates_to_sigkill_only_after_the_grace_period() {
+        assert_eq!(wsl_stop_mode(0),"stop"); assert_eq!(wsl_stop_mode(WSL_TERM_ATTEMPTS-1),"stop");
+        assert_eq!(wsl_stop_mode(WSL_TERM_ATTEMPTS),"kill"); assert_eq!(wsl_stop_mode(19),"kill");
     }
     #[tokio::test]
     async fn version_probe_refuses_unbounded_output_without_waiting_for_the_process() {
