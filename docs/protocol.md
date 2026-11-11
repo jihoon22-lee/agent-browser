@@ -280,3 +280,12 @@ Trusted input persists a lease before a potentially held key/button down. Acknow
 `verified.incomplete`, `keysReleased` and `inputRecoveryRequired` survive content action replies. Dialog replies also expose recovery or pending cleanup state. Interrupted held input quarantines the original top document; all automated writes (including DOM fallback, navigation and close) are blocked before dispatch. Owned `browser_dialog`, read-only tools and Stop remain available. Storage session leases survive worker recreation; a pending orphan fails closed. Settings, operation IDs, same-document history and restored BFCache documents do not clear quarantine. A fresh document permits input; tab closure prunes records. The panel directs the person to inspect/save and reload manually. This is not proof that arbitrary page JavaScript reset its drag/key state.
 
 API reference: [Chrome Input protocol](https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/Input.pdl). Native `cancelDragging`/detach is not used as evidence that custom page state recovered; the synthetic Chrome regression measures this boundary.
+
+## 2026-11-11 리뷰 보완 (확장 쪽 결과 계약)
+
+- **잘린 문자열:** 이름·값·페이지 텍스트·탭 제목·대화상자 메시지의 길이 제한은 서로게이트 쌍을 가르지 않는다. 페이지 텍스트의 `nextOffset`은 실제로 자른 위치이며 페이지를 이어 붙이면 원문과 같다.
+- **새 탭 로드 지연:** `browser.tabs.create`는 30초 안에 로드가 끝나지 않아도 탭 설명을 돌려주고 `loadIncomplete:true`와 `note`를 붙인다. 탭은 작업에 편입된다.
+- **오류 페이지:** 이동이 Chrome 오류 페이지로 끝나면 `UNSUPPORTED_PAGE`(retry `never`, `details {executed:true, errorPage:true, url}`)다. 오류 페이지의 snapshot도 같은 오류를 바로 돌려준다.
+- **닫기 전 검사 예외:** 탐색이 실패했고 스크립트 주입도 거부되는 하위 프레임(오류 페이지)은 사용자 편집이 있을 수 없으므로 건너뛴다. 그 밖의 검사 불가 프레임은 계속 닫기를 막는다.
+- **분리된 대화상자:** 대화상자가 열린 채 디버거가 분리되면 대화상자 상태에 `detached`가 붙는다. 읽기 또는 `browser_dialog`가 페이지 응답을 확인하면 상태를 지우고, 그 전까지 쓰기는 `BROWSER_BUSY`다.
+- **snapshot 페이징:** `offset`·`elementOffset`은 호출에 포함된 모든 프레임에 같이 적용된다(프레임별 커서는 없다).

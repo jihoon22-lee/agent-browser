@@ -489,3 +489,9 @@ Linux: `pnpm --filter agent-browser-e2e exec playwright test reliability.spec.ts
 `node tests/integration/opencode-v1-image.mjs`는 실제 설치 OpenCode를 격리 설정으로 실행하고 로컬 합성 provider를 사용해 MCP PNG가 다음 provider 입력과 실행 중 ToolPart에 연결되는지 확인한다. 실제 LLM 판단 평가가 아니다. 모델 ID를 제품에 고정하거나 전역 설정을 바꾸지 않는다.
 
 최종 성능 비교에는 동일 최종 측정 하네스로 이전/현재 exe·확장 경로를 선택한다. `AB_METRICS_SAMPLES=50`, `AB_METRICS_TRUSTED=1`, `AB_METRICS_ADVANCED=1`로 조건을 분리하고, 이전 소스는 `AB_SOURCE_REVISION`으로 정확히 기록한다. 기본 DOM과 고급 설정의 결과를 혼합하지 않는다.
+
+## 2026-11-11 리뷰 수정 회귀
+
+`tests/e2e/review-fixes.spec.ts`는 레이아웃이 필요한 수정(스크롤 뒤 드래그 시작점, 오류 페이지 하위 프레임이 있는 탭 닫기, 접힌 `<details>`, 오류 페이지 이동, 뷰포트 밖 요소)을 Linux Chromium에서 검사한다: `pnpm --filter agent-browser-e2e exec playwright test review-fixes.spec.ts`.
+
+`RUNTIME_KIND=cmd`, `RUNTIME_SCENARIO=cmd-tree-stop`(`bridge/tests/windows-runtime.mjs`)은 리스너가 기록되기 전에 중지해도 `.cmd` 런처의 자손 서버가 남지 않는지 Windows에서 검사한다.
