@@ -167,7 +167,15 @@ try {
             if (Test-Path -LiteralPath $candidate.Target -PathType Leaf) {
                 # A file the user changed, or one that is in use, stays on disk and in the record.
                 if ((Get-FileSha256 $candidate.Target) -ne $candidate.Sha256) { continue }
-                try { Remove-TransactionFile $transaction $candidate.Target } catch { continue }
+                try { Remove-TransactionFile $transaction $candidate.Target }
+                catch {
+                    # Nothing was removed: forget the journal entry so rollback does not rewrite a file in use.
+                    $lastEntry = $transaction.Journal.Count - 1
+                    if ($lastEntry -ge 0 -and $transaction.Journal[$lastEntry].Path -eq $candidate.Target -and (Test-Path -LiteralPath $candidate.Target -PathType Leaf)) {
+                        $transaction.Journal.RemoveAt($lastEntry); $null = $transaction.Seen.Remove($candidate.Target)
+                    }
+                    continue
+                }
                 $prunedFiles.Add($candidate.Target)
             } elseif (Test-Path -LiteralPath $candidate.Target) { continue }
             $owned.Remove($candidate.Path)
