@@ -92,6 +92,8 @@ impl Manager {
         let _operation = self.operation_lock(&profile.id)?;
         self.store.update(|config| {
             if create_only && config.profiles.contains_key(&profile.id) { return Err(invalid("This profile id already exists; no profile was changed")); }
+            // After a reboot or crash the record of a native runtime outlives its processes.
+            if config.runtimes.get(&profile.id).is_some_and(ended) { config.runtimes.remove(&profile.id); }
             if config.runtimes.contains_key(&profile.id) { return Err(invalid("Stop the managed runtime before editing its profile")); }
             if let Some(old) = config.profiles.get(&profile.id) { profile.preserve_secrets(old); }
             if make_default || config.default_profile_id.is_none() { config.default_profile_id = Some(profile.id.clone()); }
@@ -406,8 +408,18 @@ impl Manager {
                 let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Owned runtime failed its authenticated v1 HTTP or browser MCP readiness check"); return Ok(value);
             }
             if inspection.owned { let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Owned process is running, but its listener ownership cannot be verified"); return Ok(value); }
+            self.forget_ended(&profile,&record,&inspection.state).await;
         }
         Ok(json!({"profileId":id,"state":"stopped","directory":profile.directory,"owned":false}))
+    }
+    /// Drops a record once nothing it owns is left, so a reboot does not keep blocking profile
+    /// edits. WSL only on a confirmed Stopped/NotStarted state (its keeper is stopped first);
+    /// an unknown state never reaches this and keeps the record.
+    async fn forget_ended(&self, profile: &Profile, record: &RuntimeRecord, state: &WslState) {
+        let confirmed = if profile.kind == Kind::Wsl { matches!(state,WslState::NotStarted | WslState::Stopped) && self.terminate_wsl(profile,record).await.is_some() } else { ended(record) };
+        if !confirmed { return; }
+        let removed = self.store.update(|config| { if config.runtimes.get(&profile.id).is_some_and(|stored| stored.instance == record.instance) { config.runtimes.remove(&profile.id); } Ok(()) });
+        if let Err(error) = removed { tracing::warn!(profile_id = %profile.id, error = %error.message, "cannot remove the record of an ended runtime"); }
     }
     /// Extension-only connection discovery. Never launches a stopped runtime;
     /// ordinary status and doctor continue to omit credentials.
@@ -840,6 +852,47 @@ mod tests {
         assert_eq!(health(&base, None, None, false, &cache).await.unwrap(), "1.18.29");
         assert_eq!(health(&base, None, None, false, &cache).await.unwrap(), "1.18.29");
         assert_eq!(docs.load(Ordering::SeqCst), 1);
+    }
+
+    fn native_record(launcher: Identity) -> RuntimeRecord {
+        RuntimeRecord{profile_id:"p".into(),instance:"rid".into(),base_url:"http://127.0.0.1:65531".into(),username:"opencode".into(),password:"private".into(),launcher,server:None,wsl_owner_file:None,version:None,bridge_port:Some(4317),bridge_executable:None,wsl_keeper:None}
+    }
+    // No process can have this id: Linux caps PIDs far below it and Windows PIDs are multiples of four.
+    fn gone() -> Identity { Identity{pid:4_000_000_001,created:1,image:"ended-fixture".into()} }
+
+    #[tokio::test]
+    async fn status_forgets_a_native_runtime_whose_processes_ended() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"windows","directory":home.path(),"executable":std::env::current_exe().unwrap()})).unwrap();
+        manager.save(profile.clone(),false).unwrap();
+        manager.persist(&native_record(gone())).unwrap();
+        assert_eq!(manager.status("p").await.unwrap()["state"],"stopped");
+        assert!(manager.store.read().unwrap().runtimes.is_empty(),"a record of ended processes must not keep blocking profile edits");
+        manager.save(profile,false).unwrap();
+    }
+
+    #[test]
+    fn profile_edit_drops_an_ended_native_record_but_not_a_live_one() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"windows","directory":home.path(),"executable":std::env::current_exe().unwrap()})).unwrap();
+        manager.save(profile.clone(),false).unwrap();
+        manager.persist(&native_record(process::identity(std::process::id()).unwrap())).unwrap();
+        assert!(manager.save(profile.clone(),false).is_err(),"a live runtime still has to be stopped first");
+        manager.persist(&native_record(gone())).unwrap();
+        manager.save(profile,false).unwrap();
+        assert!(manager.store.read().unwrap().runtimes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unverifiable_wsl_record_is_retained_by_status_and_profile_edit() {
+        let home = tempfile::tempdir().unwrap(); let manager = Manager::new(home.path().into(),4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p","name":"P","kind":"wsl","distribution":"agent-browser-absent-fixture","directory":"/tmp","executable":"/bin/true"})).unwrap();
+        manager.save(profile.clone(),false).unwrap();
+        let mut record = native_record(gone()); record.wsl_owner_file = Some("/mnt/c/agent-browser-absent-fixture/rid.owner".into());
+        manager.persist(&record).unwrap();
+        assert_eq!(manager.status("p").await.unwrap()["state"],"error");
+        assert!(manager.save(profile,false).is_err());
+        assert_eq!(manager.store.read().unwrap().runtimes["p"].instance,"rid","unknown WSL state keeps the ownership record");
     }
 
     #[test]
