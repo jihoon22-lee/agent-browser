@@ -86,17 +86,26 @@ function focusFromPointer(el: Element) {
 }
 const activeIn = (el: Element) => (el.getRootNode() as Document | ShadowRoot).activeElement;
 
-function observeChanges(ms: number, signal: AbortSignal): Promise<{ urlChanged: boolean; domChanged: boolean }> {
+type Changes = Promise<{ urlChanged: boolean; domChanged: boolean }> & { delivered(): void };
+/** Watches the page from now until `ms` after the input was delivered. DOM input is delivered at
+ * once. Trusted input makes a round trip through the debugger first: with `inTransit` the window
+ * is counted from `delivered()`, so a slow round trip cannot use it up before the page reacts. */
+function observeChanges(ms: number, signal: AbortSignal, inTransit = false): Changes {
   const startUrl = location.href;
-  let mutated = false;
-  return new Promise((resolve, reject) => {
+  let mutated = false, delivered = () => {};
+  const changes = new Promise<{ urlChanged: boolean; domChanged: boolean }>((resolve, reject) => {
     const mo = observePage(() => { mutated = true; });
-    const done = () => { mo.disconnect(); clearTimeout(timer); signal.removeEventListener("abort", abort); };
+    let timer: ReturnType<typeof setTimeout> | undefined, finished = false;
+    const done = () => { finished = true; mo.disconnect(); clearTimeout(timer); signal.removeEventListener("abort", abort); };
     const abort = () => { done(); reject(cancellationError(true)); };
-    const timer = setTimeout(() => { mutated = mo.refresh() || mutated; done(); resolve({ urlChanged: location.href !== startUrl, domChanged: mutated }); }, ms);
+    delivered = () => {
+      if (finished || timer !== undefined) return;
+      timer = setTimeout(() => { mutated = mo.refresh() || mutated; done(); resolve({ urlChanged: location.href !== startUrl, domChanged: mutated }); }, ms);
+    };
     signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
+    if (signal.aborted) abort(); else if (!inTransit) delivered();
   });
+  return Object.assign(changes, { delivered: () => delivered() });
 }
 
 function verificationValue(value: string) {
@@ -164,12 +173,13 @@ async function dragOnto(el: Element, target: Element, p: P, signal: AbortSignal)
   const source = el.closest('[draggable=true], a[href]:not([draggable=false]), img:not([draggable=false])');
   const html5 = source !== null;
   const unmark = highlight(el);
-  const changes = observeChanges(p.waitFor ? 0 : 500, signal);
+  const viaDebugger = p.trusted === true && (trustedFrame() || p.trustedFrames === true) && !html5;
+  const changes = observeChanges(p.waitFor ? 0 : 500, signal, viaDebugger);
   void changes.then(unmark, unmark);
   void changes.catch(() => {});
   let trustedReason: string | undefined;
-  if (p.trusted === true && (trustedFrame() || p.trustedFrames === true) && !html5) {
-    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", {ref:p.ref,toRef:p.toRef, x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY });
+  if (viaDebugger) {
+    const answer = await requestTrusted(String(p.requestId ?? ""), "drag", {ref:p.ref,toRef:p.toRef, x: from.clientX, y: from.clientY, toX: to.clientX, toY: to.clientY }).finally(changes.delivered);
     if (answer.ok) return { executed: true, verified: { ...await changes, mode: "drag", trusted: true, ...trustedDetails(answer), ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
     assertTrustedFallback(answer, p, signal);
     trustedReason = answer.reason;
@@ -249,11 +259,12 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const modeNote = mode === "click" ? {} : { mode };
       const point = assertInteractable(el) ?? clickPoint(el);
       const unmark = highlight(el);
-      const changes = observeChanges(p.waitFor ? 0 : 500, signal);
+      const viaDebugger = p.trusted === true && (trustedFrame() || p.trustedFrames === true);
+      const changes = observeChanges(p.waitFor ? 0 : 500, signal, viaDebugger);
       void changes.then(unmark, unmark);
       let trustedReason: string | undefined;
-      if (p.trusted === true && (trustedFrame() || p.trustedFrames === true)) {
-        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { ref:p.ref, x: point.clientX, y: point.clientY, ...modeNote });
+      if (viaDebugger) {
+        const answer = await requestTrusted(String(p.requestId ?? ""), "click", { ref:p.ref, x: point.clientX, y: point.clientY, ...modeNote }).finally(changes.delivered);
         if (answer.ok) return { executed: true, verified: { ...await changes, ...modeNote, trusted: true, ...trustedDetails(answer), ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         assertTrustedFallback(answer, p, signal);
         if (!answer.ok) trustedReason = answer.reason;
@@ -404,10 +415,10 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       if (p.trusted === true && (trustedFrame() || p.trustedFrames === true)) {
         // The same checks as a DOM key press run first: a real key must not reach another element.
         preparePress(p, assertInteractable);
-        const changes = observeChanges(p.waitFor ? 0 : 500, signal);
+        const changes = observeChanges(p.waitFor ? 0 : 500, signal, true);
         void changes.catch(() => {});
         const { key, modifiers } = keyOf(p);
-        const answer = await requestTrusted(String(p.requestId ?? ""), "key", {ref:p.ref, key, ...(modifiers.length ? { modifiers } : {}) });
+        const answer = await requestTrusted(String(p.requestId ?? ""), "key", {ref:p.ref, key, ...(modifiers.length ? { modifiers } : {}) }).finally(changes.delivered);
         // The browser itself performs the key's default action; nothing is emulated here.
         if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...trustedDetails(answer), ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
         await changes.catch(() => {});
