@@ -79,7 +79,8 @@ impl OperationGate {
         self.attach_request(tab_id, client_id, None)
     }
 
-    pub fn begin_request(&self, id: &str, client: &str, tab: Option<i64>) -> Result<(), RpcError> {
+    #[cfg(test)]
+    pub(crate) fn begin_request(&self, id: &str, client: &str, tab: Option<i64>) -> Result<(), RpcError> {
         self.begin_scoped_request(id,client,tab,None)
     }
 
@@ -201,7 +202,8 @@ impl OperationGate {
         Self::active(&g, id).cloned()
     }
 
-    pub fn check(&self, id: &str) -> Result<Operation, RpcError> {
+    #[cfg(test)]
+    pub(crate) fn check(&self, id: &str) -> Result<Operation, RpcError> {
         self.with_checked(id, true, |op| Ok(op.clone()))
     }
 
@@ -245,7 +247,8 @@ impl OperationGate {
         }
     }
 
-    pub fn add_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
+    #[cfg(test)]
+    pub(crate) fn add_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
         if g.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
         g.owned_tabs.insert(tab);
@@ -259,6 +262,9 @@ impl OperationGate {
         let op = g.current.as_mut().unwrap();
             if !op.tabs.contains(&tab) { op.tabs.push(tab); op.opened_tabs.push(tab); }
         Self::select_tab(&mut g,tab);
+        // A tab this operation just created holds nothing the model has yet to see, and a blank
+        // one cannot be read before its first navigation.
+        let op = g.current.as_mut().unwrap(); op.needs_observation=false; op.handed_back=false;
         Ok(())
     }
 
@@ -283,11 +289,12 @@ impl OperationGate {
         g.recent_tabs.retain(|visited| *visited != tab);
         g.recent_tabs.push(tab);
         let op=g.current.as_mut().unwrap();
-        op.current_tab=tab;op.current_tab_closed=false;
-        op.target_epoch+=1;op.needs_observation=false;op.handed_back=false;
+        // Selecting a tab is not looking at it: only observe_target lifts needs_observation.
+        op.current_tab=tab;op.current_tab_closed=false;op.target_epoch+=1;
     }
 
-    pub fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
+    #[cfg(test)]
+    pub(crate) fn switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         let mut g=self.inner.lock().unwrap();let op=Self::active(&g,id)?;
         if !op.tabs.contains(&tab) {return Err(RpcError::new(ErrorCode::TabNotFound,Retry::Never,"Tab has not been verified for this operation"));}
         Self::select_tab(&mut g,tab);Ok(())
@@ -321,7 +328,8 @@ impl OperationGate {
         if let Some(op)=g.current.as_mut().filter(|op|op.id==origin.id && op.target_epoch==origin.target_epoch && op.current_tab==origin.current_tab && !op.current_tab_closed) {op.needs_observation=false;op.handed_back=false;}
     }
 
-    pub fn remove_tab(&self, tab: i64) {
+    #[cfg(test)]
+    pub(crate) fn remove_tab(&self, tab: i64) {
         let mut g=self.inner.lock().unwrap();
         if g.current.is_some() {Self::remove_current_tab(&mut g,tab);}
     }
@@ -329,6 +337,13 @@ impl OperationGate {
     pub fn remove_tab_for_operation(&self, id: &str, tab: i64) {
         let mut g=self.inner.lock().unwrap();
         if g.current.as_ref().is_some_and(|op|op.id==id) {Self::remove_current_tab(&mut g,tab);}
+    }
+
+    /// The browser no longer has a tab this operation asked for. Only a tab the operation held is
+    /// recorded as closed: an id it never held may be a guess that Chrome assigns later.
+    pub fn forget_missing_tab(&self, id: &str, tab: i64) {
+        let mut g=self.inner.lock().unwrap();
+        if g.current.as_ref().is_some_and(|op|op.id==id && op.tabs.contains(&tab)) {Self::remove_current_tab(&mut g,tab);}
     }
 
     /// A close event from another browser must not change this request's target.
@@ -596,6 +611,37 @@ mod tests {
         gate.remove_tab(9);assert_eq!(gate.check(&op.id).unwrap_err().code,ErrorCode::TabClosed);
         gate.visit_verified_tab(&op.id,10).unwrap();assert_eq!(gate.check(&op.id).unwrap().current_tab,10);
         assert_eq!(gate.visit_verified_tab(&op.id,9).unwrap_err().code,ErrorCode::TabClosed);
+    }
+
+    #[test]
+    fn switching_tabs_does_not_stand_in_for_looking_at_the_page() {
+        let gate=OperationGate::default();let op=gate.attach(1,"A").unwrap();
+        gate.add_and_switch_tab(&op.id,2).unwrap();gate.remove_tab(2);
+        assert!(gate.check(&op.id).unwrap().needs_observation);
+        gate.switch_tab(&op.id,1).unwrap();
+        assert!(gate.check(&op.id).unwrap().needs_observation,"re-selecting the restored tab is not an observation");
+        gate.visit_verified_tab(&op.id,9).unwrap();
+        let moved=gate.check(&op.id).unwrap();
+        assert!(moved.needs_observation && moved.current_tab==9,"another existing tab has not been seen either");
+        gate.observe_target(&moved);assert!(!gate.check(&op.id).unwrap().needs_observation);
+        gate.pause(&op.id,"A").unwrap();gate.resume(&op.id,"A").unwrap();
+        gate.switch_tab(&op.id,1).unwrap();
+        let back=gate.check(&op.id).unwrap();
+        assert!(back.needs_observation && back.handed_back,"a switch after a hand-back keeps the hand-back reason");
+        gate.add_and_switch_tab(&op.id,3).unwrap();
+        let fresh=gate.check(&op.id).unwrap();
+        assert!(!fresh.needs_observation && !fresh.handed_back,"a tab this operation just created holds nothing unseen");
+    }
+
+    #[test]
+    fn a_missing_tab_the_operation_never_held_is_not_remembered_as_closed() {
+        let gate=OperationGate::default();let op=gate.attach(1,"A").unwrap();
+        gate.forget_missing_tab(&op.id,99);
+        assert!(gate.visit_verified_tab(&op.id,99).is_ok(),"a mistyped id that Chrome later assigns must stay selectable");
+        gate.add_tab(&op.id,2).unwrap();gate.forget_missing_tab(&op.id,2);
+        assert_eq!(gate.check(&op.id).unwrap().tabs,vec![1,99]);
+        assert_eq!(gate.visit_verified_tab(&op.id,2).unwrap_err().code,ErrorCode::TabClosed,"a held tab that is gone stays closed");
+        gate.forget_missing_tab("op-other",99);assert_eq!(gate.check(&op.id).unwrap().current_tab,99);
     }
 
     #[test]

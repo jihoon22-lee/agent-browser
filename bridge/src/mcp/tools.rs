@@ -11,7 +11,14 @@ fn wait_for() -> Value { json!({"type":"object","properties":{
     "urlIncludes":{"type":"string","minLength":1,"maxLength":2000},"match":{"type":"string","enum":["all","any"]},
     "timeoutMs":{"type":"integer","minimum":100,"maximum":30000}},"additionalProperties":false}) }
 
-pub fn all() -> Vec<ToolDef> {
+/// The tool list is fixed for the life of the process: build the schemas once, not per call.
+static TOOLS: std::sync::LazyLock<Vec<ToolDef>> = std::sync::LazyLock::new(build);
+
+pub fn all() -> &'static [ToolDef] { &TOOLS }
+
+pub fn find(name: &str) -> Option<&'static ToolDef> { TOOLS.iter().find(|tool| tool.name == name) }
+
+fn build() -> Vec<ToolDef> {
     vec![
         ToolDef { name: "browser_tabs", description:
             "list/windows read tabs. In a panel request attach/new and page tools may omit requestId and operationId; otherwise attach (no tabId = request's tab) or new (url) with the Browser context requestId, then reuse operationId. Results include a snapshot and openTabs. about:blank tabs cannot be closed.",
@@ -93,7 +100,7 @@ pub fn class_of(name: &str, args: &Value) -> CommandClass {
 mod tests {
     #[test]
     fn tools_list_matches_contract_fixture() {
-        let ours: Vec<serde_json::Value> = super::all().into_iter()
+        let ours: Vec<serde_json::Value> = super::all().iter()
             .map(|t| serde_json::json!({"name": t.name, "description": t.description, "inputSchema": t.schema}))
             .collect();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../protocol/fixtures/tools-list.json");
@@ -125,7 +132,7 @@ mod tests {
 
     #[test]
     fn snapshot_can_be_narrowed_by_a_query() {
-        let snapshot = super::all().into_iter().find(|t| t.name == "browser_snapshot").unwrap();
+        let snapshot = super::all().iter().find(|t| t.name == "browser_snapshot").unwrap();
         assert_eq!(snapshot.schema["properties"]["query"]["type"], "string");
         assert!(snapshot.description.contains("query"));
     }
@@ -136,7 +143,7 @@ mod tests {
             let required = tool.schema["required"].as_array().cloned().unwrap_or_default();
             assert!(!required.iter().any(|k| k == "operationId"), "{} still requires operationId", tool.name);
         }
-        let tabs = super::all().into_iter().find(|t| t.name == "browser_tabs").unwrap();
+        let tabs = super::all().iter().find(|t| t.name == "browser_tabs").unwrap();
         assert!(tabs.description.contains("panel"), "the description must say ids may be omitted in a panel request");
     }
 

@@ -16,6 +16,8 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+const ACCEPT_RETRY: std::time::Duration = std::time::Duration::from_millis(200);
+
 pub struct ServeOptions { pub home: PathBuf, pub port: u16 }
 #[derive(Debug)]
 pub struct ServeHandle {
@@ -78,7 +80,11 @@ async fn start_with(opts: ServeOptions, pid_file: Option<&Path>) -> anyhow::Resu
             tokio::select! {
                 _ = &mut rx => break,
                 accepted = listener.accept() => {
-                    let Ok((stream, _)) = accepted else { continue };
+                    let stream = match accepted {
+                        Ok((stream, _)) => stream,
+                        // Out of handles and similar errors repeat at once: say so and back off instead of spinning.
+                        Err(error) => { tracing::warn!(%error, "accept failed"); tokio::time::sleep(ACCEPT_RETRY).await; continue; }
+                    };
                     let state = state.clone();
                     tokio::spawn(async move { conn::handle(stream, state).await });
                 }

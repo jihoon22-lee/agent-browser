@@ -15,6 +15,19 @@ async fn extension_with_valid_token_and_origin_is_accepted_and_paired() {
 }
 
 #[tokio::test]
+async fn a_connection_that_never_upgrades_is_dropped_after_the_hello_timeout() {
+    use tokio::io::AsyncReadExt;
+    let (_h, serve, cfg) = start_test_serve().await;
+    // A local program that connects and says nothing must not hold a task and socket forever.
+    let mut silent = tokio::net::TcpStream::connect(("127.0.0.1", serve.port)).await.unwrap();
+    let mut buffer = [0u8; 16];
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(8), silent.read(&mut buffer)).await;
+    assert!(matches!(closed, Ok(Ok(0)) | Ok(Err(_))), "the idle socket was still open after 8s: {closed:?}");
+    let mut ws = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    assert!(matches!(hello(&mut ws, "extension", &cfg.token, "cli-1").await, Envelope::Res { ok: true, .. }), "ordinary clients still connect");
+}
+
+#[tokio::test]
 async fn wrong_token_is_rejected_and_connection_closed() {
     let (_h, serve, _cfg) = start_test_serve().await;
     let mut ws = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();

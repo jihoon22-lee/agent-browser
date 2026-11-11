@@ -402,15 +402,18 @@ async fn profile_switch_during_attach_returns_busy_without_blocking_browser_repl
 #[tokio::test]
 async fn r01_cancel_crossing_attach_response_releases_only_that_operation() {
     let (_h,serve,cfg) = start_test_serve().await;
-    let _ext = fake_extension(serve.port,cfg.token.clone(),default_reply).await;
+    let ext = fake_extension(serve.port,cfg.token.clone(),default_reply).await;
+    let cancels = || ext.lock().unwrap().iter().filter(|m|m.as_str()=="browser.cancel").count();
     let mut mcp = mcp_client(serve.port,&cfg.token,"cancel-crossing").await;
     let request = Envelope::req("tool.call",json!({"name":"browser_tabs","arguments":{"action":"attach"}}));
     send_raw(&mut mcp,&request.to_text()).await;
     let Envelope::Res {result:Some(result),..} = recv(&mut mcp).await else {panic!("expected attach");};
     assert_eq!(result["ok"],true);
+    assert_eq!(cancels(),0);
     call(&mut mcp,"tool.cancel",json!({"requestId":request.id()})).await;
     let next = tool(&mut mcp,"browser_tabs",json!({"action":"attach"})).await;
     assert_eq!(next["ok"],true);
+    assert_eq!(cancels(),1,"the browser that ran the cancelled operation is told to stop its work");
     call(&mut mcp,"tool.cancel",json!({"requestId":request.id()})).await;
     let snapshot = tool(&mut mcp,"browser_snapshot",json!({"operationId":next["operationId"]})).await;
     assert_eq!(snapshot["ok"],true,"late cancellation must not stop a replacement operation");
@@ -530,6 +533,80 @@ async fn attach_lists_open_tabs_and_a_failed_switch_offers_them_again() {
     let missed = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":999})).await;
     assert_eq!(missed["error"]["code"], "TAB_NOT_FOUND");
     assert_eq!(missed["data"]["openTabs"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_long_tab_list_is_clipped_and_cut_to_fit_the_output_limit() {
+    fn many_tabs(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+        if method != "browser.tabs.list" { return default_reply(method, p); }
+        let count = if p["windowId"] == 2 { 3 } else { 300 };
+        let tabs: Vec<Value> = (0..count).map(|i| json!({"tabId": i + 1, "windowId": 1, "index": i, "active": i == 0, "pinned": false, "status": "complete", "attachable": true,
+            "title": format!("{i} {}", "제목😀".repeat(80)), "url": format!("https://example.test/{i}/{}", "가".repeat(700))})).collect();
+        Ok(json!({"tabs": tabs}))
+    }
+    let (_h, serve, cfg) = start_test_serve().await;
+    let _ext = fake_extension(serve.port, cfg.token.clone(), many_tabs).await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let listed = tool(&mut mcp, "browser_tabs", json!({"action":"list"})).await;
+    assert_eq!(listed["ok"], true, "{listed}");
+    assert!(listed.to_string().len() <= 40_000, "the list must fit the MCP text limit, got {} bytes", listed.to_string().len());
+    let tabs = listed["data"]["tabs"].as_array().unwrap();
+    assert!(!tabs.is_empty() && tabs.len() < 300);
+    assert_eq!(tabs[0]["tabId"], 1, "tabs are kept from the front");
+    assert_eq!(tabs[0]["index"], 0, "fields other than title and url are kept");
+    assert!(tabs.iter().all(|tab| tab["title"].as_str().unwrap().chars().count() <= 60 && tab["url"].as_str().unwrap().chars().count() <= 100), "{}", tabs[0]);
+    assert_eq!(listed["data"]["omittedTabs"], 300 - tabs.len());
+    assert!(listed["data"]["note"].as_str().unwrap().contains("windowId"), "{}", listed["data"]["note"]);
+    let window = tool(&mut mcp, "browser_tabs", json!({"action":"list","windowId":2})).await;
+    assert_eq!(window["data"]["tabs"].as_array().unwrap().len(), 3);
+    assert!(window["data"].get("omittedTabs").is_none() && window["data"].get("note").is_none(), "a list that fits says nothing: {window}");
+}
+
+#[tokio::test]
+async fn switching_to_a_tab_that_does_not_exist_yet_does_not_ban_its_id() {
+    static EXISTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    fn late_tab(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+        if method == "browser.tabs.get" && p["tabId"] == 555 && !EXISTS.load(std::sync::atomic::Ordering::SeqCst) { return Err(("TAB_NOT_FOUND", "No such tab")); }
+        tabs_reply(method, p)
+    }
+    let (_h, serve, cfg) = start_test_serve().await;
+    let _ext = fake_extension(serve.port, cfg.token.clone(), late_tab).await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let op = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await["operationId"].as_str().unwrap().to_string();
+    let missed = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":555})).await;
+    assert_eq!(missed["error"]["code"], "TAB_NOT_FOUND");
+    EXISTS.store(true, std::sync::atomic::Ordering::SeqCst);
+    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":555})).await;
+    assert_eq!(switched["ok"], true, "a tab the operation never held is not remembered as closed: {switched}");
+}
+
+#[tokio::test]
+async fn a_switch_whose_snapshot_fails_still_requires_one_before_writing() {
+    static READABLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+    fn unreadable(method: &str, p: &Value) -> Result<Value, (&'static str, &'static str)> {
+        if method == "browser.snapshot" && !READABLE.load(std::sync::atomic::Ordering::SeqCst) { return Err(("FRAME_UNAVAILABLE", "still loading")); }
+        default_reply(method, p)
+    }
+    let (_h, serve, cfg) = start_test_serve().await;
+    let seen = fake_extension(serve.port, cfg.token.clone(), unreadable).await;
+    let mut panel = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut panel, "extension", &cfg.token, "panel-1").await;
+    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let op = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await["operationId"].as_str().unwrap().to_string();
+    assert!(matches!(call(&mut panel, "operation.pause", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    assert!(matches!(call(&mut panel, "operation.resume", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    READABLE.store(false, std::sync::atomic::Ordering::SeqCst);
+    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42})).await;
+    assert_eq!(switched["ok"], true, "{switched}");
+    assert_eq!(switched["data"]["snapshotError"]["code"], "FRAME_UNAVAILABLE", "{switched}");
+    let blocked = tool(&mut mcp, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await;
+    assert_eq!(blocked["error"]["code"], "STALE_ELEMENT", "a switch is not an observation: {blocked}");
+    assert!(blocked["error"]["message"].as_str().unwrap().contains("user handled the browser"), "{blocked}");
+    assert!(!seen.lock().unwrap().iter().any(|m| m == "browser.fill"));
+    READABLE.store(true, std::sync::atomic::Ordering::SeqCst);
+    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42})).await;
+    assert!(switched["data"]["snapshot"].is_object(), "{switched}");
+    assert_eq!(tool(&mut mcp, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await["ok"], true, "the snapshot attached to a switch is the observation");
 }
 
 #[tokio::test]

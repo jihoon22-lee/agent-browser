@@ -28,7 +28,8 @@ JSON 메시지 규약이다. 계약의 원장은 `protocol/` 디렉터리이며 
 | `/extension` | Extension | `chrome-extension://<id>` 필수 | `auth.hello` |
 | `/mcp-proxy` | Mcp | 헤더가 있으면 거부 | `auth.hello` |
 
-페어링 토큰은 URL이나 WebSocket 메시지에 보내지 않는다. 봉투 `v: 1` 안에서 별도
+페어링 토큰은 URL에 넣지 않고, 인증(`auth.hello`·`auth.prove`) 메시지에도 싣지 않는다. 토큰이 WebSocket
+메시지에 실리는 경우는 아래 "페어링 코드로 토큰 받기"의 `pair.request` 성공 응답 하나뿐이다. 봉투 `v: 1` 안에서 별도
 `authVersion: 1`인 HMAC-SHA256 상호 인증을 사용한다. 인증 전에 일반 메서드를 보내면
 `AUTH_REQUIRED`로 응답하고 연결을 닫는다.
 
@@ -54,7 +55,7 @@ Rust `serde_json`과 JavaScript `JSON.stringify`가 같은 값을 생성한다. 
 `side`는 서버 증명에 `"server"`, 클라이언트 증명에 `"client"`를 사용한다. 두 방향의 증명을
 분리하고 역할·클라이언트 ID·두 nonce·재페어링 의도를 묶어 반사 공격과 다른 연결의 증명 재사용을 거부한다.
 Rust는 HMAC 라이브러리의 상수 시간 검증을, Extension은 WebCrypto의 `verify`를 사용한다.
-서버는 hello와 prove를 각각 5초 이내에 받아야 하고, Extension은 소켓 연결부터 prove 승인까지 총 10초를 제한한다.
+서버는 TCP 연결 뒤 WebSocket 업그레이드, hello, prove를 각각 5초 이내에 받아야 하고(넘기면 연결을 닫는다), Extension은 소켓 연결부터 prove 승인까지 총 10초를 제한한다.
 
 이전 `params.token` 방식이나 지원하지 않는 `authVersion`은 `AUTH_FAILED`로 거부한다.
 Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 자체는 계속 사용할 수 있다.
@@ -67,11 +68,28 @@ Bridge와 Extension을 함께 업데이트해야 하며 기존 페어링 토큰 
 | 방향 | 메서드 |
 |---|---|
 | Extension → serve | `heartbeat`, `status.get`, `request.begin`, `request.end`, `operation.abort`, `operation.pause`, `operation.resume`, `browser.use`, `profile.list`, `profile.save`, `profile.delete`, `runtime.ensure`, `runtime.status`, `runtime.stop`, `doctor.run` |
-| Mcp → serve | `tool.call`, `tool.cancel` |
+| Mcp → serve | `tool.call`, `tool.cancel`, `status.get`, `pairing.open` |
 | serve → Extension | `browser.*` 명령(`browser.click` 등) |
+| 인증 전 Extension → serve | `pair.request`(첫 메시지로만, 아래 참고) |
 | 그 밖 | `FORBIDDEN_METHOD` |
 
+MCP 역할의 `status.get`은 Extension의 것과 결과가 다르다. 설치 프로그램과 진단이 쓰는 `{pairedExtensionId, extensionSeen, browsers, serverVersion}`를 돌려주며, `extensionSeen`은 최근 15초 안에 `pair.request`를 보낸 Extension ID다. 작업·타임라인은 포함하지 않는다.
+
+### 페어링 코드로 토큰 받기
+
+설치 프로그램은 토큰으로 인증한 MCP 역할 연결에서 `pairing.open {extensionId, seconds?}`(32자 Extension ID, 10–300초, 기본 120초)를 호출해 6자리 `code`를 받아 화면에 보여 준다. 창은 하나만 열리며 새로 열면 이전 창을 대체한다.
+
+아직 토큰이 없는 Extension은 `/extension` 연결의 첫 메시지로 `auth.hello` 대신 `pair.request {clientId, code?}`를 보낸다(서버는 `code`만 본다). 응답 뒤 서버가 연결을 닫는다.
+- `code`가 없으면 "Extension이 로드됨"만 알리는 요청이다. `AUTH_REQUIRED`이며 토큰을 주지 않는다.
+- 열린 창이 없거나 만료됐거나 Origin의 Extension ID가 창의 것과 다르면 `AUTH_REQUIRED`다.
+- 코드가 틀리면 `AUTH_FAILED`이고, 한 창에서 5번 틀리면 창을 닫는다.
+- 코드가 맞으면 창을 닫고(1회용) `{token}`으로 **기존** 페어링 토큰을 돌려준다. 새 토큰을 만들지 않는다. Extension은 이 토큰으로 다시 연결해 일반 상호 인증을 거친다.
+
+Origin은 로컬의 다른 프로그램이 꾸밀 수 있으므로 화면에 표시된 코드를 사용자가 직접 입력하는 것이 토큰 전달의 근거다.
+
 MCP 연결은 동일한 토큰으로 인증했더라도 프로필과 런타임 관리 메서드를 호출할 수 없다. Extension SW는 확장 내부 페이지에서 온 관리 요청만 전달한다. 관리 작업은 연결의 브라우저 응답 처리를 막지 않도록 비동기로 실행된다.
+
+`browser.use {clientId}`의 성공 결과는 `{selected, persisted}`다. 선택은 바로 적용되며, 설정 파일에 저장하지 못하면 `persisted:false`와 사유 `persistError`를 함께 돌려준다. 이 경우 선택은 Bridge를 다시 시작하면 사라진다.
 
 ## MCP 요청 취소
 
@@ -143,6 +161,8 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 오류 코드 전체 목록은 `protocol/schema/error-codes.json`을 따른다. 응답 없음·연결 끊김·타임아웃 뒤의
 쓰기 명령(click/fill/select/press/navigate/scroll/tabs new/close)은 자동 재실행하지 않고 `EXECUTION_UNKNOWN`으로 끝낸다.
 
+Bridge는 받은 프레임의 짝 없는 서로게이트 이스케이프(`\ud83d`처럼 상위·하위가 쌍을 이루지 않는 `\uD800`–`\uDFFF`)를 U+FFFD로 바꿔 읽는다. 그래도 읽을 수 없는 `res`는 최상위 `id`를 얻을 수 있으면 그 연결의 대기 명령을 타임아웃까지 두지 않고 바로 끝낸다. 읽기는 `INTERNAL`(retry safe), 쓰기는 응답 유실과 같은 `EXECUTION_UNKNOWN`이다.
+
 
 ### 패널 요청의 탭 예약
 
@@ -204,7 +224,7 @@ background는 활성 worker에서 15초 주기, suspended worker에서는 1분 a
 
 패널 요청의 requestId는 메시지 전송 전에 생성되어 OpenCode system 문맥에 전달된다. 첫 attach/new는 그 ID로 예약을 확인하며 탭마다 새 ID를 만들지 않는다. 동일 요청에 활성 operation이 있으면 중복 bootstrap은 BROWSER_BUSY와 기존 operationId를 반환한다. 이후 도구는 operationId로 계속한다. 누락·불일치 ID를 임의 보정하거나 다른 요청의 예약을 가져오지 않는다.
 
-switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTTP(S) 대상임을 확인하고 방문 목록에 추가한다. 같은 작업이 이미 생성·채택한 준비 중 빈 탭은 재선택할 수 있다. 외부 빈 탭이나 Chrome 내부 페이지를 일반 쓰기 대상으로 편입하지 않는다. switch는 DOM 관찰을 대신하지 않으며 요소 참조는 대상 문서·operation·snapshot 경계를 그대로 유지한다.
+switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTTP(S) 대상임을 확인하고 방문 목록에 추가한다. 같은 작업이 이미 생성·채택한 준비 중 빈 탭은 재선택할 수 있다. 외부 빈 탭이나 Chrome 내부 페이지를 일반 쓰기 대상으로 편입하지 않는다. switch는 DOM 관찰을 대신하지 않으며 요소 참조는 대상 문서·operation·snapshot 경계를 그대로 유지한다. 복귀·넘겨받기 뒤의 관찰 요구(needsObservation)도 switch만으로는 풀리지 않는다. switch 결과에 붙는 스냅샷이나 별도 `browser_snapshot`이 현재 대상에서 성공해야 풀린다. 스냅샷이 `UNSUPPORTED_PAGE`로 끝난 경우(빈 탭·내부 페이지)는 읽을 것이 없다는 답 자체를 관찰로 보아 goto로 벗어날 수 있다. 같은 작업이 `new`로 방금 만든 탭은 아직 보지 못한 내용이 없으므로 관찰 요구 없이 시작한다. 없는 tabId로 switch해 `TAB_NOT_FOUND`가 나도, 작업이 보유한 적 없는 ID는 닫힌 탭으로 기록하지 않는다.
 
 ## 결과에 붙는 스냅샷·탭 목록과 출력 예산 (2026-10-15)
 
@@ -236,7 +256,8 @@ switch는 operation 소유 Chrome 연결에 정확한 tabId를 조회한 뒤 HTT
 - **포커스·DOM 키 입력:** fill과 참조를 지정한 press는 focus 뒤 대상/편집 상태를 확인하고 실제 값을 쓰거나 키를 보낸다. DOM press는 ref가 없어도 최초 포커스 요소에 임시 바인딩하고 keydown/keypress/Space keyup/beforeinput 뒤 대상 변경을 확인한다. 폼 연결·필드 name·폼 목적지/방식·기본 제출 버튼도 보호한다. 이미 확인된 기본 동작이 대상을 교체했다면 그 대상에 마지막 keyup을 추가하지 않고 `verified.keyupSkipped:true`로 알린다. body/documentElement에 보내는 페이지 단위 키는 문서에 묶되 본문 변화 자체는 허용한다. 신뢰 키의 브라우저 기본 동작을 DOM 에뮬레이션처럼 가로채는 기능은 아니다.
 - **늦은 스크립트 이동:** waitFor가 없는 click 결과가 `urlChanged:false, domChanged:false`이거나 press 결과가 폼 제출(`submitted:true`)이면 background가 탭의 `pendingUrl`·URL 변화를 최대 1초 지켜본다. 바뀌면 `verified`에 `urlChanged:true, navigated:true, lateNavigation:true`를 넣고, 위 규칙대로 도착 페이지 스냅샷이 붙는다. waitFor를 지정한 조작은 이 고정 관찰 대신 명시 조건을 따른다.
 - **잠시 넘겨받기:** Extension RPC `operation.pause {operationId, clientId}`/`operation.resume {operationId, clientId}`는 작업을 실행 중인 브라우저만 쓸 수 있다. 상태의 `operation.paused`가 바뀌어 `status.changed`로 알린다. 멈춘 동안 페이지 도구와 `browser_tabs` new·switch·close는 재개까지 최대 45초 기다린다. 시간이 넘으면 `BROWSER_BUSY`(retry safe, `details.handoff:true`)다. 기다리던 호출은 재개되어도 실행하지 않고 `STALE_ELEMENT`(retry safe, "handed the browser back")로 끝난다. 페이지가 바뀌었을 수 있고, 남은 MCP 응답 시간(60초) 안에 명령과 후속 읽기가 들어가지 않을 수 있기 때문이다. release와 중단은 기다리지 않는다. 재개 뒤 첫 쓰기도 새 스냅샷 전에는 같은 이유의 `STALE_ELEMENT`다.
-- **출력 예산(UTF-8 바이트):** content frame당 24,000B, background snapshot frame 묶음 28,000B, extract 28,000B, MCP 최종 텍스트 40,000B. OpenCode는 한 줄 도구 결과가 한도(관찰상 약 50KB)를 넘으면 통째로 파일로 돌리므로, 최종 텍스트가 40,000B를 넘으면 먼저 `data.snapshot`만 빼고 `snapshotError.tooLarge`를 붙인다. 그래도 넘으면 읽기는 `ok:false`·`details.tooLarge`로 더 작은 `maxChars`를 안내하고, 실행된 동작은 `ok`·`executed`를 유지한 채 "반복하지 말고 다시 읽으라"는 `data.note`로 바꾼다.
+- **출력 예산(UTF-8 바이트):** content frame당 24,000B, background snapshot frame 묶음 28,000B, extract 28,000B, MCP 최종 텍스트 40,000B. OpenCode는 한 줄 도구 결과가 한도(관찰상 약 50KB)를 넘으면 통째로 파일로 돌리므로, 최종 텍스트가 40,000B를 넘으면 먼저 `data.snapshot`만 빼고 `snapshotError.tooLarge`를 붙인다. 그래도 넘으면 읽기는 `ok:false`·`details.tooLarge`로 더 작은 `maxChars`를 안내하고, 실행된 동작은 `ok`·`executed`를 유지한 채 "반복하지 말고 다시 읽으라"는 `data.note`로 바꾼다. 줄이는 방법 안내는 그 도구 스키마에 있는 인자(`maxChars`, `limit`, `windowId`, `offset`류)만 말한다.
+- **탭 목록(`browser_tabs list`):** 각 항목의 `title`은 60자, `url`은 100자로 자르고 나머지 필드는 그대로 둔다. `tabs` 배열이 32,000B를 넘으면 앞에서부터 들어가는 만큼만 돌려주고 `data.omittedTabs`(생략 개수)와 `windowId`로 좁히라는 `data.note`를 붙인다.
 - **스냅샷 요소:** `role:"clickable"`은 의미 있는 태그·역할 없이 포인터 커서만 있는 최외곽 영역이다. `state`에는 expanded/collapsed/selected/pressed/mixed/current/required/readonly/invalid/focused가 들어간다. ARIA checkbox·switch는 `checked`, 범위 위젯은 `value`다. 정적 행 문맥은 query 결과가 하나여도 `context`(≤80자)로 붙인다. 행 문맥이 없고 같은 role·name이 여러 개면 같은 이름의 다른 요소를 포함하지 않는 가장 큰 조상의 텍스트를 쓴다. 이름은 같은 root의 aria-labelledby, aria-label, native label 순으로 확인하고 자식 `img alt`·SVG `title`·자식 `aria-label`도 쓴다. DOM 기반이며 Accessibility Tree와 같지 않다.
 - **끝난 requestId:** 진행 중인 패널 요청이 없는데 requestId를 주면 "이미 끝난 요청"이라는 OPERATION_INVALID다(대기 안내가 아니다).
 

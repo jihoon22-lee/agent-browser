@@ -1,4 +1,6 @@
-//! Shared v1 mutual authentication. Tokens never appear in WebSocket frames.
+//! Shared v1 mutual authentication. The handshake proves knowledge of the token without sending it.
+//! The only frame that carries the token is the `pair.request` reply to the code the installer
+//! showed (`server::conn::handle_pair_request`).
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
