@@ -67,3 +67,24 @@ test("A2: a drag whose two ends cannot be on screen together is refused before a
   expect(await page.evaluate(() => (window as any).__events)).toBe(0);
   await expect(page.locator("#order")).toHaveText("A,B,C");
 });
+
+test("A11: an element that cannot be brought into the viewport is not clicked", async () => {
+  const { page, operationId, snapshot } = await attach(async page => {
+    await page.evaluate(() => {
+      const button = document.createElement("button"); button.textContent = "화면 밖";
+      button.style.cssText = "position:fixed;left:-500px;top:10px";
+      (window as any).__offscreen = 0; button.addEventListener("click", () => { (window as any).__offscreen++; });
+      // The common custom-checkbox pattern: the native control is parked off screen behind its label.
+      const label = document.createElement("label"); label.textContent = "동의";
+      const box = document.createElement("input"); box.type = "checkbox"; box.style.cssText = "position:absolute;left:-9999px";
+      label.prepend(box);
+      document.body.append(button, label);
+    });
+  });
+  const checked = await world.ok("browser_select", { operationId, ref: refIn(snapshot, "동의"), checked: true });
+  expect(checked.verified).toMatchObject({ checked: true });
+  const result = await world.mcp.call("browser_click", { operationId, ref: refIn(snapshot, "화면 밖") });
+  expect(result.ok, JSON.stringify(result)).toBe(false);
+  expect(result.error?.code).toBe("ELEMENT_NOT_INTERACTABLE");
+  expect(await page.evaluate(() => (window as any).__offscreen)).toBe(0);
+});

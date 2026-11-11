@@ -78,6 +78,11 @@ function assertInteractable(el: Element, allowScroll = true): Point | undefined 
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el)} is covered by another element.`, "never",
       { coveredBy: { tag: top.tagName.toLowerCase(), name: accessibleName(top) } });
   }
+  // Nothing is hit outside the viewport: the element could not be scrolled into it (fixed or
+  // clipped off screen). A visually hidden native control is used through its label instead.
+  const labelled = "labels" in el && ((el as HTMLInputElement).labels?.length ?? 0) > 0;
+  if (points[0] && !inViewport(points[0]) && !labelled)
+    throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is outside the viewport and cannot be scrolled into view.`);
   return points[0];
 }
 
