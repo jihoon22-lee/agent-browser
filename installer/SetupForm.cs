@@ -28,6 +28,8 @@ namespace AgentBrowser.Installer {
         readonly Label heading=new Label(),steps=new Label(),installing=new Label(),extensionDetected=new Label(),pairingCode=new Label();
         readonly TextBox pairingState=new TextBox();
         bool detectionBridgeStarted;
+        /// Verified once when the connection page opens; the detection timer only reads these.
+        InstallState detectionState;string detectionExtensionId;
         readonly Button openExtensions=new Button(),connectChrome=new Button();
         readonly System.Windows.Forms.Timer detect=new System.Windows.Forms.Timer();
         bool detecting;
@@ -152,7 +154,7 @@ namespace AgentBrowser.Installer {
             if(operation.SelectedIndex==2&&page>=2){heading.Text=page==7?"제거 완료":"AgentBrowser 제거";steps.Text=page==7?"페어링과 프로필 데이터는 보존했습니다.":"제거할 설치 위치를 확인하세요.";}
             back.Visible=page==1||page==2||page==5||page==6||page==7;if(page!=5&&pairingWait!=null)pairingWait.Cancel();prepare.Visible=page==0||page==1||page==4||page==5||page==6;apply.Visible=page==2;apply.Text=operation.SelectedIndex==2?"제거":operation.SelectedIndex==1?"업데이트":"설치";
             if(page==2)steps.Text="아래 내용을 확인한 뒤 ["+apply.Text+"]를 누르세요.";
-            detect.Enabled=page==4;if(page!=4)detectionBridgeStarted=false;
+            detect.Enabled=page==4;if(page!=4){detectionBridgeStarted=false;detectionState=null;detectionExtensionId=null;}
             cancel.Text=page==7?"마침":page>=4?"닫기":"취소";StyleButton(cancel,page==7);AcceptButton=(page==0||page==1||page==4||page==5||page==6)?prepare:page==2?apply:page==7?cancel:null;
         }
         void OpenChromeExtensions(){
@@ -171,7 +173,15 @@ namespace AgentBrowser.Installer {
         async Task DetectExtension(){
             if(page!=4||detecting)return;detecting=true;
             try{
-                var state=Installed();string id=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));
+                // Never hash every installed file on the UI thread per tick: the page verified the
+                // installation when it opened. Without that result, verify once in the background.
+                if(detectionState==null||detectionExtensionId==null){
+                    string selected=folder.Text;
+                    var verified=await Task.Run(()=>{var checkedState=Verified(selected);return new KeyValuePair<InstallState,string>(checkedState,Pairing.ExtensionId(Path.Combine(checkedState.InstallDir,"extension","manifest.json")));});
+                    if(page!=4)return;
+                    detectionState=verified.Key;detectionExtensionId=verified.Value;
+                }
+                var state=detectionState;string id=detectionExtensionId;
                 // Starting (or verifying) the Bridge hashes files and queries processes: once per page visit.
                 if(!detectionBridgeStarted){await Task.Run(()=>BridgeControl.Start(state));detectionBridgeStarted=true;}
                 var current=await Task.Run(()=>Pairing.Status(state));
@@ -320,15 +330,17 @@ namespace AgentBrowser.Installer {
             manage.Enabled=false;
             try{var old=InstallerEngine.State(folder.Text);bool changed=!InstallerEngine.Same(loadedFolder,folder.Text);if(old!=null){if(changed){if(operation.SelectedIndex!=2)operation.SelectedIndex=1;port.Value=old.Port;startup.Checked=old.Startup!=null;if(old.Startup!=null)startupPath.Text=Path.GetDirectoryName(old.Startup.Path);}manage.Enabled=operation.SelectedIndex!=2;status.Text="기존 설치 "+old.Version+"을 찾았습니다.";}else{if(operation.SelectedIndex==1)operation.SelectedIndex=0;status.Clear();}loadedFolder=folder.Text;}catch(Exception error){status.Text=Friendly.Message(error);}
         }
-        InstallState Installed(){
-            var state=InstallerEngine.State(folder.Text);if(state==null)throw new IOException("아직 설치되지 않았습니다. [다음]을 눌러 설치를 완료하세요.");
-            InstallerEngine.Root(folder.Text);InstallerEngine.Owned(state);
+        InstallState Installed(){return Verified(folder.Text);}
+        /// Full verification of the selected installation; reads and hashes every owned file.
+        static InstallState Verified(string selected){
+            var state=InstallerEngine.State(selected);if(state==null)throw new IOException("아직 설치되지 않았습니다. [다음]을 눌러 설치를 완료하세요.");
+            InstallerEngine.Root(selected);InstallerEngine.Owned(state);
             var extensionFiles=state.OwnedFiles.Where(file=>file.Path.Replace('\\','/').StartsWith("extension/",StringComparison.OrdinalIgnoreCase)).ToArray();
             if(!extensionFiles.Any(file=>InstallerEngine.Same(file.Path.Replace('\\','/'),"extension/manifest.json")))throw new IOException("설치 기록에 Chrome 확장이 없습니다. 설치 폴더를 확인하세요.");
             foreach(var file in extensionFiles){string path=NativeIO.SafePath(state.InstallDir,file.Path);if(!File.Exists(path))throw new IOException("Chrome 확장 파일이 없습니다. 업데이트로 복구한 뒤 연결하세요: "+path);}
             return state;
         }
-        bool ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");SetPage(4);status.Clear();return true;}catch(Exception error){status.Text=Friendly.Message(error);return false;}}
+        bool ShowConnection(){try{if(operation.SelectedIndex==2)throw new IOException("제거하려면 [다음]을 눌러 진행하세요. 연결 설정은 설치 또는 업데이트에서 열 수 있습니다.");var state=Installed();extensionFolder.Text=Path.Combine(state.InstallDir,"extension");SetPage(4);detectionState=state;detectionExtensionId=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));status.Clear();return true;}catch(Exception error){status.Text=Friendly.Message(error);return false;}}
         void ShowAdvanced(){
             // This panel has already scaled with the main form. Do not scale it again
             // when it moves into a dialog, or text and fields overlap at large fonts.

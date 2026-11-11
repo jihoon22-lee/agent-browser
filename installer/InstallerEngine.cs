@@ -84,8 +84,10 @@ namespace AgentBrowser.Installer {
             if(s==null||s.Product!=Product||!Same(Full(s.InstallDir),Full(root))||!Same(Full(s.DataDir),Full(Path.Combine(root,"data")))||!Regex.IsMatch(s.InstallId??"","^[a-fA-F0-9]{32}$")||s.OwnedFiles==null) throw new IOException("Installation ownership marker is invalid.");
             return s;
         }
+        /// Counts full ownership verifications (every owned file is read and hashed); tests watch it.
+        internal static int OwnedVerifications;
         public static void Owned(InstallState state) {
-            if(state==null) return;var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if(state==null) return;Interlocked.Increment(ref OwnedVerifications);var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach(var f in state.OwnedFiles) {
                 if(!seen.Add(f.Path)||!Regex.IsMatch(f.Sha256??"","^[a-fA-F0-9]{64}$")) throw new IOException("Invalid installed file ownership record.");
                 string path=NativeIO.SafePath(state.InstallDir,f.Path);

@@ -40,6 +40,12 @@ namespace AgentBrowser.Installer {
     try{using(var form=new SetupForm(new[]{"--no-discover","--no-browser-launch","--no-startup","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
      form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
      Assert(Field<Button>(form,"OpenExtensions").Visible,"no way to open the Chrome extensions page");
+     // The 1.5 s detection timer must not verify (hash) the whole installation on every tick.
+     var detectionStarted=typeof(SetupForm).GetField("detectionBridgeStarted",BindingFlags.Instance|BindingFlags.NonPublic);
+     var detectionEnd=DateTime.UtcNow.AddSeconds(30);while(!(bool)detectionStarted.GetValue(form)&&DateTime.UtcNow<detectionEnd){Invoke(form,"DetectExtension");Application.DoEvents();Thread.Sleep(20);}
+     Assert((bool)detectionStarted.GetValue(form),"extension detection did not start");
+     int verifications=InstallerEngine.OwnedVerifications;for(int tick=0;tick<3;tick++)Invoke(form,"DetectExtension");
+     Assert(InstallerEngine.OwnedVerifications==verifications,"each detection tick verified every installed file again");
      Invoke(form,"PreparePairing");
      Assert(Field<Button>(form,"ConnectChrome").Visible&&Field<Button>(form,"CopyPairingToken").Visible,"pairing page lacks code or manual connection");
      Invoke(form,"OpenPairingCode");
