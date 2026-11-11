@@ -39,7 +39,9 @@ export function isRendered(el: Element, opts: { checkLayout: boolean }): boolean
     const cs = getComputedStyle(n);
     if (cs.display === "none" || cs.visibility === "hidden") return false;
   }
-  return opts.checkLayout ? el.getClientRects().length > 0 : true;
+  if (!opts.checkLayout) return true;
+  // checkVisibility (Chrome 105+) also knows a collapsed <details> and content-visibility:hidden.
+  return el.getClientRects().length > 0 && (typeof el.checkVisibility !== "function" || el.checkVisibility());
 }
 
 export function roleOf(el: Element): string {

@@ -68,6 +68,24 @@ test("A2: a drag whose two ends cannot be on screen together is refused before a
   await expect(page.locator("#order")).toHaveText("A,B,C");
 });
 
+test("A7: controls inside a collapsed <details> are not offered until it is opened", async () => {
+  const { operationId, snapshot } = await attach(async page => {
+    await page.evaluate(() => {
+      const details = document.createElement("details");
+      const summary = document.createElement("summary"); summary.textContent = "더보기";
+      const hidden = document.createElement("button"); hidden.textContent = "접힌 버튼";
+      details.append(summary, hidden); document.body.prepend(details);
+    });
+  });
+  const names = all(snapshot).map(e => e.name);
+  expect(names).toContain("더보기");
+  expect(names).not.toContain("접힌 버튼");
+  const opened = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "더보기") });
+  expect(opened.ok).toBe(true);
+  const after = (await world.ok("browser_snapshot", { operationId })).data;
+  expect(all(after).map(e => e.name)).toContain("접힌 버튼");
+});
+
 test("A11: an element that cannot be brought into the viewport is not clicked", async () => {
   const { page, operationId, snapshot } = await attach(async page => {
     await page.evaluate(() => {
