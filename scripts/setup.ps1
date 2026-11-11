@@ -93,6 +93,32 @@ if ($OpenCodeConfig) {
     $state.Mcp = [pscustomobject]@{ Path=$settingsPath; Kind=$OpenCodeKind; Distribution=$Distribution; EntryHash=$edit.EntryHash; CreatedMcp=($edit.CreatedMcp -or ($old -and $old.Mcp -and $old.Mcp.CreatedMcp)); CreatedFile=((-not $existed) -or ($old -and $old.Mcp -and $old.Mcp.CreatedFile)); Backups=$backups }
     $mcpPlan = [pscustomobject]@{ Path=$settingsPath; Existed=$existed; OriginalHash=$originalHash; Edit=$edit; Backup=$backupPath }
 }
+# Owned files the new package no longer ships are removed inside the transaction
+# when they still match their recorded hash. Outside app\ this covers data such as
+# old hashed extension assets; executables there are left alone. Under app\ the
+# current and the previous version stay (a managed OpenCode or a hand-copied MCP
+# entry may still point at the previous one), and so does anything that is
+# running or referenced by runtime.json.
+$shipped = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+foreach ($copy in $copies) { $null = $shipped.Add($copy.Relative.Replace('\','/')) }
+foreach ($relative in $fragments.Keys) { $null = $shipped.Add($relative) }
+$pruneCandidates = New-Object 'System.Collections.Generic.List[object]'
+if ($old) {
+    $versionChanged = (Get-FullPath $old.CurrentExe) -ne (Get-FullPath $state.CurrentExe)
+    $keptAppDirs = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $null = $keptAppDirs.Add([IO.Path]::GetDirectoryName((Get-FullPath $state.CurrentExe)))
+    $null = $keptAppDirs.Add([IO.Path]::GetDirectoryName((Get-FullPath $old.CurrentExe)))
+    foreach ($file in $old.OwnedFiles) {
+        $relative = ([string]$file.Path).Replace('\','/')
+        if ($shipped.Contains($relative)) { continue }
+        $target = Join-SafePath $root $file.Path
+        if ($target -eq (Get-FullPath $old.CurrentExe)) { continue }
+        $isApp = $relative.StartsWith('app/', [StringComparison]::OrdinalIgnoreCase)
+        if ($isApp) { if (-not $versionChanged -or $keptAppDirs.Contains([IO.Path]::GetDirectoryName($target))) { continue } }
+        elseif ($relative.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { continue }
+        $pruneCandidates.Add([pscustomobject]@{ Path=[string]$file.Path; Target=$target; Sha256=[string]$file.Sha256; App=$isApp })
+    }
+}
 $state.OwnedFiles = @($owned.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Path=$_.Key; Sha256=$_.Value } })
 
 New-InstallDirectory $root
@@ -130,11 +156,37 @@ try {
         if ($mcpPlan.Backup) { [IO.File]::Copy($mcpPlan.Path, $mcpPlan.Backup, $false) }
         Set-TransactionText $transaction $mcpPlan.Path $mcpPlan.Edit.Text $(if ($mcpPlan.Existed) { $mcpPlan.OriginalHash } else { 'missing' })
     }
+    $prunedFiles = New-Object 'System.Collections.Generic.List[string]'
+    if ($pruneCandidates.Count) {
+        $referencedApp = $null; $referencedResolved = $false
+        foreach ($candidate in $pruneCandidates) {
+            if ($candidate.App) {
+                if (-not $referencedResolved) { $referencedApp = Get-ReferencedAppDirectories $old; $referencedResolved = $true }
+                if ($null -eq $referencedApp -or $referencedApp.Contains([IO.Path]::GetDirectoryName($candidate.Target))) { continue }
+            }
+            if (Test-Path -LiteralPath $candidate.Target -PathType Leaf) {
+                # A file the user changed, or one that is in use, stays on disk and in the record.
+                if ((Get-FileSha256 $candidate.Target) -ne $candidate.Sha256) { continue }
+                try { Remove-TransactionFile $transaction $candidate.Target }
+                catch {
+                    # Nothing was removed: forget the journal entry so rollback does not rewrite a file in use.
+                    $lastEntry = $transaction.Journal.Count - 1
+                    if ($lastEntry -ge 0 -and $transaction.Journal[$lastEntry].Path -eq $candidate.Target -and (Test-Path -LiteralPath $candidate.Target -PathType Leaf)) {
+                        $transaction.Journal.RemoveAt($lastEntry); $null = $transaction.Seen.Remove($candidate.Target)
+                    }
+                    continue
+                }
+                $prunedFiles.Add($candidate.Target)
+            } elseif (Test-Path -LiteralPath $candidate.Target) { continue }
+            $owned.Remove($candidate.Path)
+        }
+        $state.OwnedFiles = @($owned.GetEnumerator() | ForEach-Object { [pscustomobject]@{ Path=$_.Key; Sha256=$_.Value } })
+    }
     Set-TransactionText $transaction (Join-Path $root $script:AgentBrowserStateName) (ConvertTo-Json $state -Depth 40)
     $running = $null
     if($changesRuntime) {
         Assert-NoManagedRuntimeForScriptUpdate $old
-        $stoppedOld=Stop-OwnedBridge $old
+        $stoppedOld=Stop-OwnedBridge $old $transaction
         Assert-NoManagedRuntimeForScriptUpdate $old
     }
     if (-not $NoStart) {
@@ -142,6 +194,17 @@ try {
         $startedNew = -not $running.reused
     }
     $committed = $true
+    # Folders emptied by the cleanup above; user files keep their folder.
+    foreach ($pruned in $prunedFiles) {
+        try {
+            $parent = [IO.Path]::GetDirectoryName($pruned)
+            while ($parent -and $parent.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $parent) -and @(Get-ChildItem -LiteralPath $parent -Force).Count -eq 0) {
+                Assert-PlainPath $parent
+                Remove-Item -LiteralPath $parent -Force
+                $parent = [IO.Path]::GetDirectoryName($parent)
+            }
+        } catch { Write-Warning ('An emptied folder was left in place: ' + $_.Exception.Message) }
+    }
     if (-not $Quiet) {
         Write-Host ('Installed AgentBrowser ' + $state.Version + ' in ' + $root)
         Write-Host ('Chrome: load the unpacked extension from ' + (Join-Path $root 'extension'))
@@ -156,7 +219,8 @@ try {
     $failure = $_
     if ($transaction -and -not $committed) {
         try {
-            if ($startedNew) { $null = Stop-OwnedBridge $state }
+            # Through the transaction: a marker cleaned up here must still roll back cleanly.
+            if ($startedNew) { $null = Stop-OwnedBridge $state $transaction }
             Undo-FileTransaction $transaction
             if ($stoppedOld) { $null = Start-OwnedBridge $old }
         } catch { $rollbackOk = $false; Write-Warning ('Rollback needs inspection: ' + $transaction.Stage + '. ' + $_.Exception.Message) }

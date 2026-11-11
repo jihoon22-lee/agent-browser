@@ -86,6 +86,24 @@ namespace AgentBrowser.Installer {
     }
     internal static class NativeIO {
         public static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
+        static readonly UTF8Encoding LenientUtf8 = new UTF8Encoding(false, false);
+        /// Decodes captured process output without throwing. wsl.exe writes its own messages and
+        /// --list in UTF-16LE, but in UTF-8 when WSL_UTF8=1; Linux commands behind --exec write UTF-8.
+        /// A null or UTF-8/UTF-16 preference means "detect"; any other encoding (cmd.exe) is used as given.
+        internal static string DecodeOutput(byte[] bytes, Encoding preferred) {
+            if (bytes == null || bytes.Length == 0) return "";
+            if (preferred != null && !(preferred is UnicodeEncoding) && !(preferred is UTF8Encoding)) return preferred.GetString(bytes);
+            if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+            int start = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+            // Text in UTF-8 has no NUL byte; UTF-16LE text has one in every ASCII character, including line ends.
+            if (start == 0 && Array.IndexOf(bytes, (byte)0) >= 0) return Encoding.Unicode.GetString(bytes);
+            try { return Utf8.GetString(bytes, start, bytes.Length - start); }
+            catch (ArgumentException) {
+                // DecoderFallbackException: not valid UTF-8. Never fail the caller over a display string.
+                if (preferred is UnicodeEncoding && bytes.Length % 2 == 0) return Encoding.Unicode.GetString(bytes);
+                return LenientUtf8.GetString(bytes, start, bytes.Length - start);
+            }
+        }
         public static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 16 * 1024 * 1024, RecursionLimit = 100 };
         public static string WslExe { get { return System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"); } }
         public static string Hash(byte[] bytes) { using(var hash=SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant(); }
@@ -113,9 +131,14 @@ namespace AgentBrowser.Installer {
             if(environment!=null) foreach(var pair in environment) info.EnvironmentVariables[pair.Key]=pair.Value;
             using(var process=new Process { StartInfo=info }) {
                 process.Start(); process.StandardInput.Close();
-                Task<string> output=process.StandardOutput.ReadToEndAsync(), error=process.StandardError.ReadToEndAsync();
-                if(!process.WaitForExit(timeout)) { process.Kill(); process.WaitForExit(); throw new IOException("The selected command did not finish. No unrelated process was stopped."); }
-                return new CommandResult { ExitCode=process.ExitCode, Output=output.Result.Trim(), Error=error.Result.Trim() };
+                // Capture bytes and decode afterwards: a strict decoder on the stream would throw on
+                // output in another encoding and lose the exit code and the message.
+                using(var stdout=new MemoryStream()) using(var stderr=new MemoryStream()) {
+                    Task output=process.StandardOutput.BaseStream.CopyToAsync(stdout), error=process.StandardError.BaseStream.CopyToAsync(stderr);
+                    if(!process.WaitForExit(timeout)) { process.Kill(); process.WaitForExit(); throw new IOException("The selected command did not finish. No unrelated process was stopped."); }
+                    output.Wait(); error.Wait();
+                    return new CommandResult { ExitCode=process.ExitCode, Output=DecodeOutput(stdout.ToArray(),encoding).Trim(), Error=DecodeOutput(stderr.ToArray(),encoding).Trim() };
+                }
             }
         }
         public static string RunChecked(string executable, IEnumerable<string> arguments, string directory=null, IDictionary<string,string> environment=null, int timeout=15000) {

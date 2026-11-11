@@ -40,6 +40,12 @@ namespace AgentBrowser.Installer {
     try{using(var form=new SetupForm(new[]{"--no-discover","--no-browser-launch","--no-startup","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
      form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
      Assert(Field<Button>(form,"OpenExtensions").Visible,"no way to open the Chrome extensions page");
+     // The 1.5 s detection timer must not verify (hash) the whole installation on every tick.
+     var detectionStarted=typeof(SetupForm).GetField("detectionBridgeStarted",BindingFlags.Instance|BindingFlags.NonPublic);
+     var detectionEnd=DateTime.UtcNow.AddSeconds(30);while(!(bool)detectionStarted.GetValue(form)&&DateTime.UtcNow<detectionEnd){Invoke(form,"DetectExtension");Application.DoEvents();Thread.Sleep(20);}
+     Assert((bool)detectionStarted.GetValue(form),"extension detection did not start");
+     int verifications=InstallerEngine.OwnedVerifications;for(int tick=0;tick<3;tick++)Invoke(form,"DetectExtension");
+     Assert(InstallerEngine.OwnedVerifications==verifications,"each detection tick verified every installed file again");
      Invoke(form,"PreparePairing");
      Assert(Field<Button>(form,"ConnectChrome").Visible&&Field<Button>(form,"CopyPairingToken").Visible,"pairing page lacks code or manual connection");
      Invoke(form,"OpenPairingCode");
@@ -70,7 +76,25 @@ namespace AgentBrowser.Installer {
      listed=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"}));
      Assert(((System.Collections.IEnumerable)listed["profiles"]).OfType<object>().Count()==1,"saving again on the page created a duplicate profile");
      form.Close();
-    }}finally{Uninstall(root);}
+    }
+    // Running the wizard again for the same OpenCode reuses the saved profile.
+    using(var again=new SetupForm(new[]{"--no-discover","--no-startup","--no-runtime-start","--install-dir",root,"--package-dir",package})){
+     again.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+     Field<ComboBox>(again,"RuntimeKind").SelectedIndex=0;Field<TextBox>(again,"RuntimeExecutable").Text=cmd;Field<TextBox>(again,"RuntimeDirectory").Text=fixture;
+     Invoke(again,"SaveRuntime");
+     var state=InstallerEngine.State(root);
+     var listed=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"}));
+     var profiles=((System.Collections.IEnumerable)listed["profiles"]).OfType<System.Collections.Generic.Dictionary<string,object>>().ToList();
+     Assert(profiles.Count==1,"a second wizard run added another profile for the same OpenCode: "+profiles.Count);
+     Assert((string)listed["defaultProfileId"]==(string)profiles[0]["id"]&&Field<TextBox>(again,"RuntimeResult").Text.Contains("저장했습니다"),"the reused profile is not reported as saved: "+Field<TextBox>(again,"RuntimeResult").Text);
+     again.Close();
+    }
+    var summary=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"profiles\":[{\"id\":\"mine\",\"name\":\"Mine\",\"kind\":\"wsl\",\"distribution\":\"Ubuntu\",\"executable\":\"/opt/opencode\",\"directory\":\"/srv/work\",\"envKeys\":[\"HTTPS_PROXY\"]}]}");
+    var wslCandidate=new OpenCodeCandidate{Kind="wsl",Distribution="ubuntu",Executable="/opt/opencode"};
+    var match=ManagedProfile.FindSame(summary,wslCandidate,"/srv/work");
+    Assert(match!=null&&(string)match["id"]=="mine"&&!ManagedProfile.WizardCanRewrite(match),"a profile with settings the wizard cannot show must be reused without rewriting it");
+    Assert(ManagedProfile.FindSame(summary,wslCandidate,"/srv/other")==null&&ManagedProfile.FindSame(summary,new OpenCodeCandidate{Kind="wsl",Distribution="Debian",Executable="/opt/opencode"},"/srv/work")==null,"a different work folder or distribution was treated as the same profile");
+    }finally{Uninstall(root);}
    });
    Case("the final page reports real connection checks with next actions",()=>{
     var status=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>("{\"pairedExtensionId\":\"icgmjjcpnaenpfjfoggnaodeaidbnihl\",\"browsers\":[{\"clientId\":\"c\",\"connected\":true,\"selected\":true}]}");
@@ -102,6 +126,22 @@ namespace AgentBrowser.Installer {
      Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"RuntimePanel").Visible,"Back from the final page must return to the runtime page");
      form.Close();
     }}finally{Uninstall(root);}
+   });
+   Case("choosing another OpenCode follows its home unless the user chose a work folder",()=>{
+    using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"candidate-home")})){
+     form.Show();Application.DoEvents();
+     var list=Field<ComboBox>(form,"RuntimeCandidates");var directory=Field<TextBox>(form,"RuntimeDirectory");
+     list.Items.Add(new OpenCodeCandidate{Kind="windows",Home=@"C:\Users\synthetic",Executable=@"C:\Users\synthetic\opencode.exe"});
+     list.Items.Add(new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",User="synthetic",Home="/home/synthetic",Executable="/home/synthetic/.opencode/bin/opencode"});
+     list.SelectedIndex=0;Assert(directory.Text==@"C:\Users\synthetic","the first candidate did not suggest its home: "+directory.Text);
+     list.SelectedIndex=1;Assert(directory.Text=="/home/synthetic","a Windows work folder stayed after choosing a WSL candidate: "+directory.Text);
+     directory.Text="/srv/project";list.SelectedIndex=0;Assert(directory.Text=="/srv/project","a work folder the user typed was replaced");
+     form.Close();
+    }
+    var wsl=new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",User="synthetic",Executable="/opt/opencode"};
+    Assert(SetupForm.RuntimeUser(wsl,"wsl","Ubuntu","/opt/opencode")=="synthetic","the same distribution must keep the discovered user");
+    Assert(SetupForm.RuntimeUser(wsl,"wsl","Debian","/opt/opencode")==null,"another distribution must not reuse the discovered user");
+    Assert(SetupForm.RuntimeUser(wsl,"wsl","Ubuntu","/usr/bin/opencode")==null&&SetupForm.RuntimeUser(wsl,"windows","Ubuntu","/opt/opencode")==null&&SetupForm.RuntimeUser(null,"wsl","Ubuntu","/opt/opencode")==null,"a user was reused without a matching candidate");
    });
    Case("long result and check lines stay readable",()=>{
     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"read-lines")})){

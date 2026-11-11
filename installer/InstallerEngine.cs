@@ -60,6 +60,8 @@ namespace AgentBrowser.Installer {
     internal sealed class InstallPlan {
         public SetupOptions Options;public InstallState Old,Next;public string StateHash,OldStartupHash,NextStartupHash;
         public readonly List<Change> Changes=new List<Change>();
+        /// Owned files the new package no longer ships; removed during Apply when unchanged and unused.
+        public readonly List<OwnedFile> Prune=new List<OwnedFile>();
         public readonly List<string> Summary=new List<string>();
         public string Preview {get{return String.Join(Environment.NewLine,Summary);}}
     }
@@ -82,8 +84,10 @@ namespace AgentBrowser.Installer {
             if(s==null||s.Product!=Product||!Same(Full(s.InstallDir),Full(root))||!Same(Full(s.DataDir),Full(Path.Combine(root,"data")))||!Regex.IsMatch(s.InstallId??"","^[a-fA-F0-9]{32}$")||s.OwnedFiles==null) throw new IOException("Installation ownership marker is invalid.");
             return s;
         }
+        /// Counts full ownership verifications (every owned file is read and hashed); tests watch it.
+        internal static int OwnedVerifications;
         public static void Owned(InstallState state) {
-            if(state==null) return;var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if(state==null) return;Interlocked.Increment(ref OwnedVerifications);var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach(var f in state.OwnedFiles) {
                 if(!seen.Add(f.Path)||!Regex.IsMatch(f.Sha256??"","^[a-fA-F0-9]{64}$")) throw new IOException("Invalid installed file ownership record.");
                 string path=NativeIO.SafePath(state.InstallDir,f.Path);
@@ -175,11 +179,30 @@ namespace AgentBrowser.Installer {
             string tag=manifest.Version+"-"+manifest.Files.First(f=>f.Path=="browser-bridge.exe").Sha256.Substring(0,12);
             var next=new InstallState{Product=Product,SchemaVersion=1,InstallId=id,InstallDir=root,DataDir=data,Version=manifest.Version,CurrentExe=NativeIO.SafePath(root,"app/"+tag+"/browser-bridge.exe"),SetupExe=NativeIO.SafePath(root,"app/"+tag+"/AgentBrowser-Setup.exe"),Port=options.Port,InstalledAt=p.Old==null?DateTime.UtcNow.ToString("o"):p.Old.InstalledAt,UpdatedAt=DateTime.UtcNow.ToString("o")};p.Next=next;
             var owned=p.Old==null?new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase):p.Old.OwnedFiles.ToDictionary(x=>x.Path,x=>x.Sha256,StringComparer.OrdinalIgnoreCase);
+            var shipped=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach(var file in manifest.Files) {
                 string relative=file.Path;if(relative=="browser-bridge.exe"||relative=="AgentBrowser-Setup.exe") relative="app/"+tag+"/"+relative;
                 string dest=NativeIO.SafePath(root,relative);
                 if(File.Exists(dest)&&!owned.ContainsKey(relative)) throw new IOException("An unowned file blocks installation: "+dest);
-                Add(p,dest,CapturePackageFile(package,file));owned[relative]=file.Sha256.ToLowerInvariant();
+                Add(p,dest,CapturePackageFile(package,file));owned[relative]=file.Sha256.ToLowerInvariant();shipped.Add(relative.Replace('\\','/'));
+            }
+            if(p.Old!=null) {
+                // Outside app\ only data such as old hashed extension assets is cleaned up; executables and the
+                // script-generated MCP examples stay. Under app\ the current and the previous version stay: a
+                // managed OpenCode or a hand-copied MCP entry may still point at the previous executable.
+                bool versionChanged=String.IsNullOrEmpty(p.Old.CurrentExe)||!Same(Full(p.Old.CurrentExe),next.CurrentExe);
+                var kept=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var previous=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                kept.Add(Path.GetDirectoryName(next.CurrentExe));
+                foreach(string exe in new[]{p.Old.CurrentExe,p.Old.SetupExe}) if(!String.IsNullOrEmpty(exe)) {previous.Add(Full(exe));kept.Add(Path.GetDirectoryName(Full(exe)));}
+                foreach(var file in p.Old.OwnedFiles) {
+                    string relative=file.Path.Replace('\\','/');
+                    if(shipped.Contains(relative)||Same(relative,"examples/mcp-windows.json")||Same(relative,"examples/mcp-wsl.json")) continue;
+                    string path=NativeIO.SafePath(root,file.Path);if(previous.Contains(path)) continue;
+                    if(relative.StartsWith("app/",StringComparison.OrdinalIgnoreCase)) {if(!versionChanged||kept.Contains(Path.GetDirectoryName(path))) continue;}
+                    else if(relative.EndsWith(".exe",StringComparison.OrdinalIgnoreCase)) continue;
+                    p.Prune.Add(file);
+                }
+                if(p.Prune.Count>0) p.Summary.Add("새 버전에 없는 이전 파일 "+p.Prune.Count+"개를 정리합니다. 사용 중이거나 직접 수정한 파일은 그대로 둡니다.");
             }
             var oldRecords=Registrations(p.Old);var requested=new List<McpRecord>(oldRecords);
             var explicitPaths=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -234,9 +257,42 @@ namespace AgentBrowser.Installer {
                 ((System.Runtime.InteropServices.ComTypes.IPersistFile)shortcut).Save(path,true);return File.ReadAllBytes(path);
             } finally {System.Runtime.InteropServices.Marshal.FinalReleaseComObject(shortcut);if(File.Exists(path)) File.Delete(path);}
         }
+        /// Removes obsolete owned files through the transaction, so a later failure restores them.
+        /// A file that changed, is in use or cannot be judged stays on disk and in the ownership record.
+        static List<string> PruneObsolete(InstallPlan p,FileTransaction transaction,string root) {
+            var removed=new List<string>();var dropped=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            HashSet<string> referenced=null;bool resolved=false;
+            foreach(var file in p.Prune) {
+                string path=NativeIO.SafePath(root,file.Path);
+                if(file.Path.Replace('\\','/').StartsWith("app/",StringComparison.OrdinalIgnoreCase)) {
+                    if(!resolved) {referenced=BridgeControl.ReferencedAppDirectories(p.Old);resolved=true;}
+                    if(referenced==null||referenced.Contains(Path.GetDirectoryName(path))) continue;
+                }
+                if(Directory.Exists(path)) continue;
+                if(File.Exists(path)) {
+                    try {
+                        if(!Same(NativeIO.FileHash(path),file.Sha256)) continue;
+                        transaction.Write(new Change{Path=path,Expected=file.Sha256.ToLowerInvariant()});
+                    } catch(IOException) {continue;} catch(UnauthorizedAccessException) {continue;}
+                    removed.Add(path);
+                }
+                dropped.Add(file.Path);
+            }
+            if(dropped.Count>0) p.Next.OwnedFiles=p.Next.OwnedFiles.Where(f=>!dropped.Contains(f.Path)).ToArray();
+            return removed;
+        }
+        static void RemoveEmptiedDirectories(string root,List<string> removed) {
+            foreach(string file in removed) {
+                try {
+                    for(string directory=Path.GetDirectoryName(file);!String.IsNullOrEmpty(directory)&&directory.StartsWith(root+"\\",StringComparison.OrdinalIgnoreCase)&&Directory.Exists(directory)&&Directory.GetFileSystemEntries(directory).Length==0;directory=Path.GetDirectoryName(directory)) {
+                        NativeIO.PlainPath(directory);Directory.Delete(directory);
+                    }
+                } catch(IOException) {} catch(UnauthorizedAccessException) {}
+            }
+        }
         public static string Apply(InstallPlan p,CancellationToken cancel,Action<string> progress) {
             string root=Root(p.Options.InstallDir),lockPath=Path.Combine(root,".agent-browser-install.lock");cancel.ThrowIfCancellationRequested();Directory.CreateDirectory(root);
-            bool restartOld=false,newStarted=false;var stoppedProfiles=new List<string>();FileTransaction transaction=null;bool complete=false;
+            bool restartOld=false,newStarted=false;var stoppedProfiles=new List<string>();FileTransaction transaction=null;bool complete=false;var pruned=new List<string>();
             using(var fileLock=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)) {
                 try {
                     if(HashOrMissing(Path.Combine(root,StateName))!=p.StateHash) throw new IOException("Installation changed after preview. Preview it again.");
@@ -263,6 +319,7 @@ namespace AgentBrowser.Installer {
                     }
                     int n=0;foreach(var change in p.Changes) {cancel.ThrowIfCancellationRequested();progress("파일 적용 "+(++n)+" / "+p.Changes.Count);transaction.Write(change);}
                     if(p.Next!=null) {
+                        if(p.Old!=null&&p.Prune.Count>0) pruned=PruneObsolete(p,transaction,root);
                         if(p.Old!=null&&p.Old.Startup!=null&&(p.Next.Startup==null||!Same(p.Old.Startup.Path,p.Next.Startup.Path))) transaction.Write(new Change{Path=p.Old.Startup.Path,Expected=p.OldStartupHash});
                         if(p.Next.Startup!=null) {var bytes=Shortcut(transaction.Stage,p.Next.SetupExe,root);transaction.Write(new Change{Path=p.Next.Startup.Path,Expected=p.NextStartupHash,Bytes=bytes});p.Next.Startup.Sha256=NativeIO.Hash(bytes);}
                         cancel.ThrowIfCancellationRequested();
@@ -271,6 +328,7 @@ namespace AgentBrowser.Installer {
                     } else transaction.Write(new Change{Path=Path.Combine(p.Old.DataDir,".installer-bridge-process.json"),Expected=HashOrMissing(Path.Combine(p.Old.DataDir,".installer-bridge-process.json"))});
                     cancel.ThrowIfCancellationRequested();
                     complete=true;string warning="";
+                    RemoveEmptiedDirectories(root,pruned);
                     // Files are committed before starting the new runtime overlay.
                     // A restart failure must not roll back files under a new MCP process.
                     if(p.Next!=null&&p.Options.Start&&stoppedProfiles.Count>0)try{RestartProfiles(p.Next,stoppedProfiles);}
@@ -298,7 +356,8 @@ namespace AgentBrowser.Installer {
         public FileTransaction(string root) {Stage=Path.Combine(root,".transaction-"+Guid.NewGuid().ToString("N"));InstallerEngine.PrivateDirectory(Stage);}
         public void Write(Change change) {
             NativeIO.PlainPath(change.Path);if(InstallerEngine.HashOrMissing(change.Path)!=change.Expected) throw new IOException("A file changed before applying: "+change.Path);
-            var entry=new Saved{Path=change.Path,Existed=File.Exists(change.Path),Backup=Path.Combine(Stage,saved.Count+".backup"),User=change.User};
+            // A unique name: a write that fails after its backup must not block the next backup.
+            var entry=new Saved{Path=change.Path,Existed=File.Exists(change.Path),Backup=Path.Combine(Stage,Guid.NewGuid().ToString("N")+".backup"),User=change.User};
             if(entry.Existed) File.Copy(change.Path,entry.Backup,false);
             if(change.Bytes==null) {NativeIO.DeleteExpected(change.Path,change.Expected,change.User);}else NativeIO.WriteAtomic(change.Path,change.Bytes,change.Expected,change.User);
             entry.Written=change.Bytes==null?"missing":NativeIO.Hash(change.Bytes);saved.Add(entry);
@@ -336,10 +395,13 @@ namespace AgentBrowser.Installer {
             if(owned.Length!=1) throw new IOException("Recorded Bridge executable is not owned.");
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
                 foreach(ManagementObject process in query.Get()) {
-                    if(!File.Exists(expected)||!InstallerEngine.Same(NativeIO.FileHash(expected),owned[0].Sha256)){process.Dispose();throw new IOException("Recorded Bridge executable is missing or changed; the live process was retained.");}
-                    DateTime created=ManagementDateTimeConverter.ToDateTime((string)process["CreationDate"]).ToUniversalTime();
+                    // Windows reuses PIDs. A live process with another identity (including a
+                    // protected process whose path cannot be read) is not this Bridge: report
+                    // "not running" so callers clean up the stale marker. Nothing is stopped.
+                    string actualPath=process["ExecutablePath"] as string,commandLine=process["CommandLine"] as string,creation=process["CreationDate"] as string;
                     var expectedCreated=DateTime.Parse((string)marker["CreatedAt"],null,System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime();
-                    if(!InstallerEngine.Same(InstallerEngine.Full((string)process["ExecutablePath"]),expected)||!Regex.IsMatch((string)process["CommandLine"],@"(?:^|\s)serve\s+--port\s+"+Convert.ToInt32(marker["Port"])+@"(?:\s|$)")||created!=expectedCreated) {process.Dispose();throw new IOException("Recorded PID identity changed. No process was stopped.");}
+                    if(String.IsNullOrEmpty(actualPath)||String.IsNullOrEmpty(commandLine)||String.IsNullOrEmpty(creation)||!InstallerEngine.Same(InstallerEngine.Full(actualPath),expected)||!Regex.IsMatch(commandLine,@"(?:^|\s)serve\s+--port\s+"+Convert.ToInt32(marker["Port"])+@"(?:\s|$)")||ManagementDateTimeConverter.ToDateTime(creation).ToUniversalTime()!=expectedCreated) {process.Dispose();return null;}
+                    if(!File.Exists(expected)||!InstallerEngine.Same(NativeIO.FileHash(expected),owned[0].Sha256)){process.Dispose();throw new IOException("Recorded Bridge executable is missing or changed; the live process was retained.");}
                     return process;
                 }
             }return null;
@@ -350,6 +412,35 @@ namespace AgentBrowser.Installer {
             if(current==null)return;
             if(NativeIO.Json.Serialize(current)!=NativeIO.Json.Serialize(marker))throw new IOException("Bridge ownership marker changed during stop; it was preserved.");
             File.Delete(path);
+        }
+        /// Directories under app\ whose executables may still be in use: recorded by runtime.json or the
+        /// Bridge marker, or running right now. Null when that cannot be determined; callers keep everything.
+        public static HashSet<string> ReferencedAppDirectories(InstallState state) {
+            var used=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try {
+                string appRoot=InstallerEngine.Full(Path.Combine(state.InstallDir,"app"))+"\\",runtime=Path.Combine(state.DataDir,"runtime.json");
+                if(File.Exists(runtime)) {
+                    var snapshot=InstallerEngine.Read<Dictionary<string,object>>(runtime);object records=null,profiles=null;
+                    if(snapshot==null||!snapshot.TryGetValue("runtimes",out records)||!(records is Dictionary<string,object>)) return null;
+                    snapshot.TryGetValue("profiles",out profiles);var known=profiles as Dictionary<string,object>;
+                    foreach(var entry in (Dictionary<string,object>)records) {
+                        var record=entry.Value as Dictionary<string,object>;object recorded=null;
+                        if(record!=null&&record.TryGetValue("bridgeExecutable",out recorded)&&recorded is string&&((string)recorded).Length>0) {used.Add(Path.GetDirectoryName(InstallerEngine.Full((string)recorded)));continue;}
+                        object profile=null,kind=null;if(known!=null) known.TryGetValue(entry.Key,out profile);
+                        var typed=profile as Dictionary<string,object>;if(typed!=null) typed.TryGetValue("kind",out kind);
+                        if((kind as string)!="external") return null;
+                    }
+                }
+                var marker=Marker(state);object markerExe=null;
+                if(marker!=null&&marker.TryGetValue("Executable",out markerExe)&&markerExe is string&&((string)markerExe).Length>0) used.Add(Path.GetDirectoryName(InstallerEngine.Full((string)markerExe)));
+                using(var query=new ManagementObjectSearcher("SELECT ExecutablePath FROM Win32_Process")) {
+                    foreach(ManagementObject process in query.Get()) using(process) {
+                        string path=process["ExecutablePath"] as string;if(String.IsNullOrEmpty(path)) continue;
+                        path=InstallerEngine.Full(path);if(path.StartsWith(appRoot,StringComparison.OrdinalIgnoreCase)) used.Add(Path.GetDirectoryName(path));
+                    }
+                }
+            } catch(Exception) {return null;}
+            return used;
         }
         public static bool Stop(InstallState state) {
             var marker=Marker(state);using(var process=Verify(state,marker)) {if(process==null) {RemoveStoppedMarker(state,marker);return false;}}
@@ -368,7 +459,8 @@ namespace AgentBrowser.Installer {
             startup.RequireChild(pid);
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
                 foreach(ManagementObject process in query.Get()) using(process) {
-                    if(!InstallerEngine.Same(InstallerEngine.Full((string)process["ExecutablePath"]),state.CurrentExe)||!Regex.IsMatch((string)process["CommandLine"],@"(?:^|\s)serve\s+--port\s+"+state.Port+@"(?:\s|$)")) throw new IOException("Bridge process identity could not be verified.");
+                    string startedPath=process["ExecutablePath"] as string,startedCommand=process["CommandLine"] as string;
+                    if(String.IsNullOrEmpty(startedPath)||String.IsNullOrEmpty(startedCommand)||!InstallerEngine.Same(InstallerEngine.Full(startedPath),state.CurrentExe)||!Regex.IsMatch(startedCommand,@"(?:^|\s)serve\s+--port\s+"+state.Port+@"(?:\s|$)")) throw new IOException("Bridge process identity could not be verified.");
                     var marker=new Dictionary<string,object>{{"Product",InstallerEngine.Product},{"InstallId",state.InstallId},{"Pid",pid},{"Executable",state.CurrentExe},{"Port",state.Port},{"CreatedAt",ManagementDateTimeConverter.ToDateTime((string)process["CreationDate"]).ToUniversalTime().ToString("o")}};
                     NativeIO.WriteText(Path.Combine(state.DataDir,".installer-bridge-process.json"),NativeIO.Json.Serialize(marker));
                     startup.Commit();

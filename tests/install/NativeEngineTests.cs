@@ -18,6 +18,8 @@ namespace AgentBrowser.Installer {
             string extensionPath=Path.Combine(destination,"extension","manifest.json");var extension=InstallerEngine.Read<Dictionary<string,object>>(extensionPath);extension["version"]=version;NativeIO.WriteText(extensionPath,NativeIO.Json.Serialize(extension));files.Single(f=>f.Path=="extension/manifest.json").Sha256=NativeIO.FileHash(extensionPath);manifest.Files=files.ToArray();manifest.Version=version;NativeIO.WriteText(Path.Combine(destination,"package-manifest.json"),NativeIO.Json.Serialize(manifest));
         }
         [STAThread] public static int Main(string[] args){
+            // A live process whose image is this test executable, for "file in use" fixtures.
+            if(args.Length==1&&args[0]=="--hold"){Thread.Sleep(120000);return 0;}
             if(args.Length==3&&args[0]=="--release-boundaries"){InstallerReviewTests.RunReleaseBoundaries(args[1],args[2]);return 0;}
             if(args.Length==3&&args[0]=="--update-runtimes"){try{InstallerReviewTests.UpdateRuntimeCases(args[1],args[2]);return 0;}catch(Exception e){Console.Error.WriteLine(e.Message);return 1;}}
             var synthetic=InstallerReviewTests.SyntheticBridge(args);if(synthetic.HasValue)return synthetic.Value;

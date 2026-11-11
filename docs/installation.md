@@ -15,7 +15,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir 
 
 ## 설치 파일과 소유권
 
-- `app/<version>-<exe sha256 앞 12자>/browser-bridge.exe`: 업데이트 시 실행 중인 이전 exe를 덮어쓰지 않는다. 기존 관리 OpenCode의 MCP 경로를 유지하도록 이전 버전도 소유 파일로 남긴다.
+- `app/<version>-<exe sha256 앞 12자>/browser-bridge.exe`: 업데이트 시 실행 중인 이전 exe를 덮어쓰지 않는다. 기존 관리 OpenCode의 MCP 경로를 유지하도록 현재 버전과 직전 버전은 소유 파일로 남긴다. 버전이 바뀌는 업데이트에서 그보다 오래된 `app/` 폴더는 실행 중이 아니고 `runtime.json`이 참조하지 않을 때만 정리하며, 판정할 수 없으면 그대로 둔다. 새 패키지에 없는 `app/` 밖 소유 파일(이전 확장 자산 등)은 기록한 해시와 같을 때만 같은 transaction에서 삭제하고 소유 목록에서 뺀다. 실행 파일과 사용자가 수정한 파일은 삭제하지 않는다.
 - `data/config.json`, `data/runtime.json`: 페어링과 실행 프로필. 기본 제거에서는 보존한다.
 - `.agent-browser-install.json`: 설치 ID, 소유 파일 해시, Startup 및 선택적 MCP 등록 정보. 다른 위치의 설치에 재사용하지 않는다.
 - `data/.installer-bridge-process.json`: 직접 시작한 Bridge의 PID, 실행 경로, 생성 시각, 포트. 종료 직전 다시 검증한다.

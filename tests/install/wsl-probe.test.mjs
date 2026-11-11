@@ -8,18 +8,23 @@ import { execFileSync } from "node:child_process";
 const source = readFileSync(new URL("../../installer/Discovery.cs", import.meta.url), "utf8");
 const match = /internal const string WslProbe=@"((?:[^"]|"")*)";/.exec(source);
 
+// The temp HOME is interpolated into a RegExp; its path may contain metacharacters.
+const escapeRegExp = text => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 test("the WSL probe finds OpenCode installed through nvm or bun without a login PATH", () => {
   assert.ok(match, "WslProbe must be a verbatim constant so it can be tested");
   const probe = match[1].replaceAll('""', '"').replaceAll("\r\n", "\n");
-  const home = mkdtempSync(join(tmpdir(), "ab-probe-"));
+  // The prefix carries metacharacters on purpose, so an unescaped pattern fails here.
+  const home = mkdtempSync(join(tmpdir(), "ab-probe+(1)-"));
+  const literalHome = escapeRegExp(home);
   try {
     for (const dir of [".nvm/versions/node/v22.0.0/bin", ".bun/bin"]) {
       mkdirSync(join(home, dir), { recursive: true });
       const exe = join(home, dir, "opencode"); writeFileSync(exe, "#!/bin/sh\necho 1.18.29\n"); chmodSync(exe, 0o755);
     }
     const output = execFileSync("/bin/sh", ["-c", probe], { env: { HOME: home, PATH: "/usr/bin:/bin" }, encoding: "utf8" });
-    assert.match(output, new RegExp(`EXE\\t${home}/\\.nvm/versions/node/v22\\.0\\.0/bin/opencode`));
-    assert.match(output, new RegExp(`EXE\\t${home}/\\.bun/bin/opencode`));
+    assert.match(output, new RegExp(`EXE\\t${literalHome}/\\.nvm/versions/node/v22\\.0\\.0/bin/opencode`));
+    assert.match(output, new RegExp(`EXE\\t${literalHome}/\\.bun/bin/opencode`));
     assert.match(output, /^USER\t/m);
   } finally {
     // The fake HOME holds executable opencode stubs; never leave it behind in the shared temp folder.

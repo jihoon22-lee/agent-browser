@@ -81,7 +81,8 @@ namespace AgentBrowser.Installer {
             }
             if(!File.Exists(NativeIO.WslExe)) { result.Notices.Add("WSL을 찾지 못했습니다. Windows 설치만 진행하거나 WSL 설정을 나중에 추가할 수 있습니다."); return result; }
             try {
-                // wsl --list emits UTF-16LE on native Windows, unlike Linux --exec output.
+                // wsl --list emits UTF-16LE on native Windows, unlike Linux --exec output; with WSL_UTF8=1
+                // it emits UTF-8. NativeIO.DecodeOutput tells them apart; UTF-16 is only the preference.
                 var listing=NativeIO.Run(NativeIO.WslExe,new [] {"--list","--quiet"},null,null,15000,Encoding.Unicode);
                 if(listing.ExitCode!=0) { result.Notices.Add("WSL 배포판을 확인하지 못했습니다. WSL 또는 회사 정책 상태를 확인하세요."); return result; }
                 var runningResult=NativeIO.Run(NativeIO.WslExe,new [] {"--list","--running","--quiet"},null,null,15000,Encoding.Unicode);

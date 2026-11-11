@@ -34,6 +34,20 @@ pnpm --filter agent-browser-e2e exec playwright install chromium
 
 `bash scripts/test-installer-windows.sh SetupFlowTests`는 현재 checkout을 `release/dev-<커밋>-<시각>`에 새로 패키징하고(게시된 `release/*.zip`은 건드리지 않음), CI와 같은 소스 구성으로 Windows .NET Framework `csc`에서 컴파일해 실행한다. 이미 만든 ZIP은 `AB_PACKAGE_ZIP=<zip>`으로 다시 쓴다. `%LOCALAPPDATA%\AgentBrowser-dev\installer-tests`만 사용하며 운영 설치·Chrome 프로필은 읽거나 바꾸지 않는다. `SetupDisplayTests`, `ManagedPathTests`도 같은 방식이다.
 
+### CI에서 실행하지 않는 설치 검사 (수동)
+
+아래 파일은 실제 WSL 배포판이나 보이는 데스크톱이 필요해 호스팅 Windows 러너에서 실행할 수 없다. CI 통과를 이 검사의 통과로 보고하지 않으며, 실행했을 때만 `docs/status.md`에 결과를 기록한다. 모두 새 격리 폴더만 사용하고 운영 설치·실제 Startup·전역 OpenCode 설정은 대상이 아니다.
+
+| 파일 | 필요한 환경 | 실행 |
+| --- | --- | --- |
+| `tests/install/NativeCoreTests.cs` | 없음(CI의 `Native GUI engine` 단계가 인수 없이 실행). 실제 WSL 후보 확인은 수동 | 배포판 이름을 인수로 주면 그 배포판에서 찾은 OpenCode 후보의 버전 확인까지 검사한다. |
+| `tests/install/wsl-settings.tests.ps1` | 실행 중인 WSL 배포판 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\install\wsl-settings.tests.ps1 -Scripts .\scripts -WslDistribution <배포판>` — `/tmp/agent-browser-installer-wsl-*` 임시 폴더에서 WSL 설정 파일의 원자적 교체·소유자/모드 보존·rollback을 검사하고 폴더를 지운다. |
+| `tests/install/recovery-package.tests.ps1` | WSL 배포판, 압축을 푼 이전 게시 패키지와 새 패키지 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\install\recovery-package.tests.ps1 -PackageDir <새 패키지> -PreviousPackageDir <이전 패키지> -WslDistribution <배포판>` — 임시 설치에서 Startup 충돌, `-NoStartup` 설치, 수동 시작, 진단 보고서의 개인 정보 제외, 스크립트 업데이트·제거를 검사한다. |
+| `tests/install/wsl-auth-check.mjs` | WSL `Ubuntu`와 그 안의 OpenCode 1.18.29 | 단독 실행하지 않는다. `NativeEngineTests`에 WSL 설정 경로와 이 파일 경로를 4·5번째 인수로 주면 실제 OpenCode CLI의 `mcp list`와 인증된 MCP 왕복을 검사한다. |
+| `tests/install/GuiSmokeTests.cs` | 로그인한 Windows 데스크톱(UI Automation, 실제 창 포커스) | `csc`에 `UIAutomationClient.dll`·`UIAutomationTypes.dll`·`WindowsBase.dll` 참조를 더해 컴파일하고 `<패키지 zip> <새 격리 폴더> <합성 설정 파일>`을 인수로 실행한다. 화면에 보이는 설치 창을 실제로 조작하므로 실행 중에는 PC를 쓰지 않는다. |
+
+설치 화면과 고급 설정의 한글 표시·잘림·배율은 위 검사와 별개로 실제 Windows 화면에서 눈으로 확인한다(`SetupDisplayTests`의 PNG는 보조 자료다).
+
 ## Windows PowerShell 5.1 배포 진입점 회귀
 
 `tests/install/package.tests.ps1`은 실제 `build-release.ps1` ZIP을 만들고 한글·공백 경로에 추출한다. Windows 시스템의 `WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File`을 자식 프로세스로 실행해 `PackageDir` 생략/명시 모두 검사한다. 별도 InstallDir·StartupDir·빈 포트를 사용하며 인증된 Bridge health, 재설치 InstallId/PID 유지, 설치된 `uninstall.ps1`의 InstallDir 생략/명시와 소유 프로세스·데이터·Startup 제거를 확인한다.
@@ -233,6 +247,8 @@ node --experimental-transform-types .\tests\integration\opencode-v1-stream.mjs `
 [CI workflow](../.github/workflows/ci.yml)는 main 대상 PR과 main push에서 Linux/Windows를 따로 실행한다.
 Linux는 전체 Rust·Extension·합성 Node·Chromium E2E, 문서 링크와 workflow 구문을 검사한다.
 Windows는 네이티브 MSVC 빌드·실행, 설치된 Chrome의 합성 E2E, PowerShell 5.1 설치·정리·패키징을 검사한다.
+Rust 툴체인 버전·컴포넌트·타깃은 `rust-toolchain.toml` 한 곳에서 읽는다(workflow에 버전을 다시 적지 않는다).
+Windows의 `cargo test`는 Unix 전용 정리 명령을 쓰는 `mcp_stdio`를 뺀 모든 통합 테스트를 실행한다. 통합 테스트 파일을 추가하면 workflow의 `--test` 목록에도 추가한다.
 호스팅 runner에 WSL이나 실제 OpenCode를 설치해 모델을 호출하지 않는다. 그 항목은 앞의 별도 실제 환경 검증과 구분한다.
 
 Actions는 커밋 SHA, 도구는 명시한 버전, 의존성은 lockfile로 고정한다. Chrome 버전은 runner 제공값을 매 실행 기록한다.
