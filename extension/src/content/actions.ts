@@ -370,8 +370,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
     case "press": {
       if (p.trusted === true && (trustedFrame() || p.trustedFrames === true)) {
         // The same checks as a DOM key press run first: a real key must not reach another element.
-        const target = preparePress(p, assertInteractable);
-        if (!p.ref && target.tagName === "IFRAME") throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
+        preparePress(p, assertInteractable);
         const changes = observeChanges(p.waitFor ? 0 : 500, signal);
         void changes.catch(() => {});
         const { key, modifiers } = keyOf(p);

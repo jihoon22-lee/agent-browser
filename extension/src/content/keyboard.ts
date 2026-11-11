@@ -71,6 +71,8 @@ function moveCaret(target: HTMLInputElement | HTMLTextAreaElement, key: string, 
 export function preparePress(p: Record<string, unknown>, validate: (element: Element) => void): HTMLElement {
   const { key, modifiers } = keyOf(p);
   const target = (p.ref ? resolveRef(String(p.ref)) : activeElement() ?? document.body) as HTMLElement;
+  // Focus inside a child document: a key sent to the frame element here would do nothing there.
+  if (!p.ref && (target.tagName === "IFRAME" || target.tagName === "FRAME")) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Focus is inside a frame; pass the ref of the element to press.");
   validate(target);
   const editableHost = target.closest("[contenteditable]");
   const rich = target.isContentEditable || (editableHost !== null && editableHost.getAttribute("contenteditable") !== "false");
