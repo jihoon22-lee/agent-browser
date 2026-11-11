@@ -728,6 +728,8 @@ if [ "$3" = listener ] || [ "$3" = inspect ]; then
   exit "$missing"
 fi
 if [ "$3" = stop ]; then /bin/kill -TERM -- -$pid; fi"#;
+/// A probe may be the call that boots the WSL VM, which takes well over five seconds when cold.
+const WSL_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &str) -> Option<i32> {
     tracing::debug!(profile_id = %profile.id, mode, "WSL control probe");
     let Some(owner) = &record.wsl_owner_file else { return None; };
@@ -735,7 +737,7 @@ async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &st
     let mut args = wsl_args(profile); args.extend(["--exec".into(),"/bin/sh".into(),"-c".into(),script.into(),"agent-browser".into(),owner.clone(),record.instance.clone(),mode.into(),format!("{:04X}",reqwest::Url::parse(&record.base_url).ok().and_then(|url| url.port()).unwrap_or(0)),record.wsl_keeper.as_ref().map(|keeper| keeper.owner_file.clone()).unwrap_or_default(),record.wsl_keeper.as_ref().map(|keeper| keeper.socket.clone()).unwrap_or_default()]);
     let mut command = tokio::process::Command::new(process::wsl_executable()); command.args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] { command.creation_flags(0x08000000); }
-    match tokio::time::timeout(Duration::from_secs(5),command.status()).await {
+    match tokio::time::timeout(WSL_PROBE_TIMEOUT,command.status()).await {
         Err(_) => Some(-2),
         Ok(Err(_)) => Some(-3),
         Ok(Ok(status)) => status.code(),

@@ -23,6 +23,9 @@ version=$(/usr/bin/timeout -k 1 5 "$6" --version 2>/dev/null) || exit 36
 case "$version" in 'browser-bridge '*) ;; *) exit 36;; esac
 "#;
 
+/// Covers a cold WSL boot plus the Windows canary (five seconds inside the script).
+const WSL_PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(20);
+
 pub(super) async fn preflight_code(profile: &Profile, owner: &str, instance: &str, diagnostic: bool) -> Option<i32> {
     // Unit-test harness executables do not implement the Bridge CLI. Native
     // persistence tests use the separately built real Bridge for this canary.
@@ -37,7 +40,7 @@ pub(super) async fn preflight_code(profile: &Profile, owner: &str, instance: &st
     let mut probe=tokio::process::Command::new(process::wsl_executable());
     probe.env_remove("WSL_INTEROP").args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] {probe.creation_flags(0x08000000);}
-    match tokio::time::timeout(Duration::from_secs(10),probe.status()).await {
+    match tokio::time::timeout(WSL_PREFLIGHT_TIMEOUT,probe.status()).await {
         Err(_) => Some(-2), Ok(Err(_)) => Some(-3), Ok(Ok(status)) => status.code(),
     }
 }
