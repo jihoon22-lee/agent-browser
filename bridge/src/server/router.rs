@@ -644,7 +644,8 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
         "new" => {
             // A dropped/cancelled creation must not strand a pending operation.
             struct Reservation<'a> { state: &'a ServerState, id: Option<String> }
-            impl Drop for Reservation<'_> { fn drop(&mut self) { if let Some(id) = &self.id { let _ = self.state.ops.release(id); } } }
+            // A cancelled call never reaches call_tool_as's broadcast, so the release announces itself.
+            impl Drop for Reservation<'_> { fn drop(&mut self) { if let Some(id) = &self.id && self.state.ops.release(id).is_ok() { self.state.broadcast_status(); } } }
             let selection = state.selection.lock().await;
             let mut reservation = Reservation {state, id:None};
             let new_id;
@@ -851,6 +852,21 @@ mod tests {
         drop(pending);
         assert!(state.ops.current().is_none());
         assert!(state.ops.attach(7,"fixture").is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancelled_standalone_new_tells_browsers_the_reservation_is_gone() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home=tempfile::tempdir().unwrap();
+        let state=ServerState::new(home.path().into(),crate::config::load_or_init(home.path()).unwrap());
+        let (tx,mut rx)=tokio::sync::mpsc::unbounded_channel();state.registry.register("fixture",tx);
+        let mut pending=Box::pin(call_tool(&state,"browser_tabs",json!({"action":"new"})));
+        assert!(futures_util::poll!(pending.as_mut()).is_pending());
+        while rx.try_recv().is_ok() {}
+        drop(pending);
+        let mut statuses=Vec::new();
+        while let Ok(text)=rx.try_recv() { if let Envelope::Evt{event,data,..}=parse_envelope(&text).unwrap() { assert_eq!(event,"status.changed"); statuses.push(data); } }
+        assert!(statuses.last().is_some_and(|status|status["operation"].is_null()),"the panel must not keep showing the cancelled reservation: {statuses:?}");
     }
 
     #[tokio::test]
