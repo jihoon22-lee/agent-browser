@@ -103,6 +103,22 @@ namespace AgentBrowser.Installer {
      form.Close();
     }}finally{Uninstall(root);}
    });
+   Case("choosing another OpenCode follows its home unless the user chose a work folder",()=>{
+    using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"candidate-home")})){
+     form.Show();Application.DoEvents();
+     var list=Field<ComboBox>(form,"RuntimeCandidates");var directory=Field<TextBox>(form,"RuntimeDirectory");
+     list.Items.Add(new OpenCodeCandidate{Kind="windows",Home=@"C:\Users\synthetic",Executable=@"C:\Users\synthetic\opencode.exe"});
+     list.Items.Add(new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",User="synthetic",Home="/home/synthetic",Executable="/home/synthetic/.opencode/bin/opencode"});
+     list.SelectedIndex=0;Assert(directory.Text==@"C:\Users\synthetic","the first candidate did not suggest its home: "+directory.Text);
+     list.SelectedIndex=1;Assert(directory.Text=="/home/synthetic","a Windows work folder stayed after choosing a WSL candidate: "+directory.Text);
+     directory.Text="/srv/project";list.SelectedIndex=0;Assert(directory.Text=="/srv/project","a work folder the user typed was replaced");
+     form.Close();
+    }
+    var wsl=new OpenCodeCandidate{Kind="wsl",Distribution="Ubuntu",User="synthetic",Executable="/opt/opencode"};
+    Assert(SetupForm.RuntimeUser(wsl,"wsl","Ubuntu","/opt/opencode")=="synthetic","the same distribution must keep the discovered user");
+    Assert(SetupForm.RuntimeUser(wsl,"wsl","Debian","/opt/opencode")==null,"another distribution must not reuse the discovered user");
+    Assert(SetupForm.RuntimeUser(wsl,"wsl","Ubuntu","/usr/bin/opencode")==null&&SetupForm.RuntimeUser(wsl,"windows","Ubuntu","/opt/opencode")==null&&SetupForm.RuntimeUser(null,"wsl","Ubuntu","/opt/opencode")==null,"a user was reused without a matching candidate");
+   });
    Case("long result and check lines stay readable",()=>{
     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"read-lines")})){
      Assert(Field<ListBox>(form,"DoneChecks").HorizontalScrollbar,"final checks cannot scroll sideways");

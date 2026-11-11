@@ -20,6 +20,8 @@ namespace AgentBrowser.Installer {
         readonly Button startDistribution=new Button(),browseRuntimeDirectory=new Button(),saveRuntime=new Button();
         readonly TextBox runtimeResult=new TextBox();CancellationTokenSource pairingWait;string savedRuntimeId;readonly ListBox savedProfiles=new ListBox();
         bool runtimeDiscovered;
+        /// The work folder this page filled in itself; a folder the user typed or picked is never replaced.
+        string suggestedRuntimeDirectory;
         readonly ListBox doneChecks=new ListBox();readonly Label complete=new Label();
         readonly ListBox registrations=new ListBox();
         readonly Panel welcome=new Panel(),input=new Panel(),advanced=new Panel(),review=new Panel(),connection=new Panel(),pairing=new Panel(),runtime=new Panel(),done=new Panel();
@@ -276,14 +278,20 @@ namespace AgentBrowser.Installer {
         }
         void UseRuntimeCandidate(){
             var c=runtimeCandidates.SelectedItem as OpenCodeCandidate;if(c==null)return;
-            runtimeKind.SelectedIndex=c.Kind=="wsl"?1:0;runtimeDistribution.Text=c.Distribution??"";runtimeExecutable.Text=c.Executable;if(String.IsNullOrWhiteSpace(runtimeDirectory.Text))runtimeDirectory.Text=c.Home;
+            runtimeKind.SelectedIndex=c.Kind=="wsl"?1:0;runtimeDistribution.Text=c.Distribution??"";runtimeExecutable.Text=c.Executable;
+            // A Windows home left over from another candidate is not a valid WSL work folder (and vice versa).
+            if(String.IsNullOrWhiteSpace(runtimeDirectory.Text)||runtimeDirectory.Text==suggestedRuntimeDirectory){runtimeDirectory.Text=c.Home;suggestedRuntimeDirectory=c.Home;}
+        }
+        /// The discovered WSL user is reused only for the same distribution and executable it was found with.
+        internal static string RuntimeUser(OpenCodeCandidate chosen,string kind,string distribution,string executable){
+            return chosen!=null&&kind=="wsl"&&chosen.Kind=="wsl"&&chosen.Executable==executable&&String.Equals(chosen.Distribution,distribution,StringComparison.OrdinalIgnoreCase)?chosen.User:null;
         }
         async Task SaveRuntime(){
             if(working)return;working=true;saveRuntime.Enabled=false;runtimeResult.Text="실행 환경을 확인하고 있습니다…";
             try{
                 var state=Installed();var chosen=runtimeCandidates.SelectedItem as OpenCodeCandidate;
-                var candidate=new OpenCodeCandidate{Kind=runtimeKind.SelectedIndex==1?"wsl":"windows",Distribution=runtimeDistribution.Text.Trim(),Executable=runtimeExecutable.Text.Trim(),
-                    User=chosen!=null&&chosen.Kind=="wsl"&&chosen.Executable==runtimeExecutable.Text.Trim()?chosen.User:null};
+                var candidate=new OpenCodeCandidate{Kind=runtimeKind.SelectedIndex==1?"wsl":"windows",Distribution=runtimeDistribution.Text.Trim(),Executable=runtimeExecutable.Text.Trim()};
+                candidate.User=RuntimeUser(chosen,candidate.Kind,candidate.Distribution,candidate.Executable);
                 bool replace=savedRuntimeId!=null;
                 string id=savedRuntimeId??"managed-"+Guid.NewGuid().ToString("N").Substring(0,8),name=candidate.Kind=="wsl"?"OpenCode ("+candidate.Distribution+")":"OpenCode (Windows)",directory=runtimeDirectory.Text.Trim();
                 var profile=await Task.Run(()=>ManagedProfile.Prepare(state,candidate,id,name,directory,replace));
