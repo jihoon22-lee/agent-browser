@@ -81,14 +81,15 @@ const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
  * a space, and words split by inline tags (<mark>A-10</mark>02) kept together. */
 const SKIP = "script,style,template,noscript,[hidden]";
 const BREAK = "td,th,tr,li,div,p,br,section,article,header,footer,h1,h2,h3,h4,h5,h6,dt,dd,[role=cell],[role=gridcell],[role=row]";
-function renderedText(root: Element): string {
+export function renderedText(root: Element, o: { limit: number; skipUndisplayed: boolean } = { limit: 600, skipUndisplayed: false }): string {
   let text = "";
+  const skipped = (el: Element) => el.matches(SKIP) || (o.skipUndisplayed && getComputedStyle(el).display === "none");
   const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
     // Rejecting an element skips its whole subtree.
-    acceptNode: node => node.nodeType === Node.ELEMENT_NODE && (node as Element).matches(SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    acceptNode: node => node.nodeType === Node.ELEMENT_NODE && skipped(node as Element) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
-  // A row longer than this is cut at 300 characters anyway; stop reading early.
-  for (let node = walker.nextNode(); node && text.length < 600; node = walker.nextNode()) {
+  // A row longer than the default limit is cut at 300 characters anyway; stop reading early.
+  for (let node = walker.nextNode(); node && text.length < o.limit; node = walker.nextNode()) {
     if (node.nodeType === Node.TEXT_NODE) text += node.nodeValue ?? "";
     else if ((node as Element).matches(BREAK)) text += " ";
   }

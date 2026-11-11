@@ -1,5 +1,6 @@
 import { runAction } from "../src/content/actions";
 import { resetRegistry } from "../src/content/refs";
+import { tableToRows } from "../src/content/extract";
 
 beforeEach(() => { resetRegistry(); });
 
@@ -26,4 +27,14 @@ it("text extract is sliced by characters", async () => {
   document.body.innerHTML = `<p>${"나".repeat(300)}</p>`;
   const r = await runAction("extract", { kind: "text", maxChars: 200, offset: 0, generation: 1 });
   expect(r).toMatchObject({ text: { returnedChars: 200, truncated: true, nextOffset: 200, totalChars: 300 } });
+});
+
+it("reads table cells as rendered text: breaks and blocks separate words, hidden text is left out", () => {
+  document.body.innerHTML = `<table><tr><td>Seoul<br>Korea</td><td><div>12</div><div>34</div></td>
+    <td>shown<span style="display:none">secret</span><script>var x = 1;</script><span hidden>gone</span></td><td><mark>A-10</mark>02</td></tr></table>`;
+  expect(tableToRows(document.querySelector("table")!).rows).toEqual([["Seoul Korea", "12 34", "shown", "A-1002"]]);
+});
+it("does not cap a long cell at the row-search limit", () => {
+  document.body.innerHTML = `<table><tr><td><b>${"word ".repeat(400)}</b></td></tr></table>`;
+  expect(tableToRows(document.querySelector("table")!).rows[0]![0]!.length).toBe(1999);
 });
