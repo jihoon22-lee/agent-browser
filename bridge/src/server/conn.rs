@@ -509,6 +509,10 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                     Some(Ok(_)) => continue,
                 };
+                // A reply that cannot be read still names its command: fail it now, not at its timeout.
+                if let Err(error) = parse_envelope(&text) && let Some(id) = crate::rpc::response_id_of_unreadable(&text) {
+                    state.registry.fail_unreadable_response(conn, &id, &error.message);
+                }
                 let env = match parse_or_reject(ws, &text).await {
                     Ok(env) => env,
                     Err(true) => break,

@@ -143,6 +143,8 @@ SSE가 끊기면 재연결 후 메시지·세션 상태·미응답 질문과 권
 오류 코드 전체 목록은 `protocol/schema/error-codes.json`을 따른다. 응답 없음·연결 끊김·타임아웃 뒤의
 쓰기 명령(click/fill/select/press/navigate/scroll/tabs new/close)은 자동 재실행하지 않고 `EXECUTION_UNKNOWN`으로 끝낸다.
 
+Bridge는 받은 프레임의 짝 없는 서로게이트 이스케이프(`\ud83d`처럼 상위·하위가 쌍을 이루지 않는 `\uD800`–`\uDFFF`)를 U+FFFD로 바꿔 읽는다. 그래도 읽을 수 없는 `res`는 최상위 `id`를 얻을 수 있으면 그 연결의 대기 명령을 타임아웃까지 두지 않고 바로 끝낸다. 읽기는 `INTERNAL`(retry safe), 쓰기는 응답 유실과 같은 `EXECUTION_UNKNOWN`이다.
+
 
 ### 패널 요청의 탭 예약
 
