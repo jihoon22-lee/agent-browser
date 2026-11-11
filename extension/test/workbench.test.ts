@@ -996,3 +996,31 @@ describe("draft and reference details", () => {
     expect(host.textContent).toContain("41,234자 중 앞부분 16,000자만 첨부했습니다");
   });
 });
+
+describe("review 2026-11-11", () => {
+  const sessionStore = () => {
+    const saved: Record<string, any> = {};
+    (chrome.storage as any).session = { get: vi.fn(async (key: string) => key in saved ? { [key]: saved[key] } : {}), set: vi.fn(async (value: Record<string, any>) => { Object.assign(saved, value); }), remove: vi.fn(async (key: string) => { delete saved[key]; }) };
+    return saved;
+  };
+  const settle = (ms: number) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+  const override = (handler: (message: any, original: (message: any) => Promise<any>) => any) => {
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation((message: any) => handler(message, original));
+    return runtime;
+  };
+  const ready = { ok: true, result: { profileId: "native", state: "ready", baseUrl: "http://127.0.0.1:7777", directory: "/fixture", version: "1.18.29", owned: true } };
+
+  it("B1 keeps text typed while the runtime is still connecting", async () => {
+    const saved = sessionStore(), ensure = deferred<any>();
+    override((message, original) => message.method === "runtime.ensure" ? ensure.promise : original(message));
+    await render(); await draftValue("연결 중에 쓴 글"); await settle(350);
+    // The directory is not known yet, so nothing may be stored under that provisional key.
+    expect(Object.keys(saved)).toEqual([]);
+    await act(async () => { ensure.resolve(ready); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(host.textContent).toContain("기존 질문");
+    expect(composerValue().value).toBe("연결 중에 쓴 글");
+    await settle(350);
+    expect(Object.keys(saved)).toEqual([`draft:${JSON.stringify(["native", "/fixture", "ses-one"])}`]);
+  });
+});

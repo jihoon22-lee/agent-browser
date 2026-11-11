@@ -70,8 +70,10 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const draftCache = useRef(new Map<string, { draft: string; attachments: Data[] }>()), previousDraft = useRef({ key: "", draft: "", attachments: [] as Data[] });
   // Draft text is also kept in chrome.storage.session; a key is written only after its saved text was read.
   const draftRestored = useRef(""), consumedDraft = useRef("");
+  // Until the runtime answers, the directory part of a draft key is empty: such a key is provisional.
+  const provisional = (key: string) => JSON.parse(key)[1] === "";
   const storeDraft = (key: string, text: string) => {
-    if (draftRestored.current !== key || !chrome.storage.session) return;
+    if (draftRestored.current !== key || !chrome.storage.session || provisional(key)) return;
     void (text.trim() && text.length <= MAX_STORED_DRAFT ? chrome.storage.session.set({ [`draft:${key}`]: text }) : chrome.storage.session.remove(`draft:${key}`)).catch(() => {});
   };
   const messageViewport = useRef<HTMLDivElement>(null), followMessages = useRef(true);
@@ -110,7 +112,11 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
         // The first message moved to the session it created; it must not return as the next new conversation's draft.
         consumedDraft.current = ""; draftCache.current.delete(previous.key); void chrome.storage.session?.remove(`draft:${previous.key}`).catch(() => {});
       } else if (previous.key) { draftCache.current.set(previous.key, { draft: previous.draft, attachments: previous.attachments }); storeDraft(previous.key, previous.draft); }
-      const next = draftCache.current.get(draftKey) ?? { draft: "", attachments: [] };
+      // Text typed while the runtime was connecting belongs to the conversation that connection opens.
+      const previousProfile = previous.key ? JSON.parse(previous.key)[0] as string : "";
+      const carried = previous.key && provisional(previous.key) && (previous.draft || previous.attachments.length) && (!previousProfile || previousProfile === wb.profileId);
+      if (carried) draftCache.current.delete(previous.key);
+      const next = carried ? { draft: previous.draft, attachments: previous.attachments } : draftCache.current.get(draftKey) ?? { draft: "", attachments: [] };
       setDraft(next.draft); setAttachments(next.attachments); setArtifact(undefined); setNotice(""); setSending(false); sendLock.current = false; previousDraft.current = { key: draftKey, ...next };
     } else previousDraft.current = { key: draftKey, draft, attachments };
   }, [draftKey, draft, attachments]);
