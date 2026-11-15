@@ -134,7 +134,7 @@
     "name": "browser_navigate"
   },
   {
-    "description": "Click a ref; double/right/hover/drag (toRef). For a known outcome, use waitFor text/textGone/urlIncludes in this tab (default all, 5s): waits then returns a snapshot, without replaying the click. newTab opens a link; cannot use waitFor.",
+    "description": "Click a ref; double/right/hover/drag (toRef). For a known outcome, use waitFor text/textGone/urlIncludes (text is read in the clicked frame; default all, 5s): waits then returns a snapshot, without replaying the click. newTab opens a link; cannot use waitFor.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

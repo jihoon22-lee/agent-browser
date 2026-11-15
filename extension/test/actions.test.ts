@@ -331,8 +331,11 @@ describe("trusted input keeps the keyboard and click safety checks", () => {
     const sendMessage = vi.fn(async () => ({ ok: true }));
     vi.stubGlobal("chrome", { runtime: { sendMessage } });
     document.body.innerHTML = '<div contenteditable="true" aria-label="본문">글</div>';
-    await expect(runAction('press', { ref: refOf('본문'), key: 'Enter', generation: 10, requestId: 'k-2', trusted: true })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    await expect(runAction('press', { ref: refOf('본문'), key: 'Backspace', generation: 10, requestId: 'k-2', trusted: true })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
     expect(sendMessage).not.toHaveBeenCalled();
+    // Enter is the page's own key in an editor (send, new block): with trusted input it goes out as the real key.
+    await runAction('press', { ref: refOf('본문'), key: 'Enter', generation: 10, requestId: 'k-3', trusted: true });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
   it("never repeats a click that was partly delivered as trusted input", async () => {
     vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: false, reason: 'debugger-error', dispatched: true })) } });
