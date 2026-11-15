@@ -28,10 +28,11 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 - **로컬 검증(이 checkout으로 만든 0.4.3 개발 패키지, 실제 Windows 프로세스):**
   - 최종(리뷰 수정 뒤) Linux: Bridge `cargo test` **278 통과/0 실패**(1 제외), 확장 단위 **880 통과**·`tsc` 통과, 전체 Linux E2E **257 통과/5 제외**.
   - 최종(리뷰 수정 뒤) Windows: `NativeEngineTests` REVIEW **66/0**·전체 **75 PASS**(이전 버전 Bridge 교체·100초 연결 확인 시작 케이스는 수정 전 실패 재현), `install.tests.ps1` **20개 통과**, `SetupFlowTests` **31/0**, `GuiSmokeTests --uia --profiles` **6개 PASS**, 게시된 v0.4.2 → 0.4.3 GUI 업데이트 **4개 PASS**, `WSL_UTF8=1`의 `wsl-unregistered`·`healthy-fixture` 통과. 이번 수정은 화면 배치를 바꾸지 않아 화면 확인은 아래 기록 그대로다.
+  - 버전 혼합: 0.4.2 확장을 0.4.3 Bridge에 붙여 E2E를 돌리면 확장이 첫 연결에서 스스로 다시 읽어(`reloadIfOutdated`, 설치가 바꾼 파일을 읽는 설계) 하네스가 연결 대기에서 멈췄다. 그래서 섞인 상태의 명령 실행은 확인하지 못했다. 0.4.2 코드에는 매개변수 전체를 순회하는 곳이 없어(코드 검색) 새 `replyWithinMs`는 읽히지 않는다.
   - 리뷰 수정 전 Linux: Bridge 275, 확장 870, E2E 251/5.
-  - Windows lib 테스트 exe **138 통과/7 제외**. `windows-runtime.mjs`(Windows Node, 합성 fixture, 실제 Ubuntu) cmd·wsl 16개 시나리오 통과(새 `wsl-unregistered`는 0.4.2 Bridge로 실패 재현 후 통과, `health-failure`·`mcp-failure`는 `Last check:` 문구까지 단언). 실행 뒤 `%TEMP%\ab-runtime-*`와 남은 fixture 프로세스 0.
-  - 설치: `NativeEngineTests` 전체 통과(REVIEW **63/0**, 새 70초 시작 케이스는 60초 제한에서 실패 재현), `install.tests.ps1` **19개 통과**, `SetupFlowTests` **31/0**, `SetupDisplayTests` 10·12.5·15·20pt 통과, `ManagedPathTests` **2개 통과**.
-  - 실제 exe: `GuiSmokeTests --uia --profiles` **6개 PASS**. `p0-welcome`·`runtime-step`·`managed-profile-saved`·고급 설정에서 입력란 글자가 처음부터 보이고 결과 칸에 빈 스크롤 막대가 없음을 직접 봤다. **게시된 v0.4.2 → 0.4.3 교차 버전 GUI 업데이트 PASS**(설치 ID·페어링·사용자 모델 수정 보존, MCP 등록 1개, 제거까지).
+  - 리뷰 수정 전 Windows lib 테스트 exe **138 통과/7 제외**. `windows-runtime.mjs`(Windows Node, 합성 fixture, 실제 Ubuntu) cmd·wsl 16개 시나리오 통과(새 `wsl-unregistered`는 0.4.2 Bridge로 실패 재현 후 통과, `health-failure`·`mcp-failure`는 `Last check:` 문구까지 단언). 실행 뒤 `%TEMP%\ab-runtime-*`와 남은 fixture 프로세스 0.
+  - 리뷰 수정 전 설치: `NativeEngineTests` 전체 통과(REVIEW **63/0**, 새 70초 시작 케이스는 60초 제한에서 실패 재현), `install.tests.ps1` **19개 통과**, `SetupFlowTests` **31/0**, `SetupDisplayTests` 10·12.5·15·20pt 통과, `ManagedPathTests` **2개 통과**.
+  - 리뷰 수정 전 실제 exe: `GuiSmokeTests --uia --profiles` **6개 PASS**. `p0-welcome`·`runtime-step`·`managed-profile-saved`·고급 설정에서 입력란 글자가 처음부터 보이고 결과 칸에 빈 스크롤 막대가 없음을 직접 봤다. **게시된 v0.4.2 → 0.4.3 교차 버전 GUI 업데이트 PASS**(설치 ID·페어링·사용자 모델 수정 보존, MCP 등록 1개, 제거까지).
   - 첫 GUI 스모크 1회는 실행 중 마법사 창이 최소화되어 실패했다(공유 데스크톱, 제품 코드는 창을 최소화하지 않음). 재실행에서 통과했다.
 - **실행하지 않은 것:** 실제 모델 호출, 실제 Chrome에서 확장 감지→자동 진행→코드 입력의 끝까지 수동 연결.
 
