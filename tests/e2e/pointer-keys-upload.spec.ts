@@ -158,6 +158,31 @@ test("P30 hit target: a DOM click reaches the element under the pointer and repo
   expect(hover.verified).toMatchObject({ noEffect: true });
 });
 
+test("P32 a DOM click on a link card does not press the button inside it", async () => {
+  const page = await world.open("hit-target.html"), operationId = await world.attach(page);
+  const cards = all(await fresh(operationId)).filter(e => e.name.startsWith("Product A-1001"));
+  expect(cards).toHaveLength(1); const card = cards[0]!.ref;
+  await world.ok("browser_click", { operationId, ref: card });
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#product-a1001");
+  expect(await page.evaluate(() => (window as any).hits)).not.toContain("fav");
+  // The button keeps its own ref and still works.
+  await page.evaluate(() => { location.hash = ""; });
+  await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "Remove from favourites") });
+  expect(await page.evaluate(() => (window as any).hits)).toContain("fav");
+});
+test("P33 a click that toggles a checkbox or moves focus is not reported as having no effect", async () => {
+  const page = await world.open("hit-target.html"), operationId = await world.attach(page);
+  const box = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "Send news") });
+  expect(await page.locator("#news").isChecked()).toBe(true);
+  expect(box.verified?.noEffect).toBeUndefined();
+  const label = all(await fresh(operationId)).find(e => e.name === "Accept terms")!;
+  const viaLabel = await world.ok("browser_click", { operationId, ref: label.ref });
+  expect(await page.locator("#terms").isChecked()).toBe(true);
+  expect(viaLabel.verified?.noEffect).toBeUndefined();
+  const field = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "Order note") });
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe("note");
+  expect(field.verified?.noEffect).toBeUndefined();
+});
 test("P31 a script-opened window is blocked after a DOM click and the click says nothing happened", async () => {
   const page = await world.open("new-tabs.html"), operationId = await world.attach(page);
   const before = world.context.pages().length;

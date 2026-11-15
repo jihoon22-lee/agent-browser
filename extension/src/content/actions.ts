@@ -2,7 +2,7 @@ import { highlight } from "./highlight";
 import { clipText } from "./text";
 import { assertTrustedFallback, requestTrusted, trustedFrame, trustedDetails } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, composedParent, isDisabled, isRendered, walkDeep } from "./dom";
+import { accessibleName, composedParent, isDisabled, isInteractive, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
@@ -56,6 +56,13 @@ function reaches(top: Element | null, el: Element): boolean {
   return !!label && "labels" in el && [...((el as HTMLInputElement).labels ?? [])].includes(label);
 }
 
+/** Whether a hit inside `el` lands on `el` itself rather than on a separate control nested in it (a
+ * favourite button in a link card). That control has its own ref; clicking it instead would press
+ * something the agent did not name. */
+function ownHit(top: Element | null, el: Element): boolean {
+  for (let hit = top; hit && hit !== el; hit = composedParent(hit)) if (isInteractive(hit)) return false;
+  return true;
+}
 const inViewport = (point: Point) => point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight;
 /** A reachable point of the element in viewport coordinates, scrolling it into view when needed.
  * With `allowScroll` false the page is left where it is: the caller holds coordinates of another
@@ -66,17 +73,23 @@ function assertInteractable(el: Element, allowScroll = true): Point | undefined 
   }
   if (!hasLayout()) return undefined;
   // Preserve an already usable position instead of recentering every field/button.
-  for (const point of candidatePoints(el))
-    if (inViewport(point) && reaches(topAt(point),el)) return point;
+  const pick = (points: Point[], visible: (point: Point) => boolean) => {
+    const reachable = points.filter(point => visible(point) && reaches(topAt(point), el));
+    return reachable.find(point => ownHit(topAt(point), el)) ?? reachable[0];
+  };
+  const usable = pick(candidatePoints(el), inViewport);
+  if (usable) return usable;
   if (!allowScroll) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} cannot be reached without scrolling the page again.`);
   // "instant" defeats CSS smooth scrolling, so hit testing uses the new position.
   (el as HTMLElement).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
   let points = candidatePoints(el);
-  for (const point of points) if (reaches(topAt(point), el)) return point;
+  const scrolled = pick(points, () => true);
+  if (scrolled) return scrolled;
   // "nearest" stops at the viewport edge, which a fixed header or footer may cover: try the middle once.
   (el as HTMLElement).scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
   points = candidatePoints(el);
-  for (const point of points) if (reaches(topAt(point), el)) return point;
+  const centred = pick(points, () => true);
+  if (centred) return centred;
   const top = points[0] ? topAt(points[0]) : null;
   if (top) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el)} is covered by another element.`, "never",
@@ -88,6 +101,19 @@ function assertInteractable(el: Element, allowScroll = true): Point | undefined 
   if (points[0] && !inViewport(points[0]) && !labelled)
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is outside the viewport and cannot be scrolled into view.`);
   return points[0];
+}
+
+/** What a click can change without a DOM mutation: a checkbox or radio toggled through its `checked`
+ * property (directly or through its label), a select's value, or a text field taking the caret.
+ * Focus landing on a clicked button is a by-product, not an effect. */
+function quietState(el: Element): unknown[] {
+  const controls: Element[] = [el, ...Array.from(el.querySelectorAll("input,select")).slice(0, 20)];
+  const labelled = el instanceof HTMLLabelElement ? el.control : el.closest("label")?.control;
+  if (labelled) controls.push(labelled);
+  let active: Element | null = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  const typing = active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "image", "file", "color", "range"].includes(active.type)) || (active as HTMLElement | null)?.isContentEditable;
+  return [typing ? active : null, ...controls.map(control => control instanceof HTMLInputElement ? `${control.checked}|${control.value}` : control instanceof HTMLSelectElement ? control.value : "")];
 }
 
 /** Focus the nearest focusable ancestor, as a real pointer press does before mouseup and click. */
@@ -295,12 +321,18 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       void changes.catch(() => {});
       // A real pointer event targets the deepest element under the pointer and bubbles to the ref.
       // Pages listen on that inner element (a span in a labelled wrapper) or read event.target (a td).
-      const under = (at: Point = point): Element => { const top = hasLayout() ? topAt(at) : null; return top && top !== el && el.contains(top) ? top : el; };
+      // Never into a separate control nested in the ref: that is another ref.
+      const under = (at: Point = point): Element => { const top = hasLayout() ? topAt(at) : null; return top && top !== el && el.contains(top) && ownHit(top, el) ? top : el; };
       const pointer = (type: string, init: Record<string, unknown>) =>
         under().dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
       // Nothing observable happened: say so instead of leaving a bare "executed". (With waitFor the
       // caller's own condition decides, and the observation window is not kept open.)
-      const outcome = async () => { const seen = await changes; return !p.waitFor && seen && seen.domChanged === false && seen.urlChanged === false ? { ...seen, noEffect: true } : seen; };
+      const quietBefore = quietState(el);
+      const outcome = async () => {
+        const seen = await changes;
+        const quiet = quietState(el).every((value, index) => value === quietBefore[index]);
+        return !p.waitFor && quiet && seen && seen.domChanged === false && seen.urlChanged === false ? { ...seen, noEffect: true } : seen;
+      };
       if (mode === "hover") {
         // enter events do not bubble: like a pointer arriving from outside, enter each ancestor, outermost first.
         const chain: Element[] = [];
