@@ -28,6 +28,8 @@ const unpack = (outcome: Outcome): unknown => { if (outcome.ok)
 type Running = {
     req: Req;
     controller: AbortController;
+    /** When this reply must be on its way so it reaches the Bridge before the Bridge stops waiting. */
+    replyBy?: number;
     started: boolean;
     promise: Promise<unknown>;
     /** The action's confirmed result while only the late-navigation watch is still running. */
@@ -42,16 +44,29 @@ export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot
 export type AttachmentLookup = (name: string, panelRequestId: string | undefined) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
 const origin = (url: string | undefined) => { try { const value = url ? new URL(url).origin : "null"; return value === "null" ? undefined : value; } catch { return undefined; } };
 const PAGE_REPLY_MS = 10_000;
+/** Kept back from the Bridge's wait (replyWithinMs) so this reply reaches it first. After its page went
+ * quiet, a click or key press still looks up to a second for the navigation it may have caused. */
+const REPLY_MARGIN_MS = { read: 500, write: 1_500 };
+/** A page given less than this had no fair chance to answer; its silence says nothing about a dialog. */
+const FAIR_WAIT_MS = 1_000;
 const UNRESPONSIVE = 'The page did not answer in time. A page dialog (alert, confirm or prompt) may be open: answer it in Chrome, then take a new browser_snapshot before repeating anything.';
+const OUT_OF_TIME = 'The page did not answer before this request ran out of time. Take a new browser_snapshot before repeating anything.';
+const OUT_OF_TIME_WRITE = 'No reply before this request ran out of time; the action may or may not have happened. Take a new browser_snapshot before repeating anything.';
+/** Nothing reached the page: the request spent its time waiting (behind another write, or on Chrome). */
+const spent = () => new ProtocolError('TIMEOUT', 'This request ran out of time before it reached the page; nothing was done. Take a new browser_snapshot before trying again.', 'safe', { reason: 'deadline' });
+const unanswered = (e: unknown) => ['page-unresponsive', 'deadline'].includes(String((asError(e).details as { reason?: unknown } | undefined)?.reason));
 /** Rejects when the content script has not replied within `ms`. The reply itself may still arrive later. */
 function answered<T>(work: Promise<T>, ms: number, write: boolean): Promise<T> {
+    const fair = ms >= FAIR_WAIT_MS, reason = fair ? 'page-unresponsive' : 'deadline';
     return new Promise<T>((resolve, reject) => {
         const timer = setTimeout(() => reject(write
-            ? new ProtocolError('EXECUTION_UNKNOWN', UNRESPONSIVE, 'unsafe', { reason: 'page-unresponsive' })
-            : new ProtocolError('TIMEOUT', UNRESPONSIVE, 'safe', { reason: 'page-unresponsive' })), ms);
+            ? new ProtocolError('EXECUTION_UNKNOWN', fair ? UNRESPONSIVE : OUT_OF_TIME_WRITE, 'unsafe', { reason })
+            : new ProtocolError('TIMEOUT', fair ? UNRESPONSIVE : OUT_OF_TIME, 'safe', { reason })), Math.max(0, ms));
         work.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
     });
 }
+/** Up to `ms`, cut to what is left before the Bridge stops waiting for this request. */
+const within = (run: Running, ms: number) => run.replyBy === undefined ? ms : Math.min(ms, run.replyBy - Date.now());
 
 /** The content script marks a click that changed nothing it could see. A tab the click opened, or a
  * navigation found afterwards, is an effect only the background knows about. */
@@ -64,6 +79,12 @@ const withEffect = (result: any) => result?.verified?.noEffect && (result.verifi
 
 export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup, advanced?:AdvancedBrowser, download?:{handle(p:Record<string,unknown>,signal:AbortSignal):Promise<unknown>},recovery?:InputRecovery) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
+    /** Every message to a page is bounded: a page blocked by alert/confirm/prompt answers nothing,
+     * not even the injection or probe before a command. Once the time is spent it is not started. */
+    const onPage = <T>(run: Running, work: () => Promise<T>, write = false, ms = PAGE_REPLY_MS): Promise<T> => {
+        const left = within(run, ms);
+        return left <= 0 ? Promise.reject(spent()) : answered(work(), left, write);
+    };
     const writes=new Map<number,Promise<unknown>>();
     /** A link click may still be committing the next document; read the page it produced. Wait for
      * the commit, then give subresources only a short grace: slow ads must not delay a readable DOM. */
@@ -106,29 +127,36 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     async function send(tabId: number, frame: FrameInfo, method: string, params: Record<string, unknown>, run: Running) {
         await check(run.req, run.controller.signal);
         const tracksTabs = ['browser.click','browser.press'].includes(run.req.method);
-        const inputState = async () => {
+        const inputState = async (before: boolean) => {
             try {
-                const value: any = await interruptible(api.sendToFrame(tabId,frame,{kind:'input-state'}),run.controller.signal);
+                const value: any = await interruptible(onPage(run, () => api.sendToFrame(tabId,frame,{kind:'input-state'})),run.controller.signal);
                 return typeof value?.document === 'string' && Number.isSafeInteger(value?.epoch)
                     ? `${value.document}:${value.epoch}` : null;
-            } catch { aborted(run.controller.signal); return null; }
+            } catch (error) {
+                aborted(run.controller.signal);
+                // Nothing is sent yet: a page that cannot answer this probe would not run the input either.
+                if (before && unanswered(error)) throw error;
+                return null;
+            }
         };
-        const inputBefore = tracksTabs ? await inputState() : null;
+        const inputBefore = tracksTabs ? await inputState(true) : null;
         const startUrl = tracksTabs ? (await api.tabsGet(tabId).catch(() => undefined))?.url : undefined;
         if(tracksTabs && frame.frameId!==0)
             run.sourceTopDocument=(await interruptible(frames.list(tabId),run.controller.signal)).find(f=>f.frameId===0)?.documentId;
         // Off by default: only an enabled, attached debugger turns the content command into trusted input.
         if ((tracksTabs || (advanced?.enabled() && WRITE.has(run.req.method))) && (frame.frameId === 0 || advanced?.enabled()) && trusted && await trusted.ensure(tabId).catch(() => false)) params = { ...params, trusted: true, ...(advanced?.enabled()?{trustedFrames:true}:{}) };
         await check(run.req, run.controller.signal);
+        const own = Math.max(0, Number(params.timeoutMs) || 0, Number(params.settleMs) || 0, Number((params.waitFor as { timeoutMs?: unknown } | undefined)?.timeoutMs) || 0);
+        // A write sent without the time to hear back would run unseen; keep it unsent instead.
+        if (WRITE.has(run.req.method) && within(run, own + PAGE_REPLY_MS) < FAIR_WAIT_MS) throw spent();
         if (WRITE.has(run.req.method)) { advanced?.clear(); run.started = true; }
         const tabs = tracksTabs ? trackCreatedTabs(api,tabId,frame.frameId,run.controller.signal) : undefined;
         let response: any;
         run.frame=frame;
         try {
             // A page blocked by alert/confirm/prompt never answers. Give up after the request's own wait
-            // budget plus 10 seconds and say so, instead of leaving the Bridge to report a bare timeout.
-            const own = Math.max(0, Number(params.timeoutMs) || 0, Number(params.settleMs) || 0, Number((params.waitFor as { timeoutMs?: unknown } | undefined)?.timeoutMs) || 0);
-            const work=()=>answered(api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } }), own + PAGE_REPLY_MS, WRITE.has(run.req.method));
+            // budget plus 10 seconds, or sooner if the Bridge stops waiting first, and say so.
+            const work=()=>onPage(run, () => api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } }), WRITE.has(run.req.method), own + PAGE_REPLY_MS);
             response = await interruptible(WRITE.has(run.req.method) && advanced ? advanced.race(run.req,work) : work(), run.controller.signal);
         }
         catch (e) {
@@ -160,7 +188,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (children.openedTabs?.length) {
                 // Check through the entire observation/load interval, even after
                 // the action response. A user action in this frame is ambiguous.
-                const inputAfter = await inputState();
+                const inputAfter = await inputState(false);
                 aborted(run.controller.signal);
                 if (!inputBefore || inputBefore !== inputAfter) return {...effective(result),openedTabWarnings:[
                     ...(children.openedTabWarnings ?? []),
@@ -269,7 +297,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (!top) throw new ProtocolError('FRAME_UNAVAILABLE', 'Cannot check the document before closing.');
             await requireSnapshot(p, tabId, top.documentId);
             const checkClean = async (frame: FrameInfo) => {
-                const response = await interruptible(api.sendToFrame(tabId, frame, {kind:'cmd', method:'close-check', params:{...p,requestId:req.id}}), signal);
+                const response = await interruptible(onPage(run, () => api.sendToFrame(tabId, frame, {kind:'cmd', method:'close-check', params:{...p,requestId:req.id}})), signal);
                 if (!response?.ok) throw new ProtocolError('ELEMENT_NOT_INTERACTABLE', 'A frame has edited controls or cannot be checked; preserve the tab.');
             };
             const checkDocuments = async () => {
@@ -282,7 +310,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             // that left the old document in place still injects and is checked like any frame.
             const checkable: FrameInfo[] = [];
             for (const frame of documents) {
-                try { await frames.inject(tabId, frame); }
+                try { await onPage(run, () => frames.inject(tabId, frame)); }
                 catch (error) { if (frame.frameId !== 0 && frame.errorOccurred) continue; throw error; }
                 checkable.push(frame);
                 await checkClean(frame);
@@ -320,10 +348,12 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             for(let index=frameOffset;index<allFrames.length;index++) {
                 const f=allFrames[index]!;
                 if(index-frameOffset>=20){framesNextOffset=index;break;}
+                // Out of time after the first frame: hand back what was read; frameOffset reads on.
+                if(index>frameOffset&&within(run,PAGE_REPLY_MS)<=0){framesNextOffset=index;break;}
                 await check(req,signal);
                 try {
                     // Injection into a page blocked by a dialog never returns either.
-                    await answered(frames.inject(tabId,f), PAGE_REPLY_MS, false);
+                    await onPage(run, () => frames.inject(tabId,f));
                     const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
                     const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotToken(snapshotId)}f${f.frameId}`};
                     const length=jsonBytes(withDocument);
@@ -334,7 +364,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                     if(signal.aborted||asError(e).code==='CANCELLED')throw e;
                     if(f.frameId===0&&f.errorOccurred)throw errorPage(tab.url,false);
                     // A top document that does not answer at all will not answer a second attempt either.
-                    if(f.frameId===0&&(asError(e).details as {reason?:unknown}|undefined)?.reason==='page-unresponsive')throw e;
+                    if(f.frameId===0&&unanswered(e))throw e;
                     const error:FrameError={frameId:f.frameId,url:clipText(f.url,2048),code:'FRAME_UNAVAILABLE',message:clipText(asError(e).message,500)};
                     const errorSize=jsonBytes(error);
                     if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
@@ -436,7 +466,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             const prepare = async () => {
                 const frame = await frames.resolve(tabId, ref, String(p.operationId),frameRef);
                 if(WRITE.has(req.method))await requireSnapshot(p,tabId,frame.documentId);
-                await frames.inject(tabId, frame);
+                await onPage(run, () => frames.inject(tabId, frame));
                 await check(req, signal);
                 return frame;
             };
@@ -466,7 +496,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (req.method === 'browser.click' && p.newTab === true && p.mode !== undefined && p.mode !== 'click')
                 throw new ProtocolError('INVALID_PARAMS', 'newTab opens a link with a plain click; omit mode.');
             if (req.method === 'browser.click' && p.newTab === true) {
-                const link = await interruptible(api.sendToFrame(tabId,frame,{kind:'cmd',method:'link',params:{...p,requestId:req.id}}),signal);
+                const link = await interruptible(onPage(run, () => api.sendToFrame(tabId,frame,{kind:'cmd',method:'link',params:{...p,requestId:req.id}})),signal);
                 if (!link?.ok) { const e=link?.error; throw new ProtocolError(e?.code ?? 'ELEMENT_NOT_INTERACTABLE',e?.message ?? 'The ref is not an HTTP(S) anchor.'); }
                 const url=String(link.result?.url ?? ''); requireWeb(url);
                 await check(req,signal); run.started=true;
@@ -635,7 +665,11 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const duplicate = running.get(req.id);
         if (duplicate)
             return duplicate.promise;
-        const run: Running = { req, controller: new AbortController(), started: false, promise: Promise.resolve() };
+        // The Bridge says how long it waits for this reply; the page never sees that number.
+        const { replyWithinMs, ...params } = req.params, budget = Number(replyWithinMs);
+        if (replyWithinMs !== undefined) req = { ...req, params };
+        const replyBy = Number.isFinite(budget) && budget > 0 ? Date.now() + budget - (WRITE.has(req.method) ? REPLY_MARGIN_MS.write : REPLY_MARGIN_MS.read) : undefined;
+        const run: Running = { req, controller: new AbortController(), started: false, promise: Promise.resolve(), ...(replyBy === undefined ? {} : { replyBy }) };
         running.set(req.id, run);
         const tabId=Number(req.params.tabId);
         if(WRITE.has(req.method)&&req.method!=='browser.dialog') {

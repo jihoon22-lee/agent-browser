@@ -125,6 +125,37 @@ test('D17 discard replacement rejects the old operation tab without navigating a
  const r=await world.mcp.call('browser_navigate',{operationId,url:world.fixture.base+'/detail.html'});expect(r.error?.code).toBe('TAB_NOT_FOUND');expect(r.executed).toBe('no');
  expect((await world.adminPage.evaluate(tabId=>chrome.tabs.get(tabId),discarded.id)).url).toContain('/advanced.html');
 });
+test('D21 with a dialog already open, a wait and a click get the dialog hint before the Bridge gives up',async()=>{
+ test.setTimeout(90_000);
+ world=await startWorld();
+ await world.adminPage.evaluate(()=>chrome.storage.local.set({advancedBrowser:false,trustedInput:false}));
+ const page=await world.open('trusted.html');let dialog:any,dialogs=0;page.on('dialog',d=>{dialog=d;dialogs++;});
+ const operationId=await world.attach(page),snap=await world.ok('browser_snapshot',{operationId});
+ await page.evaluate(()=>{setTimeout(()=>alert('Still open'),0);});
+ await expect.poll(()=>dialog!==undefined).toBe(true);
+ let began=Date.now();const wait=await world.mcp.call('browser_wait',{operationId,text:'Never',timeoutMs:2000});
+ console.log('D21 wait '+JSON.stringify({ms:Date.now()-began,code:wait.error?.code,message:wait.error?.message}));
+ expect(wait.ok).toBe(false);expect(wait.error?.code).toBe('TIMEOUT');expect(wait.error?.message).toContain('dialog');
+ began=Date.now();const click=await world.mcp.call('browser_click',{operationId,ref:ref(snap.data,'확인창 띄우기')});
+ console.log('D21 click '+JSON.stringify({ms:Date.now()-began,executed:click.executed,code:click.error?.code,message:click.error?.message}));
+ // Nothing reached the blocked page: the click is safe to retry once the dialog is answered.
+ expect(click.ok).toBe(false);expect(click.error?.code).toBe('TIMEOUT');expect(click.executed).toBe('no');expect(click.error?.message).toContain('dialog');
+ await dialog.dismiss();await page.waitForTimeout(1500);
+ expect(dialogs).toBe(1);expect(await page.locator('#result').textContent()).toBe('');
+});
+test('D22 a link to a page that alerts while loading still gets the dialog hint in its attached snapshot',async()=>{
+ test.setTimeout(90_000);
+ world=await startWorld();
+ await world.adminPage.evaluate(()=>chrome.storage.local.set({advancedBrowser:false,trustedInput:false}));
+ const page=await world.open('trusted.html');let dialog:any;page.on('dialog',d=>{dialog=d;});
+ await page.evaluate(()=>document.body.insertAdjacentHTML('beforeend','<a href="/alert-on-load.html">Alerting page</a>'));
+ const operationId=await world.attach(page),snap=await world.ok('browser_snapshot',{operationId});
+ const began=Date.now(),click=await world.mcp.call('browser_click',{operationId,ref:ref(snap.data,'Alerting page')});
+ console.log('D22 '+JSON.stringify({ms:Date.now()-began,ok:click.ok,verified:click.verified,snapshotError:click.data?.snapshotError}));
+ expect(click.ok,JSON.stringify(click)).toBe(true);expect(dialog).toBeDefined();
+ expect(click.data?.snapshotError?.message).toContain('dialog');
+ await dialog.dismiss();
+});
 for(const background of [false,true])test('D20 a confirm opened by a DOM click is named as the likely cause'+(background?' (work tab in the background)':''),async()=>{
  test.setTimeout(90_000);
  world=await startWorld();

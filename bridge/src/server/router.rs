@@ -396,18 +396,24 @@ async fn run_operation_tool(state: &ServerState, caller:&Caller, name: &str, arg
     if matches!(name,"browser_upload"|"browser_pointer") { if let Some(request) = state.ops.panel_request_of(op_id) { params.insert("panelRequestId".into(), json!(request)); } }
     let class = tools::class_of(name, args);
     let method = format!("browser.{}", name.trim_start_matches("browser_"));
-    let queued = match queue_operation_tool(state, op_id, &method, params, class) {
+    let queued = match queue_operation_tool(state, op_id, &method, params, class, timeout_for(name, args)) {
         Ok(queued) => queued,
         Err(error) => return ToolOutcome::rejected(name, Some(op_id), error),
     };
     let origin = queued.origin.clone();
-    finish(state, name, op_id, class, &origin, queued.wait(timeout_for(name, args)).await)
+    finish(state, name, op_id, class, &origin, queued.wait().await)
 }
 
-struct OperationCommand<'a> { queued: QueuedCommand<'a>, origin: super::operation::Operation }
-impl OperationCommand<'_> { async fn wait(self, timeout: Duration) -> Result<Value,RpcError> { self.queued.wait(timeout).await } }
+struct OperationCommand<'a> { queued: QueuedCommand<'a>, origin: super::operation::Operation, timeout: Duration }
+impl OperationCommand<'_> { async fn wait(self) -> Result<Value,RpcError> { self.queued.wait(self.timeout).await } }
 
-fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass) -> Result<OperationCommand<'a>, RpcError> {
+/// The extension is told how long this wait is (replyWithinMs), so a page that went silent behind a
+/// dialog is reported by the extension, which knows why, before this side gives up.
+fn reply_within(params: &mut serde_json::Map<String, Value>, timeout: Duration) {
+    params.insert("replyWithinMs".into(), json!(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)));
+}
+
+fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, mut params: serde_json::Map<String, Value>, class: CommandClass, timeout: Duration) -> Result<OperationCommand<'a>, RpcError> {
     state.ops.with_checked(op_id, true, |op| {
         ensure_not_held(op)?;
         if class==CommandClass::Write && op.needs_observation {return Err(observation_required(op));}
@@ -415,8 +421,9 @@ fn queue_operation_tool<'a>(state: &'a ServerState, op_id: &str, method: &str, m
         params.insert("generation".into(), json!(op.generation));
         params.insert("targetEpoch".into(),json!(op.target_epoch));
         params.insert("tabId".into(), json!(op.current_tab));
+        reply_within(&mut params, timeout);
         let queued = state.registry.queue_command_for(&op.client_id, method, Value::Object(params), class)?;
-        Ok(OperationCommand {queued,origin:op.clone()})
+        Ok(OperationCommand {queued,origin:op.clone(),timeout})
     })
 }
 
@@ -551,9 +558,9 @@ async fn follow_up_snapshot(state: &ServerState, op_id: &str) -> Result<Value, R
     // A smaller text budget: the elements are what the next action needs. settleMs lets a
     // link click finish committing the next document before it is read.
     let params = json!({ "maxChars": 1500, "settleMs": 6000, "maxElements": FOLLOW_UP_MAX_ELEMENTS }).as_object().cloned().expect("object");
-    let queued = queue_operation_tool(state, op_id, "browser.snapshot", params, CommandClass::Read)?;
+    let queued = queue_operation_tool(state, op_id, "browser.snapshot", params, CommandClass::Read, FOLLOW_UP_TIMEOUT)?;
     let origin = queued.origin.clone();
-    let result = queued.wait(FOLLOW_UP_TIMEOUT).await;
+    let result = queued.wait().await;
     let outcome = finish(state, "browser_snapshot", op_id, CommandClass::Read, &origin, result);
     match outcome.error { Some(error) => Err(error), None => Ok(outcome.data) }
 }
@@ -730,8 +737,9 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 ensure_not_held(op)?;
                 if op.needs_observation {return Err(observation_required(op));}
                 if args.get("tabId").is_some() { return Err(invalid("close targets the current tab; switch first")); }
-                let params = json!({"operationId":op.id,"generation":op.generation,"tabId":op.current_tab});
-                let queued = state.registry.queue_command_for(&op.client_id,"browser.tabs.close",params,CommandClass::Write)?;
+                let mut params = json!({"operationId":op.id,"generation":op.generation,"tabId":op.current_tab}).as_object().cloned().expect("object");
+                reply_within(&mut params, DEFAULT_TIMEOUT);
+                let queued = state.registry.queue_command_for(&op.client_id,"browser.tabs.close",Value::Object(params),CommandClass::Write)?;
                 Ok((op.current_tab, queued))
             });
             let (tab_id, queued) = match queued {
@@ -794,6 +802,47 @@ mod tests {
         assert!(futures_util::poll!(pending.as_mut()).is_pending());
         let Envelope::Req { params, .. } = parse_envelope(&rx.try_recv().unwrap()).unwrap() else { panic!() };
         assert!(params.get("mode").is_none() && params.get("toRef").is_none(), "{params}");
+    }
+
+    /// The extension answers a page that went silent (a dialog) only if it knows when the Bridge stops waiting.
+    #[tokio::test]
+    async fn each_page_command_carries_the_wait_the_bridge_gives_it() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("A", tx);
+        let op = state.ops.attach(1, "A").unwrap();
+        // A dropped pending call cancels its command; only the requests matter here.
+        let next = |rx: &mut tokio::sync::mpsc::UnboundedReceiver<String>| loop {
+            let env = parse_envelope(&rx.try_recv().unwrap()).unwrap();
+            if !matches!(&env, Envelope::Req { method, .. } if method == "browser.cancel") { return env; }
+        };
+        for (name, args) in [
+            ("browser_wait", json!({"operationId":op.id,"text":"Ready","timeoutMs":5000})),
+            ("browser_click", json!({"operationId":op.id,"ref":"s1f0e1","waitFor":{"text":"Ready","timeoutMs":2000}})),
+            ("browser_snapshot", json!({"operationId":op.id})),
+        ] {
+            let mut pending = Box::pin(call_tool(&state, name, args.clone()));
+            assert!(futures_util::poll!(pending.as_mut()).is_pending());
+            let Envelope::Req { params, .. } = next(&mut rx) else { panic!() };
+            assert_eq!(params["replyWithinMs"].as_u64(), Some(timeout_for(name, &args).as_millis() as u64), "{name}: {params}");
+        }
+        state.ops.release(&op.id).unwrap();
+        let op = state.ops.attach(1, "A").unwrap();
+        let mut clicked = Box::pin(call_tool(&state, "browser_click", json!({"operationId":op.id,"ref":"s1f0e1"})));
+        assert!(futures_util::poll!(clicked.as_mut()).is_pending());
+        let Envelope::Req { id, .. } = next(&mut rx) else { panic!() };
+        state.registry.handle_response(conn, Envelope::ok(id, json!({"executed":true,"verified":{"domChanged":true}})));
+        assert!(futures_util::poll!(clicked.as_mut()).is_pending());
+        let Envelope::Req { method, params, .. } = next(&mut rx) else { panic!() };
+        assert_eq!((method.as_str(), params["replyWithinMs"].as_u64()), ("browser.snapshot", Some(FOLLOW_UP_TIMEOUT.as_millis() as u64)));
+        state.ops.release(&op.id).unwrap();
+        let op = state.ops.attach(1, "A").unwrap();
+        let mut closing = Box::pin(call_tool(&state, "browser_tabs", json!({"action":"close","operationId":op.id})));
+        assert!(futures_util::poll!(closing.as_mut()).is_pending());
+        let Envelope::Req { method, params, .. } = next(&mut rx) else { panic!() };
+        assert_eq!((method.as_str(), params["replyWithinMs"].as_u64()), ("browser.tabs.close", Some(DEFAULT_TIMEOUT.as_millis() as u64)));
     }
 
     #[test]
@@ -976,7 +1025,7 @@ mod tests {
             if abort { state.ops.abort(Some(&old.id)); } else { state.ops.release(&old.id).unwrap(); }
             state.registry.use_browser("B");
             let new = state.ops.attach(1, "B").unwrap();
-            let error = queue_operation_tool(&state, &old.id, "browser.fill", params, CommandClass::Write).err().expect("stale work must be rejected before enqueue");
+            let error = queue_operation_tool(&state, &old.id, "browser.fill", params, CommandClass::Write, DEFAULT_TIMEOUT).err().expect("stale work must be rejected before enqueue");
             assert_eq!(error.code, if abort { ErrorCode::Cancelled } else { ErrorCode::OperationInvalid });
             assert!(from_a.try_recv().is_err(), "binding to old owner is insufficient: no stale command may be sent");
             assert!(from_b.try_recv().is_err(), "the replacement profile must not receive old work");
@@ -1017,17 +1066,17 @@ mod tests {
         let conn = state.registry.register("A", tx);
         let op = state.ops.attach(1, "A").unwrap();
         state.ops.add_tab(&op.id, 2).unwrap();
-        let first = queue_operation_tool(&state, &op.id, "browser.scroll", serde_json::Map::new(), CommandClass::Write).unwrap();
+        let first = queue_operation_tool(&state, &op.id, "browser.scroll", serde_json::Map::new(), CommandClass::Write, DEFAULT_TIMEOUT).unwrap();
         state.ops.switch_tab(&op.id, 2).unwrap();
-        let second = queue_operation_tool(&state, &op.id, "browser.scroll", serde_json::Map::new(), CommandClass::Write).unwrap();
+        let second = queue_operation_tool(&state, &op.id, "browser.scroll", serde_json::Map::new(), CommandClass::Write, DEFAULT_TIMEOUT).unwrap();
         let Envelope::Req { id: first_id, params: first_params, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
         let Envelope::Req { id: second_id, params: second_params, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
         assert_eq!(first_params["tabId"], 1);
         assert_eq!(second_params["tabId"], 2);
         state.registry.handle_response(conn, Envelope::ok(second_id, json!({"tabId":2})));
         state.registry.handle_response(conn, Envelope::ok(first_id, json!({"tabId":1})));
-        assert_eq!(first.wait(DEFAULT_TIMEOUT).await.unwrap()["tabId"], 1);
-        assert_eq!(second.wait(DEFAULT_TIMEOUT).await.unwrap()["tabId"], 2);
+        assert_eq!(first.wait().await.unwrap()["tabId"], 1);
+        assert_eq!(second.wait().await.unwrap()["tabId"], 2);
     }
 
     #[tokio::test]
