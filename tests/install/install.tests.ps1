@@ -304,6 +304,9 @@ try {
             $liveState=Read-InstallState $liveInstall
             $markerPath=Join-Path $liveState.DataDir '.installer-bridge-process.json'; $savedMarker=Read-Utf8Text $markerPath
             $unrelated=Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @('-NoProfile','-NonInteractive','-Command','Start-Sleep -Seconds 30') -PassThru -WindowStyle Hidden
+            # This block is about the marker alone. Without serve.pid the running Bridge cannot be adopted,
+            # so a marker naming another process must leave every process alone.
+            $servePidPath=Join-Path $liveState.DataDir 'serve.pid'; $savedServePid=Read-Utf8Text $servePidPath; Remove-Item -LiteralPath $servePidPath -Force
             try {
                 $fakeMarker=$savedMarker | ConvertFrom-Json; $fakeMarker.Pid=$unrelated.Id
                 $fakeProcess=Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $unrelated.Id); $fakeMarker.CreatedAt=$fakeProcess.CreationDate.ToUniversalTime().ToString('o')
@@ -316,7 +319,7 @@ try {
                 Write-Utf8Atomic $markerPath (ConvertTo-Json $foreignMarker)
                 Assert-Throws { Stop-OwnedBridge $liveState } 'A marker of another installation was accepted'
                 Assert (Test-Path -LiteralPath $markerPath) 'A marker of another installation was removed'
-            } finally { Write-Utf8Atomic $markerPath $savedMarker; if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
+            } finally { Write-Utf8Atomic $markerPath $savedMarker; Write-Utf8Atomic $servePidPath $savedServePid; if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
             $occupied=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $occupied.Start()
             try {
                 Assert-Throws { & (Join-Path $package2 'setup.ps1') -InstallDir $liveInstall -StartupDir $liveStartup -Port $occupied.LocalEndpoint.Port -Quiet } 'Conflicting upgrade was accepted'
@@ -363,6 +366,33 @@ try {
                 Assert $removed.Removed 'Uninstall was blocked by a stale PID marker'
                 $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'Uninstall terminated an unrelated process'
             } finally { if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
+        }
+        Case 'a Bridge restarted without a marker is adopted for update and uninstall' {
+            $loneInstall=Join-Path $testRoot 'unmarked bridge install'; $activeInstalls.Add($loneInstall); $lonePort=Free-Port
+            $null=& (Join-Path $package1 'setup.ps1') -InstallDir $loneInstall -NoStartup -Port $lonePort -Quiet
+            # What an MCP proxy does after the Bridge died: start a detached serve. No marker is written.
+            $unmark={
+                $loneState=Read-InstallState $loneInstall
+                $markerPath=Join-Path $loneState.DataDir '.installer-bridge-process.json'
+                $marker=Get-Content -Raw -LiteralPath $markerPath | ConvertFrom-Json
+                Stop-Process -Id ([int]$marker.Pid) -Force; Remove-Item -LiteralPath $markerPath -Force
+                for($i=0;$i -lt 50 -and (Get-Process -Id ([int]$marker.Pid) -ErrorAction SilentlyContinue);$i++){Start-Sleep -Milliseconds 100}
+                $null=Invoke-BridgeCapture $loneState @('start','--port',[string]$loneState.Port)
+                Assert (-not (Test-Path -LiteralPath $markerPath)) 'The fixture start wrote a marker'
+                [int](Read-Utf8Text (Join-Path $loneState.DataDir 'serve.pid')).Trim()
+            }
+            $lonePid=& $unmark
+            Assert (Stop-OwnedBridge (Read-InstallState $loneInstall)) 'An unmarked Bridge of this installation was not stopped'
+            Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'The unmarked Bridge is still running after Stop'
+            $null=& (Join-Path $loneInstall 'start-bridge.ps1'); $lonePid=& $unmark
+            # The next package changes the executable path, as a real update does.
+            $updated=& (Join-Path $package2 'setup.ps1') -InstallDir $loneInstall -NoStartup -Quiet
+            Assert ($updated.Running.running -and [int]$updated.Running.pid -ne $lonePid) 'Update did not replace the previous version unmarked Bridge'
+            Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'The previous version unmarked Bridge survived the update'
+            $lonePid=& $unmark
+            $removed=& (Join-Path $package2 'uninstall.ps1') -InstallDir $loneInstall -RemoveData -Quiet
+            Assert $removed.Removed 'Uninstall was blocked by an unmarked Bridge'
+            Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'Uninstall left the unmarked Bridge running'
         }
         Case 'occupied port rolls back assets, Startup and user config' {
             $listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $listener.Start(); $blockedPort=$listener.LocalEndpoint.Port
