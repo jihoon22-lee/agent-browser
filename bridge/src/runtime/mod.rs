@@ -185,17 +185,28 @@ impl Manager {
         drop(reservation);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let mut exited = false;
+        // The last readiness check that failed. Without it every start failure read the same.
+        let mut last_reason: Option<String> = None;
         loop {
             let inspection = match self.inspect(profile,&mut record).await {
                 Ok(value) => value,
                 Err(error) => { self.terminate(profile,&record).await; return Err(error); }
             };
-            if inspection.listener && let Ok(version) = health(&record.base_url,Some(&record.username),Some(&record.password),true,&self.verified_docs).await {
-                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-                if let Ok(Ok(())) = tokio::time::timeout(remaining,browser_mcp(profile,&record)).await {
-                    record.version = Some(version); self.persist(&record)?;
-                    tracing::info!(profile_id = %profile.id, "OpenCode HTTP and browser MCP ready");
-                    return Ok(info(profile,&record,"ready",true,&self.home));
+            if inspection.listener {
+                match health(&record.base_url,Some(&record.username),Some(&record.password),true,&self.verified_docs).await {
+                    Ok(version) => {
+                        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                        match tokio::time::timeout(remaining,browser_mcp(profile,&record)).await {
+                            Ok(Ok(())) => {
+                                record.version = Some(version); self.persist(&record)?;
+                                tracing::info!(profile_id = %profile.id, "OpenCode HTTP and browser MCP ready");
+                                return Ok(info(profile,&record,"ready",true,&self.home));
+                            }
+                            Ok(Err(error)) => remember(&mut last_reason,error.message),
+                            Err(_) => remember(&mut last_reason,MCP_UNFINISHED.into()),
+                        }
+                    }
+                    Err(error) => remember(&mut last_reason,error.message),
                 }
             }
             if profile.kind == Kind::Wsl && matches!(inspection.state,WslState::Stopped | WslState::NotStarted) { break; }
@@ -206,8 +217,8 @@ impl Manager {
             tokio::time::sleep(Duration::from_millis(if profile.kind == Kind::Wsl {1500} else {400})).await;
         }
         self.stop_inner(profile).await?;
-        if exited { return Err(failure("OpenCode exited before its server became ready. Check the executable/version, port, directory, and environment.")); }
-        Err(failure("OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment."))
+        if exited { return Err(failure(with_last_check("OpenCode exited before its server became ready. Check the executable/version, port, directory, and environment.",last_reason.as_deref()))); }
+        Err(failure(with_last_check("OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.",last_reason.as_deref())))
     }
     fn persist(&self, record: &RuntimeRecord) -> Result<(), RpcError> { self.store.update(|config| { config.runtimes.insert(record.profile_id.clone(), record.clone()); Ok(()) }) }
     /// Status polls and doctor run every few seconds: they publish runtime.json only when the record differs.
@@ -778,11 +789,27 @@ async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &st
         Ok(Ok(status)) => status.code(),
     }
 }
+const UNREACHABLE: &str = "OpenCode is not reachable";
+const MCP_UNFINISHED: &str = "OpenCode HTTP is available but browser MCP initialization did not finish";
+/// A server that answered and then went away is last seen without an answer; what it said while it
+/// was up explains more, so a reason without an answer never replaces one the server gave.
+fn remember(last: &mut Option<String>, reason: String) {
+    let unanswered = |text: &str| text == UNREACHABLE || text == MCP_UNFINISHED;
+    if !unanswered(&reason) || last.as_deref().is_none_or(unanswered) { *last = Some(reason); }
+}
+/// The extension recognises a start failure by its fixed sentence, so that sentence stays as it is and
+/// the cause follows it. Causes are this module's own fixed texts, never child process output.
+fn with_last_check(message: &str, reason: Option<&str>) -> String {
+    match reason.map(|reason| reason.trim_end_matches('.')) {
+        Some(reason) if !reason.is_empty() => format!("{message} Last check: {reason}."),
+        _ => message.to_string(),
+    }
+}
 async fn health(base: &str, username: Option<&str>, password: Option<&str>, managed: bool, verified: &DocCache) -> Result<String,RpcError> {
     let client = http_client(base)?;
     let endpoint = |path: &str| format!("{}/{}",base.trim_end_matches('/'),path);
     if managed {
-        let response = client.get(endpoint("global/health")).send().await.map_err(|_| failure("OpenCode is not reachable"))?;
+        let response = client.get(endpoint("global/health")).send().await.map_err(|_| failure(UNREACHABLE))?;
         if response.status() != reqwest::StatusCode::UNAUTHORIZED { return Err(failure("Managed OpenCode must require Basic authentication")); }
     }
     let request = |path: &str| { let request = client.get(endpoint(path)); if let Some(password) = password.filter(|value| !value.is_empty()) { request.basic_auth(username.unwrap_or("opencode"),Some(password)) } else { request } };
@@ -803,7 +830,7 @@ async fn browser_mcp(profile: &Profile, record: &RuntimeRecord) -> Result<(),Rpc
     let mut url = reqwest::Url::parse(&format!("{}/mcp",record.base_url)).map_err(|_| failure("Invalid managed runtime URL"))?;
     url.query_pairs_mut().append_pair("directory",&profile.directory);
     let response = http_client(&record.base_url)?.get(url).basic_auth(&record.username,Some(&record.password))
-        .timeout(Duration::from_secs(35)).send().await.map_err(|_| failure("OpenCode HTTP is available but browser MCP initialization did not finish"))?;
+        .timeout(Duration::from_secs(35)).send().await.map_err(|_| failure(MCP_UNFINISHED))?;
     if !response.status().is_success() { return Err(failure("Browser MCP status returned an error")); }
     let value = limited_json(response,1024 * 1024).await?;
     if value["browser"]["status"] != "connected" { return Err(failure("OpenCode HTTP is available but browser MCP is not connected; inspect WSL interop and the Bridge executable")); }
@@ -866,6 +893,26 @@ mod tests {
         assert!(busy_from(&json!(["a"])).is_err(), "a reply that is not a map never reads as idle");
     }
 
+    #[test]
+    fn an_unreachable_server_does_not_hide_what_it_said_before() {
+        let mut last = None;
+        remember(&mut last, UNREACHABLE.into()); assert_eq!(last.as_deref(), Some(UNREACHABLE));
+        remember(&mut last, "Only OpenCode v1 is supported".into()); remember(&mut last, UNREACHABLE.into());
+        assert_eq!(last.as_deref(), Some("Only OpenCode v1 is supported"));
+        remember(&mut last, "OpenCode reported unhealthy".into()); remember(&mut last, MCP_UNFINISHED.into());
+        assert_eq!(last.as_deref(), Some("OpenCode reported unhealthy"));
+        let mut last = None;
+        remember(&mut last, UNREACHABLE.into()); remember(&mut last, MCP_UNFINISHED.into());
+        assert_eq!(last.as_deref(), Some(MCP_UNFINISHED), "with no answer at all, the latest is kept");
+    }
+    #[test]
+    fn a_start_failure_keeps_its_sentence_and_adds_the_last_failed_check() {
+        let base = "OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.";
+        assert_eq!(with_last_check(base, None), base);
+        assert_eq!(with_last_check(base, Some("")), base);
+        assert_eq!(with_last_check(base, Some("Only OpenCode v1 is supported")), format!("{base} Last check: Only OpenCode v1 is supported."));
+        assert_eq!(with_last_check(base, Some("Ends with a period.")), format!("{base} Last check: Ends with a period."));
+    }
     #[tokio::test]
     async fn health_verifies_the_api_document_once_per_server_version() {
         use std::sync::atomic::{AtomicUsize, Ordering};

@@ -69,3 +69,16 @@ describe("classification by protocol code", () => {
     expect(bridgeUnavailable("Bridge connection closed")).toBe(true);
   });
 });
+
+// The Bridge appends the last failed readiness check to a start failure. A known cause is explained
+// by its own rule; an unknown one keeps the general explanation. The original text is kept either way.
+it("explains a start failure by its last check when that cause is known", () => {
+  const base = "OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.";
+  const mcp = base + " Last check: OpenCode HTTP is available but browser MCP is not connected; inspect WSL interop and the Bridge executable.";
+  expect(friendlyError(mcp).text).toContain("브라우저 MCP가 연결되지 않았습니다");
+  expect(friendlyError(mcp).original).toBe(mcp);
+  expect(friendlyError(base + " Last check: Only OpenCode v1 is supported.").text).toContain("OpenCode v1 API를 찾지 못했습니다");
+  const other = base + " Last check: OpenCode reported a state this version does not know.";
+  expect(friendlyError(other).text).toContain("60초 안에 준비되지 않았습니다");
+  expect(friendlyError(other).original).toBe(other);
+});

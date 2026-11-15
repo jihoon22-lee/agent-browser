@@ -255,6 +255,8 @@ async function regression() {
     const began=Date.now(); const ready = await call('runtime.ensure',{profileId:profile.id});
     if(scenario==='mcp-failure') {
       assert.equal(ready.state,'error'); assert(ready.error.includes('browser MCP'));
+      // The fixed sentence stays first for the extension; the last failed check follows it.
+      assert.match(ready.error,/^OpenCode HTTP and browser MCP did not become ready within 60 seconds\. .* Last check: OpenCode HTTP is available but browser MCP is not connected; inspect WSL interop and the Bridge executable\.$/);
       assert.equal((await call('runtime.status',{profileId:profile.id})).state,'stopped');
       assert.equal(await fetch('http://127.0.0.1:'+profile.port+'/').then(()=>true,()=>false),false);
       await call('profile.delete',{profileId:profile.id}); outcome.checks.push('http-ready-mcp-failed-startup-cleanup'); return;
@@ -315,6 +317,7 @@ server.listen(port,'127.0.0.1'); setTimeout(()=>process.exit(0),90000).unref();`
     }
     const result = await ready;
     assert.equal(result.state,'error');
+    assert.match(result.error,/^OpenCode HTTP and browser MCP did not become ready within 60 seconds\. .* Last check: Managed OpenCode must require Basic authentication\.$/);
     const alive = await fetch(`http://127.0.0.1:${profile.port}/`).then(()=>true,()=>false);
     outcome.observed = {listening, recordedChild, aliveAfterFailure:alive};
     assert(listening, 'Synthetic .cmd fixture never opened its listener');
