@@ -44,7 +44,7 @@ Bridge는 LLM을 직접 호출하거나 별도 에이전트 하네스를 구현�
 
 관리 서버에는 임의의 Basic 인증 비밀번호와 페어링된 확장 Origin의 CORS 설정을 전달한다. `--pure`는 설치된 OpenCode 1.18.29의 순수 v1 서버 경로를 사용하기 위한 옵션이다. `OPENCODE_CONFIG_CONTENT` overlay는 기존 모델·provider·인증·다른 MCP 설정을 유지하면서 해당 관리 프로세스의 `mcp.browser`를 구성한다. 전역 OpenCode 설정 파일을 쓰지 않는다. WSL에서도 MCP는 설치된 Windows Bridge exe를 호출한다.
 
-Bridge가 종료되어도 관리 OpenCode는 유지되므로 Bridge 재시작·업데이트 뒤 같은 서버를 재사용할 수 있다. 명시적 중지·프로필 삭제·제품 제거는 소유권이 확인된 관리 프로세스만 종료한다. 종료를 확인할 수 없으면 소유권 기록을 남겨 후속 진단·재시도를 가능하게 한다. 단 `wsl.exe --list --quiet`가 응답했고 그 목록에 배포판이 없으면(등록 해제) 기록과 표식을 지우고 `reason: distribution-unregistered`로 끝낸다. CLI의 `runtime stop-all`·`profile delete`는 상주 Bridge가 상태 확인 등으로 프로필을 잡고 있으면 최대 10초 기다린다(상주 Bridge 안에서는 기다리지 않는다). 설치 관리자와 제거 스크립트는 프로필 재시작에 150초를 준다. 외부 서버의 MCP 등록은 그 서버의 설정에서 별도로 수행한다.
+Bridge가 종료되어도 관리 OpenCode는 유지되므로 Bridge 재시작·업데이트 뒤 같은 서버를 재사용할 수 있다. 명시적 중지·프로필 삭제·제품 제거는 소유권이 확인된 관리 프로세스만 종료한다. 종료를 확인할 수 없으면 소유권 기록을 남겨 후속 진단·재시도를 가능하게 한다. 단 `wsl.exe --list --quiet`가 응답했고 그 목록에 배포판이 없으면(등록 해제) 기록과 표식을 지우고 `reason: distribution-unregistered`로 끝낸다. CLI의 `runtime stop-all`·`profile delete`는 상주 Bridge가 상태 확인 등으로 프로필을 잡고 있으면 최대 10초 기다린다(상주 Bridge 안에서는 기다리지 않는다). `runtime start`를 부르는 곳(설치 관리자·제거 스크립트의 프로필 재시작, 마법사의 연결 확인, 확장의 `runtime.ensure`)은 모두 150초를 준다. 외부 서버의 MCP 등록은 그 서버의 설정에서 별도로 수행한다.
 
 ## 작업 UI와 재연결
 
