@@ -41,6 +41,18 @@ export type TrustedHooks = { ensure(tabId: number): Promise<boolean>; screenshot
 /** The file of that name the person attached to the panel request now running, if any. */
 export type AttachmentLookup = (name: string, panelRequestId: string | undefined) => Promise<{ name: string; mime: string; dataUrl: string } | undefined>;
 const origin = (url: string | undefined) => { try { const value = url ? new URL(url).origin : "null"; return value === "null" ? undefined : value; } catch { return undefined; } };
+const PAGE_REPLY_MS = 10_000;
+const UNRESPONSIVE = 'The page did not answer in time. A page dialog (alert, confirm or prompt) may be open: answer it in Chrome, then take a new browser_snapshot before repeating anything.';
+/** Rejects when the content script has not replied within `ms`. The reply itself may still arrive later. */
+function answered<T>(work: Promise<T>, ms: number, write: boolean): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(write
+            ? new ProtocolError('EXECUTION_UNKNOWN', UNRESPONSIVE, 'unsafe', { reason: 'page-unresponsive' })
+            : new ProtocolError('TIMEOUT', UNRESPONSIVE, 'safe', { reason: 'page-unresponsive' })), ms);
+        work.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+    });
+}
+
 export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup, advanced?:AdvancedBrowser, download?:{handle(p:Record<string,unknown>,signal:AbortSignal):Promise<unknown>},recovery?:InputRecovery) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
     const writes=new Map<number,Promise<unknown>>();
@@ -104,16 +116,21 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         let response: any;
         run.frame=frame;
         try {
-            const work=()=>api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } });
+            // A page blocked by alert/confirm/prompt never answers. Give up after the request's own wait
+            // budget plus 10 seconds and say so, instead of leaving the Bridge to report a bare timeout.
+            const own = Math.max(0, Number(params.timeoutMs) || 0, Number(params.settleMs) || 0, Number((params.waitFor as { timeoutMs?: unknown } | undefined)?.timeoutMs) || 0);
+            const work=()=>answered(api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } }), own + PAGE_REPLY_MS, WRITE.has(run.req.method));
             response = await interruptible(WRITE.has(run.req.method) && advanced ? advanced.race(run.req,work) : work(), run.controller.signal);
         }
         catch (e) {
             tabs?.dispose();
-            if (e instanceof ProtocolError)
+            if (e instanceof ProtocolError && e.code !== 'EXECUTION_UNKNOWN' && e.code !== 'TIMEOUT')
                 throw e;
             // An upload's change handler may submit or navigate too.
             if ((tracksTabs || run.req.method === 'browser.upload') && await navigatedAway(tabId, frame, run.sourceTopDocument))
                 return { executed: true, verified: { navigated: true, urlChanged: true } };
+            if (e instanceof ProtocolError)
+                throw e;
             if (WRITE.has(run.req.method))
                 throw new ProtocolError('EXECUTION_UNKNOWN', 'The document stopped replying after the command was sent. Take a snapshot before retrying.', 'unsafe');
             throw new ProtocolError('STALE_ELEMENT', 'The frame stopped replying. Take a fresh snapshot.');
@@ -296,7 +313,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 if(index-frameOffset>=20){framesNextOffset=index;break;}
                 await check(req,signal);
                 try {
-                    await frames.inject(tabId,f);
+                    // Injection into a page blocked by a dialog never returns either.
+                    await answered(frames.inject(tabId,f), PAGE_REPLY_MS, false);
                     const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
                     const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotToken(snapshotId)}f${f.frameId}`};
                     const length=jsonBytes(withDocument);
@@ -306,6 +324,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 }catch(e){
                     if(signal.aborted||asError(e).code==='CANCELLED')throw e;
                     if(f.frameId===0&&f.errorOccurred)throw errorPage(tab.url,false);
+                    // A top document that does not answer at all will not answer a second attempt either.
+                    if(f.frameId===0&&(asError(e).details as {reason?:unknown}|undefined)?.reason==='page-unresponsive')throw e;
                     const error:FrameError={frameId:f.frameId,url:clipText(f.url,2048),code:'FRAME_UNAVAILABLE',message:clipText(asError(e).message,500)};
                     const errorSize=jsonBytes(error);
                     if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}

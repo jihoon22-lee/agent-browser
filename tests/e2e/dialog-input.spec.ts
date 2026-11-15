@@ -125,3 +125,19 @@ test('D17 discard replacement rejects the old operation tab without navigating a
  const r=await world.mcp.call('browser_navigate',{operationId,url:world.fixture.base+'/detail.html'});expect(r.error?.code).toBe('TAB_NOT_FOUND');expect(r.executed).toBe('no');
  expect((await world.adminPage.evaluate(tabId=>chrome.tabs.get(tabId),discarded.id)).url).toContain('/advanced.html');
 });
+for(const background of [false,true])test('D20 a confirm opened by a DOM click is named as the likely cause'+(background?' (work tab in the background)':''),async()=>{
+ test.setTimeout(90_000);
+ world=await startWorld();
+ await world.adminPage.evaluate(()=>chrome.storage.local.set({advancedBrowser:false,trustedInput:false}));
+ const page=await world.open('trusted.html');let dialog:any;page.on('dialog',d=>{dialog=d;});
+ const operationId=await world.attach(page),snap=await world.ok('browser_snapshot',{operationId});
+ if(background)await world.adminPage.bringToFront();
+ const began=Date.now(),click=await world.mcp.call('browser_click',{operationId,ref:ref(snap.data,'확인창 띄우기')});
+ console.log('D20 '+JSON.stringify({background,ms:Date.now()-began,ok:click.ok,executed:click.executed,code:click.error?.code,message:click.error?.message}));
+ expect(click.ok).toBe(false);expect(click.error?.code).toBe('EXECUTION_UNKNOWN');
+ expect(click.error?.message).toContain('dialog');expect(Date.now()-began).toBeLessThan(13_000);
+ const read=await world.mcp.call('browser_snapshot',{operationId});
+ expect(read.ok).toBe(false);expect(read.error?.message).toContain('dialog');
+ await dialog?.dismiss().catch(()=>{});
+ await world.stop();
+});

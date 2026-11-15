@@ -1021,3 +1021,38 @@ it('a navigation whose flagged document is still readable is not mistaken for an
   for (const f of w.updates) f(1, { status: 'complete' }, w.tabs.get(1)!);
   expect(await work).toMatchObject({ executed: true, verified: { url: 'https://example.test/new' } });
 });
+
+describe('a page that stops answering', () => {
+  const stuck = (w: ReturnType<typeof world>, method: string) => {
+    const base = w.api.sendToFrame;
+    w.api.sendToFrame = (tab, frame, msg: any) => msg.method === method ? new Promise(() => {}) : base(tab, frame, msg);
+  };
+  const settle = async (work: Promise<unknown>) => { let outcome: any = 'pending'; void work.then(value => { outcome = { value }; }, error => { outcome = { error }; }); return () => outcome; };
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('reports a write as unknown and says a page dialog may be open, after 10 seconds', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore()), ref = await firstRef(h);
+    stuck(w, 'click');
+    const outcome = await settle(h(request('browser.click', { ref })));
+    await vi.advanceTimersByTimeAsync(9_900); expect(outcome()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(outcome().error).toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe', details: { reason: 'page-unresponsive' } });
+    expect(outcome().error.message).toContain('dialog');
+  });
+  it('reports a read as a safe timeout with the same hint', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    stuck(w, 'snapshot');
+    const outcome = await settle(h(request('browser.snapshot', {})));
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(outcome().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe', details: { reason: 'page-unresponsive' } });
+  });
+  it('does not cut a request short of its own wait budget', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    stuck(w, 'wait');
+    const outcome = await settle(h(request('browser.wait', { text: 'Ready', timeoutMs: 20_000 })));
+    await vi.advanceTimersByTimeAsync(25_000); expect(outcome()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(5_200);
+    expect(outcome().error).toMatchObject({ details: { reason: 'page-unresponsive' } });
+  });
+});
