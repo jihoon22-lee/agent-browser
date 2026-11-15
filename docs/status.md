@@ -2,6 +2,25 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.4.2 Windows preview — 게시 완료 (2026-11-15)
+
+[v0.4.2](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.2)(prerelease)를 **2026-11-15 13:12:28 UTC / 22:12:28 KST**에 게시했다. 주석 태그는 [PR #44](https://github.com/jihoon22-lee/agent-browser/pull/44)의 main 병합 커밋 **`bc94ccae7708da45e5c0e328b41b4106a2f45db5`**를 가리킨다.
+
+- **배포 ZIP:** **3,942,517 bytes / 37 files**, SHA256 **`7ebbfb25f32f10f6a68a2411c40d5818086a7cfc6b553c17b3048ef02160474b`**. `SHA256SUMS` 별도 게시. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/43716317897)의 Windows 작업이 만든 `windows-x64-package-bc94cca…` 아티팩트다.
+- **소스·CI:** [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/43714765181)와 배포 커밋 main CI의 Linux·Windows 작업이 모두 성공했다. PR CI 수치: Linux E2E **243 통과/5 제외**, Windows Chrome **157.0.8103.79** E2E **243 통과/5 제외**, 마법사 `SetupFlowTests` **31 통과/0 실패**(추가 드라이브 케이스 포함), `SetupDisplayTests` 4개 글꼴 크기, 관리 경로 검사 통과.
+- **게시 ZIP의 로컬 실제 Windows 검증:** 게시 전 같은 ZIP의 `AgentBrowser-Setup.exe`를 `GuiSmokeTests --uia --profiles`로 조작해 **6개 PASS**(미리보기·취소, 설치와 WSL 설정 등록, WSL 실행 환경 저장, 연결 설정 → 페어링 → OpenCode → 완료, 업데이트, 제거)를 확인했다. 데스크톱이 잠겨 있어 화면 복사는 증거로 쓰지 않았다.
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, GitHub 자산 크기·digest, ZIP 내부 **36개 manifest 해시와 전체 37개 파일**, 확장 버전 0.4.2, 릴리스 본문의 세 섹션을 확인했다.
+- **정리:** 병합된 작업 브랜치를 로컬·원격에서 삭제했다. 최종 파일은 `release/v0.4.2-main/`에 보관하고 개발 패키지·다운로드·임시 파일과 격리 시험 폴더를 지웠다.
+
+## Bridge 런타임 실제 Windows·WSL 실행과 관찰 (2026-11-15)
+
+사용자 요청(Bridge 프로세스 관리와 브라우저 조작 검토)에 따른 검토 중 실행한 것만 기록한다. 제품 코드는 바꾸지 않았다. 사용한 `browser-bridge.exe`는 `feat/m4-wizard-flow`에서 버전을 0.4.2로 올리기 전에 만든 MSVC release 빌드다(런타임 코드는 v0.4.2와 같다).
+
+- **`bridge/tests/windows-runtime.mjs` (Windows Node 24.18.1, 합성 fixture, 모델 호출 없음):** `RUNTIME_KIND=cmd`의 `cmd-tree-stop`(2026-11-11에 실행하지 못했던 시나리오), `healthy-fixture` 통과. `RUNTIME_KIND=wsl`(실제 Ubuntu 배포판)의 `healthy-fixture`, `concurrent-callers`, `previous-boot`, `startup-crash`, `orphan-leader`, `wsl-start-failure`, `wsl-unknown-marker` 통과. 실행 뒤 Windows·WSL 양쪽에 남은 프로세스가 없음을 확인했다. `interop-keeper`·`interop-review`·`health-failure`·`doctor-env`는 실행하지 않았다.
+- **관찰(미수정): 표식 없는 Bridge.** 격리 설치에서 Bridge를 종료한 뒤 `browser-bridge.exe start`로 다시 띄우면(MCP 프록시가 Bridge를 다시 띄울 때와 같은 경로) `.installer-bridge-process.json` 표식이 없다. 이 상태에서 C# `BridgeControl.Stop`은 false를 돌려주고 Bridge를 그대로 두며, `BridgeControl.Start`와 같은 패키지 업데이트는 `Bridge PID does not belong to this startup.`으로 실패하고, 제거는 `액세스가 거부되었습니다`로 실패해 설치 기록이 남았다. PowerShell `start-bridge.cmd`의 인수 경로는 실행하지 않았다.
+- **관찰:** 없는 배포판 이름으로 `wsl.exe -d <이름> --exec /bin/true`를 실행하면 종료 코드 255(`WSL_E_DISTRO_NOT_FOUND`)다. 2026-11-11에 전제를 확인하지 못해 보류한 "등록 해제된 WSL 배포판의 복구 경로"의 전제다. `%LOCALAPPDATA%\AgentBrowser-Setup\<해시>` 유지보수 exe 캐시는 지우는 코드가 없고 이 PC에 9개가 남아 있다.
+- **브라우저 조작 검토:** Linux headless Chromium 156.0.8078.4와 단위 테스트의 임시 프로브로 확인했고 프로브는 삭제했다. 신뢰 입력을 끈 기본 설정만 실행했으며 Windows·실제 모델은 실행하지 않았다. 결과는 대화로 보고했고 수정 과제는 정하지 않았다.
+
 ## 설치 마법사 흐름 단축·단계 표시·오류 강조 — 구현·로컬 Windows 검증 (2026-11-15)
 
 사용자 요청("설치 위자드를 조금 더 개선", 이어서 흐름 단축과 진행 표시·오류 강조를 바로 진행)에 따라 `feat/m4-wizard-flow` 브랜치에서 진행했다. 변경은 `installer/SetupForm.cs`와 설치 테스트, 안내 문서에 한정된다. 설치 엔진·페어링 인증·소유권 검사는 바꾸지 않았다.
