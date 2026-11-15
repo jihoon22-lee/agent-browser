@@ -246,7 +246,8 @@ namespace AgentBrowser.Installer {
                 }
                 var state=detectionState;string id=detectionExtensionId;
                 // Starting (or verifying) the Bridge hashes files and queries processes: once per page visit.
-                if(!detectionBridgeStarted){await Task.Run(()=>BridgeControl.Start(state));detectionBridgeStarted=true;}
+                // One attempt per page visit, successful or not: a failing start must not be repeated every tick.
+                if(!detectionBridgeStarted){detectionBridgeStarted=true;await Task.Run(()=>BridgeControl.Start(state));}
                 var current=await Task.Run(()=>BridgeStatus(state));
                 if(page==4&&Pairing.Seen(current,id)){
                     advance=connectionAuto;connectionAuto=false;
@@ -645,6 +646,8 @@ namespace AgentBrowser.Installer {
             new KeyValuePair<string,string>("Port must be between 1 and 65535","포트는 1~65535 사이로 입력하세요."),
             new KeyValuePair<string,string>("Pair the Chrome extension first","먼저 Chrome 연결 단계를 완료하세요."),
             new KeyValuePair<string,string>("No authenticated Bridge","Bridge가 실행 중이 아닙니다. [뒤로] 후 다시 [다음]을 누르면 Bridge를 시작합니다."),
+            new KeyValuePair<string,string>("Bridge PID does not belong to this startup","Bridge를 시작하지 못했습니다. 포트를 다른 프로그램이 쓰고 있지 않은지 확인하세요. [뒤로] 후 고급 설정에서 포트를 바꾸거나, 설치 폴더의 diagnose.cmd 결과를 확인하세요."),
+            new KeyValuePair<string,string>("Owned Bridge startup","Bridge를 시작하지 못했습니다. 포트를 다른 프로그램이 쓰고 있지 않은지 확인하세요. [뒤로] 후 고급 설정에서 포트를 바꾸거나, 설치 폴더의 diagnose.cmd 결과를 확인하세요."),
             new KeyValuePair<string,string>("Another operation is already managing this profile","같은 실행 환경을 다른 작업이 처리 중입니다. 잠시 후 다시 시도하세요."),
         };
         public static string Message(Exception error) {

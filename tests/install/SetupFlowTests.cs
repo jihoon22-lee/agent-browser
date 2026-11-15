@@ -235,6 +235,21 @@ namespace AgentBrowser.Installer {
     var broken=DoneChecks.Report(Json("{\"pairedExtensionId\":\""+ExtensionId+"\",\"browsers\":[{\"clientId\":\"c\",\"connected\":true}]}"),Json("{\"checks\":[{\"id\":\"opencode\",\"status\":\"error\",\"message\":\"missing\"}]}"),ExtensionId);
     Assert(broken.NeedsRuntime&&!broken.NeedsChrome,"a failing runtime does not point at the OpenCode step");
    });
+   Case("Bridge start errors are explained and not retried on every detection tick",()=>{
+    Assert(Friendly.Message(new IOException("Bridge PID does not belong to this startup.")).Contains("포트"),"an unverified Bridge is not explained");
+    Assert(Friendly.Message(new IOException("Owned Bridge startup failed (1).")).Contains("포트"),"a failed start is not explained");
+    string root=Path.Combine(fixture,"start-once");int port=Int32.Parse(FreePort());
+    try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false,Port=port}),CancellationToken.None,m=>{});
+     var blocker=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,port);blocker.Start();
+     try{using(var form=new SetupForm(new[]{"--no-discover","--no-browser-launch","--install-dir",root})){
+      form.Show();Invoke(form,"OpenSetup");
+      Assert(Field<Panel>(form,"ConnectionPanel").Visible,"the Chrome step did not open after a failed Bridge start");
+      int before=BridgeControl.Starts;for(int tick=0;tick<3;tick++)Invoke(form,"DetectExtension");
+      Assert(BridgeControl.Starts==before+1,"each detection tick started the Bridge again: "+(BridgeControl.Starts-before));
+      form.Close();
+     }}finally{blocker.Stop();}
+    }finally{Uninstall(root);}
+   });
    Case("choosing another OpenCode follows its home unless the user chose a work folder",()=>{
     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"candidate-home")})){
      form.Show();Application.DoEvents();
