@@ -8,6 +8,19 @@ internal static class InstallerReviewTests {
   try{InstallerEngine.PrivateDirectory(options.InstallDir);action(options);count++;Console.WriteLine("PASS REVIEW "+name);}catch(Exception error){failures++;Console.WriteLine("FAIL REVIEW "+name+": "+error.GetBaseException().Message);}
   finally{var state=InstallerEngine.State(options.InstallDir);if(state!=null)try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=options.InstallDir}),CancellationToken.None,s=>{});}catch(Exception e){Console.WriteLine("REVIEW cleanup: "+e.Message);}}
  }
+ static bool Alive(int pid){try{using(var p=Process.GetProcessById(pid))return !p.HasExited;}catch(ArgumentException){return false;}}
+ static int FreePort(){var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();int port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port;listener.Stop();return port;}
+ static int ServePid(InstallState s){string f=Path.Combine(s.DataDir,"serve.pid");int pid;return File.Exists(f)&&Int32.TryParse(File.ReadAllText(f).Trim(),out pid)?pid:0;}
+ static string MarkerPath(InstallState s){return Path.Combine(s.DataDir,".installer-bridge-process.json");}
+ // Leaves this installation's serve running without the installer's marker, as after a Bridge crash
+ // followed by an MCP proxy (or `browser-bridge.exe start`) launching it again.
+ static int Unmarked(InstallState s){
+  int running=ServePid(s);
+  if(running>0&&Alive(running))using(var p=Process.GetProcessById(running)){Assert(p.MainModule.FileName.StartsWith(s.InstallDir,StringComparison.OrdinalIgnoreCase),"serve.pid is not the fixture Bridge");p.Kill();p.WaitForExit(5000);}
+  if(File.Exists(MarkerPath(s)))File.Delete(MarkerPath(s));
+  var run=BridgeControl.Run(s,new[]{"start","--port",s.Port.ToString()},30000);Assert(run.ExitCode==0,"fixture start failed: "+run.Error);
+  Thread.Sleep(300);int pid=ServePid(s);Assert(pid>0&&Alive(pid)&&!File.Exists(MarkerPath(s)),"no unmarked serve is running");return pid;
+ }
  static void Apply(SetupOptions options){InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,s=>{});}
  // A copy of the fixture package under another version, optionally shipping one extra file.
  static string VersionedPackage(string name,string version,string extra){
@@ -218,7 +231,43 @@ internal static class InstallerReviewTests {
   Case("data-directory-preserves-managed-owner",o=>{var acl=new DirectorySecurity();acl.SetOwner(new SecurityIdentifier("S-1-5-21-1-2-3-1001"));acl.AddAccessRule(new FileSystemAccessRule(WindowsIdentity.GetCurrent().User,FileSystemRights.FullControl,AccessControlType.Allow));var protectedAcl=InstallerEngine.PrivateAcl(acl);Assert(protectedAcl.GetOwner(typeof(SecurityIdentifier)).Value=="S-1-5-21-1-2-3-1001","data protection changed the managed owner");});
   Case("maintenance-cache-managed-ancestor",o=>{var acl=Directory.GetAccessControl(o.InstallDir);byte[] original=acl.GetSecurityDescriptorBinaryForm();acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.DeleteSubdirectoriesAndFiles,AccessControlType.Allow));Directory.SetAccessControl(o.InstallDir,acl);try{Program.PrepareMaintenanceCache(Path.Combine(o.InstallDir,"cache"));}finally{var restore=new DirectorySecurity();restore.SetSecurityDescriptorBinaryForm(original,AccessControlSections.Access);Directory.SetAccessControl(o.InstallDir,restore);}});
   Case("automatic-discovery-rejects-local-junction",o=>{string target=Path.Combine(o.InstallDir,"target"),link=Path.Combine(o.InstallDir,"linked"),oldPath=Environment.GetEnvironmentVariable("PATH");Directory.CreateDirectory(target);File.WriteAllText(Path.Combine(target,"opencode.cmd"),"@echo off\r\necho 1.18.29\r\n");var result=NativeIO.Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe"),new[]{"/d","/c","mklink","/J",link,target},null,null,15000,System.Text.Encoding.Default);Assert(result.ExitCode==0,"junction fixture failed");try{Environment.SetEnvironmentVariable("PATH",link);var found=Discovery.Find();Assert(!found.OpenCode.Any(c=>c.Executable.StartsWith(link+"\\",StringComparison.OrdinalIgnoreCase)),"automatic discovery followed a reparse candidate");}finally{Environment.SetEnvironmentVariable("PATH",oldPath);Assert((File.GetAttributes(link)&FileAttributes.ReparsePoint)!=0,"fixture link changed");Directory.Delete(link);}});
-  Case("relative-windows-path-never-executes",o=>{Apply(o);string fixture=Path.Combine(o.InstallDir,"opencode.exe"),marker=Path.Combine(o.InstallDir,"version-ran.txt"),oldPath=Environment.GetEnvironmentVariable("PATH"),oldProbe=Environment.GetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE");File.Copy(Assembly.GetExecutingAssembly().Location,fixture);try{Environment.SetEnvironmentVariable("PATH",o.InstallDir+";"+oldPath);Environment.SetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE",marker);bool rejected=false;try{ManagedProfile.Prepare(InstallerEngine.State(o.InstallDir),new OpenCodeCandidate{Kind="windows",Executable="opencode.exe"},"relative-windows","Relative Windows",o.InstallDir);}catch(IOException){rejected=true;}Assert(rejected&&!File.Exists(marker),"relative Windows version probe executed before rejection");var selected=ManagedProfile.Prepare(InstallerEngine.State(o.InstallDir),new OpenCodeCandidate{Kind="windows",Executable=fixture},"absolute-windows","Absolute Windows",o.InstallDir);Assert(File.Exists(marker)&&(string)selected["executable"]==fixture,"explicit valid Windows profile could not be prepared");}finally{Environment.SetEnvironmentVariable("PATH",oldPath);Environment.SetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE",oldProbe);}});
+  Case("relative-windows-path-never-executes",o=>{Apply(o);string fixture=Path.Combine(o.InstallDir,"opencode.exe"),marker=Path.Combine(o.InstallDir,"version-ran.txt"),oldPath=Environment.GetEnvironmentVariable("PATH"),oldProbe=Environment.GetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE");File.Copy(Assembly.GetExecutingAssembly().Location,fixture);try{Environment.SetEnvironmentVariable("PATH",o.InstallDir+";"+oldPath);Environment.SetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE",marker);bool rejected=false;try{ManagedProfile.Prepare(InstallerEngine.State(o.InstallDir),new OpenCodeCandidate{Kind="windows",Executable="opencode.exe"},"relative-windows","Relative Windows",o.InstallDir);}catch(IOException){rejected=true;}Assert(rejected&&!File.Exists(marker),"relative Windows version probe executed before rejection");var selected=ManagedProfile.Prepare(InstallerEngine.State(o.InstallDir),new OpenCodeCandidate{Kind="windows",Executable=fixture},"absolute-windows","Absolute Windows",o.InstallDir);Assert(File.Exists(marker)&&(string)selected["executable"]==fixture,"explicit valid Windows profile could not be prepared");}finally{Environment.SetEnvironmentVariable("PATH",oldPath);Environment.SetEnvironmentVariable("AGENT_BROWSER_REVIEW_PROBE",oldProbe);}});  Case("unmarked-serve-is-adopted-stopped-updated-removed",o=>{
+   o.Port=FreePort();o.Start=true;Apply(o);var state=InstallerEngine.State(o.InstallDir);
+   int pid=Unmarked(state);
+   Assert(BridgeControl.Stop(state),"an unmarked serve of this installation was not stopped");
+   Assert(!Alive(pid),"Stop reported success but the serve is still running");
+   pid=Unmarked(state);BridgeControl.Start(state);
+   Assert(File.Exists(MarkerPath(state))&&Convert.ToInt32(InstallerEngine.Read<Dictionary<string,object>>(MarkerPath(state))["Pid"])==pid&&Alive(pid),"Start did not adopt the running serve");
+   Unmarked(state);o.Operation="update";Apply(o);
+   Unmarked(InstallerEngine.State(o.InstallDir));
+   Apply(new SetupOptions{Operation="uninstall",InstallDir=o.InstallDir});
+   Assert(InstallerEngine.State(o.InstallDir)==null,"uninstall left the installation behind");
+  });
+  Case("unmarked-previous-version-serve-does-not-block-update",o=>{
+   o.Port=FreePort();o.Start=true;Apply(o);var old=InstallerEngine.State(o.InstallDir);int pid=Unmarked(old);
+   o.PackageDir=VersionedPackage("unmarked-next-package","0.1.5-review-unmarked",null);o.Operation="update";Apply(o);
+   var next=InstallerEngine.State(o.InstallDir);int now=ServePid(next);
+   Assert(!InstallerEngine.Same(old.CurrentExe,next.CurrentExe),"the fixture did not change the Bridge executable path");
+   Assert(!Alive(pid),"the previous version's unmarked serve survived the update");
+   using(var p=Process.GetProcessById(now))Assert(String.Equals(p.MainModule.FileName,next.CurrentExe,StringComparison.OrdinalIgnoreCase),"the new Bridge is not the one serving");
+  });
+  Case("foreign-serve-pid-is-never-adopted",o=>{
+   Apply(o);var state=InstallerEngine.State(o.InstallDir);
+   File.WriteAllText(Path.Combine(state.DataDir,"serve.pid"),Process.GetCurrentProcess().Id.ToString());
+   Assert(BridgeControl.AdoptRunning(state)==null,"a process that is not this installation's Bridge was adopted");
+   Assert(!File.Exists(MarkerPath(state)),"a marker was written for a foreign process");
+   Assert(!BridgeControl.Stop(state),"Stop claimed to stop a foreign process");
+  });
+  Case("serve-of-another-data-folder-is-never-adopted",o=>{
+   o.Port=FreePort();o.Start=true;Apply(o);var first=InstallerEngine.State(o.InstallDir);int pid=ServePid(first);
+   var other=new SetupOptions{PackageDir=package,InstallDir=o.InstallDir+"-other",Startup=false,Start=false,Port=o.Port};
+   try{InstallerEngine.PrivateDirectory(other.InstallDir);Apply(other);var second=InstallerEngine.State(other.InstallDir);
+    File.WriteAllText(Path.Combine(second.DataDir,"serve.pid"),pid.ToString());
+    Assert(BridgeControl.AdoptRunning(second)==null,"another installation's serve was adopted");
+    Assert(!BridgeControl.Stop(second)&&Alive(pid),"another installation's serve was stopped");
+   }finally{if(InstallerEngine.State(other.InstallDir)!=null){File.Delete(Path.Combine(InstallerEngine.State(other.InstallDir).DataDir,"serve.pid"));Apply(new SetupOptions{Operation="uninstall",InstallDir=other.InstallDir});}}
+  });
+
   UpdateRuntimeCases();
   RunReleaseBoundaries(destination,source);
   Console.WriteLine("REVIEW "+count+" PASS, "+failures+" FAIL");if(failures>0)throw new Exception("Installer review regressions failed");return count;

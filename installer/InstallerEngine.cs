@@ -406,6 +406,34 @@ namespace AgentBrowser.Installer {
                 }
             }return null;
         }
+        /// How often Start ran; tests observe that a failing start is not repeated on a timer.
+        internal static int Starts;
+        /// A serve that an MCP proxy or `start` launched has no marker, so Stop and Start used to treat this
+        /// installation's own Bridge as a stranger. It is adopted only when serve.pid names a process whose image
+        /// is an exact owned Bridge executable of this installation, whose command line is `serve --port <port>`,
+        /// and which accepts this data folder's token. Anything else is left alone and null is returned.
+        internal static Dictionary<string,object> AdoptRunning(InstallState state) {
+            try {
+                string pidPath=Path.Combine(state.DataDir,"serve.pid");int pid;
+                if(!File.Exists(pidPath)||!Int32.TryParse(File.ReadAllText(pidPath).Trim(),out pid)||pid<=0)return null;
+                using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
+                    foreach(ManagementObject process in query.Get()) using(process) {
+                        string path=process["ExecutablePath"] as string,commandLine=process["CommandLine"] as string,creation=process["CreationDate"] as string;
+                        if(String.IsNullOrEmpty(path)||String.IsNullOrEmpty(commandLine)||String.IsNullOrEmpty(creation))return null;
+                        string image=InstallerEngine.Full(path);
+                        var owned=state.OwnedFiles.Where(f=>String.Equals(Path.GetFileName(f.Path),"browser-bridge.exe",StringComparison.OrdinalIgnoreCase)&&InstallerEngine.Same(NativeIO.SafePath(state.InstallDir,f.Path),image)).ToArray();
+                        if(owned.Length!=1||!InstallerEngine.Same(NativeIO.FileHash(image),owned[0].Sha256))return null;
+                        if(!Regex.IsMatch(commandLine,@"(?:^|\s)serve\s+--port\s+"+state.Port+@"(?:\s|$)"))return null;
+                        // Only a serve of this data folder accepts its token.
+                        if(Run(state,new[]{"status","--json"},20000).ExitCode!=0)return null;
+                        var marker=new Dictionary<string,object>{{"Product",InstallerEngine.Product},{"InstallId",state.InstallId},{"Pid",pid},{"Executable",image},{"Port",state.Port},{"CreatedAt",ManagementDateTimeConverter.ToDateTime(creation).ToUniversalTime().ToString("o")}};
+                        NativeIO.WriteText(Path.Combine(state.DataDir,".installer-bridge-process.json"),NativeIO.Json.Serialize(marker));
+                        return marker;
+                    }
+                }
+            } catch(Exception) {/* Unverifiable: not adopted. */}
+            return null;
+        }
         static void RemoveStoppedMarker(InstallState state,Dictionary<string,object> marker) {
             if(marker==null)return;
             string path=Path.Combine(state.DataDir,".installer-bridge-process.json");NativeIO.PlainPath(path);var current=Marker(state);
@@ -443,20 +471,33 @@ namespace AgentBrowser.Installer {
             return used;
         }
         public static bool Stop(InstallState state) {
-            var marker=Marker(state);using(var process=Verify(state,marker)) {if(process==null) {RemoveStoppedMarker(state,marker);return false;}}
+            var marker=Marker(state);using(var process=Verify(state,marker)) {if(process==null) {var adopted=AdoptRunning(state);if(adopted==null){RemoveStoppedMarker(state,marker);return false;}marker=adopted;}}
             using(var again=Verify(state,marker)) {if(again==null) {RemoveStoppedMarker(state,marker);return false;}using(var p=Process.GetProcessById(Convert.ToInt32(marker["Pid"]))) {p.Kill();if(!p.WaitForExit(5000)) throw new IOException("Owned Bridge did not stop.");}}
             RemoveStoppedMarker(state,marker);return true;
         }
         public static void Start(InstallState state) {
             ValidateLaunch(state);
-            InstallerEngine.Owned(state);
+            InstallerEngine.Owned(state);Interlocked.Increment(ref Starts);
             var existing=Marker(state);
-            using(var verified=Verify(state,existing)) {if(verified!=null&&InstallerEngine.Same((string)existing["Executable"],state.CurrentExe)&&Convert.ToInt32(existing["Port"])==state.Port)return;}
+            using(var verified=Verify(state,existing)) {
+                if(verified!=null&&InstallerEngine.Same((string)existing["Executable"],state.CurrentExe)&&Convert.ToInt32(existing["Port"])==state.Port)return;
+                if(verified==null) {
+                    // A serve nobody marked (restarted by an MCP proxy): take it over, or replace an older version's.
+                    var adopted=AdoptRunning(state);
+                    if(adopted!=null) {if(InstallerEngine.Same((string)adopted["Executable"],state.CurrentExe))return;Stop(state);}
+                }
+            }
             using(var startup=new BridgeStartJob(state.CurrentExe,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},state.Port)) {
             startup.Wait();
             int pid;string pidPath=Path.Combine(state.DataDir,"serve.pid");
             if(!File.Exists(pidPath)||!Int32.TryParse(File.ReadAllText(pidPath).Trim(),out pid)||pid<=0)throw new IOException("Bridge PID publication failed.");
-            startup.RequireChild(pid);
+            try {startup.RequireChild(pid);}
+            catch(IOException) {
+                // `start` found a serve that was already answering (it won the race with this launch).
+                var adopted=AdoptRunning(state);
+                if(adopted!=null&&InstallerEngine.Same((string)adopted["Executable"],state.CurrentExe))return;
+                throw;
+            }
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
                 foreach(ManagementObject process in query.Get()) using(process) {
                     string startedPath=process["ExecutablePath"] as string,startedCommand=process["CommandLine"] as string;
