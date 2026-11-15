@@ -224,7 +224,7 @@ async function regression() {
       for(const status of statuses) {assert.equal(status.state,'ready');assert.equal(status.baseUrl,statuses[0].baseUrl);assert(!('password' in status));}
       for(const result of callers.filter(result=>result.code!==0)) assert(result.stderr.includes('Another operation is already managing this profile'),'Only a profile lock conflict may reject a concurrent caller');
       const records=JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes;
-      assert.equal(Object.keys(records).length,1); assert(records[profile.id].wslKeeper);
+      assert.equal(Object.keys(records).length,1); if(kind==='wsl') assert(records[profile.id].wslKeeper);
       outcome.stages=[{stage:'concurrent-native-cli-callers',ok:true,callers:2,successful:successful.length,lockRejected:2-successful.length,ownedRuntimeRecords:1}];
       outcome.checks.push('concurrent-native-callers-share-one-owned-runtime-after-caller-exit');
     }
@@ -442,5 +442,11 @@ try {
   outcome.error = error.message;
   try { await call('runtime.stop', { profileId: profile.id }); } catch { outcome.cleanup = 'Runtime ownership record was retained in the isolated home'; }
 } finally { await fixtureShutdown?.(); ws?.close(); bridge?.kill(); }
-writeFileSync(join(home, 'result.json'), JSON.stringify(outcome, null, 2));
+if (outcome.ok) {
+  // A passing run leaves nothing in %TEMP%. The Bridge may still hold serve.log for a moment after kill.
+  try { rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
+  catch (error) { outcome.ok = false; outcome.error = 'The isolated home could not be removed: ' + error.message; }
+}
+// A failed run keeps its home and result for diagnosis.
+if (!outcome.ok) writeFileSync(join(home, 'result.json'), JSON.stringify(outcome, null, 2));
 console.log(JSON.stringify(outcome)); process.exitCode = outcome.ok ? 0 : 1;
