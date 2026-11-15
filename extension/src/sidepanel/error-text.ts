@@ -42,6 +42,9 @@ export const bridgeUnavailable = (message: string, code?: string) => code ? code
 
 export function friendlyError(message: string, code?: string): { text: string; original?: string } {
   if (code && CODES[code]) return { text: CODES[code], original: message };
+  // A start failure ends with the last check that failed: that cause, when known, is the useful explanation.
+  const lastCheck = /Last check: (.+)$/.exec(message)?.[1];
+  if (lastCheck) for (const [pattern, text] of RULES) if (pattern.test(lastCheck)) return { text, original: message };
   for (const [pattern, text] of code ? RULES : [...UNCODED, ...RULES]) if (pattern.test(message)) return { text, original: message };
   return { text: message };
 }

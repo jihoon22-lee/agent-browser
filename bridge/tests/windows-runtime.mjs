@@ -224,7 +224,7 @@ async function regression() {
       for(const status of statuses) {assert.equal(status.state,'ready');assert.equal(status.baseUrl,statuses[0].baseUrl);assert(!('password' in status));}
       for(const result of callers.filter(result=>result.code!==0)) assert(result.stderr.includes('Another operation is already managing this profile'),'Only a profile lock conflict may reject a concurrent caller');
       const records=JSON.parse(readFileSync(join(home,'runtime.json'))).runtimes;
-      assert.equal(Object.keys(records).length,1); assert(records[profile.id].wslKeeper);
+      assert.equal(Object.keys(records).length,1); if(kind==='wsl') assert(records[profile.id].wslKeeper);
       outcome.stages=[{stage:'concurrent-native-cli-callers',ok:true,callers:2,successful:successful.length,lockRejected:2-successful.length,ownedRuntimeRecords:1}];
       outcome.checks.push('concurrent-native-callers-share-one-owned-runtime-after-caller-exit');
     }
@@ -255,6 +255,8 @@ async function regression() {
     const began=Date.now(); const ready = await call('runtime.ensure',{profileId:profile.id});
     if(scenario==='mcp-failure') {
       assert.equal(ready.state,'error'); assert(ready.error.includes('browser MCP'));
+      // The fixed sentence stays first for the extension; the last failed check follows it.
+      assert.match(ready.error,/^OpenCode HTTP and browser MCP did not become ready within 60 seconds\. .* Last check: OpenCode HTTP is available but browser MCP is not connected; inspect WSL interop and the Bridge executable\.$/);
       assert.equal((await call('runtime.status',{profileId:profile.id})).state,'stopped');
       assert.equal(await fetch('http://127.0.0.1:'+profile.port+'/').then(()=>true,()=>false),false);
       await call('profile.delete',{profileId:profile.id}); outcome.checks.push('http-ready-mcp-failed-startup-cleanup'); return;
@@ -293,6 +295,18 @@ async function regression() {
     await assert.rejects(call('profile.delete',{profileId:profile.id}),/record was retained/);
     assert(JSON.parse(readFileSync(path)).runtimes[profile.id]);
     outcome.checks.push('R04-missing-marker-preserves-unknown-runtime');
+  } else if (scenario === 'wsl-unregistered') {
+    // The record of a distribution that was unregistered (wsl --unregister) can be stopped and deleted.
+    assert.equal(kind,'wsl'); profile.distribution='AbNoSuchDistro-'+randomBytes(4).toString('hex'); profile.executable='/bin/true'; profile.directory='/tmp';
+    await call('profile.save',{profile});
+    const path=join(home,'runtime.json'), config=JSON.parse(readFileSync(path));
+    config.runtimes[profile.id]={profileId:profile.id,instance:'missing-fixture',baseUrl:'http://127.0.0.1:'+profile.port,username:'opencode',password:'fixture',launcher:{pid:0,created:0,image:'absent'},server:null,wslOwnerFile:windowsToWsl(join(home,'missing.owner')),version:null};
+    writeFileSync(path,JSON.stringify(config));
+    const stopped=await call('runtime.stop',{profileId:profile.id});
+    assert.equal(stopped.stopped,false); assert.equal(stopped.reason,'distribution-unregistered');
+    assert(!JSON.parse(readFileSync(path)).runtimes[profile.id],'The record of an unregistered distribution was retained');
+    await call('profile.delete',{profileId:profile.id});
+    outcome.checks.push('unregistered-distribution-record-cleared');
   } else if (scenario === 'health-failure') {
     assert.equal(kind, 'cmd');
     const file = join(home, 'bad-health.mjs'), launcher = join(home, 'bad-health.cmd'), nonce = randomBytes(16).toString('hex');
@@ -315,6 +329,7 @@ server.listen(port,'127.0.0.1'); setTimeout(()=>process.exit(0),90000).unref();`
     }
     const result = await ready;
     assert.equal(result.state,'error');
+    assert.match(result.error,/^OpenCode HTTP and browser MCP did not become ready within 60 seconds\. .* Last check: Managed OpenCode must require Basic authentication\.$/);
     const alive = await fetch(`http://127.0.0.1:${profile.port}/`).then(()=>true,()=>false);
     outcome.observed = {listening, recordedChild, aliveAfterFailure:alive};
     assert(listening, 'Synthetic .cmd fixture never opened its listener');
@@ -427,5 +442,11 @@ try {
   outcome.error = error.message;
   try { await call('runtime.stop', { profileId: profile.id }); } catch { outcome.cleanup = 'Runtime ownership record was retained in the isolated home'; }
 } finally { await fixtureShutdown?.(); ws?.close(); bridge?.kill(); }
-writeFileSync(join(home, 'result.json'), JSON.stringify(outcome, null, 2));
+if (outcome.ok) {
+  // A passing run leaves nothing in %TEMP%. The Bridge may still hold serve.log for a moment after kill.
+  try { rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); }
+  catch (error) { outcome.ok = false; outcome.error = 'The isolated home could not be removed: ' + error.message; }
+}
+// A failed run keeps its home and result for diagnosis.
+if (!outcome.ok) writeFileSync(join(home, 'result.json'), JSON.stringify(outcome, null, 2));
 console.log(JSON.stringify(outcome)); process.exitCode = outcome.ok ? 0 : 1;

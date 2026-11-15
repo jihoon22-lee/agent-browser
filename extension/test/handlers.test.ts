@@ -1021,3 +1021,100 @@ it('a navigation whose flagged document is still readable is not mistaken for an
   for (const f of w.updates) f(1, { status: 'complete' }, w.tabs.get(1)!);
   expect(await work).toMatchObject({ executed: true, verified: { url: 'https://example.test/new' } });
 });
+
+describe('a page that stops answering', () => {
+  const stuck = (w: ReturnType<typeof world>, method: string) => {
+    const base = w.api.sendToFrame;
+    w.api.sendToFrame = (tab, frame, msg: any) => msg.method === method ? new Promise(() => {}) : base(tab, frame, msg);
+  };
+  const settle = async (work: Promise<unknown>) => { let outcome: any = 'pending'; void work.then(value => { outcome = { value }; }, error => { outcome = { error }; }); return () => outcome; };
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('reports a write as unknown and says a page dialog may be open, after 10 seconds', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore()), ref = await firstRef(h);
+    stuck(w, 'click');
+    const outcome = await settle(h(request('browser.click', { ref })));
+    await vi.advanceTimersByTimeAsync(9_900); expect(outcome()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(outcome().error).toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe', details: { reason: 'page-unresponsive' } });
+    expect(outcome().error.message).toContain('dialog');
+  });
+  it('reports a read as a safe timeout with the same hint', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    stuck(w, 'snapshot');
+    const outcome = await settle(h(request('browser.snapshot', {})));
+    await vi.advanceTimersByTimeAsync(12_000);
+    expect(outcome().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe', details: { reason: 'page-unresponsive' } });
+  });
+  it('does not cut a request short of its own wait budget', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    stuck(w, 'wait');
+    const outcome = await settle(h(request('browser.wait', { text: 'Ready', timeoutMs: 20_000 })));
+    await vi.advanceTimersByTimeAsync(25_000); expect(outcome()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(5_200);
+    expect(outcome().error).toMatchObject({ details: { reason: 'page-unresponsive' } });
+  });
+  // The Bridge names how long it will wait (replyWithinMs). The hint is only useful if it arrives first.
+  it('answers a wait before the Bridge gives up on it, but not before the wait itself', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    stuck(w, 'wait');
+    const outcome = await settle(h(request('browser.wait', { text: 'Ready', timeoutMs: 5_000, replyWithinMs: 8_000 })));
+    await vi.advanceTimersByTimeAsync(5_100); expect(outcome()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(2_700);
+    expect(outcome().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe', details: { reason: 'page-unresponsive' } });
+    expect(outcome().error.message).toContain('dialog');
+  });
+  it('answers a follow-up snapshot inside the Bridge budget, settle wait included', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore());
+    stuck(w, 'snapshot');
+    const outcome = await settle(h(request('browser.snapshot', { maxChars: 1500, settleMs: 6_000, maxElements: 40, replyWithinMs: 8_000 })));
+    await vi.advanceTimersByTimeAsync(7_800);
+    expect(outcome().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe', details: { reason: 'page-unresponsive' } });
+  });
+  it('answers a write inside the Bridge budget and keeps the click it sent unknown', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore()), ref = await firstRef(h);
+    stuck(w, 'click');
+    const outcome = await settle(h(request('browser.click', { ref, replyWithinMs: 12_000 })));
+    await vi.advanceTimersByTimeAsync(9_400); expect(outcome()).toBe('pending');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(outcome().error).toMatchObject({ code: 'EXECUTION_UNKNOWN', retry: 'unsafe', details: { reason: 'page-unresponsive' } });
+  });
+  it('a page that cannot even be probed before a click is a safe timeout, and the click is never sent', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore()), ref = await firstRef(h);
+    const base = w.api.sendToFrame;
+    w.api.sendToFrame = (tab, frame, msg: any) => msg.kind === 'input-state' ? new Promise(() => {}) : base(tab, frame, msg);
+    const outcome = await settle(h(request('browser.click', { ref, replyWithinMs: 15_000 })));
+    await vi.advanceTimersByTimeAsync(13_400);
+    expect(outcome().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe', details: { reason: 'page-unresponsive' } });
+    expect(w.sent.some(s => s.msg.method === 'click')).toBe(false);
+  });
+  it('a page that cannot be injected before a write is a safe timeout inside the Bridge budget', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore()), ref = await firstRef(h);
+    w.api.inject = () => new Promise(() => {});
+    const outcome = await settle(h(request('browser.fill', { ref, text: 'x', replyWithinMs: 15_000 })));
+    await vi.advanceTimersByTimeAsync(13_400);
+    expect(outcome().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe', details: { reason: 'page-unresponsive' } });
+    expect(w.sent.some(s => s.msg.method === 'fill')).toBe(false);
+  });
+  it('a write that waited out its budget behind another one is not sent at all', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore()), ref = await firstRef(h);
+    const base = w.api.sendToFrame; let clicks = 0;
+    w.api.sendToFrame = (tab, frame, msg: any) => msg.method === 'click' && ++clicks === 1
+      ? new Promise(r => setTimeout(() => r({ ok: true, result: { executed: true, verified: { clicked: true } } }), 9_000)) : base(tab, frame, msg);
+    const first = await settle(h(request('browser.click', { ref, replyWithinMs: 15_000 })));
+    const second = await settle(h(request('browser.click', { ref, replyWithinMs: 10_000 })));
+    await vi.advanceTimersByTimeAsync(9_600);
+    expect(first().value).toBeDefined();
+    expect(second().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe', details: { reason: 'deadline' } });
+    expect(second().error.message).not.toContain('dialog');
+    expect(clicks).toBe(1);
+  });
+  it('the Bridge budget is not passed on to the page', async () => {
+    const w = world(), h = createHandlers(w.api, memorySessionStore()), ref = await firstRef(h);
+    const outcome = await settle(h(request('browser.click', { ref, replyWithinMs: 15_000 })));
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(outcome().value).toBeDefined();
+    expect(w.sent.filter(s => s.msg.kind === 'cmd').every(s => s.msg.params.replyWithinMs === undefined)).toBe(true);
+  });
+});

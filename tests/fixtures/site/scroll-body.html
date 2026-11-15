@@ -1,0 +1,19 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Scroll body</title>
+<style>
+  html { height: 100%; overflow: hidden; }
+  body { height: 100%; margin: 0; overflow: auto; font: 14px sans-serif; }
+  #carousel { overflow-x: auto; white-space: nowrap; height: 80px; }
+  .slide { display: inline-block; width: 300px; height: 86px; background: #eef; margin-right: 8px; }
+  .row { height: 34px; padding: 0 8px; }
+</style>
+<h1>Products</h1>
+<div id="carousel"></div>
+<div id="rows"></div>
+<script>
+  const carousel = document.getElementById('carousel');
+  for (let i = 1; i <= 6; i++) carousel.insertAdjacentHTML('beforeend', `<span class="slide"><button>Slide ${i}</button></span>`);
+  const rows = document.getElementById('rows');
+  for (let i = 1; i <= 120; i++) rows.insertAdjacentHTML('beforeend', `<div class="row">Product ${i}</div>`);
+</script>

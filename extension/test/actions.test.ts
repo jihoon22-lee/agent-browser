@@ -331,8 +331,11 @@ describe("trusted input keeps the keyboard and click safety checks", () => {
     const sendMessage = vi.fn(async () => ({ ok: true }));
     vi.stubGlobal("chrome", { runtime: { sendMessage } });
     document.body.innerHTML = '<div contenteditable="true" aria-label="본문">글</div>';
-    await expect(runAction('press', { ref: refOf('본문'), key: 'Enter', generation: 10, requestId: 'k-2', trusted: true })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+    await expect(runAction('press', { ref: refOf('본문'), key: 'Backspace', generation: 10, requestId: 'k-2', trusted: true })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
     expect(sendMessage).not.toHaveBeenCalled();
+    // Enter is the page's own key in an editor (send, new block): with trusted input it goes out as the real key.
+    await runAction('press', { ref: refOf('본문'), key: 'Enter', generation: 10, requestId: 'k-3', trusted: true });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
   it("never repeats a click that was partly delivered as trusted input", async () => {
     vi.stubGlobal("chrome", { runtime: { sendMessage: vi.fn(async () => ({ ok: false, reason: 'debugger-error', dispatched: true })) } });
@@ -543,4 +546,13 @@ it('a rich editor that drops part of multi-line text is reported as not matching
     const result: any = await runAction('fill', { ref: refOf('Note'), text: 'first line\nsecond line', generation: 10 });
     expect(result.verified).toMatchObject({ matches: false });
   } finally { delete (document as any).execCommand; }
+});
+
+it("select on a <select> needs option; an omitted one never falls back to the empty option", async () => {
+  document.body.innerHTML = `<label for="c">Country</label><select id="c"><option value="">Choose…</option><option value="kr" selected>Korea</option></select>`;
+  const select = document.getElementById("c") as HTMLSelectElement;
+  await expect(runAction("select", { ref: refOf("Country") })).rejects.toMatchObject({ code: "INVALID_PARAMS", message: expect.stringContaining("option") });
+  expect(select.value).toBe("kr");
+  // An explicitly empty option is still a choice.
+  expect(await runAction("select", { ref: refOf("Country"), option: "" })).toMatchObject({ verified: { value: "" } });
 });

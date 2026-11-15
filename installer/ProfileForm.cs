@@ -62,7 +62,7 @@ namespace AgentBrowser.Installer {
         }
         /// Starts the managed runtime once and reports the result in words a user can act on.
         public static string Start(InstallState state,string id) {
-            var run=BridgeControl.Run(state,new []{"runtime","start","--profile",id},90000);
+            var run=BridgeControl.Run(state,new []{"runtime","start","--profile",id},BridgeControl.RuntimeStartMs);
             Dictionary<string,object> result=null;try{result=NativeIO.Json.Deserialize<Dictionary<string,object>>(run.Output);}catch(Exception){/* Failures before startup print no JSON. */}
             object stateValue=null,version=null,error=null;if(result!=null){result.TryGetValue("state",out stateValue);result.TryGetValue("version",out version);result.TryGetValue("error",out error);}
             if(run.ExitCode==0&&stateValue as string=="ready")return "✓ 저장했습니다. OpenCode "+(version as string)+"가 시작됐고 브라우저 도구 연결을 확인했습니다.";

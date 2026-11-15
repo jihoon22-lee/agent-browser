@@ -2,7 +2,7 @@ import { highlight } from "./highlight";
 import { clipText } from "./text";
 import { assertTrustedFallback, requestTrusted, trustedFrame, trustedDetails } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, composedParent, isDisabled, isRendered, walkDeep } from "./dom";
+import { accessibleName, composedParent, isDisabled, isInteractive, isRendered, walkDeep } from "./dom";
 import { resolveRef } from "./refs";
 import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
@@ -56,6 +56,13 @@ function reaches(top: Element | null, el: Element): boolean {
   return !!label && "labels" in el && [...((el as HTMLInputElement).labels ?? [])].includes(label);
 }
 
+/** Whether a hit inside `el` lands on `el` itself rather than on a separate control nested in it (a
+ * favourite button in a link card). That control has its own ref; clicking it instead would press
+ * something the agent did not name. */
+function ownHit(top: Element | null, el: Element): boolean {
+  for (let hit = top; hit && hit !== el; hit = composedParent(hit)) if (isInteractive(hit)) return false;
+  return true;
+}
 const inViewport = (point: Point) => point.clientX >= 0 && point.clientY >= 0 && point.clientX < innerWidth && point.clientY < innerHeight;
 /** A reachable point of the element in viewport coordinates, scrolling it into view when needed.
  * With `allowScroll` false the page is left where it is: the caller holds coordinates of another
@@ -66,13 +73,23 @@ function assertInteractable(el: Element, allowScroll = true): Point | undefined 
   }
   if (!hasLayout()) return undefined;
   // Preserve an already usable position instead of recentering every field/button.
-  for (const point of candidatePoints(el))
-    if (inViewport(point) && reaches(topAt(point),el)) return point;
+  const pick = (points: Point[], visible: (point: Point) => boolean) => {
+    const reachable = points.filter(point => visible(point) && reaches(topAt(point), el));
+    return reachable.find(point => ownHit(topAt(point), el)) ?? reachable[0];
+  };
+  const usable = pick(candidatePoints(el), inViewport);
+  if (usable) return usable;
   if (!allowScroll) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} cannot be reached without scrolling the page again.`);
   // "instant" defeats CSS smooth scrolling, so hit testing uses the new position.
   (el as HTMLElement).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
-  const points = candidatePoints(el);
-  for (const point of points) if (reaches(topAt(point), el)) return point;
+  let points = candidatePoints(el);
+  const scrolled = pick(points, () => true);
+  if (scrolled) return scrolled;
+  // "nearest" stops at the viewport edge, which a fixed header or footer may cover: try the middle once.
+  (el as HTMLElement).scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+  points = candidatePoints(el);
+  const centred = pick(points, () => true);
+  if (centred) return centred;
   const top = points[0] ? topAt(points[0]) : null;
   if (top) {
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el)} is covered by another element.`, "never",
@@ -84,6 +101,19 @@ function assertInteractable(el: Element, allowScroll = true): Point | undefined 
   if (points[0] && !inViewport(points[0]) && !labelled)
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} is outside the viewport and cannot be scrolled into view.`);
   return points[0];
+}
+
+/** What a click can change without a DOM mutation: a checkbox or radio toggled through its `checked`
+ * property (directly or through its label), a select's value, or a text field taking the caret.
+ * Focus landing on a clicked button is a by-product, not an effect. */
+function quietState(el: Element): unknown[] {
+  const controls: Element[] = [el, ...Array.from(el.querySelectorAll("input,select")).slice(0, 20)];
+  const labelled = el instanceof HTMLLabelElement ? el.control : el.closest("label")?.control;
+  if (labelled) controls.push(labelled);
+  let active: Element | null = document.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  const typing = active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "image", "file", "color", "range"].includes(active.type)) || (active as HTMLElement | null)?.isContentEditable;
+  return [typing ? active : null, ...controls.map(control => control instanceof HTMLInputElement ? `${control.checked}|${control.value}` : control instanceof HTMLSelectElement ? control.value : "")];
 }
 
 /** Focus the nearest focusable ancestor, as a real pointer press does before mouseup and click. */
@@ -289,8 +319,20 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
       void changes.catch(() => {});
+      // A real pointer event targets the deepest element under the pointer and bubbles to the ref.
+      // Pages listen on that inner element (a span in a labelled wrapper) or read event.target (a td).
+      // Never into a separate control nested in the ref: that is another ref.
+      const under = (at: Point = point): Element => { const top = hasLayout() ? topAt(at) : null; return top && top !== el && el.contains(top) && ownHit(top, el) ? top : el; };
       const pointer = (type: string, init: Record<string, unknown>) =>
-        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
+        under().dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
+      // Nothing observable happened: say so instead of leaving a bare "executed". (With waitFor the
+      // caller's own condition decides, and the observation window is not kept open.)
+      const quietBefore = quietState(el);
+      const outcome = async () => {
+        const seen = await changes;
+        const quiet = quietState(el).every((value, index) => value === quietBefore[index]);
+        return !p.waitFor && quiet && seen && seen.domChanged === false && seen.urlChanged === false ? { ...seen, noEffect: true } : seen;
+      };
       if (mode === "hover") {
         // enter events do not bubble: like a pointer arriving from outside, enter each ancestor, outermost first.
         const chain: Element[] = [];
@@ -299,7 +341,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
           if (!type.endsWith("enter")) { pointer(type, { buttons: 0, detail: 0 }); continue; }
           for (const node of chain) node.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:0,detail:0,bubbles:false,pointerId:1,pointerType:'mouse',isPrimary:true}));
         }
-        return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+        return { executed: true, verified: { ...await outcome(), ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
       }
       const button = mode === "right" ? 2 : 0;
       const checkTarget = (): Point => {
@@ -326,17 +368,19 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
       if (mode === "right") {
-        el.dispatchEvent(new MouseEvent('contextmenu',{...base,...finalPoint,button:2,buttons:0}));
+        under(finalPoint).dispatchEvent(new MouseEvent('contextmenu',{...base,...finalPoint,button:2,buttons:0}));
       } else {
-        el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
+        under(finalPoint).dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
         if (mode === "double") {
           checkTarget();
           press(2);
-          el.dispatchEvent(new MouseEvent('click',{...base,...checkTarget(),buttons:0,detail:2}));
-          el.dispatchEvent(new MouseEvent('dblclick',{...base,...checkTarget(),buttons:0,detail:2}));
+          let again = checkTarget();
+          under(again).dispatchEvent(new MouseEvent('click',{...base,...again,buttons:0,detail:2}));
+          again = checkTarget();
+          under(again).dispatchEvent(new MouseEvent('dblclick',{...base,...again,buttons:0,detail:2}));
         }
       }
-      return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+      return { executed: true, verified: { ...await outcome(), ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
     }
     case "fill": {
       const el = resolveRef(String(p.ref));
@@ -389,7 +433,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const el = resolveRef(String(p.ref));
       assertInteractable(el);
       if (el instanceof HTMLSelectElement) {
-        const want = String(p.option ?? "");
+        // Without this, a call that forgot `option` selected the empty placeholder and reported a match.
+        if (p.option === undefined || p.option === null) throw new ProtocolError("INVALID_PARAMS", "browser_select on a <select> needs option (its value or visible label).");
+        const want = String(p.option);
         const opt = [...el.options].find((o) => o.value === want) ?? [...el.options].find((o) => o.text.trim() === want);
         if (!opt) {
           const labels = [...el.options].slice(0, 20).map(option => option.text.trim());
@@ -494,8 +540,46 @@ async function upload(p: P, signal: AbortSignal) {
   return { executed: true, verified: { files, size: file.size, ...await changes } };
 }
 
+/** Whether the element scrolls up and down. A horizontal carousel computes overflow-y:auto too and often
+ * overflows by a few pixels (a hidden scroll bar); that is not a vertical scroller. The body scrolls
+ * on its own only when the root's overflow is not visible; otherwise its overflow is the viewport's. */
+const scrollsVertically = (el: Element) => {
+  const extra = el.scrollHeight - el.clientHeight;
+  if (extra <= 1) return false;
+  const style = getComputedStyle(el);
+  if (!/auto|scroll|overlay/.test(style.overflowY)) return false;
+  if (el === document.body && getComputedStyle(document.documentElement).overflowY === "visible") return false;
+  return !(/auto|scroll|overlay/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1 && extra < 32);
+};
+/** What can actually move: the ref (or its nearest scrollable ancestor), the document, or — when the
+ * document itself cannot scroll, as in an app shell — the largest scrollable area on screen. */
+function scrollTarget(p: P): { el: HTMLElement; target: "document" | "ancestor" | "region" } {
+  const doc = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+  if (p.ref) {
+    const start = resolveRef(String(p.ref));
+    if (scrollsVertically(start)) return { el: start as HTMLElement, target: "region" };
+    for (let node = composedParent(start); node && node !== document.body && node !== document.documentElement; node = composedParent(node))
+      if (scrollsVertically(node)) return { el: node as HTMLElement, target: "ancestor" };
+    return { el: pageScroller(doc), target: "document" };
+  }
+  if (doc.scrollHeight > doc.clientHeight + 1) return { el: doc, target: "document" };
+  if (pageScroller(doc) !== doc) return { el: document.body, target: "document" };
+  let best: HTMLElement | null = null, bestArea = 0;
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>("body *")).slice(0, 5000)) {
+    if (!scrollsVertically(el)) continue;
+    const r = el.getBoundingClientRect();
+    const area = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+    if (area > bestArea) { best = el; bestArea = area; }
+  }
+  return best ? { el: best, target: "region" } : { el: doc, target: "document" };
+}
+/** The element that scrolls the page: the document, or the body when the root is overflow:hidden and
+ * the body holds the scroll bar. */
+const pageScroller = (doc: HTMLElement): HTMLElement =>
+  doc.scrollHeight > doc.clientHeight + 1 || !document.body || !scrollsVertically(document.body) ? doc : document.body;
 function scroll(p: P) {
-  const el = (p.ref ? resolveRef(String(p.ref)) : document.scrollingElement ?? document.documentElement) as HTMLElement;
+  const { el, target } = scrollTarget(p);
+  const before = el.scrollTop;
   const page = el.clientHeight * 0.8;
   switch (p.direction) {
     case "up": el.scrollBy({ top: -page, behavior: 'instant' }); break;
@@ -504,5 +588,6 @@ function scroll(p: P) {
     case "bottom": el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }); break;
     default: throw new ProtocolError("INVALID_PARAMS", "direction must be up, down, top or bottom");
   }
-  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1 } });
+  // `moved:false` with atEnd means the end was already reached, not that more content is hidden.
+  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1, moved: el.scrollTop !== before, target } });
 }

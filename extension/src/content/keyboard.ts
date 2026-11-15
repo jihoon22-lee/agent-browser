@@ -76,8 +76,10 @@ export function preparePress(p: Record<string, unknown>, validate: (element: Ele
   validate(target);
   const editableHost = target.closest("[contenteditable]");
   const rich = target.isContentEditable || (editableHost !== null && editableHost.getAttribute("contenteditable") !== "false");
-  const edits = modifiers.length === 0 && (key === "Backspace" || key === "Delete" || key === "Space" || (key === "Enter" && (target instanceof HTMLTextAreaElement || rich)) || ((key === "ArrowUp" || key === "ArrowDown") && target instanceof HTMLInputElement && target.type === "number"));
+  const edits = modifiers.length === 0 && (key === "Backspace" || key === "Delete" || key === "Space" || (key === "Enter" && target instanceof HTMLTextAreaElement) || ((key === "ArrowUp" || key === "ArrowDown") && target instanceof HTMLInputElement && target.type === "number"));
   if (edits && editableValue(target) && target.readOnly) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The field is read-only.");
+  // Enter is not in `edits` for a rich editor: it is the page's own key (send, new block), so its key
+  // events are delivered and nothing is emulated. Deleting or typing through emulation stays refused.
   if (edits && rich) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "Keyboard editing of rich editable areas is not supported. Use browser_fill.");
   if (edits && editableValue(target) && key !== "ArrowUp" && key !== "ArrowDown" && target.selectionStart === null) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "This field does not support text selection. Use browser_fill.");
   target.focus();
@@ -110,7 +112,7 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
   const single = /^[a-zA-Z0-9]$/.test(key);
   const editableHost = target.closest("[contenteditable]");
   const rich = target.isContentEditable || (editableHost !== null && editableHost.getAttribute("contenteditable") !== "false");
-  const edits = modifiers.length === 0 && (key === "Backspace" || key === "Delete" || key === "Space" || (key === "Enter" && (target instanceof HTMLTextAreaElement || rich)) || ((key === "ArrowUp" || key === "ArrowDown") && target instanceof HTMLInputElement && target.type === "number"));
+  const edits = modifiers.length === 0 && (key === "Backspace" || key === "Delete" || key === "Space" || (key === "Enter" && target instanceof HTMLTextAreaElement) || ((key === "ArrowUp" || key === "ArrowDown") && target instanceof HTMLInputElement && target.type === "number"));
   const bound = bindTarget(target);
   const verifyTarget = () => {
     try { bound(); }

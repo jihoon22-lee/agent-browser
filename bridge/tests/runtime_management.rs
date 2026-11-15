@@ -272,3 +272,82 @@ async fn a_launcher_that_exits_without_a_server_fails_without_the_startup_wait()
     assert_eq!(manager.status("exits").await.unwrap()["state"],"stopped");
     manager.save(profile,false).expect("no ownership record may remain");
 }
+
+#[cfg(unix)]
+fn fixture_profile(home: &std::path::Path, id: &str, env: serde_json::Value) -> Profile {
+    use std::os::unix::fs::PermissionsExt;
+    let executable = home.join("fixture-opencode.cjs");
+    if !executable.exists() {
+        let node = std::process::Command::new("node").args(["-p","process.execPath"]).output().unwrap(); assert!(node.status.success());
+        std::fs::write(&executable,format!("#!{}\n{}",String::from_utf8(node.stdout).unwrap().trim(),include_str!("fixtures/opencode-server.cjs"))).unwrap();
+        std::fs::set_permissions(&executable,std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut env = env; env["AGENT_BROWSER_FIXTURE_LOG"] = json!(home.join(format!("{id}.jsonl")));
+    // Each test has its own data folder, so nothing stops two of them choosing the default port.
+    let port = std::net::TcpListener::bind(("127.0.0.1",0)).unwrap().local_addr().unwrap().port();
+    serde_json::from_value(json!({"id":id,"name":id,"kind":"windows","directory":home,"executable":executable,"port":port,"env":env})).unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn a_failed_start_says_which_readiness_check_failed_last() {
+    let exited = "OpenCode exited before its server became ready. Check the executable/version, port, directory, and environment.";
+    for (id, env, reason) in [
+        ("notv1", json!({"AGENT_BROWSER_FIXTURE_DOC":"not-v1","AGENT_BROWSER_FIXTURE_EXIT_MS":"3000"}), "The server does not expose the required OpenCode v1 APIs"),
+        ("refused", json!({"AGENT_BROWSER_FIXTURE_AUTH":"reject","AGENT_BROWSER_FIXTURE_EXIT_MS":"3000"}), "OpenCode health returned HTTP 401"),
+        ("mcpfailed", json!({"AGENT_BROWSER_FIXTURE_MCP_STATUS":"failed","AGENT_BROWSER_FIXTURE_EXIT_MS":"3000"}), "OpenCode HTTP is available but browser MCP is not connected; inspect WSL interop and the Bridge executable"),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::new(home.path().into(),54331);
+        let profile = fixture_profile(home.path(),id,env);
+        manager.save(profile.clone(),false).unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(20),manager.ensure(id,"chrome-extension://abcdefghijklmnopabcdefghijklmnop")).await
+            .expect("a server that exits ends the start without the 60-second wait").unwrap();
+        let error = result["error"].as_str().unwrap_or_default();
+        assert_eq!(result["state"],"error","{id}: {result}");
+        assert!(error.starts_with(exited),"{id}: the fixed sentence comes first: {error}");
+        assert!(error.ends_with(&format!(" Last check: {reason}.")),"{id}: {error}");
+        assert!(!error.contains(result["password"].as_str().unwrap_or("no-password")),"{id}: no secret in the message");
+        manager.save(profile,false).expect("no ownership record may remain");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn a_start_that_becomes_ready_late_is_still_ready() {
+    let home = tempfile::tempdir().unwrap();
+    let manager = Manager::new(home.path().into(),54341);
+    manager.save(fixture_profile(home.path(),"late",json!({"AGENT_BROWSER_FIXTURE_MCP_DELAY_MS":"3000"})),false).unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(65),manager.ensure("late","chrome-extension://abcdefghijklmnopabcdefghijklmnop")).await.unwrap().unwrap();
+    assert_eq!(result["state"],"ready","{result}");
+    assert_eq!(manager.stop_all().await.unwrap()["errors"],json!([]));
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn cli_stop_waits_for_a_profile_another_process_is_briefly_using() {
+    let home = tempfile::tempdir().unwrap();
+    let manager = Manager::new(home.path().into(),54351);
+    for id in ["brief","stuck"] { manager.save(fixture_profile(home.path(),id,json!({})),false).unwrap(); }
+    let stop_all = || tokio::process::Command::new(env!("CARGO_BIN_EXE_browser-bridge")).args(["runtime","stop-all","--json"]).env("AGENT_BROWSER_HOME",home.path()).env("AGENT_BROWSER_PORT","54351").output();
+    let held = |id: &str| { let file = std::fs::OpenOptions::new().read(true).write(true).open(home.path().join("runtime").join(format!("{id}.lock"))).unwrap(); file.try_lock().unwrap(); file };
+
+    assert_eq!(manager.ensure("brief","chrome-extension://abcdefghijklmnopabcdefghijklmnop").await.unwrap()["state"],"ready");
+    let lock = held("brief");
+    let release = tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_secs(3)).await; drop(lock); });
+    let output = stop_all().await.unwrap(); release.await.unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(output.status.success(),"a status poll holding the profile for 3 s must not fail the stop: {report} {}",String::from_utf8_lossy(&output.stderr));
+    assert_eq!(report["stoppedProfiles"],json!(["brief"]));
+
+    assert_eq!(manager.ensure("stuck","chrome-extension://abcdefghijklmnopabcdefghijklmnop").await.unwrap()["state"],"ready");
+    let lock = held("stuck");
+    let started = std::time::Instant::now();
+    let output = stop_all().await.unwrap();
+    let waited = started.elapsed(); drop(lock);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!output.status.success(),"{report}");
+    assert!(report["errors"][0]["message"].as_str().unwrap().starts_with("Another operation is already managing this profile"),"{report}");
+    assert!(waited >= std::time::Duration::from_secs(9) && waited < std::time::Duration::from_secs(20),"the CLI waits about 10 s, not forever: {waited:?}");
+    assert_eq!(manager.stop_all().await.unwrap()["errors"],json!([]));
+}

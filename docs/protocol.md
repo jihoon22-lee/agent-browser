@@ -289,3 +289,22 @@ API reference: [Chrome Input protocol](https://raw.githubusercontent.com/ChromeD
 - **닫기 전 검사 예외:** 탐색이 실패했고 스크립트 주입도 거부되는 하위 프레임(오류 페이지)은 사용자 편집이 있을 수 없으므로 건너뛴다. 그 밖의 검사 불가 프레임은 계속 닫기를 막는다.
 - **분리된 대화상자:** 대화상자가 열린 채 디버거가 분리되면 대화상자 상태에 `detached`가 붙는다. 읽기 또는 `browser_dialog`가 페이지 응답을 확인하면 상태를 지우고, 그 전까지 쓰기는 `BROWSER_BUSY`다.
 - **snapshot 페이징:** `offset`·`elementOffset`은 호출에 포함된 모든 프레임에 같이 적용된다(프레임별 커서는 없다).
+
+## 2026-11-15 정확도 보완 (결과 필드 추가, 매개변수 변경 없음)
+
+MCP 도구의 이름·매개변수는 그대로다. 결과의 `verified`와 오류에 필드가 추가됐다.
+
+- **browser_select:** `<select>`에는 `option`이 필요하다. 빠지면 `INVALID_PARAMS`다(이전에는 빈 값 항목을 고르고 `matches:true`를 돌려줬다). `option:""`처럼 빈 값을 명시하면 그 항목을 고른다.
+- **browser_scroll:** `verified`에 `moved`(위치가 실제로 바뀌었는지)와 `target`(`document`·`ancestor`·`region`)이 붙는다. ref가 스크롤 가능한 요소면 그 요소를, 아니면 가장 가까운 스크롤 가능 조상을 스크롤한다. ref가 없고 문서가 스크롤되지 않으면 화면에서 가장 큰 스크롤 영역을 스크롤한다. 루트가 `overflow:hidden`이고 `body`가 스크롤 막대를 가진 페이지는 `body`가 문서(`target:"document"`)다. 가로 캐러셀처럼 세로로 몇 픽셀(32px 미만)만 넘치는 가로 스크롤 영역은 세로 스크롤 대상으로 보지 않는다. `atStart`·`atEnd`는 실제로 스크롤한 요소 기준이다.
+- **browser_click:** 포인터 이벤트는 클릭 지점의 가장 안쪽 요소(ref 요소의 자손일 때)에 전달되어 ref 요소로 버블링된다. 화면 가장자리로 들어온 대상이 고정 머리글·바닥글에 가려지면 가운데로 한 번 더 스크롤한다. DOM 변화·URL 변화·이동·새 탭이 모두 없으면 `verified.noEffect:true`가 붙는다(hover 포함, `waitFor`가 있으면 붙지 않는다). 신뢰 입력을 끈 상태에서 스크립트가 `window.open`으로 여는 창은 Chrome이 차단하므로 이 표시가 붙는다. 신뢰 입력을 켜면 그 창이 열리고 `openedTabs`로 작업에 들어온다. 에이전트 자신의 신뢰 입력이 만드는 이벤트는 사용자 입력으로 세지 않고, 그보다 많은 입력(같은 순간 사람의 클릭)은 이전처럼 `openedTabWarnings`의 `user-intervention`이다.
+- **응답 없는 페이지:** content script가 요청 자신의 대기 기한(`timeoutMs`·`settleMs`·`waitFor.timeoutMs`) + 10초 안에 답하지 않으면 확장이 직접 오류를 돌려준다. 코드는 이전과 같고(쓰기 `EXECUTION_UNKNOWN`/`unsafe`, 읽기 `TIMEOUT`/`safe`) 메시지가 페이지 대화상자(alert·confirm·prompt) 가능성을 알리며 `details.reason`은 `page-unresponsive`다. 그런 페이지의 snapshot은 다시 시도하지 않는다.
+  - Bridge는 페이지 명령(operation 도구, 후속 snapshot, `browser.tabs.close`)에 자신이 기다릴 시간을 `replyWithinMs`로 실어 보낸다(`panelRequestId`처럼 모델이 줄 수 없는 내부 매개변수). 확장은 요청을 받은 때부터 그 시간에서 읽기 0.5초·쓰기 1.5초를 뺀 시각까지 답하도록 위 기한을 줄인다. 그래서 `browser_wait`(Bridge는 `timeoutMs` + 3초)와 후속 snapshot(8초)도 Bridge의 맨 시간 초과보다 먼저 대화상자 안내를 받는다. 값은 페이지에 전달하지 않으며, 값이 없는 이전 Bridge에는 위 기한만 쓴다.
+  - 명령 전의 주입·입력 상태 확인·링크 확인·닫기 전 확인도 같은 기한 안에서 기다린다. 이 단계에서 답이 없으면 아무것도 보내지 않았으므로 쓰기 요청도 `TIMEOUT`/`safe`(`executed:no`)다.
+  - 기한을 다른 쓰기 뒤에서 기다리느라 다 쓴 쓰기는 페이지에 보내지 않고 `TIMEOUT`/`safe`, `details.reason:"deadline"`으로 끝낸다. 1초보다 짧게만 기다린 페이지의 무응답도 `deadline`이며 대화상자를 짐작하지 않는다. 시간이 다 된 snapshot은 읽은 frame까지 돌려주고 `framesNextOffset`으로 이어 읽게 한다.
+- **ref의 묶임:** snapshot이 반복 컨트롤에 `context`를 보여 줬다면 ref는 그 context를 만든 조상에 묶인다. 그 조상의 식별 텍스트가 바뀌면 `STALE_ELEMENT`다. 라벨과 입력란 하나로 된 필드 래퍼는 레코드로 보지 않아, 도움말 문구가 바뀌어도 그 입력란의 ref는 유효하다.
+- **browser_press:** contenteditable에서 Enter는 키 이벤트를 전달하고 `defaultAction:"event-only"`를 돌려준다(신뢰 입력이 켜져 있으면 실제 키). Backspace·Delete·Space의 편집 에뮬레이션은 계속 거부한다.
+- **대기 텍스트:** `browser_wait`와 `waitFor`의 `text`·`textGone`은 대소문자, 연속 공백·탭, 줄바꿈 없는 공백을 구분하지 않는다(snapshot `query`와 같은 읽기).
+- **런타임 시작 실패:** 기존 문장 뒤에 ` Last check: <마지막으로 실패한 준비 확인>.`이 붙는다. 60초 대기는 그대로다.
+- **CLI 대기:** `browser-bridge runtime stop-all`·`profile delete`는 상주 Bridge가 프로필을 잡고 있으면 최대 10초 기다린 뒤 이전 문구(`Another operation is already managing this profile…`)로 실패한다. WebSocket의 `runtime.stop`·`profile.delete`는 기다리지 않는다.
+- **런타임 중지:** WSL 프로필의 배포판이 `wsl.exe --list --quiet` 목록에 없으면 기록을 지우고 `{stopped:false, reason:"distribution-unregistered"}`를 돌려준다. 목록 조회가 실패하면 이전처럼 기록을 보존한다.
+

@@ -179,3 +179,18 @@ it("a press without a ref is refused while focus is inside a frame instead of su
   } finally { spy.mockRestore(); }
   expect(seen).toEqual([]);
 });
+
+it('delivers Enter to a rich editor as key events and leaves the editing to the page', async () => {
+  document.body.innerHTML = '<div id="editor" contenteditable="true" role="textbox" aria-label="Message">hello</div>';
+  const editor = document.getElementById('editor')!, seen: string[] = [];
+  Object.defineProperty(editor, 'isContentEditable', { value: true });
+  for (const type of ['keydown', 'keyup']) editor.addEventListener(type, e => seen.push(type + ':' + (e as KeyboardEvent).key));
+  const { takeSnapshot } = await import('../src/content/snapshot');
+  const ref = takeSnapshot({ snapshotId: 9, frameId: 0, maxChars: 4000, offset: 0, checkLayout: false }).elements.find(e => e.name === 'Message')!.ref;
+  const { runAction } = await import('../src/content/actions');
+  expect(await runAction('press', { ref, key: 'Enter' })).toMatchObject({ executed: true, verified: { defaultAction: 'event-only' } });
+  expect(seen).toEqual(['keydown:Enter', 'keyup:Enter']);
+  expect(editor.textContent).toBe('hello');
+  // Emulating an edit inside a rich editor is still refused.
+  await expect(runAction('press', { ref, key: 'Backspace' })).rejects.toMatchObject({ code: 'ELEMENT_NOT_INTERACTABLE' });
+});

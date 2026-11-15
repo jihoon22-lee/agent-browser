@@ -26,10 +26,12 @@ internal static class GuiSmokeTests {
     [DllImport("kernel32.dll")]static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")]static extern bool AttachThreadInput(uint a,uint b,bool attach);
     [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
+    [DllImport("user32.dll")]static extern bool IsIconic(IntPtr h);
     [StructLayout(LayoutKind.Sequential)]struct Point {public int X,Y;public Point(int x,int y){X=x;Y=y;}}
     [DllImport("user32.dll")]static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll",SetLastError=true)]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int width,int height,uint flags);
     [DllImport("user32.dll")]static extern bool SetCursorPos(int x,int y);
+    [DllImport("user32.dll")]static extern bool PrintWindow(IntPtr h,IntPtr dc,uint flags);
     [DllImport("user32.dll")]static extern void mouse_event(uint f,uint x,uint y,uint d,UIntPtr e);
     static AutomationElement window;static Process process;static bool doubleApply,useUia;
     static AutomationElement Find(string name){var e=window.FindFirst(TreeScope.Descendants,new PropertyCondition(AutomationElement.NameProperty,name));if(e==null)throw new Exception("Control missing: "+name);return e;}
@@ -68,7 +70,8 @@ internal static class GuiSmokeTests {
     static void ConnectionStep(){Click("ManageConnection");Wait(()=>Get("ExtensionFolder").EndsWith("extension")&&!Find("OpenExtensions").Current.IsOffscreen,"Chrome extension step did not open");}
     static void PairingStep(){Click("Preview");Wait(()=>{try{return Find("PairingToken").Current.IsPassword;}catch{return false;}},"pairing step did not open");}
     static void Close(){if(process==null)return;if(!process.HasExited){Click("Cancel");if(!process.WaitForExit(10000))throw new Exception("Owned test GUI did not close.");}process.Dispose();process=null;}
-    static void Screenshot(string path){var r=window.Current.BoundingRectangle;using(var b=new Bitmap((int)r.Width,(int)r.Height))using(var g=Graphics.FromImage(b)){g.CopyFromScreen((int)r.X,(int)r.Y,0,0,b.Size);b.Save(path,System.Drawing.Imaging.ImageFormat.Png);}}
+    // PrintWindow draws the wizard itself even when another window is in front or the desktop is locked.
+    static void Screenshot(string path){Thread.Sleep(400);var h=new IntPtr(window.Current.NativeWindowHandle);var r=window.Current.BoundingRectangle;using(var b=new Bitmap((int)r.Width,(int)r.Height)){bool drawn;using(var g=Graphics.FromImage(b)){IntPtr dc=g.GetHdc();try{drawn=PrintWindow(h,dc,2);}finally{g.ReleaseHdc(dc);}}if(!drawn){using(var g=Graphics.FromImage(b))g.CopyFromScreen((int)r.X,(int)r.Y,0,0,b.Size);Console.WriteLine("WARN capture fallback: "+path);}b.Save(path,System.Drawing.Imaging.ImageFormat.Png);}}
     static void Choose(string name,int index){
         if(useUia){var control=Find(name);var handle=new IntPtr(control.Current.NativeWindowHandle);uint pid;GetWindowThreadProcessId(handle,out pid);if(pid!=process.Id)throw new Exception("Selection target is not the owned GUI");if(SendMessage(handle,0x14e,new IntPtr(index),IntPtr.Zero).ToInt32()!=index)throw new Exception("Selection item missing: "+name);SendMessage(GetParent(handle),0x111,new IntPtr((GetDlgCtrlID(handle)&0xffff)|0x10000),handle);Thread.Sleep(100);return;}
         Click(name);uint foregroundPid;GetWindowThreadProcessId(GetForegroundWindow(),out foregroundPid);if(foregroundPid!=process.Id)throw new Exception("Keyboard target is not the owned GUI; no keys sent");SendKeys.SendWait("{HOME}"+String.Concat(Enumerable.Repeat("{DOWN}",index))+"{ENTER}");Thread.Sleep(100);
@@ -91,10 +94,10 @@ internal static class GuiSmokeTests {
                 Set("InstallFolder",install);Click("AdvancedSettings");var advancedParent=EnterDialog("AgentBrowser 고급 설정");Click("Discover");Set("OpenCodeConfig",settings);Wait(()=>Find("Discover").Current.IsEnabled,"discovery did not finish",90000);
                 if(Get("OpenCodeConfig")!=settings)throw new Exception("late discovery overwrote manual config");Click("CloseAdvanced");window=advancedParent;Close();Console.WriteLine("PASS actual GUI automatic discovery, existing-install selection and manual-input freshness");
             }
-            Launch(exe,common);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"preview failed");Screenshot(Path.Combine(root,"preview-cancel.png"));Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"second preview failed");Close();
+            Launch(exe,common);Screenshot(Path.Combine(root,"p0-welcome.png"));Click("Preview");Screenshot(Path.Combine(root,"p1-location.png"));Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"preview failed");Screenshot(Path.Combine(root,"preview-cancel.png"));Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"second preview failed");Close();
             if(File.Exists(Path.Combine(install,".agent-browser-install.json")))throw new Exception("Cancel installed product");
             Console.WriteLine("PASS actual GUI preview/back/cancel without installation");
-            Launch(exe,common);Click("Preview");Click("AdvancedSettings");var advancedWindow=EnterDialog("AgentBrowser 고급 설정");Click("RegisterMcp");Choose("OpenCodeKind",1);Set("Distribution","Ubuntu");Set("OpenCodeConfig",settings);Click("AddRegistration");Click("CloseAdvanced");window=advancedWindow;Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"WSL preview failed");Screenshot(Path.Combine(root,"wsl-preview.png"));
+            Launch(exe,common);Click("Preview");Click("AdvancedSettings");var advancedWindow=EnterDialog("AgentBrowser 고급 설정");Screenshot(Path.Combine(root,"advanced.png"));Click("RegisterMcp");Choose("OpenCodeKind",1);Set("Distribution","Ubuntu");Set("OpenCodeConfig",settings);Click("AddRegistration");Click("CloseAdvanced");window=advancedWindow;Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"WSL preview failed");Screenshot(Path.Combine(root,"wsl-preview.png"));
             if(args.Contains("--failure")) {var blocker=new TcpListener(IPAddress.Loopback,port);try{blocker.Start();Click("Apply");Wait(()=>Get("Status").Contains("다시 시도"),"expected startup failure missing",50000);Screenshot(Path.Combine(root,"startup-failure.png"));if(File.Exists(Path.Combine(install,".agent-browser-install.json"))||File.ReadAllText(settings)!=original)throw new Exception("failed install did not roll back files/config");}finally{blocker.Stop();}Click("Back");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"retry preview failed");Console.WriteLine("PASS actual GUI startup failure rollback and retry preview");}
             Click("Apply");Wait(()=>Get("Status").StartsWith("설치 완료"),"GUI install failed");Screenshot(Path.Combine(root,"install-complete.png"));Close();
             Console.WriteLine("PASS actual GUI install and WSL missing-mcp registration");
@@ -119,10 +122,11 @@ internal static class GuiSmokeTests {
                 PairingStep();Click("Preview");Screenshot(Path.Combine(root,"runtime-step.png"));Click("Preview");Screenshot(Path.Combine(root,"wizard-complete.png"));
                 if(Find("Cancel").Current.Name!="Cancel")throw new Exception("Finish action missing");Close();Console.WriteLine("PASS sequential Chrome/pairing/runtime/completion and masked token; token not read or copied by test");
             }
+            }
+            // A user edits the model between versions; a resumed upgrade must keep that edit too.
             string first=File.ReadAllText(settings);if(!first.Contains("\"browser\"")||!first.Contains("// preserve"))throw new Exception("WSL settings or comment missing");
             File.WriteAllText(Path.Combine(install,"data","gui-preserve.json"),"{\"synthetic\":true}");
             File.WriteAllText(settings,first.Replace("test/model","test/user-edited"),new System.Text.UTF8Encoding(false));
-            }
             Launch(exe,common);Choose("Operation",1);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"update preview failed");Click("Apply");Wait(()=>Get("Status").StartsWith("업데이트 완료"),"GUI update failed");Screenshot(Path.Combine(root,"update-complete.png"));Close();
             string updated=File.ReadAllText(settings);if(!updated.Contains("test/user-edited")||System.Text.RegularExpressions.Regex.Matches(updated,"\"browser\"").Count!=1)throw new Exception("update duplicated MCP or lost model");
             if(args.Contains("--upgrade")) {var state=new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(Path.Combine(install,".agent-browser-install.json")));if((string)state["Version"]!=expectedVersion||(string)state["InstallId"]!=File.ReadAllText(Path.Combine(root,"old-identity.txt")))throw new Exception("cross-version update lost version/identity");using(var sha=System.Security.Cryptography.SHA256.Create()){string hash=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(Path.Combine(install,"data","config.json")))).Replace("-","").ToLowerInvariant();if(hash!=File.ReadAllText(Path.Combine(root,"old-config-sha.txt")))throw new Exception("upgrade changed pairing data");}Console.WriteLine("PASS actual GUI published "+previousVersion+" Bridge installation upgraded to "+expectedVersion+"; identity/pairing preserved");}
@@ -141,7 +145,11 @@ internal static class GuiSmokeTests {
             string final=File.ReadAllText(settings);if(final.Contains("\"browser\"")||!final.Contains("test/user-edited")||!final.Contains("// preserve")||(original.Contains("\"other\"")?!final.Contains("\"other\""):final.Contains("\"mcp\"")))throw new Exception("uninstall did not preserve the original MCP state");
             Console.WriteLine("PASS actual GUI uninstall target confirmation, no-mcp restoration and data preservation");
             Console.WriteLine("GUI_ROOT "+root);return 0;
-        }catch(Exception error){Console.Error.WriteLine(error);if(process!=null&&!process.HasExited) {Console.Error.WriteLine("GUI_PID "+process.Id);try{Screenshot(Path.Combine(root,"failure.png"));}catch{}}return 1;}
+        }catch(Exception error){Console.Error.WriteLine(error);if(process!=null&&!process.HasExited) {Console.Error.WriteLine("GUI_PID "+process.Id);
+            // Another window or the user can minimize the wizard on this shared desktop; its controls then read as
+            // missing. Say so, and restore it so the picture shows the page it was on.
+            if(IsIconic(process.MainWindowHandle)){Console.Error.WriteLine("GUI_MINIMIZED the wizard was minimized when the step failed");ShowWindow(process.MainWindowHandle,9);Thread.Sleep(500);}
+            try{Screenshot(Path.Combine(root,"failure.png"));}catch{}}return 1;}
     }
 }
 

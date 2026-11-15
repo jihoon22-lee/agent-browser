@@ -49,7 +49,7 @@ fn build() -> Vec<ToolDef> {
             schema: json!({"type":"object","properties":{"operationId":op(),
                 "action":{"type":"string","enum":["goto","back","forward","reload"]},
                 "url":{"type":"string"}},"additionalProperties":false}) },
-        ToolDef { name: "browser_click", description: "Click a ref; double/right/hover/drag (toRef). For a known outcome, use waitFor text/textGone/urlIncludes in this tab (default all, 5s): waits then returns a snapshot, without replaying the click. newTab opens a link; cannot use waitFor.",
+        ToolDef { name: "browser_click", description: "Click a ref; double/right/hover/drag (toRef). For a known outcome, use waitFor text/textGone/urlIncludes (text is read in the clicked frame; default all, 5s): waits then returns a snapshot, without replaying the click. newTab opens a link; cannot use waitFor.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),"newTab":{"type":"boolean"},
                 "mode":{"type":"string","enum":["click","double","right","hover","drag"]},"toRef":{"type":"string"},"waitFor":wait_for()},"required":["ref"],"additionalProperties":false}) },
         ToolDef { name: "browser_fill", description: "Replace the text of an input, textarea or editable area.",

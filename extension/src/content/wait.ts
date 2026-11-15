@@ -1,5 +1,10 @@
 import { ProtocolError } from "../protocol/errors";
 import { pageText } from "./snapshot";
+
+/** Words as a person reads them: case, runs of spaces, the tab between table cells and a
+ * non-breaking space do not matter. browser_snapshot's query reads the page the same way. */
+const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
+const shows = (text: string, wanted: string) => text.includes(wanted) || fold(text).includes(fold(wanted));
 import { resolveRef } from "./refs";
 import { cancellationError } from "./cancellation";
 import { observePage } from "./observe";
@@ -7,16 +12,16 @@ import { observePage } from "./observe";
 /** Internal read-only probe used across document replacements by the background waiter. */
 export function textConditions(p: Record<string,unknown>): Record<string,boolean> {
   const text=pageText(document),result:Record<string,boolean>={};
-  if(typeof p.text==='string')result.text=text.includes(p.text);
-  if(typeof p.textGone==='string')result.textGone=!text.includes(p.textGone);
+  if(typeof p.text==='string')result.text=shows(text,p.text);
+  if(typeof p.textGone==='string')result.textGone=!shows(text,p.textGone);
   return result;
 }
 
 export function waitFor(p: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   if (signal?.aborted) return Promise.reject(cancellationError());
   const conds: [string, () => boolean][] = [];
-  if (typeof p.text === "string") conds.push(["text", () => pageText(document).includes(p.text as string)]);
-  if (typeof p.textGone === "string") conds.push(["textGone", () => !pageText(document).includes(p.textGone as string)]);
+  if (typeof p.text === "string") conds.push(["text", () => shows(pageText(document), p.text as string)]);
+  if (typeof p.textGone === "string") conds.push(["textGone", () => !shows(pageText(document), p.textGone as string)]);
   if (typeof p.refGone === "string") {
     // Capture the known node once: snapshot-cache eviction says nothing about its DOM lifetime.
     try {

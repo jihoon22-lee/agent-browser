@@ -202,10 +202,13 @@ export class World {
         ...(customBrowser ? { executablePath: this.config.browserExecutable } : { channel: "chromium" }),
         headless: this.config.headless,
         // Playwright uses a debugging pipe. Branded Chrome loads unpacked extensions through CDP.
-        ...((customBrowser || process.env.AB_TEST_BFCACHE === '1') ? { ignoreDefaultArgs: [
+        // Playwright turns Chrome's popup blocker off. A user's Chrome has it on, and it decides whether a
+        // script-opened window appears after a synthetic click. AB_TEST_ALLOW_POPUPS=1 keeps Playwright's default.
+        ignoreDefaultArgs: [
+          ...(process.env.AB_TEST_ALLOW_POPUPS === '1' ? [] : ["--disable-popup-blocking"]),
           ...(customBrowser ? ["--disable-extensions"] : []),
           ...(process.env.AB_TEST_BFCACHE === '1' ? ["--disable-back-forward-cache"] : []),
-        ] } : {}),
+        ],
         args: customBrowser ? ["--enable-unsafe-extension-debugging"]
           : [`--disable-extensions-except=${this.config.extensionDir}`, `--load-extension=${this.config.extensionDir}`],
       });

@@ -2,6 +2,40 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.4.3 후속 작업 — 구현·로컬 검증 (2026-11-15~16)
+
+사용자 요청("계획 1→2→3 순차 진행 후 태그·릴리스·정리")과 후속 지시("작업 중 발견한 이슈는 분석해서 고친다")에 따라 `feat/m4-followups`에서 진행했다. 세 계획(`installer-overlap-and-bridge-adoption`, `browser-action-accuracy`, `bridge-runtime-lifecycle`)의 과제를 모두 마쳤고, 진행 중 발견한 아래 문제도 같은 브랜치에서 고쳤다.
+
+- **진행 중 발견해 고친 것:**
+  - **신뢰 입력 팝업:** 신뢰 입력을 켜면 클릭 뒤 스크립트가 연 창이 열리지만 작업에 들어오지 않았다. 디버거 입력도 `isTrusted`라서 에이전트 자신의 클릭이 사용자 입력으로 세어졌다(`user-input.ts`). 이제 에이전트가 보내는 입력이 만드는 이벤트만 종류별로 빼고 센다. E2E T30이 수정 전 실패·수정 후 통과했고, T31은 같은 순간 사람의 클릭이 여전히 `user-intervention`인지 검사한다.
+  - **`\\?\` 경로 프로세스:** 이 PC에서만 실패하던 `update-prunes-obsolete-owned-files`의 원인은 경로가 `\\?\C:\WINDOWS\system32\conhost.exe`로 보고되는 콘솔 호스트였다. .NET Framework의 기존 경로 처리(csc 빌드, 대상 프레임워크 특성 없음)는 이 경로에서 예외를 던지고, `ReferencedAppDirectories`가 "확인 불가"로 끝나 업데이트가 쓰이지 않는 이전 실행 파일을 지우지 못했다. PowerShell은 접두사를 그대로 둬 일반 경로와 비교되지 않았다. C#·PowerShell 모두 일반 경로로 읽고, PID 재사용 검사는 읽을 수 없는 경로를 다른 프로세스로 본다. 접두사 경로로 띄운 프로세스로 두 쪽 모두 수정 전 실패·수정 후 통과를 확인했다.
+  - **`serve.log` 제한:** 계획 4번 과제의 첫 구현은 Windows에서 동작하지 않았다(추가 모드 핸들은 파일을 비울 권한이 없음, os error 5). Windows lib 테스트 exe로 확인하고 두 번째 핸들로 비우게 고쳤다.
+  - **시작 실패 원인:** 서버가 종료된 뒤의 "응답 없음"이 서버가 앞서 돌려준 원인을 덮어썼다. 응답 없음은 더 구체적인 원인을 덮지 않는다.
+  - **설치 마법사:** OpenCode·Chrome 연결 단계의 결과 칸이 비어 있거나 한 줄일 때도 세로 스크롤 막대를 보였다. 모든 상태 칸이 글자 높이를 재서 넘칠 때만 막대를 보인다.
+  - **테스트 도구:** `windows-runtime.mjs`가 매 실행마다 `%TEMP%\ab-runtime-*` 홈을 남겼고(통과 시 삭제), `concurrent-callers`는 WSL에서만 통과하는 검사를 모든 종류에 적용했다. PowerShell 표식 없는 Bridge 케이스는 실패 시 serve를 남겼다(이전 실패 실행이 남긴 테스트 Bridge 1개를 확인하고 종료). `GuiSmokeTests --resume --upgrade`는 사용자 수정 단계를 건너뛰어 직접 손댄 설정 파일 없이는 실패했고, 창이 최소화되면 원인 대신 "Control missing"으로 실패했다. 모두 고쳤다.
+- **자체 코드 리뷰에서 나온 것(모두 고침, 실패하는 테스트를 먼저 씀):**
+  - **WSL 목록 인코딩:** `WSL_UTF8=1`이면 `wsl.exe --list`가 UTF-8로 출력해 등록 해제 판정이 늘 "확인 불가"였다. UTF-16LE와 UTF-8을 모두 읽는다. 실제 Windows에서 `WSL_UTF8=1`로 `wsl-unregistered`·`healthy-fixture` 통과.
+  - **`Last check`:** 앞 단계가 나중에 통과했는데도 그 단계의 옛 실패가 원인으로 붙었다. 마지막 실패가 속한 단계가 통과하면 지운다.
+  - **클릭 대상:** 클릭 지점이 ref 안에 중첩된 다른 컨트롤(카드 안 즐겨찾기 버튼)이면 그 컨트롤을 눌렀다. ref 자신에 닿는 지점을 고르고 중첩 컨트롤로는 넘기지 않는다. 체크 상자·라벨 토글은 `noEffect`로 잘못 표시되지 않는다.
+  - **신뢰 입력의 클릭 예산:** Enter·Space 활성화와 라벨 클릭이 Chrome에서 만드는 신뢰 click을 사용자 입력으로 셌다. 키·라벨이 만드는 click까지 에이전트 입력으로 뺀다.
+  - **레코드 카드:** 라벨 하나와 입력란 하나가 든 카드를 필드 래퍼로 보아 ref가 레코드에 묶이지 않았다. 입력란 앞에 다른 글이 있으면 레코드로 본다.
+  - **세로 스크롤:** 루트가 보이는 넘침(`visible`)인 페이지에서 `body`를 문서로 골랐고, 세로로 몇 픽셀만 넘치는 가로 캐러셀을 세로 스크롤 대상으로 골랐다.
+  - **대화상자 안내가 늦음:** 확장은 요청의 대기 + 10초 뒤에 대화상자 가능성을 알렸지만 Bridge는 `browser_wait`을 `timeoutMs`+3초, 후속 snapshot을 8초만 기다려 맨 시간 초과가 먼저 도착했다. 명령 전의 주입·입력 상태 확인은 기한이 없어 이미 대화상자가 열린 페이지의 클릭이 "실행 여부 불명"으로 끝났다. Bridge가 기다릴 시간을 `replyWithinMs`로 보내고 확장이 그 전에 답한다. 확인 단계에서 막히면 아무것도 보내지 않았으므로 `TIMEOUT`/`safe`, 다른 쓰기 뒤에서 시간을 다 쓴 쓰기는 보내지 않는다. E2E D21·D22가 수정 전 빌드에서 실패(`The browser did not answer in time.`)하고 수정 후 통과했다.
+  - **시작 제한 시간 불일치:** 복구·제거는 `runtime start`에 150초를 주지만 마법사의 [저장하고 연결 확인]은 90초, 확장의 `runtime.ensure`는 120초였다. 모두 150초(`BridgeControl.RuntimeStartMs`).
+  - **이전 버전 Bridge:** 표식이 있고 다른 버전·포트로 떠 있는 이 설치의 Bridge를 C# `Start`가 그대로 둬 이후 시작이 매번 `Bridge PID does not belong to this startup.`으로 실패했다(PowerShell은 이미 교체). 먼저 멈추고 시작한다. 새 케이스가 수정 전 실패·수정 후 통과했다.
+  - **토큰 검사 테스트 공백:** 이 설치의 실행 파일이 다른 데이터 폴더로 떠 있는 경우는 토큰 검사만이 막는데 테스트가 없었다. C#·PowerShell 케이스를 추가했다(제품 코드 변경 없음).
+  - **clippy:** 이 브랜치가 더한 경고 1건(`is_multiple_of`)을 고쳐 main과 같은 수(lib 15)다.
+- **로컬 검증(이 checkout으로 만든 0.4.3 개발 패키지, 실제 Windows 프로세스):**
+  - 최종(리뷰 수정 뒤) Linux: Bridge `cargo test` **278 통과/0 실패**(1 제외), 확장 단위 **880 통과**·`tsc` 통과, 전체 Linux E2E **257 통과/5 제외**.
+  - 최종(리뷰 수정 뒤) Windows: `NativeEngineTests` REVIEW **66/0**·전체 **75 PASS**(이전 버전 Bridge 교체·100초 연결 확인 시작 케이스는 수정 전 실패 재현), `install.tests.ps1` **20개 통과**, `SetupFlowTests` **31/0**, `GuiSmokeTests --uia --profiles` **6개 PASS**, 게시된 v0.4.2 → 0.4.3 GUI 업데이트 **4개 PASS**, `WSL_UTF8=1`의 `wsl-unregistered`·`healthy-fixture` 통과. 이번 수정은 화면 배치를 바꾸지 않아 화면 확인은 아래 기록 그대로다.
+  - 버전 혼합: 0.4.2 확장을 0.4.3 Bridge에 붙여 E2E를 돌리면 확장이 첫 연결에서 스스로 다시 읽어(`reloadIfOutdated`, 설치가 바꾼 파일을 읽는 설계) 하네스가 연결 대기에서 멈췄다. 그래서 섞인 상태의 명령 실행은 확인하지 못했다. 0.4.2 코드에는 매개변수 전체를 순회하는 곳이 없어(코드 검색) 새 `replyWithinMs`는 읽히지 않는다.
+  - 리뷰 수정 전 Linux: Bridge 275, 확장 870, E2E 251/5.
+  - 리뷰 수정 전 Windows lib 테스트 exe **138 통과/7 제외**. `windows-runtime.mjs`(Windows Node, 합성 fixture, 실제 Ubuntu) cmd·wsl 16개 시나리오 통과(새 `wsl-unregistered`는 0.4.2 Bridge로 실패 재현 후 통과, `health-failure`·`mcp-failure`는 `Last check:` 문구까지 단언). 실행 뒤 `%TEMP%\ab-runtime-*`와 남은 fixture 프로세스 0.
+  - 리뷰 수정 전 설치: `NativeEngineTests` 전체 통과(REVIEW **63/0**, 새 70초 시작 케이스는 60초 제한에서 실패 재현), `install.tests.ps1` **19개 통과**, `SetupFlowTests` **31/0**, `SetupDisplayTests` 10·12.5·15·20pt 통과, `ManagedPathTests` **2개 통과**.
+  - 리뷰 수정 전 실제 exe: `GuiSmokeTests --uia --profiles` **6개 PASS**. `p0-welcome`·`runtime-step`·`managed-profile-saved`·고급 설정에서 입력란 글자가 처음부터 보이고 결과 칸에 빈 스크롤 막대가 없음을 직접 봤다. **게시된 v0.4.2 → 0.4.3 교차 버전 GUI 업데이트 PASS**(설치 ID·페어링·사용자 모델 수정 보존, MCP 등록 1개, 제거까지).
+  - 첫 GUI 스모크 1회는 실행 중 마법사 창이 최소화되어 실패했다(공유 데스크톱, 제품 코드는 창을 최소화하지 않음). 재실행에서 통과했다.
+- **실행하지 않은 것:** 실제 모델 호출, 실제 Chrome에서 확장 감지→자동 진행→코드 입력의 끝까지 수동 연결.
+
 ## v0.4.2 Windows preview — 게시 완료 (2026-11-15)
 
 [v0.4.2](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.2)(prerelease)를 **2026-11-15 13:12:28 UTC / 22:12:28 KST**에 게시했다. 주석 태그는 [PR #44](https://github.com/jihoon22-lee/agent-browser/pull/44)의 main 병합 커밋 **`bc94ccae7708da45e5c0e328b41b4106a2f45db5`**를 가리킨다.
@@ -18,7 +52,7 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 
 - **설치 마법사의 입력란 왼쪽이 가려진다.** 시작 화면의 `수행할 작업`은 `설치`가 `치`로, `업데이트`가 `데이트`로 보인다. OpenCode 단계는 `Windows`가 `ndows`로, 실행 파일·작업 폴더 경로의 앞 두세 글자가 보이지 않는다. 값은 정상이고 표시만 가려진다. 원인은 `LabelAt`의 기본 폭 170과 x=154·150에서 시작하는 입력란의 겹침(16px·20px)이다. 2026-10-13(시작 화면)과 2026-10-16(OpenCode 단계)부터 있었고 v0.2.2~v0.4.2에 모두 들어 있다. 고급 설정 대화상자는 겹치지 않는다.
 - **GitHub Dependabot 알림 10건**(높음 4, 중간 6)은 모두 `extension`의 테스트 도구 경로다: `jsdom` 30.1.2 → `undici` 8.11.2(8건, 수정 8.12.2), `vitest` 4.1.11 → `@vitest/mocker`(2건, 수정 4.1.12). `extension/dist`에는 들어 있지 않다.
-- **후속 계획(미착수):** `docs/plans/installer-overlap-and-bridge-adoption.md`(글자 가림, 표식 없는 Bridge, 위 의존성), `docs/plans/browser-action-accuracy.md`, `docs/plans/bridge-runtime-lifecycle.md`. 뒤의 두 계획에는 사용자 결정이 필요한 항목이 표로 정리되어 있다.
+- **후속 계획:** 세 계획 모두 0.4.3에서 완료했다(위 절). 계획 파일은 삭제했다.
 - 문서 커밋 `9cd24ea`의 main CI는 Linux·Windows 모두 성공했다.
 
 ## Bridge 런타임 실제 Windows·WSL 실행과 관찰 (2026-11-15)
@@ -26,8 +60,8 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 사용자 요청(Bridge 프로세스 관리와 브라우저 조작 검토)에 따른 검토 중 실행한 것만 기록한다. 제품 코드는 바꾸지 않았다. `windows-runtime.mjs`에 쓴 `browser-bridge.exe`는 `feat/m4-wizard-flow`에서 버전을 0.4.2로 올리기 전에 만든 MSVC release 빌드다(런타임 코드는 v0.4.2와 같다). 표식 없는 Bridge 관찰은 게시된 v0.4.1 ZIP의 Bridge와 그 브랜치의 설치 관리자 소스로 실행했다.
 
 - **`bridge/tests/windows-runtime.mjs` (Windows Node 24.18.1, 합성 fixture, 모델 호출 없음):** `RUNTIME_KIND=cmd`의 `cmd-tree-stop`(2026-11-11에 실행하지 못했던 시나리오), `healthy-fixture` 통과. `RUNTIME_KIND=wsl`(실제 Ubuntu 배포판)의 `healthy-fixture`, `concurrent-callers`, `previous-boot`, `startup-crash`, `orphan-leader`, `wsl-start-failure`, `wsl-unknown-marker` 통과. 실행 뒤 Windows·WSL 양쪽에 남은 프로세스가 없음을 확인했다. `interop-keeper`·`interop-review`·`health-failure`·`doctor-env`는 실행하지 않았다.
-- **관찰(미수정): 표식 없는 Bridge.** 격리 설치에서 Bridge를 종료한 뒤 `browser-bridge.exe start`로 다시 띄우면(MCP 프록시가 Bridge를 다시 띄울 때와 같은 경로) `.installer-bridge-process.json` 표식이 없다. 이 상태에서 C# `BridgeControl.Stop`은 false를 돌려주고 Bridge를 그대로 두며, `BridgeControl.Start`와 같은 패키지 업데이트는 `Bridge PID does not belong to this startup.`으로 실패하고, 제거는 `액세스가 거부되었습니다`로 실패해 설치 기록이 남았다. PowerShell `start-bridge.cmd`의 인수 경로는 실행하지 않았다.
-- **관찰:** 없는 배포판 이름으로 `wsl.exe -d <이름> --exec /bin/true`를 실행하면 종료 코드 255(`WSL_E_DISTRO_NOT_FOUND`)다. 2026-11-11에 전제를 확인하지 못해 보류한 "등록 해제된 WSL 배포판의 복구 경로"의 전제다. `%LOCALAPPDATA%\AgentBrowser-Setup\<해시>` 유지보수 exe 캐시는 지우는 코드가 없고 이 PC에 9개가 남아 있다.
+- **관찰(0.4.3에서 수정): 표식 없는 Bridge.** 격리 설치에서 Bridge를 종료한 뒤 `browser-bridge.exe start`로 다시 띄우면(MCP 프록시가 Bridge를 다시 띄울 때와 같은 경로) `.installer-bridge-process.json` 표식이 없다. 이 상태에서 C# `BridgeControl.Stop`은 false를 돌려주고 Bridge를 그대로 두며, `BridgeControl.Start`와 같은 패키지 업데이트는 `Bridge PID does not belong to this startup.`으로 실패하고, 제거는 `액세스가 거부되었습니다`로 실패해 설치 기록이 남았다. PowerShell `start-bridge.cmd`의 인수 경로는 실행하지 않았다.
+- **관찰:** 없는 배포판 이름으로 `wsl.exe -d <이름> --exec /bin/true`를 실행하면 종료 코드 255(`WSL_E_DISTRO_NOT_FOUND`)다. 2026-11-11에 전제를 확인하지 못해 보류한 "등록 해제된 WSL 배포판의 복구 경로"의 전제다(0.4.3에서 해결). `%LOCALAPPDATA%\AgentBrowser-Setup\<해시>` 유지보수 exe 캐시는 지우는 코드가 없었다(0.4.3에서 정리 추가).
 - **브라우저 조작 검토:** Linux headless Chromium 156.0.8078.4와 단위 테스트의 임시 프로브로 확인했고 프로브는 삭제했다. 신뢰 입력을 끈 기본 설정만 실행했으며 Windows·실제 모델은 실행하지 않았다. 결과는 대화로 보고했고 수정 과제는 정하지 않았다.
 
 ## 설치 마법사 흐름 단축·단계 표시·오류 강조 — 구현·로컬 Windows 검증 (2026-11-15)
@@ -60,7 +94,7 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 - **실행한 검증(CI):** [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/42956154971)의 Linux·Windows 작업이 모두 성공했다. Windows 작업은 MSVC 빌드, Rust 테스트(이번에 `pairing_window`·`request_binding`·`snapshot_paging` 추가), 설치된 Chrome E2E, PowerShell 5.1 설치·업데이트·제거 회귀, C# 설치 엔진·마법사 회귀(이번에 `NativeCoreTests` 추가)를 포함한다. 첫 실행은 새 테스트 하나가 Windows 경로 구분자를 가정해 실패했고 테스트를 고쳐 다시 통과했다.
 - **로컬 Windows 미실행:** WSL interop 오류(`UtilAcceptVsock accept4 failed 110`)로 로컬 Windows 프로세스 검증을 하지 못했다. PowerShell·C# 변경과 Windows 전용 Rust 경로는 CI의 hosted runner 실행이 유일한 Windows 증거다. `windows-runtime.mjs`의 새 `cmd-tree-stop` 시나리오와 기존 cmd·wsl 시나리오, WSL 전용 ignored 테스트는 실행하지 않았다.
 - **화면 미확인:** 설치 마법사의 고급 설정 대화상자 크기 계산과 확장 감지 타이머 변경은 화면으로 확인하지 않았다(`SetupDisplayTests`·`SetupFlowTests`만 통과).
-- **전제를 확인하지 못해 적용하지 않은 것:** WSL mirrored 네트워킹의 준비 판정(하드코딩 경로만 `%ProgramFiles%` 기준으로 변경), 등록 해제된 WSL 배포판의 복구 경로, 설정 파일 교체 시 ACL 명시 복사, 재분석 지점을 통한 OpenCode shim 탐색, snapshot의 프레임별 페이징 커서(계약 결정 필요).
+- **전제를 확인하지 못해 적용하지 않은 것:** WSL mirrored 네트워킹의 준비 판정(하드코딩 경로만 `%ProgramFiles%` 기준으로 변경), 등록 해제된 WSL 배포판의 복구 경로(0.4.3에서 해결), 설정 파일 교체 시 ACL 명시 복사, 재분석 지점을 통한 OpenCode shim 탐색, snapshot의 프레임별 페이징 커서(계약 결정 필요).
 - **전제가 달랐던 것:** 접힌 `<details>` 내부는 Chromium 156에서 이미 제외되고 있었다(`checkVisibility()` 보강만 추가). WSL 프로브 15초·콜드 부팅, 신뢰 입력 왕복 시간은 측정하지 않고 적용했다.
 - **부분 적용:** 오류 분류의 코드 기준 전환은 `BROWSER_DISCONNECTED`·`TIMEOUT`·`AUTH_*`·`NOT_PAIRED`만 해당한다. 런타임 실패는 Bridge가 일반 코드로 보내므로 메시지 규칙이 남아 있다. 실행 중 폴링의 `limit=1` 조회는 실제 서버에서 확인하지 않았고, 응답이 여러 건이면 전체 스냅샷으로 쓰며 5회마다 전체를 받는다.
 

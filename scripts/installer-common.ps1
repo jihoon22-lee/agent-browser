@@ -10,6 +10,14 @@ function Get-TextHash([string]$Text) {
 }
 function Get-FileSha256([string]$Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 function Get-FullPath([string]$Path) { return [IO.Path]::GetFullPath($Path).TrimEnd([char]'\', [char]'/') }
+# A process image as a plain path, or $null when it cannot be read as one. Windows reports some images
+# with the \\?\ prefix (a console host, for one), which never equals the plain path of the same file.
+function Get-ProcessImage([string]$Path) {
+    if (-not $Path) { return $null }
+    if ($Path.StartsWith('\\?\UNC\', [StringComparison]::OrdinalIgnoreCase)) { $Path = '\\' + $Path.Substring(8) }
+    elseif ($Path.StartsWith('\\?\', [StringComparison]::Ordinal)) { $Path = $Path.Substring(4) }
+    try { return Get-FullPath $Path } catch { return $null }
+}
 function Assert-PlainPath([string]$Path) {
     $current = [IO.Path]::GetFullPath($Path)
     while ($current) {
@@ -385,12 +393,37 @@ function Get-VerifiedBridgeProcess($State) {
     # protected process whose path cannot be read) is not this Bridge: report
     # "not running" so the stale marker can be cleaned up. Nothing is terminated.
     $actualExe = $null
-    if ($process.ExecutablePath) { $actualExe = Get-FullPath $process.ExecutablePath }
+    if ($process.ExecutablePath) { $actualExe = Get-ProcessImage $process.ExecutablePath }
     $created = $null
     if ($process.CreationDate) { $created = $process.CreationDate.ToUniversalTime().ToString('o') }
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$marker.Port) + '(?:\s|$)'
     if ($actualExe -ne $expectedExe -or -not $process.CommandLine -or $process.CommandLine -notmatch $role -or $created -ne $marker.CreatedAt) { return $null }
     return [pscustomobject]@{ Process=$process; Marker=$marker }
+}
+# A serve that an MCP proxy or `browser-bridge.exe start` launched has no marker. It is adopted only when
+# serve.pid names a process whose image is an exact owned Bridge executable of this installation, whose
+# command line is the serve role on this port, and which accepts this data folder's token.
+function Get-AdoptedBridgeProcess($State, $Transaction=$null) {
+    try {
+        $pidFile = Join-Path $State.DataDir 'serve.pid'
+        if (-not (Test-Path -LiteralPath $pidFile)) { return $null }
+        $servePid = 0
+        if (-not [int]::TryParse((Read-Utf8Text $pidFile).Trim(), [ref]$servePid) -or $servePid -le 0) { return $null }
+        $process = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $servePid)
+        if (-not $process -or -not $process.ExecutablePath -or -not $process.CommandLine -or -not $process.CreationDate) { return $null }
+        $image = Get-ProcessImage $process.ExecutablePath
+        if (-not $image) { return $null }
+        $owned = @($State.OwnedFiles | Where-Object { [IO.Path]::GetFileName($_.Path) -eq 'browser-bridge.exe' -and (Get-FullPath (Join-SafePath $State.InstallDir $_.Path)) -eq $image })
+        if ($owned.Count -ne 1 -or (Get-FileSha256 $image) -ne $owned[0].Sha256) { return $null }
+        $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$State.Port) + '(?:\s|$)'
+        if ($process.CommandLine -notmatch $role) { return $null }
+        $null = Invoke-BridgeCapture $State @('status','--json')
+        $marker = [ordered]@{ Product=$script:AgentBrowserProduct; InstallId=$State.InstallId; Pid=$servePid; Executable=$image; Port=[int]$State.Port; CreatedAt=$process.CreationDate.ToUniversalTime().ToString('o') }
+        $markerPath = Join-Path $State.DataDir '.installer-bridge-process.json'
+        if ($Transaction) { Set-TransactionText $Transaction $markerPath (ConvertTo-Json $marker -Depth 5) }
+        else { Write-Utf8Atomic $markerPath (ConvertTo-Json $marker -Depth 5) }
+        return Get-VerifiedBridgeProcess $State
+    } catch { return $null }
 }
 function Remove-StaleBridgeMarker($State, $Transaction=$null) {
     # Only called after Get-VerifiedBridgeProcess accepted the marker as this
@@ -428,7 +461,9 @@ function Get-ReferencedAppDirectories($State) {
         if ($marker -and $marker.Executable) { $null = $used.Add([IO.Path]::GetDirectoryName((Get-FullPath ([string]$marker.Executable)))) }
         foreach ($process in @(Get-CimInstance Win32_Process -Property ProcessId,ExecutablePath -ErrorAction Stop)) {
             if (-not $process.ExecutablePath) { continue }
-            $processExe = Get-FullPath $process.ExecutablePath
+            # An image that cannot be read as a path could be one of ours: keep every executable.
+            $processExe = Get-ProcessImage $process.ExecutablePath
+            if (-not $processExe) { return $null }
             if ($processExe.StartsWith($appRoot, [StringComparison]::OrdinalIgnoreCase)) { $null = $used.Add([IO.Path]::GetDirectoryName($processExe)) }
         }
     } catch { return $null }
@@ -449,6 +484,7 @@ function Assert-NoManagedRuntimeForScriptUpdate($State) {
 }
 function Stop-OwnedBridge($State, $Transaction=$null) {
     $verified = Get-VerifiedBridgeProcess $State
+    if (-not $verified) { $verified = Get-AdoptedBridgeProcess $State $Transaction }
     if (-not $verified) { Remove-StaleBridgeMarker $State $Transaction; return $false }
     # Re-read identity immediately before acting; never kill by image name.
     $again = Get-VerifiedBridgeProcess $State
@@ -563,6 +599,7 @@ function Invoke-BridgeCapture($State, [string[]]$Arguments, [int]$TimeoutMs=2000
 }
 function Start-OwnedBridge($State, $Transaction=$null) {
     $existing = Get-VerifiedBridgeProcess $State
+    if (-not $existing) { $existing = Get-AdoptedBridgeProcess $State $Transaction }
     if ($existing -and (Get-FullPath $existing.Marker.Executable) -eq (Get-FullPath $State.CurrentExe) -and [int]$existing.Marker.Port -eq [int]$State.Port) {
         return [pscustomobject]@{ running=$true; pid=[int]$existing.Marker.Pid; port=[int]$State.Port; reused=$true }
     }
@@ -576,7 +613,7 @@ function Start-OwnedBridge($State, $Transaction=$null) {
     if (-not (Test-Path -LiteralPath $pidFile) -or [int](Read-Utf8Text $pidFile).Trim() -ne [int]$started.pid) { throw 'Bridge startup PID does not match serve.pid.' }
     $process = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + [int]$started.pid)
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$State.Port) + '(?:\s|$)'
-    if (-not $process -or -not $process.ExecutablePath -or (Get-FullPath $process.ExecutablePath) -ne $expectedExe -or -not $process.CommandLine -or $process.CommandLine -notmatch $role) { throw 'Started Bridge process identity could not be verified.' }
+    if (-not $process -or -not $process.ExecutablePath -or (Get-ProcessImage $process.ExecutablePath) -ne $expectedExe -or -not $process.CommandLine -or $process.CommandLine -notmatch $role) { throw 'Started Bridge process identity could not be verified.' }
     $marker = [ordered]@{ Product=$script:AgentBrowserProduct; InstallId=$State.InstallId; Pid=[int]$started.pid; Executable=$expectedExe; Port=[int]$State.Port; CreatedAt=$process.CreationDate.ToUniversalTime().ToString('o') }
     $markerPath=Join-Path $State.DataDir '.installer-bridge-process.json'
     if($Transaction){Set-TransactionText $Transaction $markerPath (ConvertTo-Json $marker -Depth 5)}

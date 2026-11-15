@@ -129,3 +129,70 @@ test("P05 only a file attached to the running panel request can be uploaded", as
   const after = await world.mcp.call("browser_upload", { operationId, ref: label, file: "a.png" });
   expect(after.ok).toBe(false);
 });
+
+test("P30 hit target: a DOM click reaches the element under the pointer and reports when nothing happened", async () => {
+  const page = await world.open("hit-target.html"), operationId = await world.attach(page);
+  const hits = () => page.evaluate(() => (window as any).hits.join(","));
+  let snapshot = await fresh(operationId);
+  // The listener is on the inner span, not on the labelled wrapper the snapshot lists.
+  await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Open panel") });
+  expect(await hits()).toBe("inner");
+  snapshot = await fresh(operationId);
+  const row = all(snapshot).find(e => e.name.includes("Row one"));
+  expect(row, "the pointer-cursor row is listed").toBeTruthy();
+  await world.ok("browser_click", { operationId, ref: row!.ref });
+  expect(await hits()).toBe("inner,cell");
+  // Below the fold: scrolling it just into view leaves it under the fixed footer.
+  snapshot = await fresh(operationId);
+  await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Bottom action") });
+  expect(await hits()).toBe("inner,cell,low");
+  snapshot = await fresh(operationId);
+  const idle = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Does nothing") });
+  expect(idle.verified).toMatchObject({ noEffect: true });
+  snapshot = await fresh(operationId);
+  const changed = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Adds a line") });
+  expect(changed.verified?.noEffect).toBeUndefined();
+  // A CSS-only :hover menu cannot be opened by synthetic events; the result must not look like success.
+  snapshot = await fresh(operationId);
+  const hover = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Products"), mode: "hover" });
+  expect(hover.verified).toMatchObject({ noEffect: true });
+});
+
+test("P32 a DOM click on a link card does not press the button inside it", async () => {
+  const page = await world.open("hit-target.html"), operationId = await world.attach(page);
+  const cards = all(await fresh(operationId)).filter(e => e.name.startsWith("Product A-1001"));
+  expect(cards).toHaveLength(1); const card = cards[0]!.ref;
+  await world.ok("browser_click", { operationId, ref: card });
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe("#product-a1001");
+  expect(await page.evaluate(() => (window as any).hits)).not.toContain("fav");
+  // The button keeps its own ref and still works.
+  await page.evaluate(() => { location.hash = ""; });
+  await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "Remove from favourites") });
+  expect(await page.evaluate(() => (window as any).hits)).toContain("fav");
+});
+test("P33 a click that toggles a checkbox or moves focus is not reported as having no effect", async () => {
+  const page = await world.open("hit-target.html"), operationId = await world.attach(page);
+  const box = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "Send news") });
+  expect(await page.locator("#news").isChecked()).toBe(true);
+  expect(box.verified?.noEffect).toBeUndefined();
+  const label = all(await fresh(operationId)).find(e => e.name === "Accept terms")!;
+  const viaLabel = await world.ok("browser_click", { operationId, ref: label.ref });
+  expect(await page.locator("#terms").isChecked()).toBe(true);
+  expect(viaLabel.verified?.noEffect).toBeUndefined();
+  const field = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "Order note") });
+  expect(await page.evaluate(() => document.activeElement?.id)).toBe("note");
+  expect(field.verified?.noEffect).toBeUndefined();
+});
+test("P31 a script-opened window is blocked after a DOM click and the click says nothing happened", async () => {
+  const page = await world.open("new-tabs.html"), operationId = await world.attach(page);
+  const before = world.context.pages().length;
+  const clicked = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "스크립트 새 탭") });
+  expect(clicked.data?.openedTabs ?? []).toHaveLength(0);
+  expect(world.context.pages().length).toBe(before);
+  expect(clicked.verified).toMatchObject({ noEffect: true });
+  // A target=_blank link is not a script popup: it still opens and joins the operation.
+  const opened = page.context().waitForEvent("page");
+  const link = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "새 탭 링크") });
+  await opened;
+  expect(link.data?.openedTabs ?? []).toHaveLength(1);
+});

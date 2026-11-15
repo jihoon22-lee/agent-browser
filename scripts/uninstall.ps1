@@ -90,7 +90,7 @@ try {
             Undo-FileTransaction $transaction
             if ($stopped) { $null = Start-OwnedBridge $state }
             foreach ($profileId in $stoppedProfiles) {
-                try { $null = Invoke-BridgeCapture $state @('runtime','start','--profile',[string]$profileId) 60000 }
+                try { $null = Invoke-BridgeCapture $state @('runtime','start','--profile',[string]$profileId) 150000 }
                 catch { $rollbackOk = $false; Write-Warning ('Could not restart managed profile ' + $profileId + ': ' + $_.Exception.Message) }
             }
         }

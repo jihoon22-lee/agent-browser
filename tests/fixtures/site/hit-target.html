@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Hit target</title>
+<style>
+  body { margin: 0; font: 14px sans-serif; }
+  header, footer { position: fixed; left: 0; right: 0; height: 80px; background: #dde; z-index: 5; }
+  header { top: 0; } footer { bottom: 0; }
+  main { padding: 100px 16px; height: 3000px; }
+  #wrapper { display: inline-block; padding: 8px; border: 1px solid #888; }
+  tr.clickable { cursor: pointer; }
+  .sub { display: none; } #menu:hover .sub { display: block; }
+  #low { position: absolute; top: 2600px; left: 16px; }
+  #card { display: inline-block; position: relative; width: 240px; height: 60px; border: 1px solid #888; }
+  #fav { position: absolute; left: 100px; top: 18px; width: 40px; height: 24px; }
+</style>
+<header aria-label="Site header">Site header</header>
+<main>
+  <p id="out" aria-live="off"></p>
+  <div id="wrapper" tabindex="0" aria-label="Open panel"><span id="inner">Open the panel</span></div>
+  <table><tbody id="rows"><tr class="clickable"><td>Row one</td><td>Detail</td></tr></tbody></table>
+  <div id="menu"><a href="#products">Products</a><div class="sub"><a href="#pricing">Pricing</a></div></div>
+  <a id="card" href="#product-a1001"><span>Product A-1001</span><button id="fav" type="button" aria-label="Remove from favourites">♥</button></a>
+  <p><input type="checkbox" id="news" aria-label="Send news"> <label><input type="checkbox" id="terms"> Accept terms</label> <input id="note" aria-label="Order note"></p>
+  <button id="idle">Does nothing</button>
+  <button id="changes">Adds a line</button>
+  <button id="low">Bottom action</button>
+</main>
+<footer aria-label="Sticky order bar">Sticky order bar</footer>
+<script>
+  const log = [];
+  window.hits = log;
+  document.getElementById('inner').addEventListener('click', () => log.push('inner'));
+  document.getElementById('rows').addEventListener('click', e => { if (e.target.closest('td')) log.push('cell'); });
+  document.getElementById('changes').addEventListener('click', () => { const p = document.createElement('p'); p.textContent = 'Line added'; document.querySelector('main').append(p); });
+  document.getElementById('low').addEventListener('click', () => log.push('low'));
+  document.getElementById('fav').addEventListener('click', e => { e.preventDefault(); log.push('fav'); });
+</script>
