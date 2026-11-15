@@ -489,15 +489,20 @@ namespace AgentBrowser.Installer {
         public static void Start(InstallState state) {
             ValidateLaunch(state);
             InstallerEngine.Owned(state);Interlocked.Increment(ref Starts);
-            var existing=Marker(state);
+            var existing=Marker(state);bool replace=false;
             using(var verified=Verify(state,existing)) {
-                if(verified!=null&&InstallerEngine.Same((string)existing["Executable"],state.CurrentExe)&&Convert.ToInt32(existing["Port"])==state.Port)return;
-                if(verified==null) {
+                if(verified!=null) {
+                    if(InstallerEngine.Same((string)existing["Executable"],state.CurrentExe)&&Convert.ToInt32(existing["Port"])==state.Port)return;
+                    // This installation's Bridge from another version or port: starting beside it only finds it
+                    // answering, so it is replaced. (Left running, every later Start failed the same way.)
+                    replace=true;
+                } else {
                     // A serve nobody marked (restarted by an MCP proxy): take it over, or replace an older version's.
                     var adopted=AdoptRunning(state);
-                    if(adopted!=null) {if(InstallerEngine.Same((string)adopted["Executable"],state.CurrentExe))return;Stop(state);}
+                    if(adopted!=null) {if(InstallerEngine.Same((string)adopted["Executable"],state.CurrentExe))return;replace=true;}
                 }
             }
+            if(replace)Stop(state);
             using(var startup=new BridgeStartJob(state.CurrentExe,state.InstallDir,new Dictionary<string,string>{{"AGENT_BROWSER_HOME",state.DataDir},{"AGENT_BROWSER_PORT",state.Port.ToString()}},state.Port)) {
             startup.Wait();
             int pid;string pidPath=Path.Combine(state.DataDir,"serve.pid");
@@ -507,6 +512,8 @@ namespace AgentBrowser.Installer {
                 // `start` found a serve that was already answering (it won the race with this launch).
                 var adopted=AdoptRunning(state);
                 if(adopted!=null&&InstallerEngine.Same((string)adopted["Executable"],state.CurrentExe))return;
+                // An older version's serve won the race: stop it so the next start is not blocked by it.
+                if(adopted!=null)Stop(state);
                 throw;
             }
             using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {

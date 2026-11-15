@@ -272,6 +272,19 @@ internal static class InstallerReviewTests {
    Assert(!Alive(pid),"the previous version's unmarked serve survived the update");
    using(var p=Process.GetProcessById(now))Assert(String.Equals(p.MainModule.FileName,next.CurrentExe,StringComparison.OrdinalIgnoreCase),"the new Bridge is not the one serving");
   });
+  // An older version's Bridge of this installation, marked and running, is replaced by Start rather than
+  // reused or left to make every later Start fail.
+  Case("a-marked-older-version-serve-is-replaced-on-start",o=>{
+   o.Port=FreePort();o.Start=true;Apply(o);var state=InstallerEngine.State(o.InstallDir);int oldPid=ServePid(state);string oldExe=state.CurrentExe;
+   Assert(oldPid>0&&File.Exists(MarkerPath(state)),"the fixture did not start a marked Bridge");
+   string nextDir=Path.Combine(o.InstallDir,"app","9.9.9-review-next");Directory.CreateDirectory(nextDir);string nextExe=Path.Combine(nextDir,"browser-bridge.exe");File.Copy(oldExe,nextExe);
+   state.CurrentExe=nextExe;state.OwnedFiles=state.OwnedFiles.Concat(new[]{new OwnedFile{Path="app/9.9.9-review-next/browser-bridge.exe",Sha256=NativeIO.FileHash(nextExe)}}).ToArray();
+   NativeIO.WriteText(Path.Combine(o.InstallDir,InstallerEngine.StateName),NativeIO.Json.Serialize(state));
+   for(int attempt=0;attempt<2;attempt++)BridgeControl.Start(state);
+   int now=ServePid(state);
+   Assert(!Alive(oldPid),"the older version's Bridge was left running");
+   using(var p=Process.GetProcessById(now))Assert(String.Equals(p.MainModule.FileName,nextExe,StringComparison.OrdinalIgnoreCase),"the current Bridge is not the one serving");
+  });
   Case("foreign-serve-pid-is-never-adopted",o=>{
    Apply(o);var state=InstallerEngine.State(o.InstallDir);
    File.WriteAllText(Path.Combine(state.DataDir,"serve.pid"),Process.GetCurrentProcess().Id.ToString());
