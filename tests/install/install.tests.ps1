@@ -119,6 +119,27 @@ try {
         $null=& (Join-Path $pruneD 'uninstall.ps1') -InstallDir $pruneInstall -RemoveData -Quiet
         Assert (Test-Path -LiteralPath $userFile) 'Uninstall removed a user file'
     }
+    Case 'a process reported with the long-path prefix is read like any other' {
+        Assert ((Get-ProcessImage '\\?\C:\Windows\System32\conhost.exe') -eq 'C:\Windows\System32\conhost.exe') 'A \\?\ drive path was not read as a plain path'
+        Assert ((Get-ProcessImage '\\?\UNC\server\share\x.exe') -eq '\\server\share\x.exe') 'A \\?\UNC path was not read as a UNC path'
+        Assert ($null -eq (Get-ProcessImage '') -and $null -eq (Get-ProcessImage '\Device\HarddiskVolume3\x.exe:bad')) 'An unreadable image path was not reported as unknown'
+        $prefixPackage=New-TestPackage 'prefix' '0.5.1'
+        $prefixInstall=Join-Path $testRoot 'prefix install'; $activeInstalls.Add($prefixInstall)
+        $null=& (Join-Path $prefixPackage 'setup.ps1') -InstallDir $prefixInstall -NoStartup -NoStart -Quiet
+        $prefixState=Read-InstallState $prefixInstall
+        $holder=Join-Path ([IO.Path]::GetDirectoryName($prefixState.CurrentExe)) 'prefixed-holder.exe'
+        Copy-Item -LiteralPath (Join-Path $env:WINDIR 'System32\PING.EXE') -Destination $holder
+        $info=New-Object Diagnostics.ProcessStartInfo(('\\?\' + $holder), '-n 60 127.0.0.1'); $info.UseShellExecute=$false; $info.CreateNoWindow=$true
+        $running=[Diagnostics.Process]::Start($info)
+        try {
+            $reported=(Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $running.Id)).ExecutablePath
+            Assert ($reported -and $reported.StartsWith('\\?\')) ('The test process is not reported with the prefix: ' + $reported)
+            $referenced=Get-ReferencedAppDirectories $prefixState
+            Assert ($null -ne $referenced) 'One prefixed process made every executable unverifiable'
+            Assert ($referenced.Contains([IO.Path]::GetDirectoryName($prefixState.CurrentExe))) 'A prefixed process in the app folder was not seen as using it'
+        } finally { if (-not $running.HasExited) { $running.Kill(); $null=$running.WaitForExit(5000) }; Remove-Item -LiteralPath $holder -Force -ErrorAction SilentlyContinue }
+        $null=& (Join-Path $prefixPackage 'uninstall.ps1') -InstallDir $prefixInstall -RemoveData -Quiet
+    }
     $install = Join-Path $testRoot '사용자 설치 & 공백'
     # Include a character outside legacy Windows ANSI code pages on every locale.
     $startup = Join-Path $testRoot ('합성 Startup ' + [char]::ConvertFromUtf32(0x1F9EA))

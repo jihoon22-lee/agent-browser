@@ -182,6 +182,25 @@ internal static class InstallerReviewTests {
     }finally{if(!unrelated.HasExited){unrelated.Kill();unrelated.WaitForExit(5000);}}
    }
   });
+  // Windows reports some processes with a \\?\ image path (a console host, for one). That must neither
+  // make every executable look unverifiable nor hide a process running from the app folder.
+  Case("a-long-path-prefixed-process-is-read-like-any-other",o=>{Apply(o);var state=InstallerEngine.State(o.InstallDir);
+   Assert(InstallerEngine.ProcessImage(@"\\?\C:\Windows\System32\conhost.exe")==@"C:\Windows\System32\conhost.exe","a long-path-prefixed drive path was not read as a plain path");
+   Assert(InstallerEngine.ProcessImage(@"\\?\UNC\server\share\x.exe")==@"\\server\share\x.exe","a long-path-prefixed UNC path was not read as a UNC path");
+   Assert(InstallerEngine.ProcessImage(null)==null&&InstallerEngine.ProcessImage(@"\Device\HarddiskVolume3\x.exe:bad")==null,"an unreadable image path was not reported as unknown");
+   string holder=Path.Combine(Path.GetDirectoryName(state.CurrentExe),"prefixed-holder.exe");File.Copy(Assembly.GetExecutingAssembly().Location,holder);
+   try{
+    using(var running=Process.Start(new ProcessStartInfo(@"\\?\"+holder,"--hold"){UseShellExecute=false,CreateNoWindow=true})){
+     try{
+      string reported=null;using(var query=new ManagementObjectSearcher("SELECT ExecutablePath FROM Win32_Process WHERE ProcessId="+running.Id))foreach(ManagementObject process in query.Get())using(process)reported=process["ExecutablePath"] as string;
+      Assert(reported!=null&&reported.StartsWith(@"\\?\"),"the test process is not reported with the prefix: "+reported);
+      var referenced=BridgeControl.ReferencedAppDirectories(state);
+      Assert(referenced!=null,"one prefixed process made every executable unverifiable");
+      Assert(referenced.Contains(Path.GetDirectoryName(state.CurrentExe)),"a prefixed process in the app folder was not seen as using it");
+     }finally{if(!running.HasExited){running.Kill();running.WaitForExit(5000);}}
+    }
+   }finally{for(int attempt=0;;attempt++){try{File.Delete(holder);break;}catch(Exception){if(attempt>=50)throw;Thread.Sleep(100);}}}
+  });
   Case("update-prunes-obsolete-owned-files",o=>{
    string a=VersionedPackage("prune-package-a","0.9.1-prune","extension/assets/index-old.js"),b=VersionedPackage("prune-package-b","0.9.2-prune","extension/assets/index-new.js"),c=VersionedPackage("prune-package-c","0.9.3-prune",null),d=VersionedPackage("prune-package-d","0.9.4-prune",null);
    o.PackageDir=a;Apply(o);var first=InstallerEngine.State(o.InstallDir);
