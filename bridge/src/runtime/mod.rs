@@ -331,6 +331,13 @@ impl Manager {
                 self.remove_wsl_markers(&record);
                 return Ok(json!({"stopped": stopped}));
             }
+            // A distribution that was unregistered cannot hold a process any more. Without this its record
+            // could never be stopped or deleted, and it blocked update and uninstall.
+            if wsl_distribution_unregistered(profile).await {
+                self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
+                self.remove_wsl_markers(&record);
+                return Ok(json!({"stopped": false, "reason": "distribution-unregistered"}));
+            }
             let code=wsl_control_status(profile,&record,"state").await;
             return Err(failure(format!("{}: Cannot confirm the WSL runtime stopped; ownership record was retained. Run diagnose.cmd in the installation folder.",diagnostics::wsl_probe_reason(code))));
         }
@@ -776,6 +783,23 @@ if [ "$3" = stop ]; then /bin/kill -TERM -- -$pid; fi
 if [ "$3" = kill ]; then /bin/kill -KILL -- -$pid; fi"#;
 /// A probe may be the call that boots the WSL VM, which takes well over five seconds when cold.
 const WSL_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
+/// True only when `wsl.exe --list --quiet` answered and does not name the distribution. A listing that
+/// fails, or names it, proves nothing: the record is then kept as before.
+fn unregistered(listing: &str, name: &str) -> bool {
+    let wanted = name.trim();
+    !wanted.is_empty() && !listing.lines().any(|line| line.trim().trim_start_matches('\u{feff}').eq_ignore_ascii_case(wanted))
+}
+async fn wsl_distribution_unregistered(profile: &Profile) -> bool {
+    let Some(name) = profile.distribution.as_deref().filter(|name| !name.trim().is_empty()) else { return false; };
+    let mut command = tokio::process::Command::new(process::wsl_executable());
+    command.args(["--list","--quiet"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
+    #[cfg(windows)] { command.creation_flags(0x08000000); }
+    let Ok(Ok(output)) = tokio::time::timeout(WSL_PROBE_TIMEOUT,command.output()).await else { return false; };
+    if !output.status.success() || output.stdout.is_empty() { return false; }
+    // wsl.exe prints UTF-16LE.
+    let units: Vec<u16> = output.stdout.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
+    unregistered(&String::from_utf16_lossy(&units), name)
+}
 async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &str) -> Option<i32> {
     tracing::debug!(profile_id = %profile.id, mode, "WSL control probe");
     let Some(owner) = &record.wsl_owner_file else { return None; };
@@ -893,6 +917,15 @@ mod tests {
         assert!(busy_from(&json!(["a"])).is_err(), "a reply that is not a map never reads as idle");
     }
 
+    #[test]
+    fn only_a_listing_without_the_name_means_unregistered() {
+        let listing = "\u{feff}Ubuntu\r\ndocker-desktop\r\n";
+        assert!(!unregistered(listing, "Ubuntu"));
+        assert!(!unregistered(listing, " ubuntu "), "names are compared without case");
+        assert!(unregistered(listing, "Debian"));
+        assert!(unregistered("", "Ubuntu"), "an empty listing has no distributions");
+        assert!(!unregistered(listing, ""), "a profile without a name proves nothing");
+    }
     #[test]
     fn an_unreachable_server_does_not_hide_what_it_said_before() {
         let mut last = None;

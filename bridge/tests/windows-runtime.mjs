@@ -295,6 +295,18 @@ async function regression() {
     await assert.rejects(call('profile.delete',{profileId:profile.id}),/record was retained/);
     assert(JSON.parse(readFileSync(path)).runtimes[profile.id]);
     outcome.checks.push('R04-missing-marker-preserves-unknown-runtime');
+  } else if (scenario === 'wsl-unregistered') {
+    // The record of a distribution that was unregistered (wsl --unregister) can be stopped and deleted.
+    assert.equal(kind,'wsl'); profile.distribution='AbNoSuchDistro-'+randomBytes(4).toString('hex'); profile.executable='/bin/true'; profile.directory='/tmp';
+    await call('profile.save',{profile});
+    const path=join(home,'runtime.json'), config=JSON.parse(readFileSync(path));
+    config.runtimes[profile.id]={profileId:profile.id,instance:'missing-fixture',baseUrl:'http://127.0.0.1:'+profile.port,username:'opencode',password:'fixture',launcher:{pid:0,created:0,image:'absent'},server:null,wslOwnerFile:windowsToWsl(join(home,'missing.owner')),version:null};
+    writeFileSync(path,JSON.stringify(config));
+    const stopped=await call('runtime.stop',{profileId:profile.id});
+    assert.equal(stopped.stopped,false); assert.equal(stopped.reason,'distribution-unregistered');
+    assert(!JSON.parse(readFileSync(path)).runtimes[profile.id],'The record of an unregistered distribution was retained');
+    await call('profile.delete',{profileId:profile.id});
+    outcome.checks.push('unregistered-distribution-record-cleared');
   } else if (scenario === 'health-failure') {
     assert.equal(kind, 'cmd');
     const file = join(home, 'bad-health.mjs'), launcher = join(home, 'bad-health.cmd'), nonce = randomBytes(16).toString('hex');
