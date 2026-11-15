@@ -1,5 +1,6 @@
 import { cancellationError, checkCancelled, type CommandScope } from './cancellation';
 import { ProtocolError } from '../protocol/errors';
+import { agentEvents, asAgentInput } from './user-input';
 
 /** Only a positive acknowledgement that no input was attempted permits DOM fallback.
  * A lost reply says nothing about whether the native input reached the page. */
@@ -8,7 +9,7 @@ export type TrustedAnswer = { ok: true; incomplete?:boolean; keysReleased?:boole
 
 export async function requestTrusted(requestId: string, action: "click" | "drag" | "key" | "text", payload: Record<string, unknown>): Promise<TrustedAnswer> {
   try {
-    const answer = await chrome.runtime.sendMessage({ kind: "trusted-input", requestId, action, ...payload });
+    const answer = await asAgentInput(agentEvents(action, payload), () => chrome.runtime.sendMessage({ kind: "trusted-input", requestId, action, ...payload }));
     if (answer?.ok === true) return { ok: true, ...trustedDetails(answer), ...(answer.dialog ? { dialog: answer.dialog } : {}) };
     return { ok: false, reason: typeof answer?.reason === "string" ? answer.reason : "unavailable",
       dispatched: !(answer?.ok === false && answer.dispatched === false), cancelled: answer?.cancelled === true, verificationFailed:answer?.verificationFailed===true,inputRecoveryRequired:answer?.inputRecoveryRequired===true };

@@ -81,3 +81,37 @@ test("T04 an inactive operation tab can be captured with trusted input", async (
   // Capturing did not activate the operation tab.
   expect(await other.evaluate(() => document.visibilityState)).toBe("visible");
 });
+
+// Chrome's popup blocker is on here, as in a user's browser. A window a page opens by script needs a
+// real user gesture, which trusted input gives; the agent's own trusted click is not the user's.
+for (const [name, kind] of [["스크립트 새 탭", "script"], ["주소가 늦게 정해지는 새 탭", "delayed"]]) test(`T30 ${kind}: a window opened by script after a trusted click joins the operation`, async () => {
+  await setTrusted(true);
+  const { page, operationId, ref } = await attach("new-tabs.html");
+  const original = await world.tabId(page);
+  const popup = world.context.waitForEvent("page", { predicate: p => p !== world.adminPage && p !== page });
+  const clicked = await world.ok("browser_click", { operationId, ref: ref(name) });
+  const child = await popup; await child.waitForURL(`**/new-tab-child.html?kind=${kind}`);
+  const childId = await world.tabId(child);
+  expect(clicked.verified!.trusted).toBe(true);
+  expect(clicked.data.openedTabWarnings ?? []).toEqual([]);
+  expect(clicked.data.openedTabs).toEqual(expect.arrayContaining([expect.objectContaining({ tabId: childId, sourceTabId: original })]));
+  expect((await world.ok("browser_snapshot", { operationId })).data.tabId).toBe(childId);
+});
+
+test("T31 a person's click right after the agent's trusted click is still the person's", async () => {
+  await setTrusted(true);
+  const { page, operationId, ref } = await attach("new-tabs.html");
+  const original = await world.tabId(page);
+  await page.locator("#original-note").evaluate(input => input.addEventListener("click", () => input.setAttribute("data-clicked", "true")));
+  const commandSeen = world.relay.nextCommand("browser.click");
+  const clicking = world.ok("browser_click", { operationId, ref: ref("원본 메모") });
+  await commandSeen;
+  await expect(page.locator("#original-note")).toHaveAttribute("data-clicked", "true");
+  const popup = world.context.waitForEvent("page", { predicate: p => p !== world.adminPage && p !== page });
+  await page.locator("a").first().click(); const child = await popup;
+  const result = await clicking, childId = await world.tabId(child);
+  expect(result.verified!.trusted).toBe(true);
+  expect(result.data.openedTabs ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ tabId: childId })]));
+  expect(result.data.openedTabWarnings).toContainEqual({ tabId: childId, reason: "user-intervention" });
+  const status = await world.admin("status.get"); expect(status.operation.currentTab).toBe(original); expect(status.operation.tabs).not.toContain(childId);
+});
