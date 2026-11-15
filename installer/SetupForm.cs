@@ -103,7 +103,7 @@ namespace AgentBrowser.Installer {
             LabelAt(pairing,"Chrome에 열린 AgentBrowser 설정의 [페어링 코드]에 아래 6자리 코드를 입력하고 [코드로 연결]을 누르세요.",0,0,656,48);
             connectChrome.Text="코드 다시 받기";Position(pairing,connectChrome,"ConnectChrome",0,54,220,38);connectChrome.Click+=async delegate{await ConnectChrome();};
             pairingCode.Font=new Font(Font.FontFamily,Font.Size*2F,FontStyle.Bold);pairingCode.ForeColor=Ink;Position(pairing,pairingCode,"PairingCode",236,50,420,46);
-            pairingState.ScrollBars=ScrollBars.Vertical;Position(pairing,pairingState,"PairingState",0,102,656,44);
+            Position(pairing,pairingState,"PairingState",0,102,656,44);
             LabelAt(pairing,"코드 대신 직접 입력할 때: 확장 설정의 Bridge 주소·페어링 토큰 칸에 아래 값을 넣고 [저장 후 연결]",0,152,656,28).ForeColor=Muted;
             pairingUrl.ReadOnly=true;Position(pairing,pairingUrl,"PairingUrl",0,182,656);
             pairingToken.ReadOnly=true;pairingToken.UseSystemPasswordChar=true;Position(pairing,pairingToken,"PairingToken",0,220,480);
@@ -117,7 +117,7 @@ namespace AgentBrowser.Installer {
             LabelAt(runtime,"작업 폴더",0,184,142);Position(runtime,runtimeDirectory,"RuntimeDirectory",150,180,390);
             browseRuntimeDirectory.Text="폴더 선택";Position(runtime,browseRuntimeDirectory,"BrowseRuntimeDirectory",548,178,108,32);browseRuntimeDirectory.Click+=delegate{if(runtimeKind.SelectedIndex==1){status.Text="WSL 작업 폴더는 /home/<사용자>/project 같은 Linux 경로로 입력하세요.";return;}using(var dialog=new FolderBrowserDialog{Description="OpenCode 작업 폴더",SelectedPath=runtimeDirectory.Text})if(dialog.ShowDialog(this)==DialogResult.OK)runtimeDirectory.Text=dialog.SelectedPath;};
             saveRuntime.Text="저장하고 연결 확인";Position(runtime,saveRuntime,"SaveRuntime",0,222,220,36);StyleButton(saveRuntime,true);saveRuntime.Click+=async delegate{await SaveRuntime();};
-            runtimeResult.ScrollBars=ScrollBars.Vertical;Position(runtime,runtimeResult,"RuntimeResult",230,222,426,52);
+            Position(runtime,runtimeResult,"RuntimeResult",230,222,426,52);
             LabelAt(runtime,"저장된 실행 환경 (Chrome 설정에도 같은 목록이 보입니다)",0,280,656,24).ForeColor=Muted;
             Position(runtime,savedProfiles,"SavedProfiles",0,304,656,64);
             var check=doneMark;check.Text="✓";Position(done,check,"DoneMark",0,6,56,60);check.Font=new Font("Segoe UI Symbol",32F);check.ForeColor=Notice.Good;
@@ -128,7 +128,7 @@ namespace AgentBrowser.Installer {
             fixChrome.Text="Chrome 연결 단계로";Position(done,fixChrome,"FixChrome",76,244,190,34);fixChrome.Visible=false;fixChrome.Click+=delegate{if(EnterConnection())status.Clear();};
             fixRuntime.Text="OpenCode 설정으로";Position(done,fixRuntime,"FixRuntime",278,244,190,34);fixRuntime.Visible=false;fixRuntime.Click+=async delegate{SetPage(6);status.Clear();await EnterRuntimePage();};
             recheck.Text="다시 확인";Position(done,recheck,"Recheck",536,244,120,34);recheck.Click+=async delegate{await RunDoneChecks();};
-            status.ScrollBars=ScrollBars.None;status.TextChanged+=delegate{status.ScrollBars=status.Lines.Length>2?ScrollBars.Vertical:ScrollBars.None;};Position(this,status,"Status",32,450,656,44);
+            Position(this,status,"Status",32,450,656,44);
             var footer=new Panel{BackColor=Color.FromArgb(246,247,249)};footer.SetBounds(0,508,720,56);Controls.Add(footer);
             var footerLine=new Panel{BackColor=Border};footerLine.SetBounds(0,0,720,1);footer.Controls.Add(footerLine);
             back.Text="< 뒤로";Position(footer,back,"Back",384,520-508,96,32);back.Click+=delegate{GoBack();};
@@ -623,6 +623,17 @@ namespace AgentBrowser.Installer {
         }
         public new void Clear(){Text="";}
         public void Fail(string text){failing=true;try{BackColor=DangerBack;ForeColor=Danger;Text="⚠ "+text;}finally{failing=false;}}
+        // A scroll bar only when the text does not fit: an always-on bar beside a one-line result looked broken,
+        // and counting line breaks missed a long line that wraps.
+        protected override void OnTextChanged(EventArgs e){base.OnTextChanged(e);FitScrollBar();}
+        protected override void OnSizeChanged(EventArgs e){base.OnSizeChanged(e);FitScrollBar();}
+        protected override void OnFontChanged(EventArgs e){base.OnFontChanged(e);FitScrollBar();}
+        void FitScrollBar(){
+            int width=Math.Max(1,Width-SystemInformation.VerticalScrollBarWidth-6);
+            int needed=TextRenderer.MeasureText(Text.Length==0?" ":Text,Font,new Size(width,Int32.MaxValue),TextFormatFlags.WordBreak|TextFormatFlags.TextBoxControl).Height;
+            var wanted=needed>Height?ScrollBars.Vertical:ScrollBars.None;
+            if(ScrollBars!=wanted)ScrollBars=wanted;
+        }
     }
     /// User-facing installer errors: Korean, with the next action. The original stays for diagnosis.
     internal static class Friendly {

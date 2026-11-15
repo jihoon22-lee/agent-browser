@@ -81,7 +81,11 @@ namespace AgentBrowser.Installer {
      Assert((string)listed["defaultProfileId"]==(string)profiles[0]["id"],"the saved profile is not the default");
      Assert(Field<ListBox>(form,"SavedProfiles").Items.Count==1,"the page does not show what the Bridge saved");
      Assert(Field<TextBox>(form,"RuntimeResult").Text.Contains("저장했습니다"),Field<TextBox>(form,"RuntimeResult").Text);
-     Assert(Field<TextBox>(form,"RuntimeResult").ScrollBars==ScrollBars.Vertical&&Field<TextBox>(form,"RuntimeResult").ReadOnly,"long runtime results must stay readable");
+     // A short result shows no empty scroll bar; a long one scrolls.
+     Assert(Field<TextBox>(form,"RuntimeResult").ScrollBars==ScrollBars.None&&Field<TextBox>(form,"RuntimeResult").ReadOnly,"a one-line result shows an empty scroll bar");
+     Field<Notice>(form,"RuntimeResult").Fail(String.Join(" ",Enumerable.Repeat("OpenCode HTTP and browser MCP did not become ready within 60 seconds.",4)));
+     Assert(Field<TextBox>(form,"RuntimeResult").ScrollBars==ScrollBars.Vertical,"long runtime results must stay readable");
+     Field<TextBox>(form,"RuntimeResult").Text="";
      Field<TextBox>(form,"RuntimeExecutable").Text=cmd;Invoke(form,"SaveRuntime");
      listed=NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"}));
      Assert(((System.Collections.IEnumerable)listed["profiles"]).OfType<object>().Count()==1,"saving again on the page created a duplicate profile");
@@ -269,7 +273,10 @@ namespace AgentBrowser.Installer {
    Case("long result and check lines stay readable",()=>{
     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"read-lines")})){
      Assert(Field<ListBox>(form,"DoneChecks").HorizontalScrollbar,"final checks cannot scroll sideways");
-     var state=Field<TextBox>(form,"PairingState");Assert(state.Multiline&&state.ReadOnly&&state.ScrollBars==ScrollBars.Vertical,"pairing errors are clipped");
+     var state=Field<Notice>(form,"PairingState");state.Text="코드를 확인했습니다.";Assert(state.Multiline&&state.ReadOnly&&state.ScrollBars==ScrollBars.None,"a short pairing result shows an empty scroll bar");
+     state.Fail(String.Join("\r\n",Enumerable.Repeat("페어링 코드가 만료됐습니다. [코드 다시 받기]를 누르세요.",3)));Assert(state.ScrollBars==ScrollBars.Vertical,"pairing errors are clipped");
+     var status=Field<Notice>(form,"Status");status.Text=String.Join(" ",Enumerable.Repeat("설치 파일을 적용하는 중입니다.",14));Assert(status.ScrollBars==ScrollBars.Vertical,"a long wrapped status line is clipped");
+     status.Text="준비가 완료되었습니다.";Assert(status.ScrollBars==ScrollBars.None,"a short status shows an empty scroll bar");
     }
    });
    Case("discovery uses the found distribution and always shows its notices",()=>{
