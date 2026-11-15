@@ -46,7 +46,7 @@ pnpm --filter agent-browser-e2e exec playwright install chromium
 | `tests/install/wsl-auth-check.mjs` | WSL `Ubuntu`와 그 안의 OpenCode 1.18.29 | 단독 실행하지 않는다. `NativeEngineTests`에 WSL 설정 경로와 이 파일 경로를 4·5번째 인수로 주면 실제 OpenCode CLI의 `mcp list`와 인증된 MCP 왕복을 검사한다. |
 | `tests/install/GuiSmokeTests.cs` | 로그인한 Windows 데스크톱(UI Automation, 실제 창 포커스) | `csc`에 `UIAutomationClient.dll`·`UIAutomationTypes.dll`·`WindowsBase.dll` 참조를 더해 컴파일하고 `<패키지 zip> <새 격리 폴더> <합성 설정 파일>`을 인수로 실행한다. 화면에 보이는 설치 창을 실제로 조작하므로 실행 중에는 PC를 쓰지 않는다. |
 
-설치 화면과 고급 설정의 한글 표시·잘림·배율은 위 검사와 별개로 실제 Windows 화면에서 눈으로 확인한다(`SetupDisplayTests`의 PNG는 보조 자료다).
+설치 화면의 게이트는 `SetupDisplayTests`의 기하 검사(라벨·버튼 잘림, 보이는 형제 컨트롤의 겹침, 기본 크기에서 스크롤 막대 없음)다. 눈으로 보는 그림은 `PrintWindow`로 찍은 실제 창이다(`SetupDisplayTests`의 PNG, `GuiSmokeTests`의 PNG). `DrawToBitmap`은 자식 컨트롤을 화면과 다른 순서로 그려서 라벨이 입력란을 덮는 문제가 그림에 나오지 않는다. `WARN capture fallback`이 출력된 PNG는 화면 증거로 쓰지 않는다. 한글 표시·잘림·배율은 이 그림으로 직접 확인한다.
 
 ## Windows PowerShell 5.1 배포 진입점 회귀
 
