@@ -18,6 +18,19 @@
 | `WSL_KEEPER_UNVERIFIED`, `WSL_PROCESS_OR_KEEPER_UNVERIFIED` | 소유 프로세스나 전용 interop 연결을 확인할 수 없습니다. 다른 터미널의 interop 소켓을 대신 쓰지 않습니다. |
 | `WSL_PROCESS_STILL_RUNNING`, `WSL_PROCESS_STOPPED_KEEPER_UNVERIFIED` | 중지 확인이 완료되지 않았습니다. 실행 소유 기록을 보존합니다. |
 
+배포판을 등록 해제(`wsl --unregister`)한 뒤라면 v0.4.3부터 프로필의 **중지**가 남은 기록을 지웁니다(결과 `distribution-unregistered`). 그 뒤 프로필 삭제·업데이트·제거가 정상 진행됩니다.
+
+## OpenCode가 60초 안에 준비되지 않았다고 나올 때
+
+v0.4.3부터 오류 원문 끝에 `Last check:` 뒤로 마지막으로 실패한 확인이 붙습니다. 패널은 그 원인에 맞는 안내를 먼저 보여 줍니다.
+
+| `Last check:` 뒤 문구 | 확인할 항목 |
+|---|---|
+| `OpenCode health returned HTTP 401`, `Managed OpenCode must require Basic authentication` | 실행 파일이 OpenCode 1.x 서버인지, 같은 포트를 다른 서버가 쓰고 있지 않은지 확인합니다. |
+| `Only OpenCode v1 is supported`, `The server does not expose the required OpenCode v1 APIs` | OpenCode v1(1.x) 실행 파일을 지정합니다. |
+| `OpenCode HTTP is available but browser MCP is not connected…` | 브라우저 MCP 등록과 WSL interop, Bridge 실행 파일 경로를 확인합니다. |
+| `OpenCode is not reachable` | 서버가 그 포트에서 응답하지 않았습니다. 실행 파일·작업 폴더·환경 변수를 확인합니다. |
+
 진단은 관리 OpenCode 서버 시작·중지, 모델 호출, 브라우저 조작을 하지 않습니다. 실행 파일 버전과 WSL 전제 조건 확인을 위한 짧은 프로세스는 실행하며, 지정 WSL 배포판이 꺼져 있으면 해당 호출로 시작될 수 있습니다. 다른 WSL 작업이 열려 있다면 배포판 전체 종료나 재시작을 해결 절차로 사용하지 마세요. 지원 요청에는 위 보고서의 오류 코드를 사용하고 `runtime.json` 전체를 보내지 않습니다.
 
 
