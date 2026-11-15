@@ -122,10 +122,11 @@ internal static class GuiSmokeTests {
                 PairingStep();Click("Preview");Screenshot(Path.Combine(root,"runtime-step.png"));Click("Preview");Screenshot(Path.Combine(root,"wizard-complete.png"));
                 if(Find("Cancel").Current.Name!="Cancel")throw new Exception("Finish action missing");Close();Console.WriteLine("PASS sequential Chrome/pairing/runtime/completion and masked token; token not read or copied by test");
             }
+            }
+            // A user edits the model between versions; a resumed upgrade must keep that edit too.
             string first=File.ReadAllText(settings);if(!first.Contains("\"browser\"")||!first.Contains("// preserve"))throw new Exception("WSL settings or comment missing");
             File.WriteAllText(Path.Combine(install,"data","gui-preserve.json"),"{\"synthetic\":true}");
             File.WriteAllText(settings,first.Replace("test/model","test/user-edited"),new System.Text.UTF8Encoding(false));
-            }
             Launch(exe,common);Choose("Operation",1);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"update preview failed");Click("Apply");Wait(()=>Get("Status").StartsWith("업데이트 완료"),"GUI update failed");Screenshot(Path.Combine(root,"update-complete.png"));Close();
             string updated=File.ReadAllText(settings);if(!updated.Contains("test/user-edited")||System.Text.RegularExpressions.Regex.Matches(updated,"\"browser\"").Count!=1)throw new Exception("update duplicated MCP or lost model");
             if(args.Contains("--upgrade")) {var state=new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(Path.Combine(install,".agent-browser-install.json")));if((string)state["Version"]!=expectedVersion||(string)state["InstallId"]!=File.ReadAllText(Path.Combine(root,"old-identity.txt")))throw new Exception("cross-version update lost version/identity");using(var sha=System.Security.Cryptography.SHA256.Create()){string hash=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(Path.Combine(install,"data","config.json")))).Replace("-","").ToLowerInvariant();if(hash!=File.ReadAllText(Path.Combine(root,"old-config-sha.txt")))throw new Exception("upgrade changed pairing data");}Console.WriteLine("PASS actual GUI published "+previousVersion+" Bridge installation upgraded to "+expectedVersion+"; identity/pairing preserved");}
