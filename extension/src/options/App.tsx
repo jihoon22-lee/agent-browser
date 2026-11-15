@@ -54,7 +54,7 @@ export function App() {
     <section><h2>Bridge 페어링</h2>
       <p role="status" className={connected ? "connected-line" : undefined}>{connected ? "✓ " : ""}{LABELS[status.state]}</p>
       {status.state === "disconnected" && status.retryInMs !== undefined && <p>Bridge가 꺼져 있으면 Windows의 설치 폴더에서 start-bridge.cmd로 시작하세요. 시작하면 자동으로 다시 연결합니다. <button onClick={() => void chrome.runtime.sendMessage({ kind: "reconnect" }).catch(() => {})}>다시 연결</button></p>}
-      {pairingFolded ? <details className="pairing-change"><summary>다시 페어링하거나 연결 정보 바꾸기</summary>{pairingFields}</details> : <><p>설치 마법사의 [Chrome에 연결]에 표시된 6자리 코드를 입력하세요. 코드가 없으면 아래에 설치 폴더의 페어링 토큰을 직접 입력할 수 있습니다.</p>{pairingFields}</>}
+      {pairingFolded ? <details className="pairing-change"><summary>다시 페어링하거나 연결 정보 바꾸기</summary>{pairingFields}</details> : <><p>설치 마법사의 [Chrome 연결] 단계에 표시된 6자리 코드를 입력하세요. 코드가 없으면 아래에 설치 폴더의 페어링 토큰을 직접 입력할 수 있습니다.</p>{pairingFields}</>}
     </section>
     <section><div className="row"><h2>OpenCode 실행 환경</h2><button disabled={busy || !connected} onClick={() => { setForm(blank); setEditing(false); }}>프로필 추가</button></div>
       {!connected && <p>Bridge에 먼저 연결하세요.</p>}
