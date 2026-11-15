@@ -199,7 +199,7 @@ impl Manager {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let mut exited = false;
         // The last readiness check that failed. Without it every start failure read the same.
-        let mut last_reason: Option<String> = None;
+        let mut last_check = LastCheck::default();
         loop {
             let inspection = match self.inspect(profile,&mut record).await {
                 Ok(value) => value,
@@ -208,6 +208,7 @@ impl Manager {
             if inspection.listener {
                 match health(&record.base_url,Some(&record.username),Some(&record.password),true,&self.verified_docs).await {
                     Ok(version) => {
+                        last_check.passed(Check::Http);
                         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                         match tokio::time::timeout(remaining,browser_mcp(profile,&record)).await {
                             Ok(Ok(())) => {
@@ -215,11 +216,11 @@ impl Manager {
                                 tracing::info!(profile_id = %profile.id, "OpenCode HTTP and browser MCP ready");
                                 return Ok(info(profile,&record,"ready",true,&self.home));
                             }
-                            Ok(Err(error)) => remember(&mut last_reason,error.message),
-                            Err(_) => remember(&mut last_reason,MCP_UNFINISHED.into()),
+                            Ok(Err(error)) => last_check.failed(Check::Mcp,error.message),
+                            Err(_) => last_check.failed(Check::Mcp,MCP_UNFINISHED.into()),
                         }
                     }
-                    Err(error) => remember(&mut last_reason,error.message),
+                    Err(error) => last_check.failed(Check::Http,error.message),
                 }
             }
             if profile.kind == Kind::Wsl && matches!(inspection.state,WslState::Stopped | WslState::NotStarted) { break; }
@@ -230,8 +231,8 @@ impl Manager {
             tokio::time::sleep(Duration::from_millis(if profile.kind == Kind::Wsl {1500} else {400})).await;
         }
         self.stop_inner(profile).await?;
-        if exited { return Err(failure(with_last_check("OpenCode exited before its server became ready. Check the executable/version, port, directory, and environment.",last_reason.as_deref()))); }
-        Err(failure(with_last_check("OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.",last_reason.as_deref())))
+        if exited { return Err(failure(with_last_check("OpenCode exited before its server became ready. Check the executable/version, port, directory, and environment.",last_check.reason()))); }
+        Err(failure(with_last_check("OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.",last_check.reason())))
     }
     fn persist(&self, record: &RuntimeRecord) -> Result<(), RpcError> { self.store.update(|config| { config.runtimes.insert(record.profile_id.clone(), record.clone()); Ok(()) }) }
     /// Status polls and doctor run every few seconds: they publish runtime.json only when the record differs.
@@ -808,10 +809,22 @@ async fn wsl_distribution_unregistered(profile: &Profile) -> bool {
     command.args(["--list","--quiet"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)] { command.creation_flags(0x08000000); }
     let Ok(Ok(output)) = tokio::time::timeout(WSL_PROBE_TIMEOUT,command.output()).await else { return false; };
-    if !output.status.success() || output.stdout.is_empty() { return false; }
-    // wsl.exe prints UTF-16LE.
-    let units: Vec<u16> = output.stdout.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)).collect();
-    unregistered(&String::from_utf16_lossy(&units), name)
+    if !output.status.success() { return false; }
+    listing_lacks(&output.stdout, name)
+}
+/// `wsl.exe --list` output as text, or None when it cannot be read. Inbox wsl.exe prints UTF-16LE;
+/// with WSL_UTF8=1 in the environment it prints UTF-8. Reading UTF-8 as UTF-16 made every name
+/// unknown, so a live distribution looked unregistered. Same rule as the installer's DecodeOutput.
+fn decode_listing(bytes: &[u8]) -> Option<String> {
+    let utf16 = |bytes: &[u8]| (bytes.len() % 2 == 0).then(|| String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)).collect::<Vec<_>>()).ok()).flatten();
+    let text = if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) { utf16(rest)? }
+        // UTF-8 text has no NUL byte; UTF-16LE has one in every ASCII character, line ends included.
+        else if bytes.contains(&0) { utf16(bytes)? }
+        else { String::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes).to_vec()).ok()? };
+    (!text.chars().any(|c| c.is_control() && !matches!(c, '\r' | '\n' | '\t'))).then_some(text)
+}
+fn listing_lacks(bytes: &[u8], name: &str) -> bool {
+    decode_listing(bytes).is_some_and(|listing| !listing.trim().is_empty() && unregistered(&listing, name))
 }
 async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &str) -> Option<i32> {
     tracing::debug!(profile_id = %profile.id, mode, "WSL control probe");
@@ -828,11 +841,21 @@ async fn wsl_control_status(profile: &Profile, record: &RuntimeRecord, mode: &st
 }
 const UNREACHABLE: &str = "OpenCode is not reachable";
 const MCP_UNFINISHED: &str = "OpenCode HTTP is available but browser MCP initialization did not finish";
-/// A server that answered and then went away is last seen without an answer; what it said while it
-/// was up explains more, so a reason without an answer never replaces one the server gave.
-fn remember(last: &mut Option<String>, reason: String) {
-    let unanswered = |text: &str| text == UNREACHABLE || text == MCP_UNFINISHED;
-    if !unanswered(&reason) || last.as_deref().is_none_or(unanswered) { *last = Some(reason); }
+#[derive(Clone, Copy, PartialEq)]
+enum Check { Http, Mcp }
+/// The readiness check that last failed, for the start-failure message.
+#[derive(Default)]
+struct LastCheck(Option<(Check, String)>);
+impl LastCheck {
+    /// A server that answered and then went away is last seen without an answer; what it said while it
+    /// was up explains more, so a reason without an answer never replaces one the server gave.
+    fn failed(&mut self, check: Check, reason: String) {
+        let unanswered = |text: &str| text == UNREACHABLE || text == MCP_UNFINISHED;
+        if !unanswered(&reason) || self.0.as_ref().is_none_or(|(_, text)| unanswered(text)) { self.0 = Some((check, reason)); }
+    }
+    /// A check that passed afterwards no longer explains the failure.
+    fn passed(&mut self, check: Check) { if self.0.as_ref().is_some_and(|(failed, _)| *failed == check) { self.0 = None; } }
+    fn reason(&self) -> Option<&str> { self.0.as_ref().map(|(_, reason)| reason.as_str()) }
 }
 /// The extension recognises a start failure by its fixed sentence, so that sentence stays as it is and
 /// the cause follows it. Causes are this module's own fixed texts, never child process output.
@@ -941,15 +964,40 @@ mod tests {
     }
     #[test]
     fn an_unreachable_server_does_not_hide_what_it_said_before() {
-        let mut last = None;
-        remember(&mut last, UNREACHABLE.into()); assert_eq!(last.as_deref(), Some(UNREACHABLE));
-        remember(&mut last, "Only OpenCode v1 is supported".into()); remember(&mut last, UNREACHABLE.into());
-        assert_eq!(last.as_deref(), Some("Only OpenCode v1 is supported"));
-        remember(&mut last, "OpenCode reported unhealthy".into()); remember(&mut last, MCP_UNFINISHED.into());
-        assert_eq!(last.as_deref(), Some("OpenCode reported unhealthy"));
-        let mut last = None;
-        remember(&mut last, UNREACHABLE.into()); remember(&mut last, MCP_UNFINISHED.into());
-        assert_eq!(last.as_deref(), Some(MCP_UNFINISHED), "with no answer at all, the latest is kept");
+        let mut last = LastCheck::default();
+        last.failed(Check::Http, UNREACHABLE.into()); assert_eq!(last.reason(), Some(UNREACHABLE));
+        last.failed(Check::Http, "Only OpenCode v1 is supported".into()); last.failed(Check::Http, UNREACHABLE.into());
+        assert_eq!(last.reason(), Some("Only OpenCode v1 is supported"));
+        let mut last = LastCheck::default();
+        last.passed(Check::Http); last.failed(Check::Mcp, "OpenCode HTTP is available but browser MCP is not connected".into());
+        last.failed(Check::Http, UNREACHABLE.into());
+        assert_eq!(last.reason(), Some("OpenCode HTTP is available but browser MCP is not connected"), "a server that went away does not hide its MCP answer");
+        let mut last = LastCheck::default();
+        last.failed(Check::Http, UNREACHABLE.into()); last.failed(Check::Mcp, MCP_UNFINISHED.into());
+        assert_eq!(last.reason(), Some(MCP_UNFINISHED), "with no answer at all, the latest is kept");
+    }
+    #[test]
+    fn a_check_that_passed_later_no_longer_explains_the_failure() {
+        // A cold start: API discovery failed once, then HTTP passed and only the MCP never finished.
+        let mut last = LastCheck::default();
+        last.failed(Check::Http, "OpenCode v1 API discovery failed".into());
+        last.passed(Check::Http); last.failed(Check::Mcp, MCP_UNFINISHED.into());
+        assert_eq!(last.reason(), Some(MCP_UNFINISHED));
+        // An MCP problem is not cleared by HTTP passing again.
+        last.failed(Check::Mcp, "OpenCode HTTP is available but browser MCP is not connected".into()); last.passed(Check::Http);
+        assert_eq!(last.reason(), Some("OpenCode HTTP is available but browser MCP is not connected"));
+    }
+    #[test]
+    fn a_listing_in_either_encoding_names_the_same_distributions() {
+        let utf16 = |text: &str| text.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>();
+        // Inbox wsl.exe prints UTF-16LE, with or without a byte order mark; WSL_UTF8=1 makes it print UTF-8.
+        for bytes in [utf16("Ubuntu\r\nDebian\r\n"), [vec![0xFF,0xFE], utf16("Ubuntu\r\n")].concat(), b"Ubuntu\r\nDebian\r\n".to_vec(), [b"\xEF\xBB\xBF".to_vec(), b"Ubuntu\n".to_vec()].concat()] {
+            assert!(!listing_lacks(&bytes, "Ubuntu"), "{bytes:?}");
+            assert!(listing_lacks(&bytes, "Fedora"), "{bytes:?}");
+        }
+        // Output that is neither proves nothing: the record is kept.
+        assert!(!listing_lacks(&[0xC3, 0x28, 0xA0, 0xA1, 0x0A, 0x00, 0xFF], "Fedora"));
+        assert!(!listing_lacks(b"", "Fedora"));
     }
     #[test]
     fn a_start_failure_keeps_its_sentence_and_adds_the_last_failed_check() {
