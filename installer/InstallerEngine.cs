@@ -355,7 +355,7 @@ namespace AgentBrowser.Installer {
             }
         }
         static void RestartProfiles(InstallState state,List<string> profiles) {
-            var errors=new List<string>();foreach(var id in profiles)try{BridgeControl.Invoke(state,new[]{"runtime","start","--profile",id},150000);}catch(Exception error){errors.Add(id+": "+error.Message);}
+            var errors=new List<string>();foreach(var id in profiles)try{BridgeControl.Invoke(state,new[]{"runtime","start","--profile",id},BridgeControl.RuntimeStartMs);}catch(Exception error){errors.Add(id+": "+error.Message);}
             if(errors.Count>0)throw new IOException("Managed profile recovery failures: "+String.Join("; ",errors));
         }
     }
@@ -417,6 +417,9 @@ namespace AgentBrowser.Installer {
         }
         /// How often Start ran; tests observe that a failing start is not repeated on a timer.
         internal static int Starts;
+        /// A managed runtime start waits 60 s for readiness, plus WSL probes and cleanup. Every caller of
+        /// `runtime start` allows this long, so a slow but successful start is not cut off.
+        internal const int RuntimeStartMs=150000;
         /// A serve that an MCP proxy or `start` launched has no marker, so Stop and Start used to treat this
         /// installation's own Bridge as a stranger. It is adopted only when serve.pid names a process whose image
         /// is an exact owned Bridge executable of this installation, whose command line is `serve --port <port>`,
