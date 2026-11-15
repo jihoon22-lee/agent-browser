@@ -85,3 +85,15 @@ it.each([
   expect(result).toMatchObject({ error: { code: 'STALE_ELEMENT' } });
   expect((document.querySelector('input') as HTMLInputElement).value).toBe('');
 });
+
+it.each([
+  ['a heading', '<div class="card"><h3 class="id">Order A-1001</h3><label for="q">Qty</label><input id="q"></div>'],
+  ['an id line', '<div class="card"><span class="id">A-1001</span><label for="q">Qty</label><input id="q"><p class="helper"></p></div>'],
+])('binds a labelled field to a card identified by %s, even when it is the only one', async (_kind, markup) => {
+  document.body.innerHTML = markup;
+  const ref = snapshot().elements.find(element => element.name === 'Qty')!.ref;
+  document.querySelector('.id')!.textContent = 'C-3003';
+  const result = await runAction('fill', { ref, text: '3' }).catch(error => ({ error }));
+  expect(result).toMatchObject({ error: { code: 'STALE_ELEMENT' } });
+  expect((document.querySelector('input') as HTMLInputElement).value).toBe('');
+});

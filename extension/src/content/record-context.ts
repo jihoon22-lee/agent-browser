@@ -19,13 +19,26 @@ export function recordRoot(el: Element): Element | null {
   for (let node = composedParent(el); node && node !== el.ownerDocument.body && depth++ < 3; node = composedParent(node)) {
     if (!node.matches('div,section')) break;
     // A label with its one field and helper text is that field, not a record: its helper text is
-    // feedback to the field's own input and must not make the field stale.
-    if (el.matches(FIELD) && node.querySelector('label') && node.querySelectorAll(FIELD).length === 1) return null;
+    // feedback to the field's own input and must not make the field stale. A title or id before the
+    // field (a card holding one field) still makes it a record.
+    if (el.matches(FIELD) && node.querySelector('label') && node.querySelectorAll(FIELD).length === 1 && !textBefore(node, el)) return null;
     const text = node.shadowRoot ? observeRecord(node).text : node.textContent ?? '';
     if (text.length > 300) break;
     if (text.trim() && text.trim() !== (el.textContent ?? '').trim()) return node;
   }
   return null;
+}
+
+/** Whether `node` has text before `field` other than label text: what identifies a record holding it. */
+function textBefore(node: Element, field: Element): boolean {
+  const walker = node.ownerDocument.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    if (!(field.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_PRECEDING)) break;
+    const parent = text.parentElement;
+    if (parent?.closest('label') || parent?.closest(HIDDEN)) continue;
+    if (text.textContent?.trim()) return true;
+  }
+  return false;
 }
 
 /** Static row identity. Editing a field or updating a live status must not retarget its neighbours.
