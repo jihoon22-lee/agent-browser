@@ -61,10 +61,14 @@ pub struct Manager {
     store: Store,
     locks: std::sync::Mutex<BTreeMap<String, Arc<tokio::sync::Mutex<()>>>>,
     verified_docs: DocCache,
+    /// How long a stop or delete waits for a profile another process is working on. Zero inside the
+    /// resident Bridge; the CLI waits briefly so an update or uninstall does not fail on a status poll.
+    busy_wait: Duration,
 }
 
 impl Manager {
-    pub fn new(home: PathBuf, port: u16) -> Self { let home = crate::config::absolute_home(home); Self { store: Store::new(home.clone()), home, port, locks: Default::default(), verified_docs: Default::default() } }
+    pub fn new(home: PathBuf, port: u16) -> Self { let home = crate::config::absolute_home(home); Self { store: Store::new(home.clone()), home, port, locks: Default::default(), verified_docs: Default::default(), busy_wait: Duration::ZERO } }
+    pub fn waiting_for_busy_profiles(mut self, wait: Duration) -> Self { self.busy_wait = wait; self }
     fn lock(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> { self.locks.lock().unwrap().entry(id.into()).or_default().clone() }
     fn reserve_port(&self, profile: &str, requested: Option<u16>) -> Result<ReservedPort<'_>,RpcError> {
         let controller = process::identity(std::process::id()).ok_or_else(|| failure("Cannot verify the Bridge process identity"))?;
@@ -105,6 +109,15 @@ impl Manager {
     fn operation_lock(&self, id: &str) -> Result<storage::FileLock,RpcError> {
         self.try_operation_lock(id)?.ok_or_else(|| invalid("Another operation is already managing this profile; wait for it to finish"))
     }
+    /// For stop and delete: the lock, waiting up to `busy_wait` for whoever holds it.
+    async fn operation_lock_when_free(&self, id: &str) -> Result<storage::FileLock,RpcError> {
+        let deadline = tokio::time::Instant::now() + self.busy_wait;
+        loop {
+            if let Some(lock) = self.try_operation_lock(id)? { return Ok(lock); }
+            if tokio::time::Instant::now() >= deadline { return self.operation_lock(id); }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
     fn try_operation_lock(&self, id: &str) -> Result<Option<storage::FileLock>,RpcError> {
         if id.is_empty() || id.len() > 64 || !id.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)) { return Err(invalid("Invalid profile id")); }
         let directory = self.home.join("runtime"); std::fs::create_dir_all(&directory).map_err(os_failure("Cannot create runtime directory"))?;
@@ -119,7 +132,7 @@ impl Manager {
     }
     pub async fn delete(&self, id: &str) -> Result<Value, RpcError> {
         let lock = self.lock(id); let _guard = lock.lock().await;
-        let _operation = self.operation_lock(id)?;
+        let _operation = self.operation_lock_when_free(id).await?;
         let profile = self.profile(id)?; self.stop_inner(&profile).await?;
         self.store.update(|config| {
             config.profiles.remove(id);
@@ -347,7 +360,7 @@ impl Manager {
         self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
         Ok(json!({"stopped":stopped}))
     }
-    pub async fn stop(&self, id: &str) -> Result<Value, RpcError> { let lock = self.lock(id); let _guard = lock.lock().await; let _operation = self.operation_lock(id)?; self.stop_inner(&self.profile(id)?).await }
+    pub async fn stop(&self, id: &str) -> Result<Value, RpcError> { let lock = self.lock(id); let _guard = lock.lock().await; let _operation = self.operation_lock_when_free(id).await?; self.stop_inner(&self.profile(id)?).await }
     pub async fn stop_all(&self) -> Result<Value,RpcError> {
         let config = self.store.read()?;
         let skipped: Vec<_> = config.profiles.values().filter(|profile| profile.kind == Kind::External).map(|profile| profile.id.clone()).collect();

@@ -323,3 +323,31 @@ async fn a_start_that_becomes_ready_late_is_still_ready() {
     assert_eq!(manager.stop_all().await.unwrap()["errors"],json!([]));
 }
 
+#[cfg(unix)]
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn cli_stop_waits_for_a_profile_another_process_is_briefly_using() {
+    let home = tempfile::tempdir().unwrap();
+    let manager = Manager::new(home.path().into(),54351);
+    for id in ["brief","stuck"] { manager.save(fixture_profile(home.path(),id,json!({})),false).unwrap(); }
+    let stop_all = || tokio::process::Command::new(env!("CARGO_BIN_EXE_browser-bridge")).args(["runtime","stop-all","--json"]).env("AGENT_BROWSER_HOME",home.path()).env("AGENT_BROWSER_PORT","54351").output();
+    let held = |id: &str| { let file = std::fs::OpenOptions::new().read(true).write(true).open(home.path().join("runtime").join(format!("{id}.lock"))).unwrap(); file.try_lock().unwrap(); file };
+
+    assert_eq!(manager.ensure("brief","chrome-extension://abcdefghijklmnopabcdefghijklmnop").await.unwrap()["state"],"ready");
+    let lock = held("brief");
+    let release = tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_secs(3)).await; drop(lock); });
+    let output = stop_all().await.unwrap(); release.await.unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(output.status.success(),"a status poll holding the profile for 3 s must not fail the stop: {report} {}",String::from_utf8_lossy(&output.stderr));
+    assert_eq!(report["stoppedProfiles"],json!(["brief"]));
+
+    assert_eq!(manager.ensure("stuck","chrome-extension://abcdefghijklmnopabcdefghijklmnop").await.unwrap()["state"],"ready");
+    let lock = held("stuck");
+    let started = std::time::Instant::now();
+    let output = stop_all().await.unwrap();
+    let waited = started.elapsed(); drop(lock);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!output.status.success(),"{report}");
+    assert!(report["errors"][0]["message"].as_str().unwrap().starts_with("Another operation is already managing this profile"),"{report}");
+    assert!(waited >= std::time::Duration::from_secs(9) && waited < std::time::Duration::from_secs(20),"the CLI waits about 10 s, not forever: {waited:?}");
+    assert_eq!(manager.stop_all().await.unwrap()["errors"],json!([]));
+}

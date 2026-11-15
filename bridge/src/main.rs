@@ -69,7 +69,8 @@ fn main() -> anyhow::Result<()> {
             let home = agent_browser_bridge::config::home_dir()?;
             let cfg = agent_browser_bridge::config::load_or_init(&home)?;
             let port = std::env::var("AGENT_BROWSER_PORT").ok().and_then(|value| value.parse().ok()).unwrap_or(cfg.port);
-            let manager = agent_browser_bridge::runtime::Manager::new(home,port);
+            // The resident Bridge may hold a profile for a status poll or a start; a CLI stop waits for it.
+            let manager = agent_browser_bridge::runtime::Manager::new(home,port).waiting_for_busy_profiles(std::time::Duration::from_secs(10));
             let runtime = tokio::runtime::Runtime::new()?;
             if let Command::Attach { profile } = command {
                 let origin = cfg.paired_extension_id.map(|id| format!("chrome-extension://{id}")).ok_or_else(|| anyhow::anyhow!("Pair the Chrome extension first"))?;

@@ -346,7 +346,7 @@ namespace AgentBrowser.Installer {
             }
         }
         static void RestartProfiles(InstallState state,List<string> profiles) {
-            var errors=new List<string>();foreach(var id in profiles)try{BridgeControl.Invoke(state,new[]{"runtime","start","--profile",id},60000);}catch(Exception error){errors.Add(id+": "+error.Message);}
+            var errors=new List<string>();foreach(var id in profiles)try{BridgeControl.Invoke(state,new[]{"runtime","start","--profile",id},150000);}catch(Exception error){errors.Add(id+": "+error.Message);}
             if(errors.Count>0)throw new IOException("Managed profile recovery failures: "+String.Join("; ",errors));
         }
     }
