@@ -129,3 +129,31 @@ test("P05 only a file attached to the running panel request can be uploaded", as
   const after = await world.mcp.call("browser_upload", { operationId, ref: label, file: "a.png" });
   expect(after.ok).toBe(false);
 });
+
+test("P30 hit target: a DOM click reaches the element under the pointer and reports when nothing happened", async () => {
+  const page = await world.open("hit-target.html"), operationId = await world.attach(page);
+  const hits = () => page.evaluate(() => (window as any).hits.join(","));
+  let snapshot = await fresh(operationId);
+  // The listener is on the inner span, not on the labelled wrapper the snapshot lists.
+  await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Open panel") });
+  expect(await hits()).toBe("inner");
+  snapshot = await fresh(operationId);
+  const row = all(snapshot).find(e => e.name.includes("Row one"));
+  expect(row, "the pointer-cursor row is listed").toBeTruthy();
+  await world.ok("browser_click", { operationId, ref: row!.ref });
+  expect(await hits()).toBe("inner,cell");
+  // Below the fold: scrolling it just into view leaves it under the fixed footer.
+  snapshot = await fresh(operationId);
+  await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Bottom action") });
+  expect(await hits()).toBe("inner,cell,low");
+  snapshot = await fresh(operationId);
+  const idle = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Does nothing") });
+  expect(idle.verified).toMatchObject({ noEffect: true });
+  snapshot = await fresh(operationId);
+  const changed = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Adds a line") });
+  expect(changed.verified?.noEffect).toBeUndefined();
+  // A CSS-only :hover menu cannot be opened by synthetic events; the result must not look like success.
+  snapshot = await fresh(operationId);
+  const hover = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Products"), mode: "hover" });
+  expect(hover.verified).toMatchObject({ noEffect: true });
+});

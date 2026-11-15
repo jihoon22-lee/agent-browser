@@ -71,7 +71,11 @@ function assertInteractable(el: Element, allowScroll = true): Point | undefined 
   if (!allowScroll) throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el) || el.tagName} cannot be reached without scrolling the page again.`);
   // "instant" defeats CSS smooth scrolling, so hit testing uses the new position.
   (el as HTMLElement).scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
-  const points = candidatePoints(el);
+  let points = candidatePoints(el);
+  for (const point of points) if (reaches(topAt(point), el)) return point;
+  // "nearest" stops at the viewport edge, which a fixed header or footer may cover: try the middle once.
+  (el as HTMLElement).scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+  points = candidatePoints(el);
   for (const point of points) if (reaches(topAt(point), el)) return point;
   const top = points[0] ? topAt(points[0]) : null;
   if (top) {
@@ -289,8 +293,14 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       // A rejected pre-click check must not leave an unhandled observation when
       // the command is cancelled. The observer itself is bounded to 500ms.
       void changes.catch(() => {});
+      // A real pointer event targets the deepest element under the pointer and bubbles to the ref.
+      // Pages listen on that inner element (a span in a labelled wrapper) or read event.target (a td).
+      const under = (at: Point = point): Element => { const top = hasLayout() ? topAt(at) : null; return top && top !== el && el.contains(top) ? top : el; };
       const pointer = (type: string, init: Record<string, unknown>) =>
-        el.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
+        under().dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,pointerId:1,pointerType:'mouse',isPrimary:true,...init}));
+      // Nothing observable happened: say so instead of leaving a bare "executed". (With waitFor the
+      // caller's own condition decides, and the observation window is not kept open.)
+      const outcome = async () => { const seen = await changes; return !p.waitFor && seen && seen.domChanged === false && seen.urlChanged === false ? { ...seen, noEffect: true } : seen; };
       if (mode === "hover") {
         // enter events do not bubble: like a pointer arriving from outside, enter each ancestor, outermost first.
         const chain: Element[] = [];
@@ -299,7 +309,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
           if (!type.endsWith("enter")) { pointer(type, { buttons: 0, detail: 0 }); continue; }
           for (const node of chain) node.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:0,detail:0,bubbles:false,pointerId:1,pointerType:'mouse',isPrimary:true}));
         }
-        return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+        return { executed: true, verified: { ...await outcome(), ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
       }
       const button = mode === "right" ? 2 : 0;
       const checkTarget = (): Point => {
@@ -326,17 +336,19 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       // Retain native activation and viewport coordinates after the final check.
       // This is still untrusted input.
       if (mode === "right") {
-        el.dispatchEvent(new MouseEvent('contextmenu',{...base,...finalPoint,button:2,buttons:0}));
+        under(finalPoint).dispatchEvent(new MouseEvent('contextmenu',{...base,...finalPoint,button:2,buttons:0}));
       } else {
-        el.dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
+        under(finalPoint).dispatchEvent(new MouseEvent('click',{...base,...finalPoint,buttons:0}));
         if (mode === "double") {
           checkTarget();
           press(2);
-          el.dispatchEvent(new MouseEvent('click',{...base,...checkTarget(),buttons:0,detail:2}));
-          el.dispatchEvent(new MouseEvent('dblclick',{...base,...checkTarget(),buttons:0,detail:2}));
+          let again = checkTarget();
+          under(again).dispatchEvent(new MouseEvent('click',{...base,...again,buttons:0,detail:2}));
+          again = checkTarget();
+          under(again).dispatchEvent(new MouseEvent('dblclick',{...base,...again,buttons:0,detail:2}));
         }
       }
-      return { executed: true, verified: { ...await changes, ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
+      return { executed: true, verified: { ...await outcome(), ...modeNote, ...(trustedReason ? { trusted: false, trustedReason } : {}) } };
     }
     case "fill": {
       const el = resolveRef(String(p.ref));

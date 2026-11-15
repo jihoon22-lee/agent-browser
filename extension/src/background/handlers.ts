@@ -53,6 +53,15 @@ function answered<T>(work: Promise<T>, ms: number, write: boolean): Promise<T> {
     });
 }
 
+/** The content script marks a click that changed nothing it could see. A tab the click opened, or a
+ * navigation found afterwards, is an effect only the background knows about. */
+function effective<T extends { verified?: Record<string, unknown> }>(result: T): T {
+    if (!result?.verified?.noEffect) return result;
+    const { noEffect: _none, ...verified } = result.verified;
+    return { ...result, verified };
+}
+const withEffect = (result: any) => result?.verified?.noEffect && (result.verified.navigated || result.verified.urlChanged || result.verified.domChanged || result.openedTabs?.length) ? effective(result) : result;
+
 export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: TrustedHooks, attachment?: AttachmentLookup, advanced?:AdvancedBrowser, download?:{handle(p:Record<string,unknown>,signal:AbortSignal):Promise<unknown>},recovery?:InputRecovery) {
     const frames = frameRouter(api, store), running = new Map<string, Running>();
     const writes=new Map<number,Promise<unknown>>();
@@ -153,18 +162,18 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 // the action response. A user action in this frame is ambiguous.
                 const inputAfter = await inputState();
                 aborted(run.controller.signal);
-                if (!inputBefore || inputBefore !== inputAfter) return {...result,openedTabWarnings:[
+                if (!inputBefore || inputBefore !== inputAfter) return {...effective(result),openedTabWarnings:[
                     ...(children.openedTabWarnings ?? []),
                     ...children.openedTabs.map(tab => ({tabId:tab.tabId,reason:inputBefore && inputAfter ? 'user-intervention' : 'source-unavailable'})),
                 ]};
             }
-            const confirmed = {...result,...children};
+            const confirmed = children.openedTabs?.length ? {...effective(result),...children} : {...result,...children};
             if (tracksTabs) run.confirmed = confirmed;
-            return run.req.params.waitFor ? confirmed : lateNavigation(tabId, startUrl, confirmed, run.controller.signal);
+            return run.req.params.waitFor ? confirmed : lateNavigation(tabId, startUrl, confirmed, run.controller.signal).then(withEffect);
         }
         // Only a click or key press is final once its frame replies; a snapshot still has frames to read.
         if (tracksTabs) run.confirmed = response.result;
-        return run.req.params.waitFor ? response.result : lateNavigation(tabId, startUrl, response.result, run.controller.signal);
+        return run.req.params.waitFor ? response.result : lateNavigation(tabId, startUrl, response.result, run.controller.signal).then(withEffect);
     }
     /** A script may navigate a moment after the click's own observation window closed. Only a
      * reply that saw no change at all is checked, and only for this observable tab condition. */
