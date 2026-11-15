@@ -1,6 +1,8 @@
 using System;
 using System.Drawing;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Windows.Forms;
 
@@ -16,6 +18,19 @@ namespace AgentBrowser.Installer {
                 }
                 Check(control);
             }
+        }
+        // Sibling controls must not cover each other: the one added first is on top and hides the other's text.
+        static readonly List<string> Overlaps = new List<string>();
+        static string Describe(Control c) { return (c.Name.Length > 0 ? c.Name : c.GetType().Name) + "[" + (c.Text.Length > 24 ? c.Text.Substring(0, 24) : c.Text) + "]"; }
+        static void CheckOverlap(Control parent, string where) {
+            // Thin docked separator lines are decoration, not content.
+            var shown = parent.Controls.Cast<Control>().Where(c => c.Visible && c.Width > 2 && c.Height > 2).ToList();
+            for (int i = 0; i < shown.Count; i++) for (int j = i + 1; j < shown.Count; j++) {
+                var hit = Rectangle.Intersect(shown[i].Bounds, shown[j].Bounds);
+                // 1 px of tolerance for rounding when the form scales with the font.
+                if (hit.Width > 1 && hit.Height > 1) Overlaps.Add(where + ": " + Describe(shown[i]) + " covers " + Describe(shown[j]) + " by " + hit.Width + "x" + hit.Height);
+            }
+            foreach (var child in shown) CheckOverlap(child, where);
         }
         // A button sized from the point size alone clips its caption on a scaled display.
         static void CheckButton(Control parent, string name) {
@@ -34,6 +49,18 @@ namespace AgentBrowser.Installer {
                     throw new Exception("Clipped step: " + step.Text + " bounds=" + step.Bounds + " bar=" + found[0].ClientSize);
             if (found[0].Controls.Count == 0) throw new Exception("Step bar is empty");
         }
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool PrintWindow(IntPtr window, IntPtr dc, uint flags);
+        // The picture must be the window as Windows composes it. DrawToBitmap paints child controls in
+        // another order than the screen does, so a label covering a field does not show in it.
+        static void Capture(Form form, string path) {
+            Application.DoEvents();form.Update();
+            using (var bitmap = new Bitmap(form.Width, form.Height)) {
+                bool drawn;
+                using (var graphics = Graphics.FromImage(bitmap)) { IntPtr dc = graphics.GetHdc(); try { drawn = PrintWindow(form.Handle, dc, 2); } finally { graphics.ReleaseHdc(dc); } }
+                if (!drawn) { form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); Console.WriteLine("WARN capture fallback: " + path); }
+                bitmap.Save(path);
+            }
+        }
         [STAThread] public static int Main(string[] args) {
             Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
             Directory.CreateDirectory(args[0]);
@@ -45,17 +72,14 @@ namespace AgentBrowser.Installer {
                         Application.DoEvents();
                         foreach (int page in new [] {0,1,2,3,4,5,6,7}) {
                             typeof(SetupForm).GetMethod("SetPage", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] {page});
-                            Application.DoEvents();Check(form);CheckStepBar(form);
+                            Application.DoEvents();Check(form);CheckStepBar(form);CheckOverlap(form, size + "pt page " + page);
                             // At the design size every page fits: scrollbars are for small screens only.
                             if (size == 10F) {
                                 var viewport = (ScrollableControl)form.Controls.Find("PageViewport", true)[0];
                                 if (viewport.VerticalScroll.Visible || viewport.HorizontalScroll.Visible)
                                     throw new Exception("Page " + page + " scrolls at the default window size: viewport=" + viewport.ClientSize + " needs=" + viewport.AutoScrollMinSize);
                             }
-                            using(var bitmap=new Bitmap(form.Width,form.Height)) {
-                                form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));
-                                bitmap.Save(Path.Combine(args[0], "font-" + size + "-page-" + page + ".png"));
-                            }
+                            Capture(form, Path.Combine(args[0], "font-" + size + "-page-" + page + ".png"));
                         }
                         // The final page with both repair actions and an error in the status line: nothing may be clipped.
                         foreach (string name in new [] {"FixChrome", "FixRuntime"}) form.Controls.Find(name, true)[0].Visible = true;
@@ -68,17 +92,14 @@ namespace AgentBrowser.Installer {
                         ((Notice)form.Controls.Find("Status", true)[0]).Fail("설치된 파일이 수정되어 그대로 보존했습니다. 파일을 원래대로 되돌리거나 새 폴더에 설치하세요.\r\n(원문: An installed file was modified)");
                         Application.DoEvents();Check(form);
                         foreach (string name in new [] {"FixChrome", "FixRuntime", "Recheck"}) CheckButton(form, name);
-                        using(var bitmap=new Bitmap(form.Width,form.Height)) {
-                            form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));
-                            bitmap.Save(Path.Combine(args[0], "font-" + size + "-final-actions.png"));
-                        }
+                        Capture(form, Path.Combine(args[0], "font-" + size + "-final-actions.png"));
                         Exception dialogError=null;
                         using(var timer=new Timer{Interval=100}) {
                             timer.Tick+=delegate {
                                 foreach(Form dialog in Application.OpenForms) {
                                     if(dialog==form)continue;
                                     timer.Stop();
-                                    try {Check(dialog);CheckButton(dialog,"CloseAdvanced");using(var bitmap=new Bitmap(dialog.Width,dialog.Height)){dialog.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));bitmap.Save(Path.Combine(args[0],"font-"+size+"-advanced.png"));}}
+                                    try {Check(dialog);CheckOverlap(dialog, size + "pt advanced");CheckButton(dialog,"CloseAdvanced");Capture(dialog, Path.Combine(args[0],"font-"+size+"-advanced.png"));}
                                     catch(Exception error){dialogError=error;}
                                     dialog.Close();break;
                                 }
@@ -92,6 +113,7 @@ namespace AgentBrowser.Installer {
                         form.Close();Console.WriteLine("PASS setup pages, advanced settings and small-window navigation at " + size + "pt");
                     }
                 }
+                if (Overlaps.Count > 0) throw new Exception("Overlapping controls:\r\n" + String.Join("\r\n", Overlaps.Distinct()));
                 return 0;
             } catch(Exception error) {Console.Error.WriteLine(error.Message);return 1;}
         }
