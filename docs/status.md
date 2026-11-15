@@ -2,6 +2,17 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.4.3 Windows preview — 게시 완료 (2026-11-16)
+
+[v0.4.3](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.3)(prerelease)를 **2026-11-15 18:09:34 UTC / 2026-11-16 03:09:34 KST**에 게시했다. 주석 태그는 [PR #45](https://github.com/jihoon22-lee/agent-browser/pull/45)의 main 병합 커밋 **`4916d740722a7526bb79f8400d8926f4e891c076`**를 가리킨다.
+
+- **배포 ZIP:** **3,956,510 bytes / 37 files**, SHA256 **`e3310a43dae6d5e734f7c3db44c9713a4129773a6361999449698b1bbf660ce5`**. `SHA256SUMS` 별도 게시. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/43742799795)의 Windows 작업이 만든 `windows-x64-package-4916d74…` 아티팩트다.
+- **소스·CI:** [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/43739019763)와 배포 커밋 main CI의 Linux·Windows 작업이 모두 성공했다. PR CI 수치: Linux E2E **257 통과/5 제외**, Windows 설치 Chrome E2E **257 통과/5 제외**(D21·D22 포함), PowerShell 설치 회귀 **20개**, `NativeEngineTests` REVIEW **66/0**·전체 **75**, `SetupFlowTests` **32/0**. PR CI의 첫 Linux 실행은 알려진 간헐 실패 B10(`first-frame-visible`, 이번 변경 전 단계)으로 실패했고 실패 작업만 다시 실행해 통과했다. 같은 빌드의 로컬 40회 반복은 모두 통과했으며 기록은 `docs/plans/browser-quality-followup.md`에 더했다.
+- **게시 ZIP의 로컬 실제 Windows 검증:** 게시 전 같은 ZIP의 `AgentBrowser-Setup.exe`를 `GuiSmokeTests --uia --profiles`로 조작해 **6개 PASS**, 게시된 v0.4.2에서 올리는 교차 버전 GUI 업데이트 **4개 PASS**(설치 ID·페어링·사용자 설정 보존, MCP 등록 1개, 제거까지).
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, GitHub 자산 크기·digest, ZIP 내부 **36개 manifest 해시와 전체 37개 파일**, 패키지·확장·Bridge 버전 0.4.3, 릴리스 본문의 세 섹션을 확인했다.
+- **Dependabot:** main 병합 뒤 열린 알림 **0건**(이전 10건은 잠금 파일의 `undici` 8.12.4·`@vitest/mocker` 4.1.12로 해소).
+- **정리:** 병합된 작업 브랜치를 로컬·원격에서 삭제했다. 최종 파일은 `release/v0.4.3-main/`에 보관했다. 개발 패키지, 세 계획의 진행 원장, 임시 스크립트·로그·검증 사본, `%LOCALAPPDATA%\AgentBrowser-dev`의 이번 시험 폴더(`native-tests`·`ps-tests`·`runtime-probe`·`windows-setup-ui`·`installer-tests`·`libtest`·`probe`와 캡처 파일)를 지웠다. 남은 Bridge 프로세스는 사용자의 기존 설치(0.1.6) 하나뿐이다.
+
 ## v0.4.3 후속 작업 — 구현·로컬 검증 (2026-11-15~16)
 
 사용자 요청("계획 1→2→3 순차 진행 후 태그·릴리스·정리")과 후속 지시("작업 중 발견한 이슈는 분석해서 고친다")에 따라 `feat/m4-followups`에서 진행했다. 세 계획(`installer-overlap-and-bridge-adoption`, `browser-action-accuracy`, `bridge-runtime-lifecycle`)의 과제를 모두 마쳤고, 진행 중 발견한 아래 문제도 같은 브랜치에서 고쳤다.
@@ -51,7 +62,7 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 사용자 보고("업데이트·설치·제거를 고르는 부분 등에서 글자가 가려진다")를 실제 v0.4.2 `AgentBrowser-Setup.exe`로 확인했다. 96 DPI 화면에서 `PrintWindow`로 창을 캡처했다.
 
 - **설치 마법사의 입력란 왼쪽이 가려진다.** 시작 화면의 `수행할 작업`은 `설치`가 `치`로, `업데이트`가 `데이트`로 보인다. OpenCode 단계는 `Windows`가 `ndows`로, 실행 파일·작업 폴더 경로의 앞 두세 글자가 보이지 않는다. 값은 정상이고 표시만 가려진다. 원인은 `LabelAt`의 기본 폭 170과 x=154·150에서 시작하는 입력란의 겹침(16px·20px)이다. 2026-10-13(시작 화면)과 2026-10-16(OpenCode 단계)부터 있었고 v0.2.2~v0.4.2에 모두 들어 있다. 고급 설정 대화상자는 겹치지 않는다.
-- **GitHub Dependabot 알림 10건**(높음 4, 중간 6)은 모두 `extension`의 테스트 도구 경로다: `jsdom` 30.1.2 → `undici` 8.11.2(8건, 수정 8.12.2), `vitest` 4.1.11 → `@vitest/mocker`(2건, 수정 4.1.12). `extension/dist`에는 들어 있지 않다.
+- **GitHub Dependabot 알림 10건**(높음 4, 중간 6, 0.4.3 병합 뒤 0건)은 모두 `extension`의 테스트 도구 경로다: `jsdom` 30.1.2 → `undici` 8.11.2(8건, 수정 8.12.2), `vitest` 4.1.11 → `@vitest/mocker`(2건, 수정 4.1.12). `extension/dist`에는 들어 있지 않다.
 - **후속 계획:** 세 계획 모두 0.4.3에서 완료했다(위 절). 계획 파일은 삭제했다.
 - 문서 커밋 `9cd24ea`의 main CI는 Linux·Windows 모두 성공했다.
 

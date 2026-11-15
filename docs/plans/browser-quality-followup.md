@@ -4,6 +4,7 @@
 
 - [x] B10 간헐 timeout을 리뷰 회귀 중 재현했다. 새 탭 snapshot·relay·heartbeat는 정상인 상태에서 첫 iframe 표시 확인이 멈췄다. 최초 renderer/관찰 정지 원인은 미확인이다.
 - [ ] 원인이 확인되면 실패 회귀 검사부터 수정한다. 근거 없이 timeout을 늘리거나 재시도로 숨기지 않는다.
+- [x] 2026-11-16 [PR #45 CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/43739019763) Linux 첫 실행에서 같은 단계(`first-frame-visible`)로 다시 실패했다. 새 탭 snapshot(최상위 0개·두 iframe 각 1개 요소)·명령 10개·heartbeat는 정상이었고, 10초 expect 제한이 아니라 90초 테스트 제한으로 끝나 Playwright 쪽 호출 자체가 멈춘 것으로 보인다. 같은 빌드의 로컬 40회 반복은 모두 통과했다. 실패 작업만 다시 실행했다.
 - [x] 일반 클릭의 두 관찰 구간을 검토했다. 명시 조건 없는 클릭은 지연 이동 계약 때문에 유지하고, `waitFor` 드래그에 남아 있던 500ms 대기를 제거해 전후 50회 측정했다.
 - [x] 직접 영향받는 테스트, 마지막 전체 Linux 회귀 및 수치·제약 기록을 완료하고 과제별 Conventional Commit을 만들었다.
 - [x] B10 실패 시 새 탭 snapshot 오류, 시험 단계, frame 상태, relay timing을 남기고 빠른 heartbeat 실험 옵션을 추가했다. 완료된 50회 게시판 반복은 450 통과/50 제외였으나 원인은 확인하지 못했다.
