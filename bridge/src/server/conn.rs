@@ -249,7 +249,7 @@ async fn handle_pair_request(ws: &mut Ws, role: Role, extension_id: Option<&str>
     match granted {
         Some(true) => {}
         Some(false) => { send_err_and_close(ws, id, ErrorCode::AuthFailed, "The pairing code is incorrect. Check the code shown by AgentBrowser setup.").await; return; }
-        None => { send_err_and_close(ws, id, ErrorCode::AuthRequired, "No pairing window is open. Press [Chrome에 연결] in AgentBrowser setup again.").await; return; }
+        None => { send_err_and_close(ws, id, ErrorCode::AuthRequired, "No pairing window is open. Open the [Chrome 연결] step in AgentBrowser setup again, or press [코드 다시 받기] there.").await; return; }
     }
     let token = state.cfg.lock().await.token.clone();
     let _ = send(ws, &Envelope::ok(id, json!({ "token": token }))).await;
