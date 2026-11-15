@@ -389,7 +389,9 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       const el = resolveRef(String(p.ref));
       assertInteractable(el);
       if (el instanceof HTMLSelectElement) {
-        const want = String(p.option ?? "");
+        // Without this, a call that forgot `option` selected the empty placeholder and reported a match.
+        if (p.option === undefined || p.option === null) throw new ProtocolError("INVALID_PARAMS", "browser_select on a <select> needs option (its value or visible label).");
+        const want = String(p.option);
         const opt = [...el.options].find((o) => o.value === want) ?? [...el.options].find((o) => o.text.trim() === want);
         if (!opt) {
           const labels = [...el.options].slice(0, 20).map(option => option.text.trim());
@@ -494,8 +496,31 @@ async function upload(p: P, signal: AbortSignal) {
   return { executed: true, verified: { files, size: file.size, ...await changes } };
 }
 
+const scrollsVertically = (el: Element) => el.scrollHeight > el.clientHeight + 1 && /auto|scroll|overlay/.test(getComputedStyle(el).overflowY);
+/** What can actually move: the ref (or its nearest scrollable ancestor), the document, or — when the
+ * document itself cannot scroll, as in an app shell — the largest scrollable area on screen. */
+function scrollTarget(p: P): { el: HTMLElement; target: "document" | "ancestor" | "region" } {
+  const doc = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+  if (p.ref) {
+    const start = resolveRef(String(p.ref));
+    if (scrollsVertically(start)) return { el: start as HTMLElement, target: "region" };
+    for (let node = composedParent(start); node && node !== document.body && node !== document.documentElement; node = composedParent(node))
+      if (scrollsVertically(node)) return { el: node as HTMLElement, target: "ancestor" };
+    return { el: doc, target: "document" };
+  }
+  if (doc.scrollHeight > doc.clientHeight + 1) return { el: doc, target: "document" };
+  let best: HTMLElement | null = null, bestArea = 0;
+  for (const el of Array.from(document.querySelectorAll<HTMLElement>("body *")).slice(0, 5000)) {
+    if (!scrollsVertically(el)) continue;
+    const r = el.getBoundingClientRect();
+    const area = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
+    if (area > bestArea) { best = el; bestArea = area; }
+  }
+  return best ? { el: best, target: "region" } : { el: doc, target: "document" };
+}
 function scroll(p: P) {
-  const el = (p.ref ? resolveRef(String(p.ref)) : document.scrollingElement ?? document.documentElement) as HTMLElement;
+  const { el, target } = scrollTarget(p);
+  const before = el.scrollTop;
   const page = el.clientHeight * 0.8;
   switch (p.direction) {
     case "up": el.scrollBy({ top: -page, behavior: 'instant' }); break;
@@ -504,5 +529,6 @@ function scroll(p: P) {
     case "bottom": el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }); break;
     default: throw new ProtocolError("INVALID_PARAMS", "direction must be up, down, top or bottom");
   }
-  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1 } });
+  // `moved:false` with atEnd means the end was already reached, not that more content is hidden.
+  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1, moved: el.scrollTop !== before, target } });
 }

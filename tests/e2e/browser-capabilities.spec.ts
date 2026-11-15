@@ -63,3 +63,24 @@ test('C07 empty tab permission boundary is explicit and never bypassed',async()=
  expect((await world.mcp.call('browser_tabs',{action:'close',operationId:created.operationId})).error).toMatchObject({code:'UNSUPPORTED_PAGE',message:expect.stringContaining('Blank tabs cannot be safely checked')});
  const listed=await world.ok('browser_tabs',{action:'list'});expect(listed.data.tabs.some((tab:any)=>tab.tabId===created.data.tab.tabId)).toBe(true);
 });
+test('C40 scroll moves the area that can scroll and says when nothing moved',async()=>{
+ const page=await world.open('scroll-shell.html'),operationId=await world.attach(page);
+ const top=()=>page.evaluate(()=>document.querySelector('#scroller')!.scrollTop);
+ // The document itself cannot scroll: an app shell keeps its rows in an inner area.
+ const down=await world.ok('browser_scroll',{operationId,direction:'down'});
+ expect(down.verified).toMatchObject({moved:true,target:'region',atEnd:false});
+ expect(await top()).toBeGreaterThan(0);
+ await world.ok('browser_scroll',{operationId,direction:'top'});
+ const snap=await world.ok('browser_snapshot',{operationId});
+ const ref=snap.data.frames[0].elements.find((e:any)=>e.name==='Open order 1').ref;
+ const inner=await world.ok('browser_scroll',{operationId,ref,direction:'down'});
+ expect(inner.verified).toMatchObject({moved:true,target:'ancestor'});
+ expect(await top()).toBeGreaterThan(0);
+ await world.ok('browser_scroll',{operationId,direction:'bottom'});
+ const end=await world.ok('browser_scroll',{operationId,direction:'down'});
+ expect(end.verified).toMatchObject({moved:false,atEnd:true,target:'region'});
+ // A page whose document scrolls keeps scrolling the document.
+ await world.ok('browser_tabs',{action:'release',operationId});
+ const long=await world.open('board.html'),second=await world.attach(long);
+ expect((await world.ok('browser_scroll',{operationId:second,direction:'down'})).verified).toMatchObject({target:'document'});
+});

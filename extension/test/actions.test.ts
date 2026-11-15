@@ -544,3 +544,12 @@ it('a rich editor that drops part of multi-line text is reported as not matching
     expect(result.verified).toMatchObject({ matches: false });
   } finally { delete (document as any).execCommand; }
 });
+
+it("select on a <select> needs option; an omitted one never falls back to the empty option", async () => {
+  document.body.innerHTML = `<label for="c">Country</label><select id="c"><option value="">Choose…</option><option value="kr" selected>Korea</option></select>`;
+  const select = document.getElementById("c") as HTMLSelectElement;
+  await expect(runAction("select", { ref: refOf("Country") })).rejects.toMatchObject({ code: "INVALID_PARAMS", message: expect.stringContaining("option") });
+  expect(select.value).toBe("kr");
+  // An explicitly empty option is still a choice.
+  expect(await runAction("select", { ref: refOf("Country"), option: "" })).toMatchObject({ verified: { value: "" } });
+});

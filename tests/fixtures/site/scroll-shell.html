@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Scroll shell</title>
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { display: flex; flex-direction: column; font: 14px sans-serif; }
+  header { padding: 8px; }
+  #scroller { flex: 1; overflow: auto; }
+  .row { height: 34px; display: flex; align-items: center; gap: 12px; padding: 0 8px; }
+</style>
+<header><h1>Orders</h1></header>
+<div id="scroller"></div>
+<script>
+  const scroller = document.getElementById('scroller');
+  for (let i = 1; i <= 200; i++) {
+    const row = document.createElement('div'); row.className = 'row';
+    row.innerHTML = `<span>Order ${i}</span>` + (i <= 2 ? `<button>Open order ${i}</button>` : '');
+    scroller.append(row);
+  }
+</script>
