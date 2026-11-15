@@ -403,17 +403,24 @@ try {
                 [int](Read-Utf8Text (Join-Path $loneState.DataDir 'serve.pid')).Trim()
             }
             $lonePid=& $unmark
-            Assert (Stop-OwnedBridge (Read-InstallState $loneInstall)) 'An unmarked Bridge of this installation was not stopped'
-            Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'The unmarked Bridge is still running after Stop'
-            $null=& (Join-Path $loneInstall 'start-bridge.ps1'); $lonePid=& $unmark
-            # The next package changes the executable path, as a real update does.
-            $updated=& (Join-Path $package2 'setup.ps1') -InstallDir $loneInstall -NoStartup -Quiet
-            Assert ($updated.Running.running -and [int]$updated.Running.pid -ne $lonePid) 'Update did not replace the previous version unmarked Bridge'
-            Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'The previous version unmarked Bridge survived the update'
-            $lonePid=& $unmark
-            $removed=& (Join-Path $package2 'uninstall.ps1') -InstallDir $loneInstall -RemoveData -Quiet
-            Assert $removed.Removed 'Uninstall was blocked by an unmarked Bridge'
-            Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'Uninstall left the unmarked Bridge running'
+            try {
+                Assert (Stop-OwnedBridge (Read-InstallState $loneInstall)) 'An unmarked Bridge of this installation was not stopped'
+                Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'The unmarked Bridge is still running after Stop'
+                $null=& (Join-Path $loneInstall 'start-bridge.ps1'); $lonePid=& $unmark
+                # The next package changes the executable path, as a real update does.
+                $updated=& (Join-Path $package2 'setup.ps1') -InstallDir $loneInstall -NoStartup -Quiet
+                Assert ($updated.Running.running -and [int]$updated.Running.pid -ne $lonePid) 'Update did not replace the previous version unmarked Bridge'
+                Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'The previous version unmarked Bridge survived the update'
+                $lonePid=& $unmark
+                $removed=& (Join-Path $package2 'uninstall.ps1') -InstallDir $loneInstall -RemoveData -Quiet
+                Assert $removed.Removed 'Uninstall was blocked by an unmarked Bridge'
+                Assert (-not (Get-Process -Id $lonePid -ErrorAction SilentlyContinue)) 'Uninstall left the unmarked Bridge running'
+            } finally {
+                # A failed assertion must not leave the fixture's serve running. Only a process whose image is
+                # inside this test installation is stopped, so a reused PID is never touched.
+                $left=Get-CimInstance Win32_Process -Filter ('ProcessId = ' + [int]$lonePid)
+                if ($left -and (Get-ProcessImage $left.ExecutablePath) -and (Get-ProcessImage $left.ExecutablePath).StartsWith((Get-FullPath $loneInstall) + '\', [StringComparison]::OrdinalIgnoreCase)) { Stop-Process -Id $lonePid -Force }
+            }
         }
         Case 'occupied port rolls back assets, Startup and user config' {
             $listener=New-Object Net.Sockets.TcpListener([Net.IPAddress]::Loopback,0); $listener.Start(); $blockedPort=$listener.LocalEndpoint.Port
