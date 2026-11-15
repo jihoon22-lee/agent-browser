@@ -157,3 +157,17 @@ test("P30 hit target: a DOM click reaches the element under the pointer and repo
   const hover = await world.ok("browser_click", { operationId, ref: refIn(snapshot, "Products"), mode: "hover" });
   expect(hover.verified).toMatchObject({ noEffect: true });
 });
+
+test("P31 a script-opened window is blocked after a DOM click and the click says nothing happened", async () => {
+  const page = await world.open("new-tabs.html"), operationId = await world.attach(page);
+  const before = world.context.pages().length;
+  const clicked = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "스크립트 새 탭") });
+  expect(clicked.data?.openedTabs ?? []).toHaveLength(0);
+  expect(world.context.pages().length).toBe(before);
+  expect(clicked.verified).toMatchObject({ noEffect: true });
+  // A target=_blank link is not a script popup: it still opens and joins the operation.
+  const opened = page.context().waitForEvent("page");
+  const link = await world.ok("browser_click", { operationId, ref: refIn(await fresh(operationId), "새 탭 링크") });
+  await opened;
+  expect(link.data?.openedTabs ?? []).toHaveLength(1);
+});

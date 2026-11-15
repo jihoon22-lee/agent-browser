@@ -16,7 +16,11 @@ async function nextChild(): Promise<Page> {
   return world.context.waitForEvent('page', { predicate: page => page !== world.adminPage });
 }
 test.beforeAll(async ({}, info) => {
-  world = await startWorld(); await info.attach('runtime', {body:JSON.stringify(world.runtime),contentType:'application/json'});
+  // These tests are about tabs a page opens by script. Chrome blocks those after a synthetic click
+  // unless popups are allowed for the site, so this spec runs as such a site.
+  process.env.AB_TEST_ALLOW_POPUPS = '1';
+  try { world = await startWorld(); } finally { delete process.env.AB_TEST_ALLOW_POPUPS; }
+  await info.attach('runtime', {body:JSON.stringify(world.runtime),contentType:'application/json'});
   console.log(`New-tab E2E runtime: ${JSON.stringify(world.runtime)}`);
 });
 test.afterEach(async () => {
