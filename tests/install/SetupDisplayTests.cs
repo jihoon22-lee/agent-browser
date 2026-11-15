@@ -25,6 +25,15 @@ namespace AgentBrowser.Installer {
             if (found[0].Height < needed.Height || found[0].Width < needed.Width)
                 throw new Exception("Clipped button: " + name + " required=" + needed + " actual=" + found[0].Size);
         }
+        // The step bar is one line: every step name must fit inside it at any font size.
+        static void CheckStepBar(Form form) {
+            var found = form.Controls.Find("StepBar", true);
+            if (found.Length != 1) throw new Exception("Step bar missing");
+            foreach (Control step in found[0].Controls)
+                if (step.Right > found[0].ClientSize.Width || step.Bottom > found[0].ClientSize.Height)
+                    throw new Exception("Clipped step: " + step.Text + " bounds=" + step.Bounds + " bar=" + found[0].ClientSize);
+            if (found[0].Controls.Count == 0) throw new Exception("Step bar is empty");
+        }
         [STAThread] public static int Main(string[] args) {
             Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
             Directory.CreateDirectory(args[0]);
@@ -36,11 +45,32 @@ namespace AgentBrowser.Installer {
                         Application.DoEvents();
                         foreach (int page in new [] {0,1,2,3,4,5,6,7}) {
                             typeof(SetupForm).GetMethod("SetPage", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] {page});
-                            Application.DoEvents();Check(form);
+                            Application.DoEvents();Check(form);CheckStepBar(form);
+                            // At the design size every page fits: scrollbars are for small screens only.
+                            if (size == 10F) {
+                                var viewport = (ScrollableControl)form.Controls.Find("PageViewport", true)[0];
+                                if (viewport.VerticalScroll.Visible || viewport.HorizontalScroll.Visible)
+                                    throw new Exception("Page " + page + " scrolls at the default window size: viewport=" + viewport.ClientSize + " needs=" + viewport.AutoScrollMinSize);
+                            }
                             using(var bitmap=new Bitmap(form.Width,form.Height)) {
                                 form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));
                                 bitmap.Save(Path.Combine(args[0], "font-" + size + "-page-" + page + ".png"));
                             }
+                        }
+                        // The final page with both repair actions and an error in the status line: nothing may be clipped.
+                        foreach (string name in new [] {"FixChrome", "FixRuntime"}) form.Controls.Find(name, true)[0].Visible = true;
+                        var checks = (ListBox)form.Controls.Find("DoneChecks", true)[0];
+                        checks.Items.Clear();
+                        checks.Items.Add("✓ Bridge가 실행 중입니다.");
+                        checks.Items.Add("✗ Chrome 확장이 연결되지 않았습니다. [Chrome 연결 단계로]를 누르세요.");
+                        checks.Items.Add("✗ 저장된 실행 환경이 없습니다. [OpenCode 설정으로]를 누르세요.");
+                        typeof(SetupForm).GetMethod("MarkDone", BindingFlags.Instance | BindingFlags.NonPublic).Invoke(form, new object[] {false});
+                        ((Notice)form.Controls.Find("Status", true)[0]).Fail("설치된 파일이 수정되어 그대로 보존했습니다. 파일을 원래대로 되돌리거나 새 폴더에 설치하세요.\r\n(원문: An installed file was modified)");
+                        Application.DoEvents();Check(form);
+                        foreach (string name in new [] {"FixChrome", "FixRuntime", "Recheck"}) CheckButton(form, name);
+                        using(var bitmap=new Bitmap(form.Width,form.Height)) {
+                            form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));
+                            bitmap.Save(Path.Combine(args[0], "font-" + size + "-final-actions.png"));
                         }
                         Exception dialogError=null;
                         using(var timer=new Timer{Interval=100}) {

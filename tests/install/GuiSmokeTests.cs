@@ -64,6 +64,8 @@ internal static class GuiSmokeTests {
         }throw new Exception("GUI did not open.");
     }
     static AutomationElement EnterDialog(string title){var parent=window;Wait(()=>{var match=new PropertyCondition(AutomationElement.NameProperty,title);var dialog=parent.FindFirst(TreeScope.Descendants,match)??AutomationElement.RootElement.FindFirst(TreeScope.Children,new AndCondition(new PropertyCondition(AutomationElement.ProcessIdProperty,process.Id),match));if(dialog==null)return false;window=dialog;return true;},"dialog missing: "+title);return parent;}
+    // [기존 설치의 연결 설정] reads the Bridge state first; an unpaired installation then opens the Chrome extension step.
+    static void ConnectionStep(){Click("ManageConnection");Wait(()=>Get("ExtensionFolder").EndsWith("extension")&&!Find("OpenExtensions").Current.IsOffscreen,"Chrome extension step did not open");}
     static void PairingStep(){Click("Preview");Wait(()=>{try{return Find("PairingToken").Current.IsPassword;}catch{return false;}},"pairing step did not open");}
     static void Close(){if(process==null)return;if(!process.HasExited){Click("Cancel");if(!process.WaitForExit(10000))throw new Exception("Owned test GUI did not close.");}process.Dispose();process=null;}
     static void Screenshot(string path){var r=window.Current.BoundingRectangle;using(var b=new Bitmap((int)r.Width,(int)r.Height))using(var g=Graphics.FromImage(b)){g.CopyFromScreen((int)r.X,(int)r.Y,0,0,b.Size);b.Save(path,System.Drawing.Imaging.ImageFormat.Png);}}
@@ -79,7 +81,7 @@ internal static class GuiSmokeTests {
         string previousVersion="";string expectedVersion=(string)new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(Path.Combine(package,"package-manifest.json")))["Version"];
         if(resume) {string existingState=File.ReadAllText(Path.Combine(install,".agent-browser-install.json"));previousVersion=(string)new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(existingState)["Version"];port=Int32.Parse(System.Text.RegularExpressions.Regex.Match(existingState,"\"Port\"\\s*:\\s*([0-9]+)").Groups[1].Value);}
         if(args.Contains("--upgrade")&&(!resume||previousVersion==expectedVersion))throw new Exception("Cross-version upgrade requires different previous and candidate versions.");
-        string common="--no-discover --package-dir "+Quote(package)+" --install-dir "+Quote(install)+" --startup-dir "+Quote(startup)+" --port "+port;
+        string common="--no-discover --no-browser-launch --package-dir "+Quote(package)+" --install-dir "+Quote(install)+" --startup-dir "+Quote(startup)+" --port "+port;
         string exe=Path.Combine(package,"AgentBrowser-Setup.exe");string original=File.ReadAllText(settings);
         try {
             if(!resume) {
@@ -100,7 +102,7 @@ internal static class GuiSmokeTests {
                 // A freshly installed GUI saves a managed profile on the runtime page
                 // itself via the real Bridge CLI, without starting OpenCode or a model.
                 string executable="/home/jihoon/.opencode/bin/opencode";
-                Launch(exe,common+" --no-runtime-start");Click("ManageConnection");PairingStep();Click("Preview");
+                Launch(exe,common+" --no-runtime-start");ConnectionStep();PairingStep();Click("Preview");
                 Choose("RuntimeKind",1);Set("RuntimeDistribution","Ubuntu");Set("RuntimeExecutable",executable);Set("RuntimeDirectory",Path.GetDirectoryName(settings.Substring(settings.IndexOf("\\tmp\\",StringComparison.Ordinal))).Replace('\\','/'));
                 Click("SaveRuntime");if(args.Contains("--async-profile"))Click("SaveRuntime");
                 Wait(()=>Get("RuntimeResult").Contains("저장했습니다")&&Find("SaveRuntime").Current.IsEnabled,"profile save failed",60000);Screenshot(Path.Combine(root,"managed-profile-saved.png"));
@@ -110,7 +112,7 @@ internal static class GuiSmokeTests {
                 if(saved!=1)throw new Exception("expected exactly one saved profile, found "+saved);
                 if(args.Contains("--async-profile"))Console.WriteLine("PASS actual GUI double save creates one profile");
                 Console.WriteLine("PASS actual GUI managed WSL profile validation/save without runtime/model start");
-                Launch(exe,common);Click("ManageConnection");string pidBefore=File.ReadAllText(Path.Combine(install,"data","serve.pid"));PairingStep();
+                Launch(exe,common);ConnectionStep();string pidBefore=File.ReadAllText(Path.Combine(install,"data","serve.pid"));PairingStep();
                 if(File.ReadAllText(Path.Combine(install,"data","serve.pid"))!=pidBefore)throw new Exception("pairing preparation replaced the running owned Bridge");
                 if(!Find("PairingToken").Current.IsPassword||Get("PairingUrl")!="ws://127.0.0.1:"+port+"/extension")throw new Exception("pairing step must mask token and show current port");
                 Screenshot(Path.Combine(root,"pairing-masked.png"));Click("Back");if(!Get("ExtensionFolder").EndsWith("extension"))throw new Exception("Back did not return to Chrome extension step");
@@ -121,7 +123,7 @@ internal static class GuiSmokeTests {
             File.WriteAllText(Path.Combine(install,"data","gui-preserve.json"),"{\"synthetic\":true}");
             File.WriteAllText(settings,first.Replace("test/model","test/user-edited"),new System.Text.UTF8Encoding(false));
             }
-            Launch(exe,common);Choose("Operation",1);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"update preview failed");Click("Apply");Wait(()=>Get("Status").StartsWith("설치 완료"),"GUI update failed");Screenshot(Path.Combine(root,"update-complete.png"));Close();
+            Launch(exe,common);Choose("Operation",1);Click("Preview");Click("Preview");Wait(()=>Get("Status").Contains("준비가 완료"),"update preview failed");Click("Apply");Wait(()=>Get("Status").StartsWith("업데이트 완료"),"GUI update failed");Screenshot(Path.Combine(root,"update-complete.png"));Close();
             string updated=File.ReadAllText(settings);if(!updated.Contains("test/user-edited")||System.Text.RegularExpressions.Regex.Matches(updated,"\"browser\"").Count!=1)throw new Exception("update duplicated MCP or lost model");
             if(args.Contains("--upgrade")) {var state=new JavaScriptSerializer().Deserialize<System.Collections.Generic.Dictionary<string,object>>(File.ReadAllText(Path.Combine(install,".agent-browser-install.json")));if((string)state["Version"]!=expectedVersion||(string)state["InstallId"]!=File.ReadAllText(Path.Combine(root,"old-identity.txt")))throw new Exception("cross-version update lost version/identity");using(var sha=System.Security.Cryptography.SHA256.Create()){string hash=BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(Path.Combine(install,"data","config.json")))).Replace("-","").ToLowerInvariant();if(hash!=File.ReadAllText(Path.Combine(root,"old-config-sha.txt")))throw new Exception("upgrade changed pairing data");}Console.WriteLine("PASS actual GUI published "+previousVersion+" Bridge installation upgraded to "+expectedVersion+"; identity/pairing preserved");}
             Console.WriteLine("PASS actual GUI repeat/update preserves user settings and single registration");

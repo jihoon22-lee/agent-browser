@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -15,9 +16,17 @@ namespace AgentBrowser.Installer {
   static void Case(string name,Action test){try{test();passed++;Console.WriteLine("PASS "+name);}catch(Exception error){failed++;Console.WriteLine("FAIL "+name+": "+error.GetBaseException().Message);}}
   static T Field<T>(Form form,string name) where T:Control {return (T)form.Controls.Find(name,true).Single();}
   static void Invoke(Form form,string method){SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());var result=typeof(SetupForm).GetMethod(method,BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null) as Task;if(result==null)return;var end=DateTime.UtcNow.AddSeconds(30);while(!result.IsCompleted&&DateTime.UtcNow<end){Application.DoEvents();Thread.Sleep(10);}Assert(result.IsCompleted,"UI operation timed out");result.GetAwaiter().GetResult();}
+  // Application.DoEvents() restores the console context when it returns. A click made after that would
+  // start its async work without the WinForms context and continue on a pool thread, off the UI thread.
+  static void Click(Form form,string name){SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,name).PerformClick();}
   static string FreePort(){var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();string port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port.ToString();listener.Stop();return port;}
+  static System.Collections.Generic.Dictionary<string,object> Json(string text){return NativeIO.Json.Deserialize<System.Collections.Generic.Dictionary<string,object>>(text);}
+  const string ExtensionId="icgmjjcpnaenpfjfoggnaodeaidbnihl";
+  static void Until(Func<bool> done,int seconds,string reason){var end=DateTime.UtcNow.AddSeconds(seconds);while(!done()&&DateTime.UtcNow<end){Application.DoEvents();Thread.Sleep(10);}Assert(done(),reason);}
   static void Uninstall(string root){if(InstallerEngine.State(root)!=null)InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=root}),CancellationToken.None,s=>{});}
   [STAThread] public static int Main(string[] args){
+   // An exception on the UI thread must fail its case, not wait in a dialog nobody will click.
+   Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
    string fixture=args[0],package=args[1];InstallerEngine.PrivateDirectory(fixture);
    Case("installer errors are shown in Korean with the next action",()=>{
     var text=Friendly.Message(new IOException("Installation ownership marker is invalid."));
@@ -38,7 +47,7 @@ namespace AgentBrowser.Installer {
    Case("the pairing page shows a one-time code with a manual token fallback",()=>{
     string root=Path.Combine(fixture,"pairing-page");
     try{using(var form=new SetupForm(new[]{"--no-discover","--no-browser-launch","--no-startup","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
-     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Click(form,"Preview");Invoke(form,"Prepare");Invoke(form,"Apply");
      Assert(Field<Button>(form,"OpenExtensions").Visible,"no way to open the Chrome extensions page");
      // The 1.5 s detection timer must not verify (hash) the whole installation on every tick.
      var detectionStarted=typeof(SetupForm).GetField("detectionBridgeStarted",BindingFlags.Instance|BindingFlags.NonPublic);
@@ -48,7 +57,8 @@ namespace AgentBrowser.Installer {
      Assert(InstallerEngine.OwnedVerifications==verifications,"each detection tick verified every installed file again");
      Invoke(form,"PreparePairing");
      Assert(Field<Button>(form,"ConnectChrome").Visible&&Field<Button>(form,"CopyPairingToken").Visible,"pairing page lacks code or manual connection");
-     Invoke(form,"OpenPairingCode");
+     // Opening the page issues the code; nobody has to press a button first.
+     Until(()=>Field<Label>(form,"PairingCode").Text!="",30,"opening the pairing page did not issue a code");
      var code=Field<Label>(form,"PairingCode").Text;
      Assert(System.Text.RegularExpressions.Regex.IsMatch(code,@"^\d{3} \d{3}$"),"pairing code not shown: "+code);
      form.Close();
@@ -57,9 +67,9 @@ namespace AgentBrowser.Installer {
    Case("saved runtime appears in the Bridge profile list and on the page",()=>{
     string root=Path.Combine(fixture,"inline-runtime"),fake=Path.Combine(fixture,"fake-opencode");Directory.CreateDirectory(fake);
     string cmd=Path.Combine(fake,"opencode.cmd");File.WriteAllText(cmd,"@echo off\r\necho 1.18.29\r\n");
-    try{using(var form=new SetupForm(new[]{"--no-discover","--no-startup","--no-runtime-start","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
-     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
-     Invoke(form,"PreparePairing");Field<Button>(form,"Preview").PerformClick();
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-startup","--no-runtime-start","--no-browser-launch","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Click(form,"Preview");Invoke(form,"Prepare");Invoke(form,"Apply");
+     Invoke(form,"PreparePairing");Click(form,"Preview");
      Assert(Field<Panel>(form,"RuntimePanel").Visible,"runtime page missing");
      Assert(!form.Controls.Find("ManagedProfiles",true).Any(),"the separate profile dialog must be gone");
      Field<ComboBox>(form,"RuntimeKind").SelectedIndex=0;Field<TextBox>(form,"RuntimeExecutable").Text=cmd;Field<TextBox>(form,"RuntimeDirectory").Text=fixture;
@@ -109,23 +119,121 @@ namespace AgentBrowser.Installer {
     string root=Path.Combine(fixture,"pair-wait"),fake=Path.Combine(fixture,"fake-opencode-2");Directory.CreateDirectory(fake);
     string cmd=Path.Combine(fake,"opencode.cmd");File.WriteAllText(cmd,"@echo off\r\necho 1.18.29\r\n");
     try{using(var form=new SetupForm(new[]{"--no-discover","--no-startup","--no-browser-launch","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
-     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Click(form,"Preview");Invoke(form,"Prepare");Invoke(form,"Apply");
      Invoke(form,"PreparePairing");
      var waiting=(Task)typeof(SetupForm).GetMethod("ConnectChrome",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);
      var end=DateTime.UtcNow.AddSeconds(30);while(Field<Label>(form,"PairingCode").Text==""&&DateTime.UtcNow<end){Application.DoEvents();Thread.Sleep(10);}
      Assert(Field<Label>(form,"PairingCode").Text!="","pairing code did not appear");
-     Field<Button>(form,"Preview").PerformClick();Application.DoEvents();
+     Click(form,"Preview");Application.DoEvents();
      end=DateTime.UtcNow.AddSeconds(5);while(!waiting.IsCompleted&&DateTime.UtcNow<end){Application.DoEvents();Thread.Sleep(10);}
      Assert(waiting.IsCompleted,"leaving the pairing page did not stop waiting for Chrome");
      Assert(Field<Panel>(form,"RuntimePanel").Visible,"the wizard did not stay on the runtime page");
      Field<ComboBox>(form,"RuntimeKind").SelectedIndex=0;Field<TextBox>(form,"RuntimeExecutable").Text=cmd;Field<TextBox>(form,"RuntimeDirectory").Text=fixture;
      Invoke(form,"SaveRuntime");
      Assert(Field<TextBox>(form,"RuntimeResult").Text.Contains("Chrome 연결 단계"),"unpaired start must point at the pairing step: "+Field<TextBox>(form,"RuntimeResult").Text);
-     Field<Button>(form,"Preview").PerformClick();Application.DoEvents();
+     Click(form,"Preview");Application.DoEvents();
      Assert(Field<Panel>(form,"DonePanel").Visible&&Field<Button>(form,"Back").Visible,"the final page offers [뒤로] but hides it");
-     Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"RuntimePanel").Visible,"Back from the final page must return to the runtime page");
+     Click(form,"Back");Assert(Field<Panel>(form,"RuntimePanel").Visible,"Back from the final page must return to the runtime page");
+     // The failed check leads straight to its step instead of asking for [뒤로] several times.
+     Click(form,"Preview");
+     Until(()=>Field<Button>(form,"FixChrome").Visible,90,"the final page offers no way to the Chrome step that failed");
+     Assert(Field<Button>(form,"Recheck").Visible,"the final page cannot repeat its checks");
+     Click(form,"FixChrome");
+     Assert(Field<Panel>(form,"ConnectionPanel").Visible&&Field<TextBox>(form,"ExtensionFolder").Text==Path.Combine(root,"extension"),"the Chrome step did not open from the final page");
      form.Close();
     }}finally{Uninstall(root);}
+   });
+   Case("setup resumes at the first step that still needs the user",()=>{
+    var unpaired=Json("{\"pairedExtensionId\":null,\"extensionSeen\":null,\"browsers\":[]}");
+    var paired=Json("{\"pairedExtensionId\":\""+ExtensionId+"\",\"browsers\":[]}");
+    var none=Json("{\"profiles\":[]}");
+    var saved=Json("{\"defaultProfileId\":\"managed-1\",\"profiles\":[{\"id\":\"managed-1\",\"name\":\"OpenCode\",\"kind\":\"windows\"}]}");
+    var stale=Json("{\"defaultProfileId\":\"gone\",\"profiles\":[{\"id\":\"managed-1\",\"name\":\"OpenCode\",\"kind\":\"windows\"}]}");
+    Assert(SetupForm.ResumePage(unpaired,saved,ExtensionId)==4,"an unpaired extension must start at the Chrome extension step");
+    Assert(SetupForm.ResumePage(Json("{\"pairedExtensionId\":\"another\",\"browsers\":[]}"),saved,ExtensionId)==4,"another extension's pairing must not skip the Chrome steps");
+    Assert(SetupForm.ResumePage(paired,none,ExtensionId)==6&&SetupForm.ResumePage(paired,stale,ExtensionId)==6,"a paired extension without a saved default runtime must open the OpenCode step");
+    Assert(SetupForm.ResumePage(paired,saved,ExtensionId)==7,"a paired extension with a default runtime has nothing left to set up");
+   });
+   Case("reopening a finished setup opens the final checks and Back still reaches every step",()=>{
+    string root=Path.Combine(fixture,"resume"),fake=Path.Combine(fixture,"fake-opencode-3");Directory.CreateDirectory(fake);
+    string cmd=Path.Combine(fake,"opencode.cmd");File.WriteAllText(cmd,"@echo off\r\necho 1.18.29\r\n");
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-startup","--no-runtime-start","--no-browser-launch","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Click(form,"Preview");Invoke(form,"Prepare");Invoke(form,"Apply");
+     Assert(Field<Panel>(form,"ConnectionPanel").Visible,"a new installation must start at the Chrome extension step");
+     Invoke(form,"PreparePairing");Click(form,"Preview");
+     Field<ComboBox>(form,"RuntimeKind").SelectedIndex=0;Field<TextBox>(form,"RuntimeExecutable").Text=cmd;Field<TextBox>(form,"RuntimeDirectory").Text=fixture;
+     Invoke(form,"SaveRuntime");form.Close();
+    }
+    using(var again=new SetupForm(new[]{"--no-discover","--no-browser-launch","--install-dir",root})){
+     again.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+     again.BridgeStatus=state=>Json("{\"pairedExtensionId\":\""+ExtensionId+"\",\"extensionSeen\":null,\"browsers\":[{\"clientId\":\"c\",\"connected\":true,\"selected\":true}]}");
+     Invoke(again,"OpenSetup");
+     Assert(Field<Panel>(again,"DonePanel").Visible,"a paired installation with a saved runtime was walked through the setup steps again");
+     Assert(again.Controls.Find("StepBar",true).Single().AccessibleName.Contains("완료"),"the step bar does not show the final step");
+     Until(()=>Field<ListBox>(again,"DoneChecks").Items.Cast<object>().Any(i=>i.ToString().StartsWith("✓")&&i.ToString().Contains("Chrome")),90,"the final checks did not run after skipping");
+     Assert(!Field<Button>(again,"FixChrome").Visible,"a connected Chrome is offered the Chrome step again");
+     Click(again,"Back");Assert(Field<Panel>(again,"RuntimePanel").Visible,"Back from the final page did not open the OpenCode step");
+     Until(()=>Field<ListBox>(again,"SavedProfiles").Items.Cast<object>().Any(i=>i.ToString().Contains("OpenCode (Windows)")),30,"the skipped OpenCode step does not list the saved runtime");
+     Click(again,"Back");Assert(Field<Panel>(again,"PairingPanel").Visible,"Back did not open the pairing step");
+     Assert(Field<TextBox>(again,"PairingToken").Text.Length==64,"the skipped pairing step has no manual connection values");
+     Assert(Field<Label>(again,"PairingCode").Text=="","going back issued a pairing code nobody asked for");
+     again.Close();
+    }}finally{Uninstall(root);}
+   });
+   Case("a detected extension moves on to pairing by itself, except after Back",()=>{
+    string root=Path.Combine(fixture,"auto-advance");
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-startup","--no-browser-launch","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Click(form,"Preview");Invoke(form,"Prepare");Invoke(form,"Apply");
+     Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Chrome step is missing");
+     Invoke(form,"DetectExtension");Assert(Field<Panel>(form,"ConnectionPanel").Visible,"the wizard left the Chrome step before the extension was added");
+     form.BridgeStatus=state=>Json("{\"pairedExtensionId\":null,\"extensionSeen\":\""+ExtensionId+"\",\"browsers\":[]}");
+     Invoke(form,"DetectExtension");
+     Assert(Field<Panel>(form,"PairingPanel").Visible,"the detected extension still waits for [다음]");
+     Until(()=>Field<Label>(form,"PairingCode").Text!="",30,"the pairing code was not issued after the automatic step");
+     Click(form,"Back");Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Back did not return to the Chrome step");
+     Invoke(form,"DetectExtension");
+     Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Back to the Chrome step was undone by the automatic step");
+     Assert(Field<Label>(form,"ExtensionDetected").Text.Contains("✓")&&Field<Label>(form,"ExtensionDetected").Text.Contains("[다음]"),"the detected extension is not reported after Back: "+Field<Label>(form,"ExtensionDetected").Text);
+     form.Close();
+    }}finally{Uninstall(root);}
+   });
+   Case("the step bar shows where the user is",()=>{
+    Assert(SetupForm.StepOf(0,false)==0&&SetupForm.StepOf(3,false)==0&&SetupForm.StepOf(4,false)==1&&SetupForm.StepOf(5,false)==2&&SetupForm.StepOf(6,false)==3&&SetupForm.StepOf(7,false)==4,"install pages map to the wrong steps");
+    Assert(SetupForm.StepOf(2,true)==0&&SetupForm.StepOf(7,true)==1,"removal pages map to the wrong steps");
+    using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"step-bar")})){
+     var bar=form.Controls.Find("StepBar",true).Single();
+     Assert(bar.AccessibleName=="5단계 중 1단계: 설치","first step: "+bar.AccessibleName);
+     typeof(SetupForm).GetMethod("SetPage",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,new object[]{5});
+     Assert(bar.AccessibleName=="5단계 중 3단계: Chrome 연결","pairing step: "+bar.AccessibleName);
+     var labels=bar.Controls.OfType<Label>().Select(l=>l.Text).ToList();
+     Assert(labels.Contains("✓ 설치")&&labels.Contains("✓ 확장 추가")&&labels.Contains("3 Chrome 연결")&&labels.Contains("4 OpenCode")&&labels.Contains("5 완료"),"step labels: "+String.Join(" | ",labels));
+     typeof(SetupForm).GetMethod("SetPage",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,new object[]{0});
+     Field<ComboBox>(form,"Operation").SelectedIndex=2;
+     Assert(bar.AccessibleName=="2단계 중 1단계: 제거","removal steps: "+bar.AccessibleName);
+    }
+   });
+   Case("errors are marked apart from routine messages",()=>{
+    using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"notice")})){
+     var status=Field<TextBox>(form,"Status");int routine=status.ForeColor.ToArgb();
+     Invoke(form,"OpenSetup");
+     Assert(status.Text.StartsWith("⚠ ")&&status.Text.Contains("설치되지"),"the error is not marked: "+status.Text);
+     Assert(status.ForeColor.ToArgb()!=routine&&status.BackColor.ToArgb()!=Color.White.ToArgb(),"an error looks like a routine message");
+     Invoke(form,"LoadState");
+     Assert(status.Text==""&&status.ForeColor.ToArgb()==routine&&status.BackColor.ToArgb()==Color.White.ToArgb(),"the error mark stayed after the message was cleared");
+     status.Text="✓ 완료";Assert(status.ForeColor.ToArgb()!=routine&&status.BackColor.ToArgb()==Color.White.ToArgb(),"a success line is not marked");
+     Assert(Field<TextBox>(form,"PairingState") is Notice&&Field<TextBox>(form,"RuntimeResult") is Notice,"step results cannot mark errors");
+    }
+   });
+   Case("the final checks say which step to reopen",()=>{
+    var doctor=Json("{\"checks\":[{\"id\":\"opencode\",\"status\":\"ok\",\"profileId\":\"p\"}]}");
+    var connected=DoneChecks.Report(Json("{\"pairedExtensionId\":\""+ExtensionId+"\",\"browsers\":[{\"clientId\":\"c\",\"connected\":true}]}"),doctor,ExtensionId);
+    Assert(connected.ChromeConnected&&!connected.NeedsChrome&&!connected.NeedsRuntime&&!connected.Lines.Any(l=>l.StartsWith("✗")),"a finished setup reports work to do");
+    var closed=DoneChecks.Report(Json("{\"pairedExtensionId\":\""+ExtensionId+"\",\"browsers\":[]}"),doctor,ExtensionId);
+    Assert(!closed.ChromeConnected&&closed.NeedsChrome&&!closed.Lines.Any(l=>l.StartsWith("✗"))&&closed.Lines.Any(l=>l.Contains("Chrome을 열면")),"a paired Chrome that is not open is reported as a failure: "+String.Join(" | ",closed.Lines));
+    var unpaired=DoneChecks.Report(Json("{\"pairedExtensionId\":null,\"browsers\":[]}"),Json("{\"checks\":[]}"),ExtensionId);
+    Assert(unpaired.NeedsChrome&&unpaired.NeedsRuntime&&unpaired.Lines.Count(l=>l.StartsWith("✗"))==2,"an unfinished setup does not name both steps: "+String.Join(" | ",unpaired.Lines));
+    var broken=DoneChecks.Report(Json("{\"pairedExtensionId\":\""+ExtensionId+"\",\"browsers\":[{\"clientId\":\"c\",\"connected\":true}]}"),Json("{\"checks\":[{\"id\":\"opencode\",\"status\":\"error\",\"message\":\"missing\"}]}"),ExtensionId);
+    Assert(broken.NeedsRuntime&&!broken.NeedsChrome,"a failing runtime does not point at the OpenCode step");
    });
    Case("choosing another OpenCode follows its home unless the user chose a work folder",()=>{
     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"candidate-home")})){
@@ -158,21 +266,21 @@ namespace AgentBrowser.Installer {
     Assert(SetupForm.DiscoveryMessage(2,new[]{"Debian is stopped"}).Contains("Debian is stopped"),"notices hidden behind candidates");
     Assert(SetupForm.DiscoveryMessage(0,new string[0]).Contains("직접 입력"),"no candidates explains the manual path");
    });
-   Case("new folder guides installation before maintenance",()=>{using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"new")})){form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Application.DoEvents();Assert(!form.Controls.Find("StartInstalledBridge",true).Any(c=>c.Visible),"Bridge start is exposed before installation");Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is exposed before installation");Assert(!Field<Button>(form,"ManageConnection").Enabled,"maintenance is enabled before installation");Assert(Field<Button>(form,"Preview").Text.Contains("다음"),"primary action has no next-step label");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"advanced package path is exposed by default");Assert(Field<Panel>(form,"WelcomePanel").Visible,"welcome page is missing");Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"SettingsPanel").Visible,"Next did not open location page");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"location page exposes advanced fields");Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"WelcomePanel").Visible,"Back did not return to welcome");form.Close();}});
+   Case("new folder guides installation before maintenance",()=>{using(var form=new SetupForm(new[]{"--no-discover","--install-dir",Path.Combine(fixture,"new")})){form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Application.DoEvents();Assert(!form.Controls.Find("StartInstalledBridge",true).Any(c=>c.Visible),"Bridge start is exposed before installation");Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is exposed before installation");Assert(!Field<Button>(form,"ManageConnection").Enabled,"maintenance is enabled before installation");Assert(Field<Button>(form,"Preview").Text.Contains("다음"),"primary action has no next-step label");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"advanced package path is exposed by default");Assert(Field<Panel>(form,"WelcomePanel").Visible,"welcome page is missing");Click(form,"Preview");Assert(Field<Panel>(form,"SettingsPanel").Visible,"Next did not open location page");Assert(!Field<TextBox>(form,"PackageFolder").Visible,"location page exposes advanced fields");Click(form,"Back");Assert(Field<Panel>(form,"WelcomePanel").Visible,"Back did not return to welcome");form.Close();}});
    Case("changing installed folder clears stale maintenance state",()=>{string root=Path.Combine(fixture,"existing");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,s=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Assert(Field<Button>(form,"ManageConnection").Enabled,"installed Bridge action disabled");Field<TextBox>(form,"InstallFolder").Text=Path.Combine(fixture,"different");Assert(!Field<Button>(form,"ManageConnection").Enabled,"folder edit retained old installation controls");Invoke(form,"LoadState");Assert(Field<ComboBox>(form,"Operation").SelectedIndex==0,"new folder retained Update mode");}}finally{Uninstall(root);}});
    Case("Chrome pairing and runtime setup occupy separate sequential pages",()=>{
     string root=Path.Combine(fixture,"complete");var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);listener.Start();string port=((System.Net.IPEndPoint)listener.LocalEndpoint).Port.ToString();listener.Stop();
-    try{using(var form=new SetupForm(new[]{"--no-discover","--no-start","--no-startup","--install-dir",root,"--package-dir",package,"--port",port})){
-     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Field<Button>(form,"Preview").PerformClick();Invoke(form,"Prepare");Invoke(form,"Apply");
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-start","--no-startup","--no-browser-launch","--install-dir",root,"--package-dir",package,"--port",port})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Click(form,"Preview");Invoke(form,"Prepare");Invoke(form,"Apply");
      Assert(InstallerEngine.State(root)!=null,"installation did not finish");Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Chrome step is missing");
      Assert(!Field<Button>(form,"SaveRuntime").Visible,"runtime setup is shown on the Chrome step");
      Assert(!form.Controls.Find("Pairing",true).Any(c=>c.Visible),"pairing is shown on the Chrome step");
      Assert(Field<TextBox>(form,"ExtensionFolder").Text==Path.Combine(root,"extension"),"extension folder is missing");
      Invoke(form,"PreparePairing");Assert(Field<Panel>(form,"PairingPanel").Visible&&!Field<Panel>(form,"ConnectionPanel").Visible,"pairing is not its own step");
      Assert(Field<TextBox>(form,"PairingToken").UseSystemPasswordChar,"pairing token is not masked");Assert(!Field<Button>(form,"SaveRuntime").Visible,"runtime setup is shown on the pairing step");
-     Field<Button>(form,"Back").PerformClick();Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Back did not return to Chrome step");Invoke(form,"PreparePairing");
-     Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"RuntimePanel").Visible&&Field<Button>(form,"SaveRuntime").Visible&&!Field<Panel>(form,"PairingPanel").Visible,"runtime setup is not its own step");
-     Field<Button>(form,"Preview").PerformClick();Assert(Field<Panel>(form,"DonePanel").Visible&&!Field<Button>(form,"SaveRuntime").Visible&&Field<Button>(form,"Cancel").Text=="마침","completion still contains setup actions");form.Close();
+     Click(form,"Back");Assert(Field<Panel>(form,"ConnectionPanel").Visible,"Back did not return to Chrome step");Invoke(form,"PreparePairing");
+     Click(form,"Preview");Assert(Field<Panel>(form,"RuntimePanel").Visible&&Field<Button>(form,"SaveRuntime").Visible&&!Field<Panel>(form,"PairingPanel").Visible,"runtime setup is not its own step");
+     Click(form,"Preview");Assert(Field<Panel>(form,"DonePanel").Visible&&!Field<Button>(form,"SaveRuntime").Visible&&Field<Button>(form,"Cancel").Text=="마침","completion still contains setup actions");form.Close();
     }}finally{Uninstall(root);}
    });
    Case("uninstall preview names each registered settings file",()=>{
@@ -183,8 +291,8 @@ namespace AgentBrowser.Installer {
    });
    Case("connection guide rejects modified extension files",()=>{
     string root=Path.Combine(fixture,"changed-extension");byte[] bytes=null;string file=null;
-    try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,m=>{});file=Path.Combine(root,"extension","manifest.json");bytes=File.ReadAllBytes(file);File.AppendAllText(file," ");
-     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Invoke(form,"ShowConnection");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0,"modified extension was exposed for Chrome loading");Assert(Field<TextBox>(form,"Status").Text.Contains("modified"),"ownership failure was not shown");}
+    try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false,Port=Int32.Parse(FreePort())}),CancellationToken.None,m=>{});file=Path.Combine(root,"extension","manifest.json");bytes=File.ReadAllBytes(file);File.AppendAllText(file," ");
+     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Invoke(form,"OpenSetup");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0,"modified extension was exposed for Chrome loading");Assert(Field<TextBox>(form,"Status").Text.Contains("modified"),"ownership failure was not shown");}
     }finally{if(bytes!=null)File.WriteAllBytes(file,bytes);Uninstall(root);}
    });
    Case("confirmation includes advanced destinations and version",()=>{
@@ -192,7 +300,7 @@ namespace AgentBrowser.Installer {
     using(var form=new SetupForm(new[]{"--no-discover","--no-start","--install-dir",root,"--package-dir",package,"--startup-dir",startup,"--port","49527"})){Invoke(form,"Prepare");string text=Field<TextBox>(form,"ChangePreview").Text;Assert(text.Contains("49527")&&text.Contains(Path.Combine(startup,"AgentBrowser.lnk"))&&text.Contains(InstallerEngine.Read<PackageManifest>(Path.Combine(package,"package-manifest.json")).Version),"advanced confirmation omitted version, port or Startup destination");}
    });
    Case("remove cannot enter connection-only wizard",()=>{
-    string root=Path.Combine(fixture,"remove-connection");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,m=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Field<ComboBox>(form,"Operation").SelectedIndex=2;Assert(!Field<Button>(form,"ManageConnection").Enabled,"connection-only action is available during removal");Invoke(form,"ShowConnection");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0,"removal entered connection-only flow");Assert(InstallerEngine.State(root)!=null,"test removed the installation");}}finally{Uninstall(root);}
+    string root=Path.Combine(fixture,"remove-connection");try{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false,Port=Int32.Parse(FreePort())}),CancellationToken.None,m=>{});using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Field<ComboBox>(form,"Operation").SelectedIndex=2;Assert(!Field<Button>(form,"ManageConnection").Enabled,"connection-only action is available during removal");Invoke(form,"OpenSetup");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0,"removal entered connection-only flow");Assert(InstallerEngine.State(root)!=null,"test removed the installation");}}finally{Uninstall(root);}
    });
    Case("installation discovery retains malformed-marker diagnostics",()=>{
     string root=Path.Combine(fixture,"broken-marker"),key=@"Software\AgentBrowser\Installations\"+Guid.NewGuid().ToString("N");Directory.CreateDirectory(root);File.WriteAllText(Path.Combine(root,InstallerEngine.StateName),"not JSON");
@@ -215,10 +323,18 @@ namespace AgentBrowser.Installer {
     try{using(var form=new SetupForm(new[]{"--no-discover","--no-start","--no-startup","--install-dir",root,"--package-dir",package})){
      form.Show();Invoke(form,"Prepare");SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
      var task=(Task)typeof(SetupForm).GetMethod("Apply",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);
+     // Progress reports and the step after the installation reach the window through separate queues.
+     // A message queued on the context before the first report makes that step run ahead of the reports
+     // still waiting, so every report arrives late: none of them may replace the result.
+     SynchronizationContext.Current.Post(delegate{},null);
      var timeout=DateTime.UtcNow.AddSeconds(20);while(!File.Exists(Path.Combine(root,InstallerEngine.StateName))&&DateTime.UtcNow<timeout)Thread.Sleep(10);
      Assert(File.Exists(Path.Combine(root,InstallerEngine.StateName)),"installation did not commit");original=File.ReadAllBytes(file);File.AppendAllText(file," ");
+     // Registering the installation is the engine's last action; give its completion a moment to be queued.
+     string record=@"Software\AgentBrowser\Installations\"+InstallerEngine.State(root).InstallId;
+     timeout=DateTime.UtcNow.AddSeconds(10);while(DateTime.UtcNow<timeout){using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(record))if(key!=null)break;Thread.Sleep(10);}
+     Thread.Sleep(200);
      timeout=DateTime.UtcNow.AddSeconds(20);while(!task.IsCompleted&&DateTime.UtcNow<timeout){Application.DoEvents();Thread.Sleep(10);}Assert(task.IsCompleted,"post-install UI did not finish");task.GetAwaiter().GetResult();
-     Assert(Field<TextBox>(form,"Status").Text.Contains("modified"),"post-install ownership failure was overwritten by success");
+     Assert(Field<TextBox>(form,"Status").Text.Contains("modified"),"post-install ownership failure was overwritten by success: "+Field<TextBox>(form,"Status").Text+" | page title: "+Field<Label>(form,"PageTitle").Text);
      Assert(!Field<ProgressBar>(form,"InstallProgress").Visible&&Field<Panel>(form,"WelcomePanel").Visible&&Field<Button>(form,"ManageConnection").Enabled,"verification failure left an unrecoverable progress page");form.Close();
     }}finally{if(original!=null)File.WriteAllBytes(file,original);Uninstall(root);}
    });
@@ -229,10 +345,10 @@ namespace AgentBrowser.Installer {
     }finally{Uninstall(Path.Combine(root,"GUI 설치 & space"));if(File.Exists(zip))File.Delete(zip);if(Directory.Exists(root))Directory.Delete(root,true);}
    });
    foreach(string relative in new[]{"extension/manifest.json","extension/background.js"})Case("missing extension file requires repair: "+relative,()=>{
-    string root=Path.Combine(fixture,"missing-extension-"+Path.GetFileNameWithoutExtension(relative));var options=new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false};
+    string root=Path.Combine(fixture,"missing-extension-"+Path.GetFileNameWithoutExtension(relative));var options=new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false,Port=Int32.Parse(FreePort())};
     try{InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,m=>{});string file=NativeIO.SafePath(root,relative);Assert(File.Exists(file),"fixture extension file is absent");File.Delete(file);
-     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Invoke(form,"ShowConnection");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0&&Field<TextBox>(form,"Status").Text.Contains("업데이트"),"missing extension was offered for Chrome loading");
-      options.Operation="update";InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,m=>{});Invoke(form,"ShowConnection");Assert(File.Exists(file)&&Field<TextBox>(form,"ExtensionFolder").Text==Path.Combine(root,"extension"),"update did not repair the extension guide");
+     using(var form=new SetupForm(new[]{"--no-discover","--install-dir",root})){Invoke(form,"OpenSetup");Assert(Field<TextBox>(form,"ExtensionFolder").Text.Length==0&&Field<TextBox>(form,"Status").Text.Contains("업데이트"),"missing extension was offered for Chrome loading");
+      options.Operation="update";InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,m=>{});Invoke(form,"OpenSetup");Assert(File.Exists(file)&&Field<TextBox>(form,"ExtensionFolder").Text==Path.Combine(root,"extension"),"update did not repair the extension guide");
      }
     }finally{Uninstall(root);}
    });
