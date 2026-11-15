@@ -660,6 +660,17 @@ namespace AgentBrowser.Installer {
         // Installed maintenance runs outside its owned files so Windows can remove
         // or replace them. Reuse only an exact-hash private per-user maintenance executable.
         internal static void PrepareMaintenanceCache(string cache) {InstallerEngine.Root(cache);InstallerEngine.PrivateDirectory(cache);InstallerEngine.Root(cache);}
+        /// Every update leaves one maintenance copy behind under its own hash. Only the current one is needed;
+        /// a copy that is still running cannot be deleted and is left for the next run.
+        internal static void PruneMaintenanceCache(string cacheRoot,string keepHash) {
+            try {
+                foreach(string directory in Directory.GetDirectories(cacheRoot)) {
+                    string name=Path.GetFileName(directory);
+                    if(!System.Text.RegularExpressions.Regex.IsMatch(name,"^[a-fA-F0-9]{64}$")||InstallerEngine.Same(name,keepHash))continue;
+                    try{Directory.Delete(directory,true);}catch(Exception){/* In use or not ours to remove: keep it. */}
+                }
+            } catch(Exception) {/* Housekeeping never blocks maintenance. */}
+        }
         static bool RelaunchInstalled(string[] args) {
             string exe=Application.ExecutablePath;var directory=Directory.GetParent(exe);if(directory==null)return false;
             // Legacy scripts put the GUI at the install root; updates retain old
@@ -671,6 +682,7 @@ namespace AgentBrowser.Installer {
             string cache=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"AgentBrowser-Setup",hash);PrepareMaintenanceCache(cache);string copy=Path.Combine(cache,"AgentBrowser-Setup.exe");
             if(File.Exists(copy)){NativeIO.PlainPath(copy);if(NativeIO.FileHash(copy)!=hash)throw new IOException("Maintenance setup ownership is invalid.");}
             else {File.Copy(exe,copy);if(NativeIO.FileHash(copy)!=hash)throw new IOException("Maintenance setup verification failed.");}
+            PruneMaintenanceCache(Path.GetDirectoryName(cache),hash);
             var forwarded=new List<string>(args);if(!args.Contains("--install-dir"))forwarded.AddRange(new[]{"--install-dir",root});
             using(var child=Process.Start(new ProcessStartInfo(copy,String.Join(" ",forwarded.Select(NativeIO.Quote))){UseShellExecute=false})) {if(child==null)throw new IOException("Could not open installed maintenance.");}
             return true;

@@ -267,6 +267,18 @@ internal static class InstallerReviewTests {
     Assert(!BridgeControl.Stop(second)&&Alive(pid),"another installation's serve was stopped");
    }finally{if(InstallerEngine.State(other.InstallDir)!=null){File.Delete(Path.Combine(InstallerEngine.State(other.InstallDir).DataDir,"serve.pid"));Apply(new SetupOptions{Operation="uninstall",InstallDir=other.InstallDir});}}
   });
+  Case("old-maintenance-copies-are-pruned",o=>{
+   string cache=Path.Combine(o.InstallDir,"setup-cache"),keep=new string('a',64),old1=new string('b',64),busy=new string('c',64);
+   foreach(string name in new[]{keep,old1,busy,"not-a-hash"}){Directory.CreateDirectory(Path.Combine(cache,name));File.WriteAllText(Path.Combine(cache,name,"AgentBrowser-Setup.exe"),name);}
+   using(var held=new FileStream(Path.Combine(cache,busy,"AgentBrowser-Setup.exe"),FileMode.Open,FileAccess.Read,FileShare.None)){
+    Program.PruneMaintenanceCache(cache,keep);
+    Assert(Directory.Exists(Path.Combine(cache,keep)),"the current maintenance copy was removed");
+    Assert(!Directory.Exists(Path.Combine(cache,old1)),"an old maintenance copy was kept");
+    Assert(File.Exists(Path.Combine(cache,busy,"AgentBrowser-Setup.exe")),"a copy that is in use was removed");
+    Assert(Directory.Exists(Path.Combine(cache,"not-a-hash")),"a folder that is not a maintenance copy was removed");
+   }
+   Program.PruneMaintenanceCache(Path.Combine(cache,"missing"),keep);
+  });
 
   UpdateRuntimeCases();
   RunReleaseBoundaries(destination,source);
