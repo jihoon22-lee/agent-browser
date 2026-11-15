@@ -26,6 +26,7 @@ internal static class GuiSmokeTests {
     [DllImport("kernel32.dll")]static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")]static extern bool AttachThreadInput(uint a,uint b,bool attach);
     [DllImport("user32.dll")]static extern bool ShowWindow(IntPtr h,int command);
+    [DllImport("user32.dll")]static extern bool IsIconic(IntPtr h);
     [StructLayout(LayoutKind.Sequential)]struct Point {public int X,Y;public Point(int x,int y){X=x;Y=y;}}
     [DllImport("user32.dll")]static extern IntPtr WindowFromPoint(Point point);
     [DllImport("user32.dll",SetLastError=true)]static extern bool SetWindowPos(IntPtr h,IntPtr after,int x,int y,int width,int height,uint flags);
@@ -143,7 +144,11 @@ internal static class GuiSmokeTests {
             string final=File.ReadAllText(settings);if(final.Contains("\"browser\"")||!final.Contains("test/user-edited")||!final.Contains("// preserve")||(original.Contains("\"other\"")?!final.Contains("\"other\""):final.Contains("\"mcp\"")))throw new Exception("uninstall did not preserve the original MCP state");
             Console.WriteLine("PASS actual GUI uninstall target confirmation, no-mcp restoration and data preservation");
             Console.WriteLine("GUI_ROOT "+root);return 0;
-        }catch(Exception error){Console.Error.WriteLine(error);if(process!=null&&!process.HasExited) {Console.Error.WriteLine("GUI_PID "+process.Id);try{Screenshot(Path.Combine(root,"failure.png"));}catch{}}return 1;}
+        }catch(Exception error){Console.Error.WriteLine(error);if(process!=null&&!process.HasExited) {Console.Error.WriteLine("GUI_PID "+process.Id);
+            // Another window or the user can minimize the wizard on this shared desktop; its controls then read as
+            // missing. Say so, and restore it so the picture shows the page it was on.
+            if(IsIconic(process.MainWindowHandle)){Console.Error.WriteLine("GUI_MINIMIZED the wizard was minimized when the step failed");ShowWindow(process.MainWindowHandle,9);Thread.Sleep(500);}
+            try{Screenshot(Path.Combine(root,"failure.png"));}catch{}}return 1;}
     }
 }
 
