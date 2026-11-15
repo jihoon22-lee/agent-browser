@@ -63,6 +63,22 @@ test('C07 empty tab permission boundary is explicit and never bypassed',async()=
  expect((await world.mcp.call('browser_tabs',{action:'close',operationId:created.operationId})).error).toMatchObject({code:'UNSUPPORTED_PAGE',message:expect.stringContaining('Blank tabs cannot be safely checked')});
  const listed=await world.ok('browser_tabs',{action:'list'});expect(listed.data.tabs.some((tab:any)=>tab.tabId===created.data.tab.tabId)).toBe(true);
 });
+test('C41 scroll moves the page when the body is its scroller, not a carousel with a sliver of overflow',async()=>{
+ const page=await world.open('scroll-body.html'),operationId=await world.attach(page);
+ const bodyTop=()=>page.evaluate(()=>document.body.scrollTop);
+ expect(await page.evaluate(()=>{const c=document.querySelector('#carousel')!;return c.scrollHeight>c.clientHeight&&c.scrollWidth>c.clientWidth;})).toBe(true);
+ const down=await world.ok('browser_scroll',{operationId,direction:'down'});
+ expect(down.verified).toMatchObject({moved:true,target:'document'});
+ expect(await bodyTop()).toBeGreaterThan(0);
+ await world.ok('browser_scroll',{operationId,direction:'top'});
+ expect(await bodyTop()).toBe(0);
+ const snap=await world.ok('browser_snapshot',{operationId});
+ const ref=snap.data.frames[0].elements.find((e:any)=>e.name==='Slide 1').ref;
+ const fromSlide=await world.ok('browser_scroll',{operationId,ref,direction:'down'});
+ expect(fromSlide.verified).toMatchObject({moved:true,target:'document'});
+ expect(await bodyTop()).toBeGreaterThan(0);
+ expect(await page.evaluate(()=>document.querySelector('#carousel')!.scrollTop)).toBe(0);
+});
 test('C40 scroll moves the area that can scroll and says when nothing moved',async()=>{
  const page=await world.open('scroll-shell.html'),operationId=await world.attach(page);
  const top=()=>page.evaluate(()=>document.querySelector('#scroller')!.scrollTop);

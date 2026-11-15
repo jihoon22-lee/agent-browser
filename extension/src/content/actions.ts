@@ -540,7 +540,17 @@ async function upload(p: P, signal: AbortSignal) {
   return { executed: true, verified: { files, size: file.size, ...await changes } };
 }
 
-const scrollsVertically = (el: Element) => el.scrollHeight > el.clientHeight + 1 && /auto|scroll|overlay/.test(getComputedStyle(el).overflowY);
+/** Whether the element scrolls up and down. A horizontal carousel computes overflow-y:auto too and often
+ * overflows by a few pixels (a hidden scroll bar); that is not a vertical scroller. The body scrolls
+ * on its own only when the root's overflow is not visible; otherwise its overflow is the viewport's. */
+const scrollsVertically = (el: Element) => {
+  const extra = el.scrollHeight - el.clientHeight;
+  if (extra <= 1) return false;
+  const style = getComputedStyle(el);
+  if (!/auto|scroll|overlay/.test(style.overflowY)) return false;
+  if (el === document.body && getComputedStyle(document.documentElement).overflowY === "visible") return false;
+  return !(/auto|scroll|overlay/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1 && extra < 32);
+};
 /** What can actually move: the ref (or its nearest scrollable ancestor), the document, or — when the
  * document itself cannot scroll, as in an app shell — the largest scrollable area on screen. */
 function scrollTarget(p: P): { el: HTMLElement; target: "document" | "ancestor" | "region" } {
@@ -550,9 +560,10 @@ function scrollTarget(p: P): { el: HTMLElement; target: "document" | "ancestor" 
     if (scrollsVertically(start)) return { el: start as HTMLElement, target: "region" };
     for (let node = composedParent(start); node && node !== document.body && node !== document.documentElement; node = composedParent(node))
       if (scrollsVertically(node)) return { el: node as HTMLElement, target: "ancestor" };
-    return { el: doc, target: "document" };
+    return { el: pageScroller(doc), target: "document" };
   }
   if (doc.scrollHeight > doc.clientHeight + 1) return { el: doc, target: "document" };
+  if (pageScroller(doc) !== doc) return { el: document.body, target: "document" };
   let best: HTMLElement | null = null, bestArea = 0;
   for (const el of Array.from(document.querySelectorAll<HTMLElement>("body *")).slice(0, 5000)) {
     if (!scrollsVertically(el)) continue;
@@ -562,6 +573,10 @@ function scrollTarget(p: P): { el: HTMLElement; target: "document" | "ancestor" 
   }
   return best ? { el: best, target: "region" } : { el: doc, target: "document" };
 }
+/** The element that scrolls the page: the document, or the body when the root is overflow:hidden and
+ * the body holds the scroll bar. */
+const pageScroller = (doc: HTMLElement): HTMLElement =>
+  doc.scrollHeight > doc.clientHeight + 1 || !document.body || !scrollsVertically(document.body) ? doc : document.body;
 function scroll(p: P) {
   const { el, target } = scrollTarget(p);
   const before = el.scrollTop;
