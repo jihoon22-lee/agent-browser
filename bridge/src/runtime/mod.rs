@@ -816,7 +816,7 @@ async fn wsl_distribution_unregistered(profile: &Profile) -> bool {
 /// with WSL_UTF8=1 in the environment it prints UTF-8. Reading UTF-8 as UTF-16 made every name
 /// unknown, so a live distribution looked unregistered. Same rule as the installer's DecodeOutput.
 fn decode_listing(bytes: &[u8]) -> Option<String> {
-    let utf16 = |bytes: &[u8]| (bytes.len() % 2 == 0).then(|| String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)).collect::<Vec<_>>()).ok()).flatten();
+    let utf16 = |bytes: &[u8]| bytes.len().is_multiple_of(2).then(|| String::from_utf16(&bytes.as_chunks::<2>().0.iter().map(|pair| u16::from_le_bytes(*pair)).collect::<Vec<_>>()).ok()).flatten();
     let text = if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) { utf16(rest)? }
         // UTF-8 text has no NUL byte; UTF-16LE has one in every ASCII character, line ends included.
         else if bytes.contains(&0) { utf16(bytes)? }
