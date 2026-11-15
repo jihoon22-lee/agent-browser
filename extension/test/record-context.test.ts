@@ -44,3 +44,44 @@ it('retains a shadow record while fields and declared live feedback change', asy
   root.querySelector('[role=status]')!.textContent = 'Updated';
   expect(resolveRef(ref)).toBe(root.querySelector('button'));
 });
+
+// A snapshot shows `context` for repeated controls. Whatever markup produced that context, the ref
+// must stay bound to it: a recycled row must not receive the action meant for the row that was shown.
+const rows = (inner: (id: string) => string) => ['A-1001', 'B-2002'].map(id => `<div class="row"><span class="id">${id}</span>${inner(id)}</div>`).join('');
+it.each([
+  ['p', (): string => '<p><button>Cancel</button></p>'],
+  ['span', (): string => '<span><button>Cancel</button></span>'],
+  ['long', (): string => `<div>${'long description '.repeat(25)}</div><button>Cancel</button>`],
+  ['deep', (): string => '<div><div><div><div><button>Cancel</button></div></div></div></div>'],
+] as const)('rejects a recycled row whose button is wrapped as %s', async (_kind, inner) => {
+  document.body.innerHTML = rows(inner);
+  const shown = snapshot().elements.find(element => element.name === 'Cancel')!;
+  expect(shown.context).toContain('A-1001');
+  const clicked = vi.fn(); document.querySelector('button')!.addEventListener('click', clicked);
+  document.querySelector('.id')!.textContent = 'C-3003';
+  const result = await runAction('click', { ref: shown.ref }).catch(error => ({ error }));
+  expect(clicked).not.toHaveBeenCalled();
+  expect(result).toMatchObject({ error: { code: 'STALE_ELEMENT' } });
+});
+
+it('keeps a field usable when only its own helper text changes', async () => {
+  document.body.innerHTML = '<div class="field"><label for="email">Email</label><div><input id="email"></div><p class="helper"></p></div>';
+  const ref = snapshot().elements.find(element => element.name === 'Email')!.ref;
+  await runAction('fill', { ref, text: 'kim' });
+  document.querySelector('.helper')!.textContent = 'Enter a full address';
+  const second = await runAction('fill', { ref, text: 'kim@example.com' }).catch(error => ({ error }));
+  expect(second).toMatchObject({ executed: true });
+  expect((document.querySelector('#email') as HTMLInputElement).value).toBe('kim@example.com');
+});
+
+it.each([
+  ['table row', '<table><tbody>' + ['A-1001', 'B-2002'].map(id => `<tr><td class="id">${id}</td><td><input aria-label="Quantity"></td></tr>`).join('') + '</tbody></table>'],
+  ['div row', rows(() => '<input aria-label="Quantity">')],
+])('still rejects a field in a recycled %s', async (_kind, markup) => {
+  document.body.innerHTML = markup;
+  const ref = snapshot().elements.find(element => element.name === 'Quantity')!.ref;
+  document.querySelector('.id')!.textContent = 'C-3003';
+  const result = await runAction('fill', { ref, text: '3' }).catch(error => ({ error }));
+  expect(result).toMatchObject({ error: { code: 'STALE_ELEMENT' } });
+  expect((document.querySelector('input') as HTMLInputElement).value).toBe('');
+});

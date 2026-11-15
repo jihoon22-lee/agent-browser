@@ -10,7 +10,7 @@ type RefScope = 'record' | 'target' | 'dispatch';
 const formOf = (el: Element) => el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement || el instanceof HTMLButtonElement ? el.form : null;
 
 export class RefTable {
-  private els: { node: WeakRef<Element>; parent: WeakRef<Node> | null; form: WeakRef<HTMLFormElement> | null; identity: string; ownIdentity: string; record: WeakRef<Element> | null; recordIdentity: string; keyedIdentity: string; recordKey: string }[] = [];
+  private els: { node: WeakRef<Element>; parent: WeakRef<Node> | null; form: WeakRef<HTMLFormElement> | null; identity: string; ownIdentity: string; record: WeakRef<Element> | null; recordIdentity: string; keyedIdentity: string; recordKey: string; shown?: boolean }[] = [];
   // Identity, not array position, protects recycled list rows. Editable values are
   // deliberately excluded so fill/select do not invalidate their own controls.
   private identity(el: Element, names?: NameCache, own = false): string {
@@ -34,6 +34,14 @@ export class RefTable {
     const observation = root ? recordObservation(root,records) : undefined;
     this.els.push({ node: new WeakRef(el), parent: el.parentNode ? new WeakRef(el.parentNode) : null, form: form ? new WeakRef(form) : null, identity: this.identity(el,names), ownIdentity: this.identity(el,names,true), record: root ? new WeakRef(root) : null, recordIdentity: observation?.identity ?? '', keyedIdentity: observation?.keyedIdentity ?? '', recordKey: recordKey(root) });
     return `s${snapshotToken(this.snapshotId)}f${this.frameId}e${this.els.length}`;
+  }
+  /** Binds a ref that has no record of its own to the ancestor its snapshot `context` was read from.
+   * Very large ancestors are left unbound: their text changes for reasons unrelated to the control. */
+  bindContext(ref: string, root: Element, records = new Map<Element,RecordObservation>()) {
+    const parsed = RefTable.parse(ref), entry = parsed ? this.els[parsed.index - 1] : undefined;
+    if (!entry || entry.record || (root.textContent ?? '').length > 2000) return;
+    const observation = recordObservation(root, records);
+    Object.assign(entry, { record: new WeakRef(root), recordIdentity: observation.identity, keyedIdentity: observation.keyedIdentity, recordKey: recordKey(root), shown: true });
   }
   get(index: number, allowChanged = false, scope: RefScope = 'record'): Element | undefined {
     const entry = this.els[index - 1], el = entry?.node.deref();
@@ -67,6 +75,12 @@ export class RefTable {
     }
     // The first resolve gives a keyed record the same allowance: a countdown or price in a row
     // with an authored key must not leave every ref in it permanently stale.
+    if (entry!.shown) {
+      // Bound to the ancestor the snapshot's context came from, which no markup rule finds again.
+      let ancestor: Element | null = el;
+      while (ancestor && ancestor !== original) ancestor = composedParent(ancestor);
+      return ancestor === original && sameRecord(original!) ? el : undefined;
+    }
     const root = recordRoot(el);
     return root === original && (!root || sameRecord(root)) ? el : undefined;
   }

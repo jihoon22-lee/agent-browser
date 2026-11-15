@@ -65,16 +65,16 @@ export function stateOf(el: Element): string[] {
 
 /** The largest ancestor that holds this control but none of its look-alikes: the row or card,
  * whatever markup the site uses. */
-function contextOf(el: Element, lookAlikes: Element[]): string {
+function contextRoot(el: Element, lookAlikes: Element[]): Element | null {
   let best: Element | null = null;
   for (let parent = el.parentElement; parent && parent !== el.ownerDocument.body; parent = parent.parentElement) {
     const ancestor = parent;
     if (lookAlikes.some(other => other !== el && ancestor.contains(other))) break;
     best = ancestor;
   }
-  if (!best) return "";
-  return clipText(((best as HTMLElement).innerText ?? best.textContent ?? "").replace(/\s+/g, " ").trim(), 80);
+  return best;
 }
+const contextText = (root: Element) => clipText(((root as HTMLElement).innerText ?? root.textContent ?? "").replace(/\s+/g, " ").trim(), 80);
 
 const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
 /** The row or item a control belongs to, so "A-1002" finds the button in that row. Each row is read
@@ -216,7 +216,15 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   elements.forEach((e, i) => groups.set(key(e), [...(groups.get(key(e)) ?? []), nodes[i]!]));
   elements.forEach((e, i) => {
     const group = groups.get(key(e))!;
-    const context = recordText(nodes[i]!,records) || (group.length > 1 ? contextOf(nodes[i]!, group) : '');
+    let context = recordText(nodes[i]!,records);
+    if (!context && group.length > 1) {
+      const root = contextRoot(nodes[i]!, group);
+      if (root) {
+        context = contextText(root);
+        // What the model was shown is what the ref means: bind it to the ancestor this context came from.
+        if (context && context !== e.name) table.bindContext(e.ref, root, records);
+      }
+    }
     if (context && context !== e.name) e.context = clip(context, 80);
   });
   if (query) { result.query = query; if (!result.elementsTotal && !fullText) limits.add("query-no-match"); }

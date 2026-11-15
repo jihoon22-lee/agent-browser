@@ -1,6 +1,7 @@
 import { composedParent } from './dom';
 import { clipText } from './text';
 
+const FIELD = 'input,textarea,select,[contenteditable]:not([contenteditable=false])';
 const RECORD = 'tr,li,article,[role=row],[role=listitem],[data-id],[data-key]';
 const OMIT = 'script,style,template,noscript,input,textarea,select,button,[contenteditable],'
   + '[role=button],[role=textbox],[role=combobox],[role=checkbox],[role=radio],[role=switch],'
@@ -17,6 +18,9 @@ export function recordRoot(el: Element): Element | null {
   let depth = 0;
   for (let node = composedParent(el); node && node !== el.ownerDocument.body && depth++ < 3; node = composedParent(node)) {
     if (!node.matches('div,section')) break;
+    // A label with its one field and helper text is that field, not a record: its helper text is
+    // feedback to the field's own input and must not make the field stale.
+    if (el.matches(FIELD) && node.querySelector('label') && node.querySelectorAll(FIELD).length === 1) return null;
     const text = node.shadowRoot ? observeRecord(node).text : node.textContent ?? '';
     if (text.length > 300) break;
     if (text.trim() && text.trim() !== (el.textContent ?? '').trim()) return node;
