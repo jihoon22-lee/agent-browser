@@ -388,6 +388,22 @@ try {
                 $unrelated.Refresh(); Assert (-not $unrelated.HasExited) 'Uninstall terminated an unrelated process'
             } finally { if (-not $unrelated.HasExited) { $unrelated.Kill() }; $unrelated.Dispose() }
         }
+        Case 'this installation''s executable serving another data folder is never adopted' {
+            $tokenInstall=Join-Path $testRoot 'token check install'; $activeInstalls.Add($tokenInstall); $tokenPort=Free-Port
+            $null=& (Join-Path $package1 'setup.ps1') -InstallDir $tokenInstall -NoStartup -NoStart -Port $tokenPort -Quiet
+            $tokenState=Read-InstallState $tokenInstall
+            $otherHome=Join-Path $testRoot ('other home ' + [guid]::NewGuid().ToString('N')); $null=New-Item -ItemType Directory -Path $otherHome
+            $info=New-Object Diagnostics.ProcessStartInfo($tokenState.CurrentExe, ('serve --port ' + $tokenPort)); $info.UseShellExecute=$false; $info.CreateNoWindow=$true; $info.EnvironmentVariables['AGENT_BROWSER_HOME']=$otherHome
+            $foreign=[Diagnostics.Process]::Start($info)
+            try {
+                for($i=0;$i -lt 50 -and -not (Test-Path -LiteralPath (Join-Path $otherHome 'serve.pid'));$i++){Start-Sleep -Milliseconds 100}; Start-Sleep -Milliseconds 300
+                Assert (-not $foreign.HasExited) 'The fixture serve did not start'
+                Write-Utf8Atomic (Join-Path $tokenState.DataDir 'serve.pid') ([string]$foreign.Id)
+                Assert ($null -eq (Get-AdoptedBridgeProcess $tokenState)) 'A serve of another data folder was adopted'
+                Assert (-not (Stop-OwnedBridge $tokenState) -and -not $foreign.HasExited) 'A serve of another data folder was stopped'
+                Assert (-not (Test-Path -LiteralPath (Join-Path $tokenState.DataDir '.installer-bridge-process.json'))) 'A marker was written for a serve of another data folder'
+            } finally { if (-not $foreign.HasExited) { $foreign.Kill(); $null=$foreign.WaitForExit(5000) }; Remove-Item -LiteralPath (Join-Path $tokenState.DataDir 'serve.pid') -Force -ErrorAction SilentlyContinue }
+        }
         Case 'a Bridge restarted without a marker is adopted for update and uninstall' {
             $loneInstall=Join-Path $testRoot 'unmarked bridge install'; $activeInstalls.Add($loneInstall); $lonePort=Free-Port
             $null=& (Join-Path $package1 'setup.ps1') -InstallDir $loneInstall -NoStartup -Port $lonePort -Quiet

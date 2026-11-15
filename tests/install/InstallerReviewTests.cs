@@ -292,6 +292,22 @@ internal static class InstallerReviewTests {
    Assert(!File.Exists(MarkerPath(state)),"a marker was written for a foreign process");
    Assert(!BridgeControl.Stop(state),"Stop claimed to stop a foreign process");
   });
+  // This installation's own executable serving another data folder passes every check but the token one:
+  // only a serve that accepts this data folder's token is adopted.
+  Case("own-executable-serving-another-data-folder-is-never-adopted",o=>{
+   o.Port=FreePort();Apply(o);var state=InstallerEngine.State(o.InstallDir);string otherHome=Path.Combine(root,"other-home-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(otherHome);
+   var info=new ProcessStartInfo(state.CurrentExe,"serve --port "+state.Port){UseShellExecute=false,CreateNoWindow=true};info.EnvironmentVariables["AGENT_BROWSER_HOME"]=otherHome;
+   using(var foreign=Process.Start(info)){
+    try{
+     for(int i=0;i<50&&!File.Exists(Path.Combine(otherHome,"serve.pid"));i++)Thread.Sleep(100);Thread.Sleep(300);
+     Assert(!foreign.HasExited,"the fixture serve did not start");
+     File.WriteAllText(Path.Combine(state.DataDir,"serve.pid"),foreign.Id.ToString());
+     Assert(BridgeControl.AdoptRunning(state)==null,"a serve of another data folder was adopted");
+     Assert(!BridgeControl.Stop(state)&&!foreign.HasExited,"a serve of another data folder was stopped");
+     Assert(!File.Exists(MarkerPath(state)),"a marker was written for a serve of another data folder");
+    }finally{if(!foreign.HasExited){foreign.Kill();foreign.WaitForExit(5000);}File.Delete(Path.Combine(state.DataDir,"serve.pid"));}
+   }
+  });
   Case("serve-of-another-data-folder-is-never-adopted",o=>{
    o.Port=FreePort();o.Start=true;Apply(o);var first=InstallerEngine.State(o.InstallDir);int pid=ServePid(first);
    var other=new SetupOptions{PackageDir=package,InstallDir=o.InstallDir+"-other",Startup=false,Start=false,Port=o.Port};
