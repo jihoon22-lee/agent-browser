@@ -115,3 +115,15 @@ test("T31 a person's click right after the agent's trusted click is still the pe
   expect(result.data.openedTabWarnings).toContainEqual({ tabId: childId, reason: "user-intervention" });
   const status = await world.admin("status.get"); expect(status.operation.currentTab).toBe(original); expect(status.operation.tabs).not.toContain(childId);
 });
+
+test("T32 a trusted Enter on a button that opens a window by script adds that window to the operation", async () => {
+  await setTrusted(true);
+  const { page, operationId, ref } = await attach("new-tabs.html");
+  const original = await world.tabId(page);
+  const popup = world.context.waitForEvent("page", { predicate: p => p !== world.adminPage && p !== page });
+  const pressed = await world.ok("browser_press", { operationId, ref: ref("스크립트 새 탭"), key: "Enter" });
+  const child = await popup; await child.waitForURL("**/new-tab-child.html?kind=script");
+  const childId = await world.tabId(child);
+  expect(pressed.data.openedTabWarnings ?? []).toEqual([]);
+  expect(pressed.data.openedTabs).toEqual(expect.arrayContaining([expect.objectContaining({ tabId: childId, sourceTabId: original })]));
+});

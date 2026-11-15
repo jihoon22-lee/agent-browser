@@ -18,10 +18,13 @@ const absorbed = (type: string) => { const left = pending?.[type] ?? 0; if (left
 /** The trusted events one agent input produces in the page (see background/trusted-input.ts). */
 export function agentEvents(action: string, payload: { mode?: unknown; modifiers?: unknown; text?: unknown }): Counts {
   const pointer = (presses: number, extra: Counts): Counts => ({ pointerdown: presses, mousedown: presses, pointerup: presses, mouseup: presses, ...extra });
-  if (action === 'click') return payload.mode === 'hover' ? {} : payload.mode === 'right' ? pointer(1, { contextmenu: 1, auxclick: 1 }) : payload.mode === 'double' ? pointer(2, { click: 2 }) : pointer(1, { click: 1 });
+  // A click on a <label> also clicks its control: one click more than presses. A person's click is
+  // still counted, because it brings pointer events beyond these.
+  if (action === 'click') return payload.mode === 'hover' ? {} : payload.mode === 'right' ? pointer(1, { contextmenu: 1, auxclick: 1 }) : payload.mode === 'double' ? pointer(2, { click: 3 }) : pointer(1, { click: 2 });
   // A drag may end with a click on the element both ends share.
   if (action === 'drag') return pointer(1, { click: 1 });
-  if (action === 'key') { const keys = 1 + (Array.isArray(payload.modifiers) ? payload.modifiers.length : 0); return { keydown: keys, keyup: keys }; }
+  // Enter or Space on a focused link or button makes Chrome fire a trusted click.
+  if (action === 'key') { const keys = 1 + (Array.isArray(payload.modifiers) ? payload.modifiers.length : 0); return { keydown: keys, keyup: keys, click: 1 }; }
   // Text is inserted without key events; only clearing presses Backspace.
   if (action === 'text') return payload.text ? {} : { keydown: 1, keyup: 1 };
   return {};

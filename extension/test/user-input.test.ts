@@ -38,3 +38,19 @@ it('does not count the trusted input the agent itself is delivering, only input 
  fire('pointerdown');
  expect(state(),'physical input after the delivery still counts').toEqual({...initial,epoch:3});
 });
+
+it('allows the click a key press or a label produces, but not a click with its own pointer events',async()=>{
+ const {asAgentInput,agentEvents}=await import('../src/content/user-input');
+ const listeners=new Map<string,EventListener>();
+ const state=observeUserInput({addEventListener:(name:string,listener:EventListener)=>listeners.set(name,listener)} as unknown as EventTarget);
+ const fire=(...names:string[])=>{for(const name of names)listeners.get(name)!({isTrusted:true,type:name} as Event);};
+ const initial=state();
+ // Enter on a focused link or button makes Chrome fire a trusted click.
+ await asAgentInput(agentEvents('key',{}),async()=>{fire('keydown','click','keyup');});
+ // Clicking a <label> clicks its control too.
+ await asAgentInput(agentEvents('click',{}),async()=>{fire('pointerdown','mousedown','pointerup','mouseup','click','click');});
+ expect(state()).toEqual(initial);
+ // A person's click still brings its own pointer events.
+ await asAgentInput(agentEvents('key',{}),async()=>{fire('keydown','keyup','pointerdown','mousedown','pointerup','mouseup','click');});
+ expect(state().epoch).toBeGreaterThan(initial.epoch);
+});
