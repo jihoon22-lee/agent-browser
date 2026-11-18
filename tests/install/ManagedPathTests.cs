@@ -44,8 +44,46 @@ namespace AgentBrowser.Installer {
                 Assert(File.Exists(Path.Combine(root, "data", "preserved.txt")), "Uninstall removed retained data");
                 Assert(Acl(parent) == parentAcl && Acl(root) == rootAcl, "Uninstall changed managed folder ACLs");
                 Console.WriteLine("PASS managed path install/start/reinstall/remove preserves directory ACLs and user data");
+
+                // An organization folder can let the user create, change and delete files but not change permissions.
+                // Modify has no "change permissions" right, and the OWNER RIGHTS entry takes away the owner's implicit one.
+                string locked = Path.Combine(parent, "no-permission-change"), lockedRoot = Path.Combine(locked, "install");
+                Directory.CreateDirectory(locked);
+                var policy = new DirectorySecurity();
+                policy.SetAccessRuleProtection(true, false);
+                foreach (var sid in new [] { WindowsIdentity.GetCurrent().User, new SecurityIdentifier("S-1-3-4") })
+                    policy.AddAccessRule(new FileSystemAccessRule(sid, FileSystemRights.Modify, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+                Directory.SetAccessControl(locked, policy);
+                string probe = Path.Combine(locked, "probe"); Directory.CreateDirectory(probe);
+                bool refused = false;
+                try { var changed = Directory.GetAccessControl(probe); changed.SetAccessRuleProtection(true, true); Directory.SetAccessControl(probe, changed); }
+                catch (UnauthorizedAccessException) { refused = true; }
+                Directory.Delete(probe);
+                Assert(refused, "Fixture error: this folder still lets the user change permissions");
+                listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+                listener.Start(); port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
+                string lockedAcl = Acl(locked);
+                // Replacing an existing file must not depend on copying its permissions.
+                string replaced = Path.Combine(locked, "replaced.json");
+                NativeIO.WriteAtomic(replaced, NativeIO.Utf8.GetBytes("first"));
+                NativeIO.WriteAtomic(replaced, NativeIO.Utf8.GetBytes("second"));
+                Assert(File.ReadAllText(replaced) == "second", "An existing file was not replaced in a folder that refuses permission changes");
+                File.Delete(replaced);
+                options = new SetupOptions { PackageDir = args[1], InstallDir = lockedRoot, Start = true, Startup = false, Port = port };
+                InstallerEngine.Apply(InstallerEngine.Prepare(options), CancellationToken.None, s => {});
+                var lockedState = InstallerEngine.State(lockedRoot);
+                Assert(lockedState != null && Running(lockedState), "Bridge did not start in a folder that refuses permission changes");
+                File.WriteAllText(Path.Combine(lockedRoot, "data", "preserved.txt"), "synthetic user data");
+                InstallerEngine.Apply(InstallerEngine.Prepare(options), CancellationToken.None, s => {});
+                Assert(InstallerEngine.State(lockedRoot).InstallId == lockedState.InstallId, "Reinstall changed identity in a folder that refuses permission changes");
+                InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions { Operation = "uninstall", InstallDir = lockedRoot }), CancellationToken.None, s => {});
+                Assert(InstallerEngine.State(lockedRoot) == null, "Uninstall left the installation record in a folder that refuses permission changes");
+                Assert(File.ReadAllText(Path.Combine(lockedRoot, "data", "preserved.txt")) == "synthetic user data", "Uninstall removed retained data");
+                Assert(Directory.GetDirectories(lockedRoot, ".transaction-*").Length == 0, "A transaction folder was left behind");
+                Assert(Acl(locked) == lockedAcl, "Installer changed the folder's ACL");
+                Console.WriteLine("PASS install/start/reinstall/remove in a folder that refuses permission changes");
                 return 0;
-            } catch (Exception error) { Console.Error.WriteLine(error.Message); return 1; }
+            } catch (Exception error) { Console.Error.WriteLine(error.GetType().Name + ": " + error.Message); Console.Error.WriteLine(error.StackTrace); return 1; }
         }
     }
 }
