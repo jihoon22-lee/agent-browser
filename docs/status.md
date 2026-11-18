@@ -2,6 +2,15 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.4.4 — 권한 변경이 금지된 폴더 설치 (2026-11-19)
+
+사용자 보고: 사내 보안 폴더에 설치 마법사로 설치되지 않는다. `fix/install-restricted-folder`에서 수정했다.
+
+- **원인(실제 Windows에서 재현):** 파일 생성·수정·삭제는 되지만 권한 변경은 거부하는 폴더(사용자·OWNER RIGHTS에 Modify만 준 폴더)에서, 마법사는 설치 중 임시 폴더(`.transaction-*`)와 `data` 폴더의 권한을 좁히다가 `권한이 없는 작업을 수행하려고 했습니다`로 멈췄다. `setup.ps1`은 `data` 폴더에서 같은 오류로, 그다음 `File.Replace`(권한 복사에 WRITE_DAC 필요)에서 `경로에 대한 액세스가 거부되었습니다`로 멈췄다. 기존 `ManagedPathTests`는 테스트 계정이 권한을 바꿀 수 있는 폴더만 다뤄서 잡지 못했다.
+- **수정:** 권한 좁히기를 시도하되 Windows가 거부하면 그 위치의 권한을 그대로 두고 진행한다(GUI `PrivateDirectory`, 스크립트 `Set-PrivateDirectoryAccess`). 스크립트의 파일 교체는 권한 복사 실패를 무시한다. 이런 폴더에서는 페어링 등 데이터 폴더를 누가 읽을 수 있는지가 그 폴더의 정책에 따른다.
+- **실행한 검증(로컬 실제 Windows):** 세 검사 모두 수정 전 실패를 먼저 확인했다. `ManagedPathTests` **3개 통과**(권한 변경 금지 폴더의 설치·시작·재설치·제거·기존 파일 교체 포함), `SetupFlowTests` **32 통과/0 실패**(같은 폴더에 마법사로 설치하는 새 케이스 포함), `install.tests.ps1` **21개 통과**(같은 폴더의 `setup.ps1` 설치·재설치·제거 포함), `NativeEngineTests` REVIEW **66/0**·전체 **75**. 패키지는 이 checkout으로 만든 개발 ZIP과 게시된 v0.4.3 ZIP을 썼다.
+- **확인하지 못한 것:** 사용자의 실제 사내 폴더. 그 폴더가 다른 이유(네트워크 드라이브, 연결 폴더, 보안 프로그램의 파일 차단)로 막는 경우는 이 수정 범위가 아니다. 설치 화면은 바뀌지 않아 화면 검증은 하지 않았다.
+
 ## v0.4.3 Windows preview — 게시 완료 (2026-11-16)
 
 [v0.4.3](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.3)(prerelease)를 **2026-11-15 18:09:34 UTC / 2026-11-16 03:09:34 KST**에 게시했다. 주석 태그는 [PR #45](https://github.com/jihoon22-lee/agent-browser/pull/45)의 main 병합 커밋 **`4916d740722a7526bb79f8400d8926f4e891c076`**를 가리킨다.

@@ -79,6 +79,30 @@ try {
         Assert ([IO.Directory]::GetAccessControl($parent).GetSecurityDescriptorSddlForm('Access,Owner,Group') -eq $parentAcl) 'Managed path lifecycle changed parent directory policy'
         if(-not $SkipProcessTests){Assert (-not (Get-Process -Id ([int]$managed.Running.pid) -ErrorAction SilentlyContinue)) 'Managed path uninstall left its Bridge running'}
     }
+    Case 'installs where the folder policy refuses permission changes' {
+        # Modify has no "change permissions" right, and the OWNER RIGHTS entry takes away the owner's implicit one.
+        $locked=Join-Path $testRoot 'no-permission-change'
+        $null=New-Item -ItemType Directory $locked
+        $policy=New-Object Security.AccessControl.DirectorySecurity
+        $policy.SetAccessRuleProtection($true,$false)
+        foreach($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,(New-Object Security.Principal.SecurityIdentifier('S-1-3-4')))){
+            $policy.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'Modify','ContainerInherit,ObjectInherit','None','Allow')))
+        }
+        [IO.Directory]::SetAccessControl($locked,$policy)
+        $probe=Join-Path $locked 'probe';$null=New-Item -ItemType Directory $probe;$refused=$false
+        try{$changed=[IO.Directory]::GetAccessControl($probe);$changed.SetAccessRuleProtection($true,$true);[IO.Directory]::SetAccessControl($probe,$changed)}catch{$refused=$true}
+        Remove-Item -LiteralPath $probe
+        Assert $refused 'Fixture error: this folder still lets the user change permissions'
+        $lockedAcl=[IO.Directory]::GetAccessControl($locked).GetSecurityDescriptorSddlForm('Access,Owner,Group')
+        $lockedInstall=Join-Path $locked 'install';$activeInstalls.Add($lockedInstall);$lockedPort=Free-Port
+        $first=& (Join-Path $package1 'setup.ps1') -InstallDir $lockedInstall -Port $lockedPort -NoStartup -NoStart:$SkipProcessTests -Quiet
+        $lockedId=(Read-InstallState $lockedInstall).InstallId
+        if(-not $SkipProcessTests){Assert $first.Running.running 'Bridge did not start in a folder that refuses permission changes'}
+        $null=& (Join-Path $package1 'setup.ps1') -InstallDir $lockedInstall -Port $lockedPort -NoStartup -NoStart:$SkipProcessTests -Quiet
+        Assert ((Read-InstallState $lockedInstall).InstallId -eq $lockedId) 'Reinstall changed identity in a folder that refuses permission changes'
+        $null=& (Join-Path $package1 'uninstall.ps1') -InstallDir $lockedInstall -RemoveData -Quiet
+        Assert ([IO.Directory]::GetAccessControl($locked).GetSecurityDescriptorSddlForm('Access,Owner,Group') -eq $lockedAcl) 'Installer changed the folder policy'
+    }
     Case 'update removes unshipped owned files and keeps the current and previous executables' {
         $pruneA=New-TestPackage 'prune a' '0.5.0' @('extension\assets\index-old.js')
         $pruneB=New-TestPackage 'prune b' '0.6.0' @('extension\assets\index-new.js')

@@ -9,7 +9,7 @@ Windows x64용 Chrome 확장과 Browser Bridge를 설치합니다. 관리자 권
 [공식 Releases](https://github.com/jihoon22-lee/agent-browser/releases)에서 같은 버전의 ZIP과 `SHA256SUMS`를 각각 받습니다. **압축을 풀거나 실행하기 전에** ZIP의 SHA256을 별도로 받은 체크섬의 해당 ZIP 행 또는 GitHub 자산의 SHA256 digest와 비교합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.4.3-windows-x64.zip
+Get-FileHash -Algorithm SHA256 -LiteralPath .\agent-browser-0.4.4-windows-x64.zip
 ```
 
 다르면 공식 릴리스에서 다시 받습니다. 현재 exe에는 Authenticode 서명이 없습니다. ZIP 안의 `package-manifest.json`은 파일 누락·변경 확인용이며 다운로드 출처를 증명하지 않습니다.
@@ -21,7 +21,7 @@ ZIP 전체를 **설치 대상과 다른 임시 폴더**에 풀고 `AgentBrowser-
 3. 로그인 자동 시작 여부를 확인하고 **다음 → 설치**를 누릅니다. 기본값은 자동 시작입니다.
 4. **Chrome 확장 추가 → Chrome 연결 → OpenCode 설정 → 설정 완료**를 순서대로 진행합니다. 창 위쪽의 단계 표시에서 지금 위치와 끝난 단계(✓)를 볼 수 있습니다. 오류는 창 아래에 ⚠와 붉은 바탕으로 표시됩니다.
 
-조직이 관리하는 전용 로컬 폴더도 사용할 수 있습니다. GUI와 PowerShell 모두 설치 폴더·상위 폴더의 소유자나 ACL을 별도로 심사해 차단하지 않으며, Windows가 허용한 권한으로 설치합니다. 기존 폴더·부모의 권한과 소유자는 바꾸지 않고 새 설치 폴더는 해당 위치의 정책을 상속합니다. 페어링 등 제품 데이터 폴더는 별도로 보호합니다. 기존 파일의 사용자 수정 사항을 보존하며 네트워크 경로와 reparse point는 지원하지 않습니다.
+조직이 관리하는 전용 로컬 폴더도 사용할 수 있습니다. GUI와 PowerShell 모두 설치 폴더·상위 폴더의 소유자나 ACL을 별도로 심사해 차단하지 않으며, Windows가 허용한 권한으로 설치합니다. 기존 폴더·부모의 권한과 소유자는 바꾸지 않고 새 설치 폴더는 해당 위치의 정책을 상속합니다. 페어링 등 제품 데이터 폴더는 현재 사용자만 접근하도록 좁히되, 폴더 정책이 권한 변경을 허용하지 않으면 그 위치의 권한을 그대로 두고 설치를 계속합니다. 기존 파일의 사용자 수정 사항을 보존하며 네트워크 경로와 reparse point는 지원하지 않습니다.
 
 포트·로그인 자동 시작·일반 CLI MCP 등록은 설치 위치 화면의 **고급 설정**에 있습니다. 확장 관리 서버만 사용한다면 기본값으로 진행해도 됩니다. 기존의 다른 설치가 만든 Startup 바로가기는 덮어쓰지 않습니다. 자동 시작을 해제하면 설치 폴더의 `start-bridge.cmd` 또는 마법사의 **기존 설치의 연결 설정**으로 직접 시작할 수 있습니다.
 

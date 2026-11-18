@@ -96,7 +96,9 @@ mv -fT -- "$temporary" "$target"
             $actual = if (Test-Path -LiteralPath $Path) { Get-FileSha256 $Path } else { 'missing' }
             if ($actual -ne $ExpectedSha256) { throw 'Settings changed while preparing; no settings were overwritten.' }
             if ($actual -eq 'missing') { [IO.File]::Move($temp, $Path) }
-            else { [IO.File]::Replace($temp, $Path, [NullString]::Value) }
+            # Keep the file's own permissions where Windows lets them be copied. A folder that refuses
+            # permission changes still gets the new content, under the permissions it inherits.
+            else { [IO.File]::Replace($temp, $Path, [NullString]::Value, $true) }
         }
     } finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
 }
@@ -340,8 +342,18 @@ function Undo-FileTransaction($Transaction) {
         throw ('Rollback needs inspection: ' + ($conflicts -join '; '))
     }
 }
+# Narrows a product folder to this user, SYSTEM and Administrators where Windows allows it.
+# An organization folder may refuse permission changes while files can still be created and
+# replaced there: the folder then keeps the permissions it inherits and installation goes on.
+# Only real file work decides whether a location is usable.
 function Set-PrivateDirectoryAccess([string]$Path) {
     Assert-PlainPath $Path
+    try { Set-PrivateDirectoryAcl $Path }
+    catch [UnauthorizedAccessException] { }
+    # A volume without permissions (FAT, exFAT) has nothing to narrow.
+    catch [IO.IOException] { } catch [InvalidOperationException] { } catch [NotSupportedException] { }
+}
+function Set-PrivateDirectoryAcl([string]$Path) {
     $acl = [IO.Directory]::GetAccessControl($Path, [Security.AccessControl.AccessControlSections]::Access)
     $acl.SetAccessRuleProtection($true, $false)
     foreach ($existingRule in @($acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier]))) { $null = $acl.RemoveAccessRuleAll($existingRule) }

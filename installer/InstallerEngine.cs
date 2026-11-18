@@ -249,9 +249,16 @@ namespace AgentBrowser.Installer {
             p.Summary.Add("관리 OpenCode 서버는 Chrome 페어링과 프로필 설정 후 시작합니다. 일반 CLI MCP 등록과 별도입니다.");
             return p;
         }
-        public static void PrivateDirectory(string path) {
+        /// Narrows a product folder to this user, SYSTEM and Administrators where Windows allows it.
+        /// An organization folder may refuse permission changes while files can still be created and
+        /// replaced there: the folder then keeps the permissions it inherits and installation goes on.
+        /// Only real file work decides whether a location is usable. False when nothing was narrowed.
+        public static bool PrivateDirectory(string path) {
             NativeIO.PlainPath(path);Directory.CreateDirectory(path);
-            var acl=PrivateAcl(Directory.GetAccessControl(path,AccessControlSections.Access|AccessControlSections.Owner));Directory.SetAccessControl(path,acl);
+            try {var acl=PrivateAcl(Directory.GetAccessControl(path,AccessControlSections.Access|AccessControlSections.Owner));Directory.SetAccessControl(path,acl);return true;}
+            catch(UnauthorizedAccessException) {return false;}
+            // A volume without permissions (FAT, exFAT) has nothing to narrow.
+            catch(IOException) {return false;} catch(InvalidOperationException) {return false;} catch(NotSupportedException) {return false;}
         }
         internal static DirectorySecurity PrivateAcl(DirectorySecurity acl) {
             acl.SetAccessRuleProtection(true,false);

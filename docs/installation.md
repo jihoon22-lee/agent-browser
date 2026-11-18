@@ -6,7 +6,7 @@ Windows 기존 설정 파일은 해시 검사부터 교체까지 쓰기·이름 
 
 ## 설치 경로 호환성
 
-GUI와 PowerShell은 조직이 관리하는 사용자 지정 로컬 경로를 지원한다. 설치 루트·부모·드라이브의 소유자 SID 또는 ACL 허용 목록으로 설치와 유지보수를 차단하지 않는다. Windows의 실제 파일 작업 권한을 사용하고 기존 디렉터리의 소유자·ACL을 변경하지 않는다. 새 설치 루트는 상위 정책을 상속하며 제품 데이터 폴더만 별도로 보호한다.
+GUI와 PowerShell은 조직이 관리하는 사용자 지정 로컬 경로를 지원한다. 설치 루트·부모·드라이브의 소유자 SID 또는 ACL 허용 목록으로 설치와 유지보수를 차단하지 않는다. Windows의 실제 파일 작업 권한을 사용하고 기존 디렉터리의 소유자·ACL을 변경하지 않는다. 새 설치 루트는 상위 정책을 상속하며 제품 데이터 폴더만 별도로 보호한다. 폴더 정책이 권한 변경을 거부하면(파일 생성·수정·삭제는 되지만 권한 변경은 안 되는 조직 폴더) 데이터 폴더와 설치 중 임시 폴더는 상속된 권한을 유지하고 설치·업데이트·제거를 계속한다. 권한 변경 가능 여부는 차단 조건이 아니다.
 
 ```powershell
 $agentBrowserInstall = Join-Path $env:LOCALAPPDATA 'AgentBrowser' # 업데이트는 기존 설치 경로
@@ -20,7 +20,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1 -InstallDir 
 - `.agent-browser-install.json`: 설치 ID, 소유 파일 해시, Startup 및 선택적 MCP 등록 정보. 다른 위치의 설치에 재사용하지 않는다.
 - `data/.installer-bridge-process.json`: 직접 시작한 Bridge의 PID, 실행 경로, 생성 시각, 포트. 종료 직전 다시 검증한다.
 - `data/runtime/`: 프로필 작업 잠금과 WSL 관리 프로세스 소유권 표식. `runtime.json`의 PID·생성 시각·실행 경로 등과 함께 종료·재사용을 검증한다.
-- `data/logs/serve.log`: 상주 Bridge 진단 로그. 사용자 데이터 디렉터리는 ACL 상속을 끊고 현재 사용자·SYSTEM·Administrators 접근으로 제한한다.
+- `data/logs/serve.log`: 상주 Bridge 진단 로그. 사용자 데이터 디렉터리는 ACL 상속을 끊고 현재 사용자·SYSTEM·Administrators 접근으로 제한한다. Windows가 이 변경을 거부하면 상속된 권한을 그대로 쓴다.
 - `examples/mcp-windows.json`: 설치된 실제 실행 경로로 만든 MCP 조각. WSL을 명시하면 `mcp-wsl.json`도 생성한다.
 
 기본 설치는 OpenCode 전역 설정을 수정하지 않는다. `-OpenCodeConfig`로 지정한 JSON/JSONC 파일만 `mcp.browser`를 병합한다. 주석과 다른 설정을 원문 그대로 유지하고, 수정 전 전체 원본을 같은 디렉터리에 백업한다. 기존 browser 항목이나 사용자가 수정한 소유 항목은 거부한다. 제거도 소유 항목만 지우며 백업은 남긴다.
