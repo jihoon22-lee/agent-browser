@@ -64,6 +64,20 @@ namespace AgentBrowser.Installer {
      form.Close();
     }}finally{Uninstall(root);}
    });
+   Case("the wizard installs where the folder refuses permission changes",()=>{
+    // Modify has no "change permissions" right, and the OWNER RIGHTS entry takes away the owner's implicit one.
+    string locked=Path.Combine(fixture,"no-permission-change"),root=Path.Combine(locked,"install");Directory.CreateDirectory(locked);
+    var policy=new DirectorySecurity();policy.SetAccessRuleProtection(true,false);
+    foreach(var sid in new[]{WindowsIdentity.GetCurrent().User,new SecurityIdentifier("S-1-3-4")})
+     policy.AddAccessRule(new FileSystemAccessRule(sid,FileSystemRights.Modify,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
+    Directory.SetAccessControl(locked,policy);
+    try{using(var form=new SetupForm(new[]{"--no-discover","--no-browser-launch","--no-startup","--install-dir",root,"--package-dir",package,"--port",FreePort()})){
+     form.Show();SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());Click(form,"Preview");Invoke(form,"Prepare");Invoke(form,"Apply");
+     Assert(InstallerEngine.State(root)!=null,"the wizard did not install: "+Field<TextBox>(form,"Status").Text);
+     Assert(Field<Button>(form,"OpenExtensions").Visible,"the wizard did not reach the Chrome step: "+Field<TextBox>(form,"Status").Text);
+     form.Close();
+    }}finally{Uninstall(root);}
+   });
    Case("saved runtime appears in the Bridge profile list and on the page",()=>{
     string root=Path.Combine(fixture,"inline-runtime"),fake=Path.Combine(fixture,"fake-opencode");Directory.CreateDirectory(fake);
     string cmd=Path.Combine(fake,"opencode.cmd");File.WriteAllText(cmd,"@echo off\r\necho 1.18.29\r\n");
