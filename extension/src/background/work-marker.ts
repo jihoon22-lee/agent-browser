@@ -25,11 +25,14 @@ export function markerScript(on: boolean, label: string): void {
 
 export type MarkerApi = { executeScript(tabId: number, func: typeof markerScript, args: [boolean, string]): Promise<unknown> };
 
-/** Frames the operation's tabs and clears tabs that left it; returns the tabs now marked. */
-export async function syncMarkers(api: MarkerApi, previous: Set<number>, next: { tabs: number[]; paused: boolean } | null): Promise<Set<number>> {
-  const label = next?.paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
-  const now = new Set(next?.tabs ?? []);
-  for (const tab of now) await api.executeScript(tab, markerScript, [true, label]).catch(() => {});
+/** Frames the operations' tabs and clears tabs that left them; returns the tabs now marked. */
+export async function syncMarkers(api: MarkerApi, previous: Set<number>, next: { tabs: number[]; paused: boolean } | Array<{ tabs: number[]; paused: boolean }> | null): Promise<Set<number>> {
+  const label = (paused: boolean) => paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
+  // Each operation frames its own tabs; a held operation's tabs say so.
+  const labels = new Map<number, string>();
+  for (const op of Array.isArray(next) ? next : next ? [next] : []) for (const tab of op.tabs) labels.set(tab, label(op.paused));
+  const now = new Set(labels.keys());
+  for (const [tab, text] of labels) await api.executeScript(tab, markerScript, [true, text]).catch(() => {});
   for (const tab of previous) if (!now.has(tab)) await api.executeScript(tab, markerScript, [false, ""]).catch(() => {});
   return now;
 }

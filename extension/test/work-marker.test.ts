@@ -85,3 +85,11 @@ it("leaves the page untouched when the same marker is already shown", async () =
   expect(document.querySelectorAll("#agent-browser-work-marker")).toHaveLength(1);
   expect(document.querySelector("#agent-browser-work-marker")).not.toBe(host);
 });
+
+it("frames each operation's tabs with its own state", async () => {
+  const calls: Array<[number, boolean, string]> = [];
+  const api = { executeScript: async (tab: number, _f: unknown, [on, label]: [boolean, string]) => { calls.push([tab, on, label]); } };
+  const now = await syncMarkers(api as any, new Set([7]), [{ tabs: [1], paused: false }, { tabs: [2], paused: true }]);
+  expect([...now]).toEqual([1, 2]);
+  expect(calls).toEqual([[1, true, "AgentBrowser 작업 중"], [2, true, "AgentBrowser · 사용자가 조작 중"], [7, false, ""]]);
+});

@@ -1,4 +1,4 @@
-import { trustedInput, type DebuggerApi } from "../src/background/trusted-input";
+import { trustedInput, trustedTargetsFor, type DebuggerApi } from "../src/background/trusted-input";
 
 function fakeDebugger() {
   const calls: Array<[string, number, string?, unknown?]> = [];
@@ -305,4 +305,40 @@ it('a lost key callback cannot hang forever on a lost cleanup callback',async()=
  const outcome=t.key(1,'a',['Control']).then(()=>null,error=>error);await vi.advanceTimersByTimeAsync(9000);
  expect(d.calls.some(c=>c[0]==='detach')).toBe(true);expect(await outcome).toMatchObject({dispatched:true});
  }finally{vi.useRealTimers();}
+});
+
+describe("several operations of this browser", () => {
+  const two = (bPaused = false) => trustedTargetsFor([
+    { id: "op-a", clientId: "me", tabs: [1, 2] },
+    { id: "op-b", clientId: "me", tabs: [3], paused: bPaused },
+    { id: "op-x", clientId: "other", tabs: [9] },
+  ], "me", true);
+  it("lists every own tab with its operation, except a held one", () => {
+    expect(two()).toMatchObject({ operationTabs: [1, 2, 3], owners: { 1: "op-a", 2: "op-a", 3: "op-b" } });
+    expect(two(true).operationTabs).toEqual([1, 2]);
+  });
+  it("cancels only the operation whose debugging bar was cancelled", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    expect(await t.ensure(1, two())).toBe(true); expect(await t.ensure(3, two())).toBe(true);
+    d.detach(1, "canceled_by_user");
+    expect(t.cancelledReason(2)).toBe("canceled_by_user");
+    expect(t.cancelledReason(3)).toBeUndefined();
+    expect(await t.ensure(2, two())).toBe(false);
+    expect(await t.ensure(3, two())).toBe(true);
+  });
+  it("lets go of an ended operation's tabs and keeps the others", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(1, two()); await t.ensure(3, two());
+    await t.sync(trustedTargetsFor([{ id: "op-b", clientId: "me", tabs: [3] }], "me", true));
+    expect(d.calls.filter(c => c[0] === "detach").map(c => c[1])).toEqual([1]);
+    expect(t.isAttached(3)).toBe(true);
+  });
+  it("keeps a cancellation when an older operation of this browser ends", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(3, two());
+    d.detach(3, "canceled_by_user");
+    await t.sync(trustedTargetsFor([{ id: "op-b", clientId: "me", tabs: [3] }], "me", true));
+    expect(t.cancelledReason(3)).toBe("canceled_by_user");
+    expect(await t.ensure(3, trustedTargetsFor([{ id: "op-b", clientId: "me", tabs: [3] }], "me", true))).toBe(false);
+  });
 });

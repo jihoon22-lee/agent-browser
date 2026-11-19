@@ -91,6 +91,8 @@ impl ServerState {
     pub fn status(&self) -> Value {
         json!({
             "operation": self.ops.current(),
+            // Every running operation; `operation` stays the oldest for older extensions.
+            "operations": self.ops.all(),
             "browsers": self.registry.snapshot(),
             "timeline": self.timeline.entries(),
         })

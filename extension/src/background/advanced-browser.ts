@@ -18,16 +18,16 @@ export function validateCapture(c:CaptureGeometry,now:Pick<CaptureGeometry,'oper
 export const advancedMethod=(method:string,p:Record<string,unknown>,enabled:boolean)=>['browser.pointer','browser.dialog','browser.downloads'].includes(method)||(method==='browser.screenshot'&&(enabled||(p.scope!==undefined&&p.scope!=='viewport')||p.region!==undefined));
 type Dialog={dialogId:string;type:string;message:string;requestId?:string;operationId:string;generation:number;tabId:number;owned:boolean;state:"open"|"responding"|"uncertain";detached?:boolean};
 type StoredCapture={geometry:CaptureGeometry;bitmap:ImageBitmap};
-export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedInput,enabled:()=>boolean,ensure:(tabId:number)=>Promise<boolean>,vision:(requestId:unknown,args:Record<string,unknown>)=>Promise<boolean>,current:()=>{id?:string;generation?:number;tabs?:number[]}|null=()=>null,inputStatus?:(tabId:number)=>Promise<{required:boolean;pending?:boolean}>) {
+export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedInput,enabled:()=>boolean,ensure:(tabId:number)=>Promise<boolean>,vision:(requestId:unknown,args:Record<string,unknown>)=>Promise<boolean>,current:(tabId:number)=>{id?:string;generation?:number;tabs?:number[]}|null=()=>null,inputStatus?:(tabId:number)=>Promise<{required:boolean;pending?:boolean}>) {
  const works=new Map<string,{tabId:number;method:string;promise:Promise<any>}>();
  const captures=new Map<string,StoredCapture>(),pending=new Map<number,Dialog>(),observers=new Map<number,{req:Req;notify:(dialog:Dialog)=>void}>();
- const forget=()=>{for(const c of captures.values())c.bitmap.close();captures.clear();};
+ const forget=(operationId?:string)=>{for(const [key,c] of captures)if(operationId===undefined||c.geometry.operationId===operationId){c.bitmap.close();captures.delete(key);}};
  const gate=()=>{if(!advancedAvailable()||!enabled())throw new ProtocolError('FORBIDDEN_METHOD','Enable advanced browser features in Settings (Chrome 125 or later).');};
  const requireDebugger=async(tabId:number)=>{gate();if(!await ensure(tabId))throw new ProtocolError('FORBIDDEN_METHOD','Trusted input is disabled or Chrome debugger is unavailable.');};
  debug.onEvent((tabId,method,p)=>{
    if(method==='Page.javascriptDialogClosed'){pending.delete(tabId);return;}
    if(method!=='Page.javascriptDialogOpening'||!enabled()||!advancedAvailable()||!trusted.isAttached(tabId))return;
-   const observer=observers.get(tabId),op=current();
+   const observer=observers.get(tabId),op=current(tabId);
    if(!observer&&!op?.tabs?.includes(tabId))return;
    const dialog:Dialog={dialogId:crypto.randomUUID(),type:String(p.type),message:clipText(String(p.message??''),2000),requestId:observer?.req.id,operationId:String(observer?.req.params.operationId??op?.id),generation:Number(observer?.req.params.generation??op?.generation),tabId,owned:!!observer,state:'open'};
    pending.set(tabId,dialog);
@@ -107,7 +107,7 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
    if(!await vision(p.panelRequestId,p))throw new ProtocolError('FORBIDDEN_METHOD','Visual actions require a bound panel request using a model with image input and tool calling. Select an image-capable model.');
    const id=String(p.captureId),capture=captures.get(id);if(!capture)throw stale();
    // Claim synchronously before any observation awaits. Two requests cannot spend the same image.
-   captures.delete(id);forget();
+   captures.delete(id);forget(capture.geometry.operationId);
    try {
      const c=capture.geometry,action=p.mode??'click';
      if(!['click','double','right','hover','drag','wheel'].includes(String(action)))throw new ProtocolError('INVALID_PARAMS','Unknown pointer mode.');
@@ -186,13 +186,15 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
  }
 
  return {
-   enabled:()=>enabled()&&advancedAvailable(),clear:forget,
+   enabled:()=>enabled()&&advancedAvailable(),clear:(operationId?:string)=>forget(operationId),
    pending:(tabId:number)=>pending.get(tabId),
    recover,
    race,
    inflight:(id:string)=>works.get(id)?.promise,
    busy:(tabId:number)=>[...works.values()].some(w=>w.tabId===tabId),
    reset:()=>{forget();pending.clear();observers.clear();},
+   /** An ended operation's screenshots, dialogs and dialog waits; other operations keep theirs. */
+   forgetOperation:(operationId:string)=>{forget(operationId);for(const [tab,d] of pending)if(d.operationId===operationId)pending.delete(tab);for(const [tab,o] of observers)if(String(o.req.params.operationId)===operationId)observers.delete(tab);},
    async handle(req:Req,signal:AbortSignal,started:()=>void) {
      gate();aborted(signal);
      if(req.method!=='browser.dialog'&&pending.has(Number(req.params.tabId)))throw new ProtocolError('BROWSER_BUSY','A browser dialog is open.');

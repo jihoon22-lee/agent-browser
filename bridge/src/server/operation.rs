@@ -500,6 +500,11 @@ impl OperationGate {
         aborted
     }
 
+    /// Every running operation, oldest first.
+    pub fn all(&self) -> Vec<Operation> {
+        self.inner.lock().unwrap().ops.clone()
+    }
+
     /// The oldest running operation; the panel's status shows this one.
     pub fn current(&self) -> Option<Operation> {
         self.inner.lock().unwrap().ops.first().cloned()
