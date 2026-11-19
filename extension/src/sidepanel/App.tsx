@@ -107,10 +107,13 @@ export function App() {
     if (!op || state.stopping) return;
     dispatch({ kind: "stop-requested" });
     try {
-      const result = await request("operation.abort", { operationId: op.id });
-      if (!mounted.current) return;
-      dispatch({ kind: "stop-completed", operationId: op.id, confirmed: result?.aborted === true });
-      if (result?.aborted === true) await stopHandler.current(op.id);
+      // The header stops every browser operation; each conversation also stops its own.
+      for (const target of state.operations.length > 1 ? state.operations : [op]) {
+        const result = await request("operation.abort", { operationId: target.id });
+        if (!mounted.current) return;
+        dispatch({ kind: "stop-completed", operationId: target.id, confirmed: result?.aborted === true });
+        if (result?.aborted === true) await stopHandler.current(target.id);
+      }
       await refresh.current();
     } catch (error) { if (mounted.current) dispatch({ kind: "request-failed", message: errorText(error) }); }
   };
@@ -143,7 +146,7 @@ export function App() {
       {([["chat", "대화"], ["sessions", "세션"], ["browser", "브라우저"]] as const).map(([id, label]) => <button key={id} id={`tab-${id}`} role="tab" aria-controls={`view-${id}`} aria-selected={view === id} tabIndex={view === id ? 0 : -1} onClick={() => setView(id)}>{label}</button>)}
     </nav>
     <div className="app-content">
-    <Workbench operation={op} stopHandler={stopHandler} view={view} onViewChange={setView} conn={state.conn} />
+    <Workbench operation={op} operations={state.operations} stopHandler={stopHandler} view={view} onViewChange={setView} conn={state.conn} />
     <div id="view-browser" className="browser-view view-scroll" role="tabpanel" aria-labelledby="tab-browser" hidden={view !== "browser"}>
       <div className="view-heading"><div><span className="eyebrow">BROWSER</span><h2>브라우저 작업</h2></div><span className={`status-pill ${op ? "busy" : ""}`}>{op ? "작업 진행 중" : "대기"}</span></div>
     {state.browsers.length > 1 && <section aria-label="브라우저 선택">
@@ -156,6 +159,7 @@ export function App() {
       <div className="section-heading"><h2>현재 작업</h2></div>
       {op ? <>
         <p className="muted operation-id">{op.id} · 작업 탭 {op.tabs.length}개</p>
+        {state.operations.length > 1 && <p className="muted">다른 대화의 작업 {state.operations.length - 1}개가 함께 진행 중입니다. 각 대화에서 확인하고 중단할 수 있습니다.</p>}
         {localOperation ? <ul className="tabs">{tabs.map((tab) => <li key={tab.id}><strong>{tab.id === op.currentTab ? "현재 · " : ""}{tab.title}</strong>{tab.url && <span className="url">{tab.url}</span>}</li>)}</ul> : <p>다른 브라우저의 작업 탭 · {op.currentTab}</p>}
       </> : <p className="muted">{connected ? "진행 중인 작업이 없습니다." : "브리지 연결 후 작업 상태를 확인할 수 있습니다."}</p>}
     </section>

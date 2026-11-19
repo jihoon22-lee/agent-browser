@@ -24,9 +24,11 @@ const EXAMPLES = ["지금 보는 페이지를 요약해줘", "이 페이지의 �
 // Longer drafts, such as a pasted log, stay in memory only: session storage also holds the input-recovery records.
 const MAX_STORED_DRAFT = 20_000;
 type StartAction = { label: string; run: (trigger: HTMLButtonElement) => void; primary?: boolean };
-type Props = { operation: Operation | null; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void; conn: ConnStatus };
-export function Workbench({ operation, stopHandler, view, onViewChange, conn }: Props) {
+type Props = { operation: Operation | null; operations?: Operation[]; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void; conn: ConnStatus };
+export function Workbench({ operation: oldest, operations, stopHandler, view, onViewChange, conn }: Props) {
   const wb = useWorkbench();
+  // This conversation's operation. While only one runs it is shown here even before the panel can tell whose it is.
+  const operation = operations?.find(op => wb.operationOwner(op.id) === wb.sessionId) ?? ((operations?.length ?? 0) <= 1 ? oldest : null);
   const [requestHeld,setRequestHeld]=useState(false);
   const [stopping,setStopping]=useState(false);
   // This browser's id, so take-over is offered only for an operation it runs.
