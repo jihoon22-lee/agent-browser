@@ -36,7 +36,7 @@ export function collectModelMetrics(events,elapsedMs) {
 
 /** Goal evaluation admits different tool recipes. Fixture writes and independent tab listing
  * are the oracle; reads/return/release also require actual successful tool evidence, never prose. */
-export function scoreGoalRun({events,fixtureLog,preflight,exitCode,query,category,fixtureUrl,initialTabId,finalTabs}) {
+export function scoreGoalRun({events,fixtureLog,preflight,exitCode,query,category,fixtureUrl,initialTabId,finalTabs,paid=false}) {
   const calls=callsFrom(events),successful=calls.filter(c=>c.success);
   const searches=(fixtureLog?.events??[]).filter(e=>e.type==='search');
   const initialIds=new Set((preflight?.tabs?.data?.tabs??[{tabId:initialTabId}]).map(t=>t.tabId));
@@ -60,7 +60,7 @@ export function scoreGoalRun({events,fixtureLog,preflight,exitCode,query,categor
   const finalText=events.filter(e=>e.type==='text').map(e=>e.part?.text??'').join('\n');
   const checks={searchCorrect:searches.length===1&&searches[0].body?.q===query&&searches[0].body?.category===category,
     newTab:detailIds.size>0,tableRead:readDetail,returned:currentTab===initialTabId&&tabs.some(t=>t.tabId===initialTabId&&t.url?.startsWith(fixtureUrl+'/search.html')),
-    released,summaryCorrect:EXPECTED_VALUES.every(v=>finalText.includes(v)),cleanExit:exitCode===0&&!events.some(e=>e.type==='error')&&!stopReason(events)};
+    released,summaryCorrect:EXPECTED_VALUES.every(v=>finalText.includes(v)),cleanExit:exitCode===0&&!events.some(e=>e.type==='error')&&!stopReason(events,'',paid)};
   return {communication:{success:preflight?.initialized===true&&preflight?.toolsListed===true&&preflight?.browserConnected===true},
     tools:{success:calls.length>0&&successful.length===calls.length,passed:successful.length,total:calls.length},model:{success:Object.values(checks).every(Boolean),checks}};
 }

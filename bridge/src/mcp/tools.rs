@@ -61,6 +61,8 @@ fn build() -> Vec<ToolDef> {
                 "key":{"type":"string","maxLength":10},
                 "modifiers":{"type":"array","items":{"enum":["Control","Shift","Alt","Meta"]},"maxItems":4},"waitFor":wait_for()},
                 "required":["key"],"additionalProperties":false}) },
+        ToolDef { name: "browser_batch", description: "Run 1-6 click/fill/select/press steps in order in one call, each with that tool's arguments plus tool. Stops at a failure, page change or dialog; reports which steps ran.",
+            schema: json!({"type":"object","properties":{"operationId":op(),"steps":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"tool":{"type":"string","enum":["click","fill","select","press"]}},"required":["tool"]}}},"required":["steps"],"additionalProperties":false}) },
         ToolDef { name: "browser_scroll", description: "Scroll the page or a ref container.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
                 "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["direction"],"additionalProperties":false}) },
@@ -90,7 +92,7 @@ fn build() -> Vec<ToolDef> {
 pub fn class_of(name: &str, args: &Value) -> CommandClass {
     match name {
         "browser_dialog" if args["action"] == "respond" => CommandClass::Write,
-        "browser_pointer" | "browser_navigate" | "browser_click" | "browser_fill" | "browser_select" | "browser_press" | "browser_scroll" | "browser_upload" => CommandClass::Write,
+        "browser_batch" | "browser_pointer" | "browser_navigate" | "browser_click" | "browser_fill" | "browser_select" | "browser_press" | "browser_scroll" | "browser_upload" => CommandClass::Write,
         "browser_tabs" if args["action"] == "new" || args["action"] == "close" => CommandClass::Write,
         _ => CommandClass::Read,
     }

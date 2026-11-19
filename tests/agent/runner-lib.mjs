@@ -2,16 +2,20 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
-export const TOOL_NAMES = ['browser_tabs', 'browser_bookmarks', 'browser_snapshot', 'browser_navigate', 'browser_click', 'browser_fill', 'browser_select', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_extract', 'browser_screenshot', 'browser_upload', 'browser_pointer', 'browser_dialog', 'browser_downloads'];
+export const TOOL_NAMES = ['browser_tabs', 'browser_bookmarks', 'browser_snapshot', 'browser_navigate', 'browser_batch', 'browser_click', 'browser_fill', 'browser_select', 'browser_press', 'browser_scroll', 'browser_wait', 'browser_extract', 'browser_screenshot', 'browser_upload', 'browser_pointer', 'browser_dialog', 'browser_downloads'];
 export const EXPECTED_VALUES = ['에이전트 브라우저', '12,000원', 'a | b, c'];
 const builtins = ['build', 'plan', 'general', 'explore', 'title', 'summary', 'compaction'];
 
-export function buildConfig({ model, exe, bridgeHome, bridgePort }) {
-  if (typeof model !== 'string' || !/^opencode\/[A-Za-z0-9_.-]+$/.test(model)) throw new Error('Select one explicit opencode/<model> from OpenCode Zen');
+/** `paidBudget` (US dollars) admits one explicitly chosen paid provider model for measurement; otherwise Zen free models only. */
+export function buildConfig({ model, exe, bridgeHome, bridgePort, paidBudget }) {
+  const paid = Number.isFinite(paidBudget) && paidBudget > 0;
+  if (typeof model !== 'string' || !(paid ? /^(openai|opencode)\/[A-Za-z0-9_.-]+$/ : /^opencode\/[A-Za-z0-9_.-]+$/).test(model)) throw new Error('Select one explicit opencode/<model> from OpenCode Zen');
   if (!exe || !bridgeHome || !Number.isInteger(bridgePort) || bridgePort < 1 || bridgePort > 65535) throw new Error('Explicit Bridge executable, isolated home and port are required');
   const config = JSON.parse(readFileSync(new URL('./workspace/opencode.json.template', import.meta.url), 'utf8'));
   config.model = config.small_model = model;
-  config.provider.opencode.whitelist = [model.slice('opencode/'.length)];
+  const [provider, name] = model.split('/');
+  config.enabled_providers = [provider];
+  config.provider = { [provider]: { whitelist: [name] } };
   config.mcp.browser.command = [exe, 'mcp'];
   Object.assign(config.mcp.browser.environment, { AGENT_BROWSER_HOME: bridgeHome, AGENT_BROWSER_PORT: String(bridgePort) });
   for (const name of builtins) config.agent[name] = { model, ...(name === 'general' || name === 'explore' ? { disable: true } : {}) };
@@ -24,7 +28,7 @@ export function buildConfig({ model, exe, bridgeHome, bridgePort }) {
   return config;
 }
 
-export function isolatedEnvironment(base, root, config) {
+export function isolatedEnvironment(base, root, config, providerKey) {
   // Keep OS plumbing and the real HOME, without inherited provider keys or hooks.
   const allowed = ['PATH', 'HOME', 'USERPROFILE', 'SystemRoot', 'SYSTEMROOT', 'COMSPEC', 'PATHEXT', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TEMP', 'TMP', 'WSL_INTEROP', 'WSL_DISTRO_NAME', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY'];
   const env = Object.fromEntries(allowed.filter(k => base[k] !== undefined).map(k => [k, base[k]]));
@@ -33,8 +37,24 @@ export function isolatedEnvironment(base, root, config) {
     OPENCODE_CONFIG: config, OPENCODE_CONFIG_DIR: join(root, 'config-dir'), OPENCODE_TEST_HOME: join(root, 'home'), OPENCODE_TEST_MANAGED_CONFIG_DIR: join(root, 'managed'),
     OPENCODE_DISABLE_PROJECT_CONFIG: 'true', OPENCODE_DISABLE_CLAUDE_CODE: 'true', OPENCODE_DISABLE_EXTERNAL_SKILLS: 'true', OPENCODE_DISABLE_AUTOUPDATE: 'true', OPENCODE_DISABLE_LSP_DOWNLOAD: 'true', OPENCODE_DISABLE_SHARE: 'true', OPENCODE_PURE: 'true',
   });
+  // A paid measurement passes exactly one provider key, never the rest of the shell.
+  if (providerKey && base[providerKey]) env[providerKey] = base[providerKey];
   return env;
 }
+
+/** A paid model must advertise tool calls and a known price. */
+export function verifyPricedModel(model, records) {
+  const [provider, id] = model.split('/');
+  const found = records.filter(record => record.providerID === provider && record.id === id);
+  if (found.length !== 1) throw new Error('Selected model metadata is missing or ambiguous; no LLM call was made');
+  const entry = found[0];
+  if (entry.capabilities?.toolcall !== true) throw new Error('Selected model does not advertise tool-call support');
+  if (!Number.isFinite(entry.cost?.input) || !Number.isFinite(entry.cost?.output)) throw new Error('Selected model price is unknown; no LLM call was made');
+  return entry;
+}
+
+/** OpenCode's reported cost of a run, summed over model steps. */
+export const runCost = events => events.filter(event => event.type === 'step_finish').reduce((sum, event) => sum + (Number.isFinite(event.part?.cost) ? event.part.cost : 0), 0);
 
 export function assertResolvedConfig(actual, options) {
   const expected = buildConfig(options);
@@ -98,9 +118,10 @@ export function parseOutcome(output) {
   } catch { return null; }
 }
 
-export function stopReason(events, stderr = '') {
+/** `paid` admits a priced model's cost; its budget is enforced by the caller. */
+export function stopReason(events, stderr = '', paid = false) {
   for (const event of events) {
-    if (event.type === 'step_finish' && typeof event.part?.cost === 'number' && event.part.cost > 0) return 'Nonzero model cost was reported; further runs stopped';
+    if (!paid && event.type === 'step_finish' && typeof event.part?.cost === 'number' && event.part.cost > 0) return 'Nonzero model cost was reported; further runs stopped';
     if (event.type !== 'error' && !event.error) continue;
     const error = event.error ?? event;
     const data = error?.data ?? error;
@@ -120,7 +141,7 @@ export function stopReason(events, stderr = '') {
   return null;
 }
 
-export function scoreRun({ events, fixtureLog, preflight, exitCode, query, category, fixtureUrl }) {
+export function scoreRun({ events, fixtureLog, preflight, exitCode, query, category, fixtureUrl ,paid=false}) {
   const calls = new Map();
   for (const event of events) {
     const part = event.type === 'tool_use' ? event.part : null;
@@ -143,7 +164,7 @@ export function scoreRun({ events, fixtureLog, preflight, exitCode, query, categ
   const searchCorrect = searches.length === 1 && searches[0].body?.q === query && searches[0].body?.category === category;
   const finalText = events.filter(event => event.type === 'text').map(event => event.part?.text ?? '').join('\n');
   const summaryCorrect = EXPECTED_VALUES.every(value => finalText.includes(value));
-  const checks = { searchCorrect, attached: Number.isInteger(originalTab), newTab: newIndex >= 0, tableRead: extractIndex >= 0, returned: returnIndex >= 0 && lastTab === originalTab, released, summaryCorrect, cleanExit: exitCode === 0 && !events.some(event => event.type === 'error') && !stopReason(events) };
+  const checks = { searchCorrect, attached: Number.isInteger(originalTab), newTab: newIndex >= 0, tableRead: extractIndex >= 0, returned: returnIndex >= 0 && lastTab === originalTab, released, summaryCorrect, cleanExit: exitCode === 0 && !events.some(event => event.type === 'error') && !stopReason(events,'',paid) };
   return {
     communication: { success: preflight?.initialized === true && preflight?.toolsListed === true && preflight?.browserConnected === true },
     tools: { success: tools.length > 0 && success.length === tools.length, passed: success.length, total: tools.length },

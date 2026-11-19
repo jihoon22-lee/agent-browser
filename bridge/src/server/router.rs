@@ -253,7 +253,7 @@ pub async fn call_tool_as(state: &ServerState, caller: &Caller, name: &str, args
 }
 
 /// Tools that act inside an operation; in a bound panel request their operationId may be omitted.
-pub const OPERATION_TOOLS: [&str; 14] = ["browser_snapshot","browser_navigate","browser_click","browser_fill","browser_select",
+pub const OPERATION_TOOLS: [&str; 15] = ["browser_batch","browser_snapshot","browser_navigate","browser_click","browser_fill","browser_select",
     "browser_press","browser_scroll","browser_wait","browser_extract","browser_screenshot","browser_upload","browser_pointer","browser_dialog","browser_downloads"];
 
 /// Fills ids a model omitted when the caller is bound to the open panel request.
@@ -351,6 +351,8 @@ async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value
         }
     } else if name == "browser_tabs" {
         run_tabs(state, args).await
+    } else if name == "browser_batch" {
+        run_batch(state, caller, args).await
     } else {
         run_operation_tool(state, caller, name, args, &def.schema).await
     };
@@ -541,6 +543,7 @@ fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
     match name {
         "browser_click" | "browser_upload" => outcome.verified["expectationMet"] == true || outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
         "browser_press" | "browser_navigate" => true,
+        "browser_batch" => outcome.verified["pageChanged"] == true,
         "browser_tabs" => match args["action"].as_str() {
             Some("attach" | "switch") => true,
             Some("new") => args["url"].as_str().is_some_and(|url| url != "about:blank"),
@@ -548,6 +551,60 @@ fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
         },
         _ => false,
     }
+}
+
+const BATCH_TOOLS: [&str; 4] = ["click", "fill", "select", "press"];
+/// A batch starts no new step after this, so its reply stays well inside the MCP reply window.
+const BATCH_TIME: Duration = Duration::from_secs(20);
+
+/// Each step runs exactly as its own tool would (checks, handoff wait, gate), without follow-up reads.
+/// A step that changed the page ends the batch: later refs may no longer point where the model meant.
+async fn run_batch(state: &ServerState, caller: &Caller, args: &Value) -> ToolOutcome {
+    const NAME: &str = "browser_batch";
+    let op_id = args["operationId"].as_str().unwrap_or_default().to_string();
+    let reject = |message: String| ToolOutcome::rejected(NAME, Some(&op_id), invalid(message));
+    let steps = args["steps"].as_array().cloned().unwrap_or_default();
+    if steps.is_empty() || steps.len() > 6 { return reject("steps must list 1 to 6 actions".into()); }
+    let mut planned = vec![];
+    // Every step is checked before the first runs: a batch never stops on a typo halfway through.
+    for (index, step) in steps.iter().enumerate() {
+        let Some(tool) = step["tool"].as_str().filter(|tool| BATCH_TOOLS.contains(tool)) else { return reject(format!("step {} needs tool click, fill, select or press", index + 1)) };
+        let name = format!("browser_{tool}");
+        let mut step_args = step.clone();
+        let Some(fields) = step_args.as_object_mut() else { return reject(format!("step {} must be an object", index + 1)) };
+        fields.remove("tool"); fields.insert("operationId".into(), json!(op_id));
+        let def = tools::find(&name).expect("batch tools exist");
+        if let Err(error) = validate(&def.schema, &step_args).and_then(|_| validate_action(&name, &step_args)) { return reject(format!("step {}: {}", index + 1, error.message)); }
+        planned.push((name, step_args));
+    }
+    let started = tokio::time::Instant::now();
+    let (mut ran, mut executed, mut stop, mut last) = (vec![], Executed::No, None::<&str>, None::<ToolOutcome>);
+    for (index, (name, step_args)) in planned.iter().enumerate() {
+        if index > 0 && started.elapsed() > BATCH_TIME { stop = Some("time"); break; }
+        let outcome = Box::pin(run_with(state, caller, name, step_args, false)).await;
+        executed = match (executed, outcome.executed) { (Executed::Unknown, _) | (_, Executed::Unknown) => Executed::Unknown, (Executed::Yes, _) | (_, Executed::Yes) => Executed::Yes, _ => Executed::No };
+        let changed = outcome.verified["urlChanged"] == true || outcome.verified["dialogPending"] == true || outcome.data["currentTab"].is_number()
+            || (name != "browser_fill" && name != "browser_select" && (outcome.verified["domChanged"] == true || outcome.verified["expectationMet"] == true));
+        ran.push(json!({"step": index + 1, "tool": name, "ok": outcome.ok, "executed": outcome.executed, "verified": outcome.verified, "error": outcome.error}));
+        let ok = outcome.ok; last = Some(outcome);
+        if !ok { stop = Some("failed"); break; }
+        if changed { if index + 1 < planned.len() { stop = Some("pageChanged"); } break; }
+    }
+    let (completed, last) = (ran.len(), last.expect("a batch runs at least one step"));
+    let page_changed = last.ok && (stop == Some("pageChanged") || wants_snapshot(&planned[completed - 1].0, &planned[completed - 1].1, &last));
+    let mut data = json!({"steps": ran});
+    match stop {
+        Some("pageChanged") => data["note"] = json!(format!("Stopped after step {completed}: the page changed. Steps {}-{} did not run; use the returned snapshot.", completed + 1, planned.len())),
+        Some("time") => data["note"] = json!(format!("Stopped before step {}: time ran out. Later steps did not run; take browser_snapshot first.", completed + 1)),
+        _ => {}
+    }
+    let verified = json!({"completed": completed, "total": planned.len(), "pageChanged": page_changed});
+    if let Some(error) = last.error.filter(|_| stop == Some("failed")) {
+        let mut failed = ToolOutcome::failure(NAME, Some(&op_id), last.delivered, error);
+        failed.executed = executed; failed.verified = verified; failed.data = data;
+        return failed;
+    }
+    ToolOutcome::success(NAME, Some(&op_id), true, executed, verified, data)
 }
 
 /// Follow-up snapshots ride on every page-changing action; on busy pages the next step rarely

@@ -1,7 +1,7 @@
 // Korean names for tool cards and the browser timeline. The raw tool name stays visible next to them.
 const BROWSER_TOOLS: Record<string, string> = {
   browser_tabs: "탭 관리", browser_bookmarks: "북마크 읽기", browser_snapshot: "페이지 읽기", browser_navigate: "페이지 이동",
-  browser_click: "클릭", browser_fill: "텍스트 입력", browser_select: "항목 선택", browser_press: "키 입력",
+  browser_batch: "여러 단계 실행", browser_click: "클릭", browser_fill: "텍스트 입력", browser_select: "항목 선택", browser_press: "키 입력",
   browser_scroll: "스크롤", browser_wait: "조건 대기", browser_extract: "내용 추출", browser_screenshot: "화면 캡처",
   browser_pointer: "화면 좌표 조작", browser_dialog: "대화상자 응답", browser_downloads: "다운로드 확인", browser_upload: "파일 올리기",
 };

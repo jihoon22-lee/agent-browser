@@ -5,7 +5,7 @@ import { mkdir, writeFile, readFile, access } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildConfig, isolatedEnvironment, assertResolvedConfig, parseModelCatalog, verifyFreeModel, scoreRun, stopReason, verifyOfficialPricing, parseOutcome } from './runner-lib.mjs';
+import { buildConfig, isolatedEnvironment, assertResolvedConfig, parseModelCatalog, verifyFreeModel, verifyPricedModel, runCost, scoreRun, stopReason, verifyOfficialPricing, parseOutcome } from './runner-lib.mjs';
 import { McpProbe } from './mcp-probe.mjs';
 import { collectModelMetrics, scoreGoalRun, renderModelHtml } from './metrics.mjs';
 import { fetchOfficialPricing } from './pricing.mjs';
@@ -29,6 +29,7 @@ function argumentsForRun() {
     'fixture-via-windows-node': { type: 'boolean', default: false }, 'windows-node': { type: 'string', default: '/mnt/c/Program Files/nodejs/node.exe' },
     'price-source': { type: 'string', default: 'official' },
     'task-mode': { type:'string', default:'guided' },
+    'paid-budget': { type: 'string' },
     help: { type: 'boolean', default: false },
   } });
   if (values.help) { console.log(usage); process.exit(0); }
@@ -36,6 +37,9 @@ function argumentsForRun() {
   const [model, count] = positionals;
   const options = { model, runs: Number(count), exe: values.exe, bridgeHome: values['bridge-home'], bridgePort: Number(values['bridge-port']), opencode: values.opencode, timeoutMs: Number(values['timeout-ms']), checkOnly: values['check-only'], tabId: values['tab-id'] === undefined ? undefined : Number(values['tab-id']), windowsNode: values['windows-node'], fixtureViaWindows: values['fixture-via-windows-node'] };
   options.priceSource = values['price-source'];
+  // A paid model runs only with an explicit dollar cap; runs stop once OpenCode's reported cost reaches it.
+  options.paidBudget = values['paid-budget'] === undefined ? undefined : Number(values['paid-budget']);
+  if (options.paidBudget !== undefined && !(options.paidBudget > 0 && options.paidBudget <= 2)) throw new Error('paid-budget must be more than 0 and at most 2 dollars');
   options.taskMode=values['task-mode'];
   if(!['guided','goal'].includes(options.taskMode))throw new Error('task-mode must be guided or goal');
   if (!['official', 'refresh'].includes(options.priceSource)) throw new Error('price-source must be official or refresh');
@@ -76,7 +80,9 @@ function fixtureTab(preflight, options) {
   return matches[0].tabId;
 }
 
-function executeAgent(options, args, env, cwd) {
+/** `budgetLeft` (dollars) ends a paid run as soon as its reported cost reaches it. */
+function executeAgent(options, args, env, cwd, budgetLeft) {
+  const paid = budgetLeft !== undefined; let cost = 0;
   return new Promise((resolveRun, reject) => {
     const started=performance.now();
     const child = spawn(options.opencode, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' });
@@ -97,16 +103,16 @@ function executeAgent(options, args, env, cwd) {
         const newline = buffer.indexOf('\n'); if (newline < 0) break;
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
         if (!line.trim()) continue;
-        try { const event = JSON.parse(line); events.push(event); const reason = stopReason([event]); if (reason) terminate(reason); }
+        try { const event = JSON.parse(line); events.push(event); cost += runCost([event]); const reason = stopReason([event], '', paid) ?? (paid && cost >= budgetLeft ? 'Paid budget reached' : undefined); if (reason) terminate(reason); }
         catch { terminate('OpenCode JSON output contained an invalid event'); }
       }
       if (stdout.length > 16 * 1024 * 1024) terminate('Run output exceeded 16 MiB');
     });
-    child.stderr.on('data', chunk => { stderr += String(chunk); const reason = stopReason([], stderr); if (reason) terminate(reason); });
+    child.stderr.on('data', chunk => { stderr += String(chunk); const reason = stopReason([], stderr, paid); if (reason) terminate(reason); });
     child.on('close', (exitCode, signal) => {
       clearTimeout(timeout); clearTimeout(killTimer);
       if (buffer.trim()) { try { events.push(JSON.parse(buffer)); } catch { stopped ??= 'OpenCode JSON output ended with an incomplete event'; } }
-      resolveRun({ stdout, stderr, events, exitCode, signal, elapsedMs:performance.now()-started, stopReason: stopped ?? stopReason(events, stderr) });
+      resolveRun({ stdout, stderr, events, exitCode, signal, elapsedMs:performance.now()-started, stopReason: stopped ?? stopReason(events, stderr, paid) });
     });
   });
 }
@@ -122,20 +128,22 @@ async function main() {
   await mkdir(workspace, { recursive: true, mode: 0o700 });
   const config = buildConfig(options);
   await jsonFile(configPath, config);
-  const env = isolatedEnvironment(process.env, runtime, configPath);
+  const paid = options.paidBudget !== undefined, provider = options.model.split('/')[0];
+  const env = isolatedEnvironment(process.env, runtime, configPath, paid && provider === 'openai' ? 'OPENAI_API_KEY' : undefined);
   for (const key of ['OPENCODE_CONFIG_DIR', 'OPENCODE_TEST_HOME', 'OPENCODE_TEST_MANAGED_CONFIG_DIR']) await mkdir(env[key], { recursive: true, mode: 0o700 });
   const version = (await cli(options, ['--version'], env, workspace)).stdout.trim();
-  if (!['1.18.29','1.19.3'].includes(version)) throw new Error('This runner requires a locally verified OpenCode v1 version (1.18.29 or 1.19.3); found ' + version);
+  if (!['1.18.29','1.19.3','1.19.5'].includes(version)) throw new Error('This runner requires a locally verified OpenCode v1 version (1.18.29 or 1.19.3); found ' + version);
   const resolved = JSON.parse((await cli(options, ['debug', 'config', '--pure'], env, workspace)).stdout);
   assertResolvedConfig(resolved, options);
   const verifyModel = async () => {
-    const args = ['models', 'opencode', '--verbose', '--pure'];
+    const args = ['models', provider, '--verbose', '--pure'];
     if (options.priceSource === 'refresh') args.push('--refresh');
     const { stdout, stderr } = await cli(options, args, env, workspace);
     if (/error|failed|unable/i.test(stderr)) throw new Error('Model metadata lookup reported a failure');
-    const metadata = verifyFreeModel(options.model, parseModelCatalog(stdout));
+    const metadata = paid ? verifyPricedModel(options.model, parseModelCatalog(stdout)) : verifyFreeModel(options.model, parseModelCatalog(stdout));
     let source;
-    if (options.priceSource === 'official') {
+    if (paid) source = { kind: 'installed-catalogue-paid', budgetUsd: options.paidBudget };
+    else if (options.priceSource === 'official') {
       const pricingUrl = 'https://opencode.ai/docs/zen/';
       const modelsUrl = 'https://opencode.ai/zen/v1/models';
       const [pricingResponse, modelsResponse] = await Promise.all([fetchOfficialPricing(), fetch(modelsUrl,{signal:AbortSignal.timeout(15000),redirect:'error'})]);
@@ -147,7 +155,8 @@ async function main() {
     return publicMetadata;
   };
   await verifyModel();
-  console.log('Isolated config and zero-cost tool-capable model evidence verified: ' + options.model);
+  console.log(paid ? 'Isolated config and priced tool-capable model verified (budget $' + options.paidBudget + '): ' + options.model : 'Isolated config and zero-cost tool-capable model evidence verified: ' + options.model);
+  let spent = 0;
   if (options.checkOnly) { console.log('Check only; no MCP or LLM process was started. ' + resultDir); return; }
   await access(options.exe);
   const mcpEnv = { ...env, ...config.mcp.browser.environment };
@@ -171,14 +180,16 @@ async function main() {
       const category = '도서';
       const prompt = template.replaceAll('{{FIXTURE_URL}}', options.fixtureUrl).replaceAll('{{TAB_ID}}', String(tabId)).replaceAll('{{QUERY}}', query).replaceAll('{{CATEGORY}}', category);
       const args = ['run', '--pure', '--format', 'json', '--title', 'AgentBrowser synthetic run ' + index, '--model', options.model, '--agent', 'browser-test', prompt];
-      run = await executeAgent(options, args, env, workspace);
+      run = await executeAgent(options, args, env, workspace, paid ? options.paidBudget - spent : undefined);
       await writeFile(join(resultDir, 'run-' + index + '.jsonl'), run.stdout, { mode: 0o600 });
       await writeFile(join(resultDir, 'run-' + index + '.stderr.log'), run.stderr, { mode: 0o600 });
       const fixtureLog = await fixtureRequest(options, '/__log');
       const finalTabs=options.taskMode==='goal'?await probe.call('browser_tabs',{action:'list'}):undefined;
-      const scores = (options.taskMode==='goal'?scoreGoalRun:scoreRun)({ events: run.events, fixtureLog, preflight, exitCode: run.exitCode, query, category, fixtureUrl: options.fixtureUrl,initialTabId:tabId,finalTabs });
+      const scores = (options.taskMode==='goal'?scoreGoalRun:scoreRun)({ events: run.events, fixtureLog, preflight, exitCode: run.exitCode, query, category, fixtureUrl: options.fixtureUrl,initialTabId:tabId,finalTabs,paid });
       const sessionIds = [...new Set(run.events.map(event => event.sessionID ?? event.part?.sessionID).filter(Boolean))];
-      const record = { index, exitCode: run.exitCode, signal: run.signal, stopReason: run.stopReason, sessionIds, scores,metrics:collectModelMetrics(run.events,run.elapsedMs) };
+      const cost = runCost(run.events); spent += cost;
+      const record = { index, exitCode: run.exitCode, signal: run.signal, stopReason: run.stopReason, sessionIds, scores,metrics:collectModelMetrics(run.events,run.elapsedMs), costUsd: cost, spentUsd: spent };
+      if (paid && spent >= options.paidBudget) record.stopReason ??= 'Paid budget reached';
       // Cleanup is runner work and never changes the model's scores.
       const activeOperations = new Set();
       for (const event of run.events.filter(event => event.type === 'tool_use')) {
