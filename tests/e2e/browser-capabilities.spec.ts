@@ -36,6 +36,16 @@ test('C04 windows list, filtered tabs and explicit destination window work',asyn
  const list=await world.ok('browser_tabs',{action:'list',windowId:createdWindow.id});
  expect(list.data.tabs.length).toBeGreaterThan(0);expect(list.data.tabs.every((tab:any)=>tab.windowId===createdWindow.id)).toBe(true);
 });
+test('C04b windows list includes popup-type windows and their tabs',async()=>{
+ const popup=await world.adminPage.evaluate(url=>chrome.windows.create({url,type:'popup',focused:false}),world.fixture.base+'/board.html');
+ try{
+  const windows=await world.ok('browser_tabs',{action:'windows'});
+  expect(windows.data.windows.find((w:any)=>w.windowId===popup.id)?.type).toBe('popup');
+  expect(windows.data.windows.some((w:any)=>w.type==='normal')).toBe(true);
+  const list=await world.ok('browser_tabs',{action:'list',windowId:popup.id});
+  expect(list.data.tabs.length).toBe(1);
+ }finally{await world.adminPage.evaluate(id=>chrome.windows.remove(id),popup.id).catch(()=>{});}
+});
 test('C05 ordinary anchor opens in a new operation tab without navigating the source',async()=>{
  const page=await world.open('board.html'),operationId=await world.attach(page),original=page.url();
  const snap=(await world.ok('browser_snapshot',{operationId})).data;

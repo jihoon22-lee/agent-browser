@@ -53,7 +53,7 @@ export const realChromeApi: ChromeApi = {
         children: id => chrome.bookmarks.getChildren(id),
         search: query => chrome.bookmarks.search(query),
     },
-    windowsList: () => chrome.windows.getAll({windowTypes:['normal']}),
+    windowsList: () => chrome.windows.getAll({windowTypes:['normal','popup']}),
     tabsRemove: id => chrome.tabs.remove(id),
     tabsQuery: q => chrome.tabs.query(q), tabsGet: id => chrome.tabs.get(id), tabsCreate: p => chrome.tabs.create(p),
     tabsUpdate: async (id, p) => { const tab = await chrome.tabs.update(id, p); if (!tab)
