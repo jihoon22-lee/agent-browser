@@ -2,6 +2,16 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.4.5 Windows preview — 게시 완료 (2026-11-19)
+
+[v0.4.5](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.5)(prerelease)를 **2026-11-19 09:11:42 UTC / 18:11:42 KST**에 게시했다. 주석 태그는 [PR #47](https://github.com/jihoon22-lee/agent-browser/pull/47)의 main 병합 커밋 **`09658f9755d4fb59db60cafb20f547c70bf818ad`**를 가리킨다.
+
+- **배포 ZIP:** **3,958,711 bytes / 37 files**, SHA256 **`ee8c028e739fbec047ff8871ea9e859282db00404753e95b6ff661668869867c`**. `SHA256SUMS` 별도 게시. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/44476777799)의 Windows 작업이 만든 아티팩트다.
+- **소스·CI:** PR CI와 배포 커밋 main CI의 Linux·Windows 작업이 모두 성공했다.
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, 확장 버전 0.4.5를 확인했다.
+- **리뷰 반영 뒤 검증:** 독립 리뷰의 작은 지적(고른 탭이 닫힐 때 알림, 늦게 끝난 오래된 목록 무시, 탭이 계속 바뀔 때 1초 안에 목록 갱신, 탭 이동 감지, 첨부의 닫힌 탭 안내)을 고친 뒤 확장 단위 **904개**와 W19·C04 E2E를 다시 실행해 통과했다. 아래의 전체 E2E 260개는 이 수정 전 실행이다.
+- **정리:** 병합된 작업 브랜치를 로컬·원격에서 삭제했다. 최종 파일은 `release/v0.4.5-main/`에 있다.
+
 ## v0.4.5 — 작업 대상 고르기 (2026-11-19)
 
 패널의 **대상**에서 팝업형 창을 포함한 창·탭을 요청 대상으로 고른다. `feat/target-picker`에서 진행했다.
