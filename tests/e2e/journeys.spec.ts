@@ -248,3 +248,20 @@ test('J40 two conversations work side by side in their own tabs; stopping one le
  expect((await snap(second)).tabId).toBe(await world.tabId(pageB));
  lease=requestB;
 });
+
+test('J41 one batch fills, saves and stops at the first failing step with what ran',async()=>{
+ const page=await world.context.newPage();await page.goto(url('journey.html'));
+ const operationId=await attach(page),before=await snap(operationId);
+ const memo=find(before,'비교 메모'),save=find(before,'메모 저장');
+ const done=await ok('browser_batch',{operationId,steps:[{tool:'fill',ref:memo,text:'묶음 입력'},{tool:'click',ref:save}]});
+ expect(done.verified).toMatchObject({completed:2,total:2});
+ expect(JSON.stringify(await snap(operationId))).toContain('저장됨: 묶음 입력');
+ const fresh=await snap(operationId);
+ const memoNow=fresh.frames.flatMap((f:any)=>f.elements).find((e:any)=>String(e.name).startsWith('비교 메모')).ref;
+ const failed=await call('browser_batch',{operationId,steps:[{tool:'fill',ref:memoNow,text:'두 번째'},{tool:'click',ref:'e99999'},{tool:'click',ref:find(fresh,'메모 저장')}]});
+ expect(failed.ok).toBe(false);
+ expect(failed.verified).toMatchObject({completed:2,total:3});
+ expect(JSON.stringify(await snap(operationId))).not.toContain('저장됨: 두 번째');
+ const typo=await call('browser_batch',{operationId,steps:[{tool:'fill',ref:memoNow,text:'x'},{tool:'navigate',url:'https://example.com'}]});
+ expect(typo.ok).toBe(false);expect(typo.executed).toBe('no');
+});

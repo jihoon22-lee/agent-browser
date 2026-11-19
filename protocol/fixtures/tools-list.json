@@ -318,6 +318,43 @@
     "name": "browser_press"
   },
   {
+    "description": "Run 1-6 click/fill/select/press steps in order in one call, each with that tool's arguments plus tool. Stops at a failure, page change or dialog; reports which steps ran.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "operationId": {
+          "type": "string"
+        },
+        "steps": {
+          "items": {
+            "properties": {
+              "tool": {
+                "enum": [
+                  "click",
+                  "fill",
+                  "select",
+                  "press"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "tool"
+            ],
+            "type": "object"
+          },
+          "maxItems": 6,
+          "type": "array"
+        }
+      },
+      "required": [
+        "steps"
+      ],
+      "type": "object"
+    },
+    "name": "browser_batch"
+  },
+  {
     "description": "Scroll the page or a ref container.",
     "inputSchema": {
       "additionalProperties": false,
