@@ -28,6 +28,15 @@ WSL 설치본이 **1.19.3**으로 자동 갱신되어 같은 방식(격리 설�
 | 기본 바인딩 | `--hostname` 기본 `127.0.0.1`, `--port` 기본 0(임의) | `opencode serve --help` |
 | 이벤트 | `GET /event`(인스턴스), `GET /global/event`(전역), `text/event-stream`, Event 변형 89종 | OpenAPI |
 
+## MCP 도구 호출의 세션 정보 (WSL 1.19.5 실측, 2026-11-19)
+
+격리한 설정(임시 `XDG_CONFIG_HOME`·`XDG_DATA_HOME`)과 기록용 MCP 서버, `openai/gpt-6-luna`로 확인했다. 사용자 전역 설정은 바꾸지 않았다.
+
+- `tools/call`에는 세션 정보가 없다. `params._meta`는 `progressToken`뿐이다. 한 OpenCode 인스턴스의 여러 세션이 같은 MCP 프로세스를 함께 쓴다.
+- 세션을 중단(`POST /session/:id/abort`)하면 진행 중인 MCP 호출에 `notifications/cancelled`가 온다. Bridge MCP 프록시는 이 취소를 받아 아직 보내지 않은 호출을 실행하지 않는다(`client.rs` 취소 테스트).
+- 설정 폴더의 `plugins/`에 둔 플러그인의 `tool.execute.before`에서 `output.args`에 값을 더하면 MCP 서버가 그 인자를 받는다. 두 세션이 동시에 호출해도 각 호출에 자기 `sessionID`가 붙었다.
+- `OPENCODE_CONFIG_DIR`의 `plugins/` 플러그인은 사용자 설정 폴더의 플러그인과 함께 로드된다. `OPENCODE_CONFIG_CONTENT`의 `plugin`에 `file://` 경로를 넣으면 서버가 첫 요청에 응답하지 않았다(원인 미확인, 이 방식은 쓰지 않는다).
+
 ## 기능별 v1 경로
 
 | 기능 | v1 경로 | 상태 |
