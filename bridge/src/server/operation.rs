@@ -133,6 +133,7 @@ impl OperationGate {
             return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another user request owns the browser. Wait for it to finish or stop it."));
         }
         let beside=concurrent && g.requests.iter().all(|r| r.concurrent);
+        if beside && g.requests.len()>=g.limit { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,format!("{} browser requests are already running. Wait for one to finish or stop it.",g.limit))); }
         if !g.requests.is_empty() && !beside || g.requests.len()>=g.limit { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another user request owns the browser. Wait for it to finish or stop it.")); }
         // An operation outside the panel holds the browser until it ends.
         if g.ops.iter().any(|op| op.request.is_none()) || g.ops.len()>=g.limit { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Finish or stop the previous browser operation before starting a new request.")); }

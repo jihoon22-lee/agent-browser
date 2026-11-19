@@ -25,6 +25,8 @@ const RULES: ReadonlyArray<readonly [RegExp, string]> = [
   [/^OpenCode connection failed/, "OpenCode에 연결하지 못했습니다. 서버 주소·시스템 프록시·인증서를 확인하세요."],
   [/^OpenCode health returned HTTP 40[13]\b/, "OpenCode 인증에 실패했습니다. 설정에서 인증 사용자와 비밀번호를 확인하세요."],
   [/^Only OpenCode v1 is supported|required OpenCode v1 APIs|v1 API discovery failed/, "이 서버에서 OpenCode v1 API를 찾지 못했습니다. OpenCode 1.x 서버인지 확인하세요."],
+  [/^(\d+) browser requests are already running/, "브라우저 작업이 이미 최대 개수만큼 진행 중입니다. 다른 대화의 작업이 끝나거나 중단한 뒤 다시 보내세요."],
+  [/^Another user request owns the browser/, "다른 요청이 브라우저 작업을 진행 중입니다. 끝나거나 중단한 뒤 다시 보내세요. 설정에서 동시 작업을 켜면 다른 대화의 요청과 함께 진행할 수 있습니다."],
   [/^Another operation is already managing this profile/, "다른 작업이 이 실행 환경을 처리하는 중입니다. 끝난 뒤 다시 시도하세요."],
   [/port is already occupied/, "지정한 포트를 다른 프로그램이 사용하고 있습니다. 설정에서 다른 포트를 고르거나 비워 두세요."],
   [/port is reserved by another managed profile/, "지정한 포트를 다른 실행 환경이 쓰고 있습니다. 다른 포트를 고르거나 비워 두세요."],
