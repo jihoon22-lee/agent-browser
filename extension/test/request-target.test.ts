@@ -1,4 +1,4 @@
-import { captureRequestTarget, requestInstructions, completedRequest } from '../src/sidepanel/request-target';
+import { captureRequestTarget, requestInstructions, completedRequest, resolveRequestTarget, listRequestTargets, TARGET_UNAVAILABLE } from '../src/sidepanel/request-target';
 
 afterEach(() => vi.unstubAllGlobals());
 it('captures the focused window once, including a focused popup, without following later tab changes', async () => {
@@ -54,4 +54,46 @@ it("names the attached files the model may upload, and the ones it may not", () 
   expect(text).toContain("a.pdf, b.png");
   expect(text).toContain("huge.zip");
   expect(requestInstructions("req-1", null)).not.toContain("browser_upload");
+});
+
+it('uses the automatic capture unchanged when nothing is chosen', async () => {
+  const getLastFocused=vi.fn(async()=>({id:7,focused:true,type:'normal',tabs:[{id:31,active:true,url:'https://a.test'}]}));
+  const get=vi.fn();
+  vi.stubGlobal('chrome',{windows:{getLastFocused},tabs:{get}});
+  expect(await resolveRequestTarget(null)).toEqual({tabId:31,windowId:7});
+  expect(get).not.toHaveBeenCalled();
+});
+it('returns the chosen tab even when another window has focus', async () => {
+  const getLastFocused=vi.fn();
+  vi.stubGlobal('chrome',{windows:{getLastFocused},tabs:{get:vi.fn(async()=>({id:44,windowId:9,url:'https://popup.test/x'}))}});
+  expect(await resolveRequestTarget(44)).toEqual({tabId:44,windowId:9});
+  expect(getLastFocused).not.toHaveBeenCalled();
+});
+it.each([
+  ['closed', async()=>{throw new Error('No tab with id: 44');}],
+  ['a Chrome page', async()=>({id:44,windowId:9,url:'chrome://settings'})],
+  ['still loading another page', async()=>({id:44,windowId:9,url:'https://a.test',pendingUrl:'https://b.test'})],
+  ['an extension page', async()=>({id:44,windowId:9,url:'chrome-extension://abc/src/sidepanel/index.html'})],
+])('refuses a chosen tab that is %s instead of falling back to another tab', async (_,get) => {
+  const getLastFocused=vi.fn();
+  vi.stubGlobal('chrome',{windows:{getLastFocused},tabs:{get:vi.fn(get)}});
+  await expect(resolveRequestTarget(44)).rejects.toThrow(TARGET_UNAVAILABLE);
+  expect(getLastFocused).not.toHaveBeenCalled();
+});
+it('lists web tabs of normal and popup-type windows and leaves out other pages', async () => {
+  const getAll=vi.fn(async()=>[
+    {id:1,type:'normal',focused:true,tabs:[{id:11,title:'Mail',url:'https://mail.test',active:true},{id:12,title:'Settings',url:'chrome://settings',active:false}]},
+    {id:2,type:'popup',focused:false,tabs:[{id:21,title:'결재',url:'https://erp.test/approve',active:true}]},
+    {id:3,type:'popup',focused:false,tabs:[{id:31,title:'AgentBrowser',url:'chrome-extension://abc/src/sidepanel/index.html',active:true}]},
+  ]);
+  vi.stubGlobal('chrome',{windows:{getAll}});
+  expect(await listRequestTargets()).toEqual([
+    {windowId:1,type:'normal',focused:true,tabs:[{tabId:11,title:'Mail',url:'https://mail.test',active:true}]},
+    {windowId:2,type:'popup',focused:false,tabs:[{tabId:21,title:'결재',url:'https://erp.test/approve',active:true}]},
+  ]);
+  expect(getAll).toHaveBeenCalledWith({populate:true,windowTypes:['normal','popup']});
+});
+it('lists nothing when the windows API is unavailable', async () => {
+  vi.stubGlobal('chrome',{});
+  expect(await listRequestTargets()).toEqual([]);
 });
