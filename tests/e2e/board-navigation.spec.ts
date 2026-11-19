@@ -184,6 +184,9 @@ test('B10 rechecks an earlier iframe edited during a later close check',async()=
   const created=await world.ok('browser_tabs',{operationId,action:'new',url:world.fixture.base+'/close-race.html'});
   closeNewTab={snapshotError:created.data?.snapshotError??null,frames:created.data?.snapshot?.frames?.map((f:any)=>({frameId:f.frameId,elements:f.elements?.length,error:f.error}))??null};
   const owned=world.context.pages().find(p=>p.url().endsWith('/close-race.html'))!;
+  // The operation opens its tab in the background, where Chrome may not paint the iframes yet;
+  // visibility is a rendering check, so look at the tab first. The product's snapshot above already read both frames.
+  await owned.bringToFront();
   closePhase='first-frame-visible';
   await expect(owned.frameLocator('iframe').first().locator('input').first()).toBeVisible();
   closePhase='last-frame-visible';
