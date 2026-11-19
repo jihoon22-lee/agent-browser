@@ -124,3 +124,16 @@ test('provider access denial and generic API failures retain an actionable stop 
   assert.match(stopReason([{ type: 'error', error: { name: 'APIError', data: { message: 'Unauthorized', statusCode: 401 } } }]), /access denied.*401/i);
   assert.match(stopReason([{ type: 'error', error: { name: 'APIError', data: { message: 'Provider failed', statusCode: 500, responseHeaders: { 'x-request-id': 'abc429xyz' } } } }]), /API.*500/i);
 });
+
+test('a paid model runs only with an explicit budget and receives only its own provider key', async () => {
+  const { buildConfig, isolatedEnvironment, runCost } = await import('./runner-lib.mjs');
+  const base = { model: 'openai/gpt-6-luna', exe: '/x/browser-bridge', bridgeHome: '/x/home', bridgePort: 1234 };
+  assert.throws(() => buildConfig(base), /OpenCode Zen/);
+  const config = buildConfig({ ...base, paidBudget: 1 });
+  assert.deepEqual(config.enabled_providers, ['openai']);
+  assert.deepEqual(config.provider, { openai: { whitelist: ['gpt-6-luna'] } });
+  const env = isolatedEnvironment({ PATH: '/bin', OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'other' }, '/r', '/r/c.json', 'OPENAI_API_KEY');
+  assert.equal(env.OPENAI_API_KEY, 'k'); assert.equal(env.ANTHROPIC_API_KEY, undefined);
+  assert.equal(isolatedEnvironment({ OPENAI_API_KEY: 'k' }, '/r', '/r/c.json').OPENAI_API_KEY, undefined);
+  assert.equal(runCost([{ type: 'step_finish', part: { cost: 0.01 } }, { type: 'step_finish', part: {} }, { type: 'text' }]), 0.01);
+});

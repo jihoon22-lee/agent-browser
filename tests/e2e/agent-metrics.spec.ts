@@ -19,7 +19,7 @@ test('goal-only model evaluation on an isolated browser',async()=>{
     const page=await world.open('search.html');
     let stdout='',failed=false;
     try{
-      const result=await exec(process.execPath,[join(ROOT,'tests/agent/run-agent.mjs'),model,String(runs),'--opencode',opencode,'--exe',world.config.bridgeExe,'--bridge-home',world.bridge.home,'--bridge-port',String(world.bridge.port),'--fixture-url',world.fixture.base,'--tab-id',String(await world.tabId(page)),'--task-mode','goal','--timeout-ms',String(timeoutMs)],{cwd:ROOT,maxBuffer:2*1024*1024,windowsHide:true});
+      const result=await exec(process.execPath,[join(ROOT,'tests/agent/run-agent.mjs'),model,String(runs),'--opencode',opencode,'--exe',world.config.bridgeExe,'--bridge-home',world.bridge.home,'--bridge-port',String(world.bridge.port),'--fixture-url',world.fixture.base,'--tab-id',String(await world.tabId(page)),'--task-mode','goal','--timeout-ms',String(timeoutMs),...(process.env.AB_PAID_BUDGET?['--paid-budget',process.env.AB_PAID_BUDGET]:[])],{cwd:ROOT,maxBuffer:2*1024*1024,windowsHide:true});
       stdout=result.stdout;
     }catch(error){stdout=String((error as any).stdout??'');failed=true;console.log('Model evaluation stopped: '+String((error as any).stderr??'').slice(0,1000));}
     const path=stdout.match(/^Evidence directory: (.+)$/m)?.[1];
