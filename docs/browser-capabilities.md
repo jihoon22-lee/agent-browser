@@ -12,7 +12,7 @@
 |---|---|---|
 | 새 탭 생성 | new 단독으로 작업 시작, 또는 operationId로 추가. snapshot 불필요. URL 생략은 빈 탭 | HTTP(S)/about:blank만 허용. 자동 재시도 없음 |
 | 탭 목록 | list, windowId 필터. tabId/windowId/index/openerTabId/status/pinned/active 메타데이터 | 선택된 연결 Chrome 프로필 범위 |
-| 창별 대상 선택 | windows로 일반 창 ID·focused·state 확인, list/new에 windowId 지정 | 창 생성·닫기·크기 변경 도구는 이번 범위 밖. 새 권한 없음 |
+| 창별 대상 선택 | windows로 일반 창과 팝업형 창의 ID·focused·state·type 확인, list/new에 windowId 지정. 패널의 **대상**에서 팝업 창 탭을 요청 대상으로 지정 | 팝업형 창에는 탭을 만들 수 없어 Chrome이 일반 창에 만든다(작업 편입은 같음). | 창 생성·닫기·크기 변경 도구는 이번 범위 밖. 새 권한 없음 |
 | 기존 탭 연결 | attach에 tabId 지정. 제한 페이지도 메타데이터 연결 후 일반 URL로 이동 가능 | chrome:// 등의 DOM/스크린샷 접근은 허용하지 않음 |
 | 작업 탭 전환 | 같은 Chrome에서 조회·검증한 HTTP(S) tabId로 명시 switch | 기존 탭과 새 탭을 오가며 사용자 전경 포커스는 바꾸지 않음 |
 | 탭 닫기 | close로 현재 명시 선택한 웹 탭. 기존 탭도 선택 후 닫기 가능 | snapshot·폼 확인, beforeunload 유지. about:blank는 Chrome의 DOM 접근 거부로 검사할 수 없어 안전한 close 대상에서 제외한다. 전용 오류가 웹 페이지로 이동 후 검사하거나 그대로 열어 두도록 안내. 강제 닫기 없음 |
