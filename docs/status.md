@@ -13,6 +13,13 @@ v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.
 - **비용:** 측정 전체 약 0.007달러(누적 약 0.017달러, 승인 예산 2달러).
 - **실행한 검증(Linux):** Bridge 단위 전체, 확장 단위, 실행기 단위 20개, 새 E2E J41(한 번에 입력·저장, 실패 단계에서 멈추고 실행한 수 보고, 잘못된 단계가 있으면 아무것도 실행 안 함). Linux E2E 전체 **260 통과/1 실패/5 제외**: 실패한 S16은 도구 개수(16→17) 단언이라 고친 뒤 다시 실행해 통과.
 
+## v0.5.0 Windows preview — 게시 완료 (2026-11-19)
+
+[v0.5.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.5.0)(prerelease)를 **2026-11-19 10:36:33 UTC / 19:36:33 KST**에 게시했다. 주석 태그는 [PR #48](https://github.com/jihoon22-lee/agent-browser/pull/48)의 main 병합 커밋 **`66429d20b7f63a7289c9ec7e0af7d69f03ca5878`**를 가리킨다.
+
+- **배포 ZIP:** **3,985,080 bytes / 37 files**, SHA256 **`91d724e2f8ef53b8c88523df717839fa7dbff84bdd19a8b37ed630adc0bb1d12`**. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/44503561407)의 Windows 작업이 만든 아티팩트다. PR CI와 main CI의 Linux·Windows 작업이 모두 성공했다.
+- **게시본 검증:** 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, 확장 버전 0.5.0을 확인했다. 병합된 브랜치를 정리했다. 최종 파일은 `release/v0.5.0-main/`.
+
 ## v0.5.0 — 여러 대화의 동시 작업 (2026-11-19)
 
 한 대화가 브라우저 작업을 하는 동안 다른 대화에서도 지시를 보낸다. `feat/concurrency-gate`에서 진행했다. 계획의 2-1~2-5를 한 브랜치에서 과제 단위 커밋으로 나눴고, 2-1~2-4는 동작이 바뀌지 않는 상태로 테스트한 뒤 2-5에서 켰다. 중간 단계는 따로 게시하지 않았다.
