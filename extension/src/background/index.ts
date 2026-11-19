@@ -14,6 +14,7 @@ import { panelRequests } from './panel-requests';
 import { chromeDebugger, trustedInput, trustedTargets } from './trusted-input';
 import { acceptTrustedRequest } from './trusted-message';
 import { groupTargets, loadGroupState, saveGroupState, chromeGroups, syncGroup, type GroupState } from './tab-groups';
+import { contextTab } from './context-tab';
 import { applyBadge, badgeFor } from './badge';
 import { markedBefore, markerScript, remarkInQueue, shouldRemark, syncMarkers } from './work-marker';
 
@@ -186,8 +187,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     void (async () => {
       const status = lastStatus.state === "connected" ? await conn.request("status.get", {}) as { operation?: { clientId: string; currentTab: number } } : undefined;
       const clientId = (await chrome.storage.local.get("clientId")).clientId;
-      if (status?.operation && status.operation.clientId !== clientId) throw new Error("현재 작업은 다른 브라우저에 연결되어 있습니다.");
-      const tab = status?.operation ? await chrome.tabs.get(status.operation.currentTab) : (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+      const tab = await contextTab(status, clientId, typeof msg.tabId === "number" ? msg.tabId : undefined,
+        { get: id => chrome.tabs.get(id), active: async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0] });
       if (!tab?.id || !tab.url || !["http:", "https:"].includes(new URL(tab.url).protocol)) throw new Error("일반 HTTP(S) 페이지에서만 브라우저 참조를 첨부할 수 있습니다.");
       const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [msg.reference], func: (reference: string) => { const text = reference === "selection" ? getSelection()?.toString() ?? "" : document.body?.innerText ?? ""; return { title: document.title, url: location.href, text: text.slice(0, text.length > 16000 && /[\ud800-\udbff]/.test(text[15999]!) ? 15999 : 16000), length: text.length }; } });
       if (!result?.result || (msg.reference === "selection" && !result.result.text)) throw new Error("선택한 텍스트가 없습니다.");
