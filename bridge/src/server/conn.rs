@@ -611,13 +611,11 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
         }
         "operation.abort" => {
             let operation_id = params.get("operationId").and_then(Value::as_str);
-            match state.ops.abort_user(operation_id) {
-                Some(op) => {
-                    // The closed operation's owner receives cancellation, never a later selection.
-                    state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation }));
-                    state.broadcast_status();
-                    Envelope::ok(id, json!({ "aborted": true, "operationId": op.id }))
-                }
+            let aborted = state.ops.abort_user(operation_id);
+            // The closed operation's owner receives cancellation, never a later selection.
+            for op in &aborted { state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation })); }
+            match aborted.first() {
+                Some(op) => { state.broadcast_status(); Envelope::ok(id, json!({ "aborted": true, "operationId": op.id })) }
                 None => Envelope::ok(id, json!({ "aborted": false, "operationId": Value::Null })),
             }
         }
