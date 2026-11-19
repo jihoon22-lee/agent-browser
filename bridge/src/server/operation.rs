@@ -79,7 +79,11 @@ pub struct RequestScope { pub profile: String, pub session: String, pub director
 pub struct BoundRequest { pub id: String, pub client: String, pub tab: Option<i64>, pub scope: RequestScope, pub operation: Option<String> }
 
 #[derive(Clone)]
-struct RequestTarget { id: String, client: String, tab: Option<i64>, scope: Option<RequestScope> }
+struct RequestTarget { id: String, client: String, tab: Option<i64>, scope: Option<RequestScope>,
+    /// The panel lets this request run beside other conversations' requests.
+    concurrent: bool,
+    /// Another request ran beside this one: its id-less calls are no longer bound by guesswork.
+    overlapped: bool }
 
 impl GateInner {
     fn op(&self, id: &str) -> Option<&Operation> { self.ops.iter().find(|op| op.id == id) }
@@ -118,15 +122,23 @@ impl OperationGate {
     }
 
     pub fn begin_scoped_request(&self, id: &str, client: &str, tab: Option<i64>, scope: Option<RequestScope>) -> Result<(), RpcError> {
+        self.begin_request_with(id,client,tab,scope,false)
+    }
+
+    /// `concurrent` requests may run beside each other, up to the gate's limit; any other request runs alone.
+    pub fn begin_request_with(&self, id: &str, client: &str, tab: Option<i64>, scope: Option<RequestScope>, concurrent: bool) -> Result<(), RpcError> {
         let mut g=self.inner.lock().unwrap();
         if let Some(r)=g.request(id) {
             if r.client==client { return Ok(()); }
             return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another user request owns the browser. Wait for it to finish or stop it."));
         }
-        if g.requests.len()>=g.limit { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another user request owns the browser. Wait for it to finish or stop it.")); }
+        let beside=concurrent && g.requests.iter().all(|r| r.concurrent);
+        if !g.requests.is_empty() && !beside || g.requests.len()>=g.limit { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Another user request owns the browser. Wait for it to finish or stop it.")); }
         // An operation outside the panel holds the browser until it ends.
         if g.ops.iter().any(|op| op.request.is_none()) || g.ops.len()>=g.limit { return Err(RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Finish or stop the previous browser operation before starting a new request.")); }
-        g.requests.push(RequestTarget{id:id.into(),client:client.into(),tab,scope});
+        let overlapped=!g.requests.is_empty();
+        for other in &mut g.requests { other.overlapped=true; }
+        g.requests.push(RequestTarget{id:id.into(),client:client.into(),tab,scope,concurrent,overlapped});
         Ok(())
     }
 
@@ -140,10 +152,17 @@ impl OperationGate {
 
     /// The open panel request and its current operation, when the panel said which
     /// runtime session owns it. Binding still needs the caller-side guard in `binding`.
-    pub fn bound_request(&self) -> Option<BoundRequest> {
+    pub fn bound_request(&self) -> Option<BoundRequest> { self.bound_request_for(None) }
+
+    /// With `session` (reported by a runtime the Bridge launched), the request of that session.
+    /// Without it, only a lone request that never ran beside another: no guessing between conversations.
+    pub fn bound_request_for(&self, session: Option<&str>) -> Option<BoundRequest> {
         let g=self.inner.lock().unwrap();
-        // An id-less call may only be bound when exactly one request could have made it.
-        let [r]=g.requests.as_slice() else { return None }; let scope=r.scope.clone()?;
+        let r=match session {
+            Some(session)=>g.requests.iter().find(|r| r.scope.as_ref().is_some_and(|scope| scope.session==session))?,
+            None=>{ let [r]=g.requests.as_slice() else { return None }; if r.overlapped { return None; } r }
+        };
+        let scope=r.scope.clone()?;
         let operation=g.request_op(r).filter(|o| o.state==OpState::Active).map(|o| o.id.clone());
         Some(BoundRequest{id:r.id.clone(),client:r.client.clone(),tab:r.tab,scope,operation})
     }
@@ -903,7 +922,7 @@ mod concurrent_tests {
     #[test]
     fn each_request_gets_its_own_operation_and_tab() {
         let g=two();
-        g.begin_request("a","browser",Some(1)).unwrap(); g.begin_request("b","browser",Some(2)).unwrap();
+        g.begin_request_with("a","browser",Some(1),None,true).unwrap(); g.begin_request_with("b","browser",Some(2),None,true).unwrap();
         let (a,b)=(g.attach_request(1,"browser",Some("a")).unwrap(),g.attach_request(2,"browser",Some("b")).unwrap());
         assert_ne!(a.id,b.id);
         assert_eq!(g.panel_request_of(&a.id).as_deref(),Some("a"));
@@ -915,16 +934,16 @@ mod concurrent_tests {
     #[test]
     fn a_third_request_waits_for_a_free_slot() {
         let g=two();
-        g.begin_request("a","browser",None).unwrap(); g.begin_request("b","browser",None).unwrap();
-        assert_eq!(g.begin_request("c","browser",None).unwrap_err().code,ErrorCode::BrowserBusy);
+        g.begin_request_with("a","browser",None,None,true).unwrap(); g.begin_request_with("b","browser",None,None,true).unwrap();
+        assert_eq!(g.begin_request_with("c","browser",None,None,true).unwrap_err().code,ErrorCode::BrowserBusy);
         g.end_request("a","browser").unwrap();
-        g.begin_request("c","browser",None).unwrap();
+        g.begin_request_with("c","browser",None,None,true).unwrap();
     }
 
     #[test]
     fn ending_or_stopping_one_request_leaves_the_other_running() {
         let g=two();
-        g.begin_request("a","browser",Some(1)).unwrap(); g.begin_request("b","browser",Some(2)).unwrap();
+        g.begin_request_with("a","browser",Some(1),None,true).unwrap(); g.begin_request_with("b","browser",Some(2),None,true).unwrap();
         let (a,b)=(g.attach_request(1,"browser",Some("a")).unwrap(),g.attach_request(2,"browser",Some("b")).unwrap());
         assert_eq!(g.end_request("a","browser").unwrap().unwrap().id,a.id);
         assert!(g.check(&b.id).is_ok());
@@ -936,7 +955,7 @@ mod concurrent_tests {
     #[test]
     fn stopping_one_operation_keeps_the_other_request_open() {
         let g=two();
-        g.begin_request("a","browser",Some(1)).unwrap(); g.begin_request("b","browser",Some(2)).unwrap();
+        g.begin_request_with("a","browser",Some(1),None,true).unwrap(); g.begin_request_with("b","browser",Some(2),None,true).unwrap();
         let a=g.attach_request(1,"browser",Some("a")).unwrap();
         g.abort_user(Some(&a.id));
         assert_eq!(g.attach_request(1,"browser",Some("a")).unwrap_err().code,ErrorCode::OperationInvalid,"the stopped request has ended");
@@ -946,17 +965,17 @@ mod concurrent_tests {
     #[test]
     fn stop_without_an_id_ends_every_operation_and_request() {
         let g=two();
-        g.begin_request("a","browser",Some(1)).unwrap(); g.begin_request("b","browser",Some(2)).unwrap();
+        g.begin_request_with("a","browser",Some(1),None,true).unwrap(); g.begin_request_with("b","browser",Some(2),None,true).unwrap();
         g.attach_request(1,"browser",Some("a")).unwrap(); g.attach_request(2,"browser",Some("b")).unwrap();
         assert_eq!(g.abort_user(None).len(),2);
         assert!(g.current().is_none());
-        g.begin_request("c","browser",None).unwrap();
+        g.begin_request_with("c","browser",None,None,true).unwrap();
     }
 
     #[test]
     fn a_closed_tab_leaves_only_the_operation_that_held_it() {
         let g=two();
-        g.begin_request("a","browser",None).unwrap(); g.begin_request("b","browser",None).unwrap();
+        g.begin_request_with("a","browser",None,None,true).unwrap(); g.begin_request_with("b","browser",None,None,true).unwrap();
         let (a,b)=(g.attach_request(1,"browser",Some("a")).unwrap(),g.attach_request(2,"browser",Some("b")).unwrap());
         g.remove_tab_for_client("browser",1);
         assert_eq!(g.check(&a.id).unwrap_err().code,ErrorCode::TabClosed);
@@ -968,17 +987,17 @@ mod concurrent_tests {
     fn an_operation_outside_the_panel_runs_alone() {
         let g=two();
         let cli=g.attach(1,"browser").unwrap();
-        assert_eq!(g.begin_request("a","browser",None).unwrap_err().code,ErrorCode::BrowserBusy);
+        assert_eq!(g.begin_request_with("a","browser",None,None,true).unwrap_err().code,ErrorCode::BrowserBusy);
         assert_eq!(g.attach(2,"browser").unwrap_err().details["operationId"],cli.id.as_str());
         g.release(&cli.id).unwrap();
-        g.begin_request("a","browser",None).unwrap(); g.attach_request(1,"browser",Some("a")).unwrap();
+        g.begin_request_with("a","browser",None,None,true).unwrap(); g.attach_request(1,"browser",Some("a")).unwrap();
         assert_eq!(g.attach(2,"browser").unwrap_err().code,ErrorCode::OperationInvalid,"an id-less call during a panel request must name its request");
     }
 
     #[test]
     fn a_tab_belongs_to_one_operation() {
         let g=two();
-        g.begin_request("a","browser",None).unwrap(); g.begin_request("b","browser",None).unwrap();
+        g.begin_request_with("a","browser",None,None,true).unwrap(); g.begin_request_with("b","browser",None,None,true).unwrap();
         let a=g.attach_request(1,"browser",Some("a")).unwrap();
         assert_eq!(g.attach_request(1,"browser",Some("b")).unwrap_err().details["operationId"],a.id.as_str());
         let b=g.reserve_new("browser",Some("b")).unwrap();
@@ -995,18 +1014,18 @@ mod concurrent_tests {
     fn id_less_calls_bind_only_while_one_request_is_open() {
         let g=two();
         let scope=|s:&str|Some(RequestScope{profile:"p".into(),session:s.into(),directory:"/w".into()});
-        g.begin_scoped_request("a","browser",None,scope("ses_a")).unwrap();
+        g.begin_request_with("a","browser",None,scope("ses_a"),true).unwrap();
         assert_eq!(g.bound_request().unwrap().id,"a");
-        g.begin_scoped_request("b","browser",None,scope("ses_b")).unwrap();
+        g.begin_request_with("b","browser",None,scope("ses_b"),true).unwrap();
         assert!(g.bound_request().is_none());
         g.end_request("a","browser").unwrap();
-        assert_eq!(g.bound_request().unwrap().id,"b");
+        assert!(g.bound_request().is_none(),"b ran beside a: its id-less calls stay unbound until it ends");
     }
 
     #[test]
     fn an_internal_abort_without_an_id_ends_only_one_operation() {
         let g=two();
-        g.begin_request("a","browser",None).unwrap(); g.begin_request("b","browser",None).unwrap();
+        g.begin_request_with("a","browser",None,None,true).unwrap(); g.begin_request_with("b","browser",None,None,true).unwrap();
         let a=g.attach_request(1,"browser",Some("a")).unwrap(); let b=g.attach_request(2,"browser",Some("b")).unwrap();
         assert_eq!(g.abort(None).unwrap().id,a.id);
         assert!(g.check(&b.id).is_ok());
@@ -1021,10 +1040,34 @@ mod concurrent_tests {
     }
 
     #[test]
+    fn requests_run_side_by_side_only_when_each_allows_it() {
+        let g=two();
+        g.begin_request_with("a","browser",None,None,true).unwrap();
+        assert_eq!(g.begin_request_with("b","browser",None,None,false).unwrap_err().code,ErrorCode::BrowserBusy,"a request that runs alone waits");
+        g.begin_request_with("b","browser",None,None,true).unwrap();
+        assert_eq!(g.begin_request_with("c","browser",None,None,true).unwrap_err().code,ErrorCode::BrowserBusy,"the limit holds");
+        let g=two();
+        g.begin_request_with("a","browser",None,None,false).unwrap();
+        assert_eq!(g.begin_request_with("b","browser",None,None,true).unwrap_err().code,ErrorCode::BrowserBusy,"an older request that runs alone keeps the browser");
+    }
+
+    #[test]
+    fn a_request_that_ran_beside_another_needs_its_id_or_its_session() {
+        let g=two();
+        let scope=|s:&str|Some(RequestScope{profile:"p".into(),session:s.into(),directory:"/w".into()});
+        g.begin_request_with("a","browser",None,scope("ses_a"),true).unwrap();
+        g.begin_request_with("b","browser",None,scope("ses_b"),true).unwrap();
+        assert_eq!(g.bound_request_for(Some("ses_b")).unwrap().id,"b");
+        g.end_request("b","browser").unwrap();
+        assert!(g.bound_request().is_none(),"a overlapped b, so an id-less call is not bound to it by elimination");
+        assert_eq!(g.bound_request_for(Some("ses_a")).unwrap().id,"a");
+        assert!(g.bound_request_for(Some("ses_other")).is_none());
+    }
+
+    #[test]
     fn the_default_gate_still_runs_one_request() {
         let g=OperationGate::default();
         g.begin_request("a","browser",None).unwrap();
         assert_eq!(g.begin_request("b","browser",None).unwrap_err().code,ErrorCode::BrowserBusy);
     }
 }
-

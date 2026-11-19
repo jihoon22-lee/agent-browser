@@ -138,7 +138,7 @@ export function panelRequests(call:Call,concurrent:()=>boolean|Promise<boolean>=
       await saveLeases([...(await leases()).filter(saved=>saved.requestId!==lease.requestId),lease]);
       try {
         check(lease.profileId,generation);
-        await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null,profileId:lease.profileId,sessionId:lease.sessionId,directory:lease.directory});
+        await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null,profileId:lease.profileId,sessionId:lease.sessionId,directory:lease.directory,...(side?{concurrent:true}:{})});
         check(lease.profileId,generation);
       }
       catch(error){

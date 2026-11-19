@@ -8,6 +8,7 @@ import "./style.css";
 import { BookmarksPermission } from "./BookmarksPermission";
 import { AdvancedSetting } from "./AdvancedSetting";
 import { TrustedInputSetting } from "./TrustedInputSetting";
+import { ConcurrentSetting } from "./ConcurrentSetting";
 import { TabGroupsPermission } from "./TabGroupsPermission";
 import { THEMES, themeNames, useTheme } from "../theme/themes";
 const LABELS: Record<ConnStatus["state"], string> = { unpaired: "페어링 토큰을 입력하세요.", connecting: "연결하는 중…", connected: "Bridge에 연결되었습니다.", auth_failed: "상호 인증에 실패했습니다. 주소·버전·토큰을 확인하세요.", not_paired: "다른 확장과 페어링되어 있습니다. 토큰으로 다시 페어링하세요.", disconnected: "Bridge 연결을 다시 시도하는 중…" };
@@ -78,6 +79,7 @@ export function App() {
       </form>
     </section>
     <BookmarksPermission />
+    <ConcurrentSetting />
     <TrustedInputSetting />
     <AdvancedSetting />
     <TabGroupsPermission />

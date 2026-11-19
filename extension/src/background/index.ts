@@ -13,6 +13,7 @@ import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
 import { chromeDebugger, trustedInput, trustedTargetsFor } from './trusted-input';
 import { storedLeases } from '../sidepanel/request-target';
+import { concurrentRequestsOn } from './concurrency';
 import { operationChanges, statusOperations, type LiveOperation } from './operations';
 import { acceptTrustedRequest } from './trusted-message';
 import { groupTargets, loadGroupState, saveGroupState, chromeGroups, syncGroup, type GroupState } from './tab-groups';
@@ -100,7 +101,7 @@ const conn = new BridgeConnection({
   },
 });
 
-const requests=panelRequests((method,params)=>conn.request(method,params));
+const requests=panelRequests((method,params)=>conn.request(method,params),()=>chrome.storage.local.get('concurrentRequests').then(concurrentRequestsOn,()=>false));
 chrome.runtime.onStartup.addListener(() => conn.ensure());
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create("bridge-keepalive", { periodInMinutes: 1 });

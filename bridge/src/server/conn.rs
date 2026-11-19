@@ -79,7 +79,8 @@ impl ServerState {
             home,
             cfg: tokio::sync::Mutex::new(cfg),
             registry,
-            ops: OperationGate::default(),
+            // Panel requests that allow it run side by side; everything else runs alone.
+            ops: OperationGate::with_limit(4),
             timeline: Timeline::default(),
             selection: tokio::sync::Mutex::new(()),
             pairing: StdMutex::new(None),
@@ -590,7 +591,7 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
                 _=>None,
             };
             let result=if method=="request.begin" {
-                state.ops.begin_scoped_request(request,client,params["tabId"].as_i64().filter(|n|*n>0),scope).map(|_|None)
+                state.ops.begin_request_with(request,client,params["tabId"].as_i64().filter(|n|*n>0),scope,params["concurrent"]==true).map(|_|None)
             } else if params["abort"] == true { state.ops.cancel_request(request,client) }
             else { state.ops.end_request(request,client) };
             match result {
