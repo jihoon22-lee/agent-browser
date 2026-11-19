@@ -2,6 +2,14 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.5.1 Windows preview — 게시 완료 (2026-11-19)
+
+[v0.5.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.5.1)(prerelease)를 **2026-11-19 12:15:49 UTC / 21:15:49 KST**에 게시했다. 주석 태그는 [PR #49](https://github.com/jihoon22-lee/agent-browser/pull/49)의 main 병합 커밋 **`071bc8f0dbde9da324c4ced061cc5c10afb75f39`**를 가리킨다.
+
+- **배포 ZIP:** **4,007,605 bytes / 37 files**, SHA256 **`54276324badd171c4ea67335c1fc491a3b0a16e2b9a856d50f20de49c147be55`**. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/44518191291)의 Windows 작업이 만든 아티팩트다. main CI의 Linux·Windows 작업이 모두 성공했다.
+- **PR CI:** 첫 실행과 재실행에서 Linux B10이 알려진 단계(`first-frame-visible`)로 실패했다. 제품 snapshot은 두 iframe을 읽은 상태였고, 배경 탭의 화면 표시 확인이 멈춘 것이라 시험에서 탭을 앞으로 가져온 뒤 확인하도록 고쳤다. 이후 PR CI와 main CI 모두 통과.
+- **게시본 검증:** 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, 확장 버전 0.5.1을 확인했다. 병합된 브랜치를 정리했다. 최종 파일은 `release/v0.5.1-main/`.
+
 ## v0.5.1 — 속도: 여러 단계 한 번에 (2026-11-19)
 
 `feat/speed-measure`에서 진행했다. 계획 3단계(측정 → 묶음 도구 → 측정 결과에 따라 클릭 대기 단축)를 따랐다.
