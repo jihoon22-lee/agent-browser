@@ -97,3 +97,9 @@ it('lists nothing when the windows API is unavailable', async () => {
   vi.stubGlobal('chrome',{});
   expect(await listRequestTargets()).toEqual([]);
 });
+it('starts the automatic capture synchronously, before any wait, so it sees the tab in focus at the click', () => {
+  const getLastFocused=vi.fn(async()=>({id:4,focused:true,tabs:[{id:31,active:true,url:'https://a.test'}]}));
+  vi.stubGlobal('chrome',{windows:{getLastFocused}});
+  void resolveRequestTarget(null);
+  expect(getLastFocused).toHaveBeenCalledTimes(1);
+});

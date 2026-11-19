@@ -21,3 +21,7 @@ it("reads the active tab when nothing is chosen, as before", async () => {
 it("refuses an operation that belongs to another browser", async () => {
   await expect(contextTab({ operation: { clientId: "other", currentTab: 1 } }, "me", 5, api)).rejects.toThrow("다른 브라우저");
 });
+it("explains a chosen tab that has closed instead of passing Chrome's message through", async () => {
+  const gone = { get: vi.fn(async () => { throw new Error("No tab with id: 5."); }), active: vi.fn() };
+  await expect(contextTab({}, "me", 5, gone)).rejects.toThrow("대상을 다시 고르세요");
+});

@@ -7,18 +7,23 @@ const windowLabel = (win: TargetChoice, normalIndex: number) =>
 
 /** Chooses the tab the next request works on, including tabs of popup-type windows that have no toolbar.
  * Empty means the automatic capture at send time, unchanged. The choice lives only in this panel. */
-export function TargetPicker({ chosen, onChange }: { chosen: number | null; onChange(tabId: number | null): void }) {
+export function TargetPicker({ chosen, onChange }: { chosen: number | null; onChange(tabId: number | null, closed?: boolean): void }) {
   const [windows, setWindows] = useState<TargetChoice[]>([]);
   const chosenRef = useRef(chosen); chosenRef.current = chosen;
   const changeRef = useRef(onChange); changeRef.current = onChange;
   useEffect(() => {
-    let active = true, timer: ReturnType<typeof setTimeout> | undefined;
-    const load = () => { void listRequestTargets().then(list => { if (active) setWindows(list); }, () => {}); };
-    // Page loads fire many tab updates; one read after they settle is enough.
-    const later = () => { clearTimeout(timer); timer = setTimeout(load, 300); };
-    const removed = (tabId: number) => { if (tabId === chosenRef.current) changeRef.current(null); later(); };
+    let active = true, latest = 0, timer: ReturnType<typeof setTimeout> | undefined, first: number | undefined;
+    // Only the newest read may replace the list, so a slow older read cannot bring back a closed tab.
+    const load = () => { const read = ++latest; first = undefined; void listRequestTargets().then(list => { if (active && read === latest) setWindows(list); }, () => {}); };
+    // Page loads fire many tab updates; one read after they settle is enough, but at most a second late.
+    const later = () => {
+      clearTimeout(timer); first ??= Date.now();
+      timer = setTimeout(load, Math.max(0, Math.min(300, first + 1000 - Date.now())));
+    };
+    const removed = (tabId: number) => { if (tabId === chosenRef.current) changeRef.current(null, true); later(); };
     const events: Array<[chrome.events.Event<any> | undefined, (...args: any[]) => void]> = [
       [chrome.tabs?.onCreated, later], [chrome.tabs?.onUpdated, later], [chrome.tabs?.onRemoved, removed],
+      [chrome.tabs?.onAttached, later], [chrome.tabs?.onDetached, later],
       [chrome.windows?.onCreated, later], [chrome.windows?.onRemoved, later],
     ];
     load();

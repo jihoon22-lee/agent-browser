@@ -1255,6 +1255,33 @@ describe("work target picker", () => {
     const removed = (chrome.tabs.onRemoved.addListener as ReturnType<typeof vi.fn>).mock.calls.map(([f]) => f);
     await act(async () => { for (const f of removed) f(55); await new Promise(resolve => setTimeout(resolve, 0)); });
     expect(picker().value).toBe("");
+    expect(host.textContent).toContain("선택한 대상 탭이 닫혀 자동으로 돌아갔습니다");
+  });
+  it("reads the tab list again when a tab moves to another window", async () => {
+    setup(); (chrome as any).tabs.onAttached = { addListener: vi.fn(), removeListener: vi.fn() };
+    await render();
+    expect((chrome as any).tabs.onAttached.addListener).toHaveBeenCalled();
+  });
+  it("keeps only the newest tab list when an older read finishes last", async () => {
+    setup();
+    let releaseFirst!: (value: any) => void;
+    const first = new Promise(resolve => { releaseFirst = resolve; });
+    (chrome as any).windows.getAll = vi.fn().mockImplementationOnce(() => first).mockImplementation(async () => windows());
+    await render();
+    const updated = ((chrome as any).tabs.onCreated.addListener as ReturnType<typeof vi.fn>).mock.calls.map(([f]: any[]) => f).at(-1);
+    vi.useFakeTimers();
+    try { await act(async () => { updated({ id: 1 }); vi.advanceTimersByTime(400); }); } finally { vi.useRealTimers(); }
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    await act(async () => { releaseFirst([{ id: 9, type: "normal", focused: true, tabs: [{ id: 99, title: "오래된 목록", url: "https://old.test", active: true }] }]); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect([...picker().options].map(o => o.textContent)).toEqual(["자동", "메일", "결재 팝업"]);
+  });
+  it("still reads the tab list while tabs keep changing", async () => {
+    setup(); await render();
+    const getAll = (chrome as any).windows.getAll as ReturnType<typeof vi.fn>, before = getAll.mock.calls.length;
+    const updated = ((chrome as any).tabs.onCreated.addListener as ReturnType<typeof vi.fn>).mock.calls.map(([f]: any[]) => f).at(-1);
+    vi.useFakeTimers();
+    try { await act(async () => { for (let i = 0; i < 30; i++) { updated({ id: i }); vi.advanceTimersByTime(200); } }); } finally { vi.useRealTimers(); }
+    expect(getAll.mock.calls.length).toBeGreaterThan(before);
   });
   it("still renders the automatic target when the windows API is unavailable", async () => {
     setup(); delete (chrome as any).windows.getAll; await render();
