@@ -437,7 +437,7 @@ impl ServeClient {
         let cause = match reply {
             Ok(Ok(outcome)) if outcome.get("rpcError").is_none() => {
                 // The operation this call created keeps its request's lane.
-                if args.get("operationId").is_none() { if let Some(op) = outcome.get("operationId").and_then(Value::as_str) { self.lanes.bind_operation(op, lane); } }
+                if let (None, Some(op)) = (args.get("operationId"), outcome.get("operationId").and_then(Value::as_str)) { self.lanes.bind_operation(op, lane); }
                 return Ok(outcome);
             }
             Ok(Ok(rpc_failure)) => {
