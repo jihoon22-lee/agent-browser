@@ -2,9 +2,19 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
-## v0.4.4 — 권한 변경이 금지된 폴더 설치 (2026-11-19)
+## v0.4.4 Windows preview — 게시 완료 (2026-11-19)
+
+[v0.4.4](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.4.4)(prerelease)를 **2026-11-19 00:13:30 UTC / 09:13:30 KST**에 게시했다. 주석 태그는 [PR #46](https://github.com/jihoon22-lee/agent-browser/pull/46)의 main 병합 커밋 **`4145ecaa38cc2875536b8a072ef95970b287f065`**를 가리킨다.
+
+- **배포 ZIP:** **3,956,997 bytes / 37 files**, SHA256 **`435cb8b4a54a05cc2150daaa704bacaaa7b95a275866cc4e8185094a14c7f4a7`**. `SHA256SUMS` 별도 게시. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/44424022500)의 Windows 작업이 만든 아티팩트다.
+- **소스·CI:** [PR CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/44420587439)와 배포 커밋 main CI의 Linux·Windows 작업이 모두 성공했다. PR CI의 Windows 로그에서 새 검사 세 개(마법사, `setup.ps1`, 설치 엔진)가 권한 변경 금지 폴더에서 실행돼 통과한 것을 확인했다(`SetupFlowTests` 33/0, `install.tests.ps1` 21개, `NativeEngineTests` 75개).
+- **게시본 검증:** ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치, `sha256sum -c`, 패키지·확장 버전 0.4.4를 확인했다.
+- **하지 않은 것:** 게시 ZIP의 `AgentBrowser-Setup.exe`를 화면에서 조작하는 `GuiSmokeTests`. 설치 화면은 바뀌지 않았다.
+- **정리:** 병합된 작업 브랜치를 로컬·원격에서 삭제했고 개발 패키지와 시험 폴더를 지웠다. 최종 파일은 `release/v0.4.4-main/`에 있다.
 
 사용자 보고: 사내 보안 폴더에 설치 마법사로 설치되지 않는다. `fix/install-restricted-folder`에서 수정했다.
+
+- **사용자 문제와의 일치 여부는 미확인:** 권한 좁히기 호출은 v0.1.0부터 있었으므로, 재현한 조건의 폴더에는 예전 버전도 설치되지 않았을 것이다. "예전 버전에서는 됐다"는 보고와 맞지 않는다. v0.4.4로도 실패하면 마법사의 오류 원문, 설치됐던 버전, 폴더 종류를 받아 다시 조사한다.
 
 - **원인(실제 Windows에서 재현):** 파일 생성·수정·삭제는 되지만 권한 변경은 거부하는 폴더(사용자·OWNER RIGHTS에 Modify만 준 폴더)에서, 마법사는 설치 중 임시 폴더(`.transaction-*`)와 `data` 폴더의 권한을 좁히다가 `권한이 없는 작업을 수행하려고 했습니다`로 멈췄다. `setup.ps1`은 `data` 폴더에서 같은 오류로, 그다음 `File.Replace`(권한 복사에 WRITE_DAC 필요)에서 `경로에 대한 액세스가 거부되었습니다`로 멈췄다. 기존 `ManagedPathTests`는 테스트 계정이 권한을 바꿀 수 있는 폴더만 다뤄서 잡지 못했다.
 - **수정:** 권한 좁히기를 시도하되 Windows가 거부하면 그 위치의 권한을 그대로 두고 진행한다(GUI `PrivateDirectory`, 스크립트 `Set-PrivateDirectoryAccess`). 스크립트의 파일 교체는 권한 복사 실패를 무시한다. 이런 폴더에서는 페어링 등 데이터 폴더를 누가 읽을 수 있는지가 그 폴더의 정책에 따른다.
