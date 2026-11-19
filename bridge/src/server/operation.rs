@@ -85,6 +85,10 @@ impl GateInner {
     fn op(&self, id: &str) -> Option<&Operation> { self.ops.iter().find(|op| op.id == id) }
     fn op_mut(&mut self, id: &str) -> Option<&mut Operation> { self.ops.iter_mut().find(|op| op.id == id) }
     fn request(&self, id: &str) -> Option<&RequestTarget> { self.requests.iter().find(|r| r.id == id) }
+    /// Another running operation already works in this tab: one tab, one operation.
+    fn held_elsewhere(&self, id: Option<&str>, tab: i64) -> Option<&Operation> {
+        self.ops.iter().find(|op| Some(op.id.as_str()) != id && op.tabs.contains(&tab))
+    }
     fn request_op(&self, request: &RequestTarget) -> Option<&Operation> {
         self.ops.iter().find(|op| op.request.as_deref() == Some(request.id.as_str()) && op.client_id == request.client)
     }
@@ -138,7 +142,8 @@ impl OperationGate {
     /// runtime session owns it. Binding still needs the caller-side guard in `binding`.
     pub fn bound_request(&self) -> Option<BoundRequest> {
         let g=self.inner.lock().unwrap();
-        let r=g.requests.first()?; let scope=r.scope.clone()?;
+        // An id-less call may only be bound when exactly one request could have made it.
+        let [r]=g.requests.as_slice() else { return None }; let scope=r.scope.clone()?;
         let operation=g.request_op(r).filter(|o| o.state==OpState::Active).map(|o| o.id.clone());
         Some(BoundRequest{id:r.id.clone(),client:r.client.clone(),tab:r.tab,scope,operation})
     }
@@ -152,7 +157,7 @@ impl OperationGate {
             Some(id) if g.request(id).is_some_and(|r| r.client==client) => Ok(()),
             None if g.requests.iter().any(|r| r.client==client) => Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Safe,
                 "Missing requestId. No browser action ran. Copy requestId from the Browser context for the latest user request into browser_tabs attach/new arguments and retry. Do not reuse an earlier requestId or operationId; if that context is unavailable, stop and ask for a new panel request.")),
-            Some(id) if g.requests.is_empty() || (g.request(id).is_none() && g.requests.iter().all(|r| r.client==client)) => Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,
+            Some(_) if g.requests.is_empty() => Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,
                 "This requestId belongs to a request that already ended. Do not reuse it; a new panel request provides a new requestId. Outside the panel, omit requestId.")),
             _ => Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"A panel request owns the browser. Wait for completion or stop it in the panel; scoped calls must use that requestId.")),
         }
@@ -213,6 +218,7 @@ impl OperationGate {
                 "Another browser operation is running. Wait for it to finish or ask the user to press Stop.")
                 .with_details(json!({ "operationId": op.id })));
         }
+        if let Some(other) = tab_id.and_then(|tab| g.held_elsewhere(None, tab)) { return Err(Self::tab_taken(other)); }
         g.generation += 1;
         let op = Operation {
             id: format!("op-{}", &uuid::Uuid::new_v4().simple().to_string()[..8]),
@@ -268,6 +274,12 @@ impl OperationGate {
         Ok(select())
     }
 
+    fn tab_taken(other: &Operation) -> RpcError {
+        RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
+            "Another request is working in this tab. Open a new tab with browser_tabs action=new, or pick a tab no other request uses.")
+            .with_details(json!({ "operationId": other.id }))
+    }
+
     fn active<'a>(g: &'a GateInner, id: &str) -> Result<&'a Operation, RpcError> {
         match g.op(id) {
             Some(op) if op.state == OpState::Active => Ok(op),
@@ -293,6 +305,7 @@ impl OperationGate {
 
     pub fn add_and_switch_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
+        if let Some(other) = g.held_elsewhere(Some(id), tab) { return Err(Self::tab_taken(other)); }
         let op = g.op_mut(id).unwrap();
         if op.closed_tabs.contains(&tab) { return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The new tab closed before it could join the operation")); }
         op.owned_tabs.insert(tab);
@@ -308,11 +321,12 @@ impl OperationGate {
     /// that operation/generation/profile may adopt Chrome-confirmed child tabs.
     pub fn adopt_children(&self,id: &str,generation: u64,client: &str,source: i64,tabs: &[i64]) -> Result<Operation,RpcError> {
         let mut g = self.inner.lock().unwrap(); Self::active(&g,id)?;
+        let elsewhere: Vec<i64> = tabs.iter().copied().filter(|tab| g.held_elsewhere(Some(id), *tab).is_some()).collect();
         let op = g.op_mut(id).unwrap();
         if op.generation != generation || op.client_id != client || !op.owned_tabs.contains(&source) {
             return Err(RpcError::new(ErrorCode::OperationInvalid,Retry::Never,"New-tab source does not belong to this operation generation"));
         }
-        let tabs: Vec<_> = tabs.iter().copied().filter(|tab| *tab > 0 && *tab != source && !op.closed_tabs.contains(tab)).collect();
+        let tabs: Vec<_> = tabs.iter().copied().filter(|tab| *tab > 0 && *tab != source && !op.closed_tabs.contains(tab) && !elsewhere.contains(tab)).collect();
         op.owned_tabs.extend(tabs.iter().copied());
         for tab in &tabs { if !op.tabs.contains(tab) { op.tabs.push(*tab); op.opened_tabs.push(*tab); } }
         // A concurrent explicit switch wins over an older click's new-tab result.
@@ -338,6 +352,7 @@ impl OperationGate {
     /// Only call after this operation's browser has returned the exact tab.
     pub fn visit_verified_tab(&self, id: &str, tab: i64) -> Result<(), RpcError> {
         let mut g=self.inner.lock().unwrap();Self::active(&g,id)?;
+        if let Some(other) = g.held_elsewhere(Some(id), tab) { return Err(Self::tab_taken(other)); }
         let op=g.op_mut(id).unwrap();
         if op.closed_tabs.contains(&tab) {return Err(RpcError::new(ErrorCode::TabClosed,Retry::Never,"The selected tab closed during verification"));}
         op.owned_tabs.insert(tab);
@@ -461,7 +476,8 @@ impl OperationGate {
 
     fn abort_inner(&self,id:Option<&str>,user:bool)->Vec<AbortedOperation> {
         let mut g = self.inner.lock().unwrap();
-        let targets: Vec<String> = g.ops.iter().filter(|o| id.is_none_or(|i| i == o.id)).map(|o| o.id.clone()).collect();
+        // Without an id, the user's Stop ends everything; any other caller ends only the oldest.
+        let targets: Vec<String> = g.ops.iter().filter(|o| id.is_none_or(|i| i == o.id)).take(if user || id.is_some() { usize::MAX } else { 1 }).map(|o| o.id.clone()).collect();
         if user {
             let requests: Vec<RequestTarget> = match id {
                 None => std::mem::take(&mut g.requests),
@@ -952,6 +968,51 @@ mod concurrent_tests {
         g.release(&cli.id).unwrap();
         g.begin_request("a","browser",None).unwrap(); g.attach_request(1,"browser",Some("a")).unwrap();
         assert_eq!(g.attach(2,"browser").unwrap_err().code,ErrorCode::OperationInvalid,"an id-less call during a panel request must name its request");
+    }
+
+    #[test]
+    fn a_tab_belongs_to_one_operation() {
+        let g=two();
+        g.begin_request("a","browser",None).unwrap(); g.begin_request("b","browser",None).unwrap();
+        let a=g.attach_request(1,"browser",Some("a")).unwrap();
+        assert_eq!(g.attach_request(1,"browser",Some("b")).unwrap_err().details["operationId"],a.id.as_str());
+        let b=g.reserve_new("browser",Some("b")).unwrap();
+        assert_eq!(g.visit_verified_tab(&b.id,1).unwrap_err().code,ErrorCode::BrowserBusy);
+        assert_eq!(g.add_and_switch_tab(&b.id,1).unwrap_err().code,ErrorCode::BrowserBusy);
+        g.add_and_switch_tab(&b.id,2).unwrap();
+        let adopted=g.adopt_children(&a.id,a.generation,"browser",1,&[2,3]).unwrap();
+        assert_eq!(adopted.tabs,vec![1,3],"a child tab another operation holds is not adopted");
+        g.release(&b.id).unwrap();
+        g.visit_verified_tab(&a.id,2).unwrap();
+    }
+
+    #[test]
+    fn id_less_calls_bind_only_while_one_request_is_open() {
+        let g=two();
+        let scope=|s:&str|Some(RequestScope{profile:"p".into(),session:s.into(),directory:"/w".into()});
+        g.begin_scoped_request("a","browser",None,scope("ses_a")).unwrap();
+        assert_eq!(g.bound_request().unwrap().id,"a");
+        g.begin_scoped_request("b","browser",None,scope("ses_b")).unwrap();
+        assert!(g.bound_request().is_none());
+        g.end_request("a","browser").unwrap();
+        assert_eq!(g.bound_request().unwrap().id,"b");
+    }
+
+    #[test]
+    fn an_internal_abort_without_an_id_ends_only_one_operation() {
+        let g=two();
+        g.begin_request("a","browser",None).unwrap(); g.begin_request("b","browser",None).unwrap();
+        let a=g.attach_request(1,"browser",Some("a")).unwrap(); let b=g.attach_request(2,"browser",Some("b")).unwrap();
+        assert_eq!(g.abort(None).unwrap().id,a.id);
+        assert!(g.check(&b.id).is_ok());
+    }
+
+    #[test]
+    fn the_default_gate_explains_a_wrong_request_id_as_before() {
+        let g=OperationGate::default();
+        g.begin_request("a","browser",None).unwrap();
+        let error=g.attach_request(1,"browser",Some("old")).unwrap_err();
+        assert!(error.message.contains("A panel request owns the browser"),"{}",error.message);
     }
 
     #[test]
