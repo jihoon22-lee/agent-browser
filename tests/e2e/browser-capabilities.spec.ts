@@ -36,6 +36,35 @@ test('C04 windows list, filtered tabs and explicit destination window work',asyn
  const list=await world.ok('browser_tabs',{action:'list',windowId:createdWindow.id});
  expect(list.data.tabs.length).toBeGreaterThan(0);expect(list.data.tabs.every((tab:any)=>tab.windowId===createdWindow.id)).toBe(true);
 });
+test('C04b windows list includes popup-type windows and their tabs',async()=>{
+ const popup=await world.adminPage.evaluate(url=>chrome.windows.create({url,type:'popup',focused:false}),world.fixture.base+'/board.html');
+ try{
+  const windows=await world.ok('browser_tabs',{action:'windows'});
+  expect(windows.data.windows.find((w:any)=>w.windowId===popup.id)?.type).toBe('popup');
+  expect(windows.data.windows.some((w:any)=>w.type==='normal')).toBe(true);
+  const list=await world.ok('browser_tabs',{action:'list',windowId:popup.id});
+  expect(list.data.tabs.length).toBe(1);
+ }finally{await world.adminPage.evaluate(id=>chrome.windows.remove(id),popup.id).catch(()=>{});}
+});
+test('C04c a work tab in a popup-type window opens its new tabs in a normal window, inside the operation',async()=>{
+ const popup=await world.adminPage.evaluate(url=>chrome.windows.create({url,type:'popup',focused:false}),world.fixture.base+'/board.html');
+ const windowOf=(id:number)=>world.adminPage.evaluate(tab=>chrome.tabs.get(tab).then((t:any)=>t.windowId),id);
+ try{
+  const tabId=popup.tabs[0].id;
+  await expect.poll(async()=>(await world.adminPage.evaluate(id=>chrome.tabs.get(id),tabId)).status).toBe('complete');
+  const operationId=(await world.ok('browser_tabs',{action:'attach',tabId})).operationId!;
+  const link=(await world.ok('browser_snapshot',{operationId})).data.frames[0].elements.find((el:any)=>el.name==='Post 1');
+  const clicked=await world.ok('browser_click',{operationId,ref:link.ref,newTab:true});
+  expect(clicked.data.openedTabs[0].adopted).toBe(true);
+  expect(await windowOf(clicked.data.openedTabs[0].tabId)).not.toBe(popup.id);
+  // Chrome itself sends a tab meant for a popup-type window to a normal window.
+  const named=await world.ok('browser_tabs',{action:'new',operationId,windowId:popup.id,url:world.fixture.base+'/board.html'});
+  expect(named.operationId).toBe(operationId);expect(named.data.tab.windowId).not.toBe(popup.id);
+  await world.ok('browser_tabs',{action:'switch',operationId,tabId});
+  const inherited=await world.ok('browser_tabs',{action:'new',operationId,url:world.fixture.base+'/board.html'});
+  expect(inherited.operationId).toBe(operationId);expect(inherited.data.tab.windowId).not.toBe(popup.id);
+ }finally{await world.adminPage.evaluate(id=>chrome.windows.remove(id),popup.id).catch(()=>{});}
+});
 test('C05 ordinary anchor opens in a new operation tab without navigating the source',async()=>{
  const page=await world.open('board.html'),operationId=await world.attach(page),original=page.url();
  const snap=(await world.ok('browser_snapshot',{operationId})).data;

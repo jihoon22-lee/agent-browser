@@ -10,7 +10,8 @@ import { MessageCard, PermissionCard, QuestionCard, hasVisibleContent, messageTe
 import { RenameField, SessionMenu, type SessionAction } from "./SessionActions";
 import { THEMES, themeNames, themeTokens, useTheme } from "../theme/themes";
 import type { Operation } from "./status-store";
-import { captureRequestTarget, completedRequest, type RequestLease } from './request-target';
+import { completedRequest, resolveRequestTarget, type RequestLease } from './request-target';
+import { TargetPicker } from './TargetPicker';
 import { OpenCodeApiError } from '../agents/opencode-v1/client';
 import type { ConnStatus } from "../background/bridge-connection";
 import { ErrorNotice } from "./ErrorNotice";
@@ -81,6 +82,8 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const autoSend = useRef<string | undefined>(undefined), creating = useRef(false);
   const [autoTick, setAutoTick] = useState(0);
   const composer = useRef<HTMLTextAreaElement>(null);
+  // The tab chosen for the next requests; null is the automatic capture. Kept only while this panel is open.
+  const [target, setTarget] = useState<number | null>(null);
   const modelSelect = useRef<HTMLSelectElement>(null);
   const selectedControls = useRef({ key: "", dirty: false });
   const responding = useRef(new Set<string>()), composeActive = useRef(false), sendLock = useRef<object | undefined>(undefined);
@@ -254,7 +257,8 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
       if (!wb.sessionId) throw new Error("새 세션을 만들거나 기존 세션을 선택하세요.");
       if (!model) throw new Error("이 실행 환경에서 사용할 수 있는 모델을 선택하세요.");
       if (running) throw new Error("현재 응답이 끝난 뒤 보내거나 먼저 세션을 중단하세요.");
-      const targetPromise=captureRequestTarget();
+      // Started before any wait: the automatic target is the tab in focus when the person pressed send.
+      const targetPromise=resolveRequestTarget(target);targetPromise.catch(()=>{});
       const selectedApi=api(),path=sessionPath(),messageID="msg_"+crypto.randomUUID().replaceAll("-", "");
       const scope={profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId};
       const prepare=async()=>{
@@ -316,7 +320,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   }
   async function addBrowserReference(reference: string) {
     const current = wb.captureScope();
-    const response = await chrome.runtime.sendMessage({ kind: "browser-context", reference });
+    const response = await chrome.runtime.sendMessage({ kind: "browser-context", reference, ...(target === null ? {} : { tabId: target }) });
     if (!response?.ok) throw new Error(response?.error?.message ?? "브라우저 참조를 읽지 못했습니다.");
     const value = response.result;
     // The page text is cut at 16,000 characters; both the model and the user are told when that happened.
@@ -473,7 +477,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
         {mention !== undefined && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성"><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>{wb.agents.filter(item => !item.hidden && item.name.includes(mention)).map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
         {draft.startsWith("/") && !draft.includes(" ") && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)].filter(name => name.includes(draft.slice(1))).slice(0, 15).map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>}
         {modelsPanel}
-        <div className="composer-actions"><div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-send"><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
+        <div className="composer-actions"><div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-send"><TargetPicker chosen={target} onChange={(tabId, closed) => { setTarget(tabId); if (closed) setNotice("선택한 대상 탭이 닫혀 자동으로 돌아갔습니다. 다음 요청은 보낼 때 보고 있는 탭에서 합니다."); }} /><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
           <button type="button" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
             if(stopLock.current)return;
             stopLock.current=true;setStopping(true);

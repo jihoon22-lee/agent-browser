@@ -1206,3 +1206,90 @@ describe("review 2026-11-11", () => {
     });
   });
 });
+
+describe("work target picker", () => {
+  const windows = () => [
+    { id: 4, type: "normal", focused: true, tabs: [{ id: 31, title: "메일", url: "https://mail.test", active: true }] },
+    { id: 8, type: "popup", focused: false, tabs: [{ id: 55, title: "결재 팝업", url: "https://erp.test/approve", active: true }] },
+  ];
+  const picker = () => host.querySelector<HTMLSelectElement>('select[aria-label="작업 대상"]')!;
+  async function choose(value: string) { await act(async () => { const el = picker(); el.value = value; el.dispatchEvent(new Event("change", { bubbles: true })); }); }
+  function setup(get?: (id: number) => Promise<any>) {
+    (chrome as any).windows = { getLastFocused: vi.fn(async () => ({ id: 4, focused: true, tabs: [{ id: 31, active: true, url: "https://mail.test" }] })), getAll: vi.fn(async () => windows()), onCreated: { addListener: vi.fn(), removeListener: vi.fn() }, onRemoved: { addListener: vi.fn(), removeListener: vi.fn() } };
+    (chrome as any).tabs.onCreated = { addListener: vi.fn(), removeListener: vi.fn() };
+    if (get) (chrome as any).tabs.get = vi.fn(get);
+    const runtime = chrome.runtime.sendMessage as ReturnType<typeof vi.fn>, original = runtime.getMockImplementation() as (message: any) => Promise<any>;
+    runtime.mockImplementation(async (message: any) => message.kind === "request-prepare" ? { ok: true, result: { system: "ctx" } } : original(message));
+    return runtime;
+  }
+  const prepares = (runtime: ReturnType<typeof vi.fn>) => runtime.mock.calls.map(([m]) => m).filter(m => m.kind === "request-prepare");
+
+  it("lists popup-type windows and starts on the automatic target", async () => {
+    setup(); await render();
+    expect(picker().value).toBe("");
+    expect([...picker().querySelectorAll("optgroup")].map(g => g.label)).toEqual(["창 1 · 현재 창", "팝업 창"]);
+    expect([...picker().options].map(o => o.textContent)).toEqual(["자동", "메일", "결재 팝업"]);
+  });
+  it("sends the chosen tab as the request target", async () => {
+    const runtime = setup(async id => ({ id, windowId: 8, url: "https://erp.test/approve" }));
+    await render(); await choose("55");
+    await draftValue("결재해 줘"); await act(async () => button("보내기").click());
+    expect(prepares(runtime).map(m => m.target)).toEqual([{ tabId: 55, windowId: 8 }]);
+  });
+  it("sends the automatic target when nothing is chosen", async () => {
+    const runtime = setup(); await render();
+    await draftValue("요약"); await act(async () => button("보내기").click());
+    expect(prepares(runtime).map(m => m.target)).toEqual([{ tabId: 31, windowId: 4 }]);
+  });
+  it("does not send when the chosen tab is no longer usable, and keeps the draft", async () => {
+    const runtime = setup(async () => { throw new Error("No tab with id: 55"); });
+    await render(); await choose("55");
+    await draftValue("결재해 줘"); await act(async () => button("보내기").click());
+    expect(prepares(runtime)).toHaveLength(0);
+    expect(test.post.mock.calls.filter(([path]) => path.endsWith("/prompt_async"))).toHaveLength(0);
+    expect(host.textContent).toContain("선택한 대상 탭을 쓸 수 없습니다");
+    expect(composerValue().value).toBe("결재해 줘");
+  });
+  it("goes back to automatic when the chosen tab closes", async () => {
+    setup(); await render(); await choose("55");
+    const removed = (chrome.tabs.onRemoved.addListener as ReturnType<typeof vi.fn>).mock.calls.map(([f]) => f);
+    await act(async () => { for (const f of removed) f(55); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect(picker().value).toBe("");
+    expect(host.textContent).toContain("선택한 대상 탭이 닫혀 자동으로 돌아갔습니다");
+  });
+  it("reads the tab list again when a tab moves to another window", async () => {
+    setup(); (chrome as any).tabs.onAttached = { addListener: vi.fn(), removeListener: vi.fn() };
+    await render();
+    expect((chrome as any).tabs.onAttached.addListener).toHaveBeenCalled();
+  });
+  it("keeps only the newest tab list when an older read finishes last", async () => {
+    setup();
+    let releaseFirst!: (value: any) => void;
+    const first = new Promise(resolve => { releaseFirst = resolve; });
+    (chrome as any).windows.getAll = vi.fn().mockImplementationOnce(() => first).mockImplementation(async () => windows());
+    await render();
+    const updated = ((chrome as any).tabs.onCreated.addListener as ReturnType<typeof vi.fn>).mock.calls.map(([f]: any[]) => f).at(-1);
+    vi.useFakeTimers();
+    try { await act(async () => { updated({ id: 1 }); vi.advanceTimersByTime(400); }); } finally { vi.useRealTimers(); }
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    await act(async () => { releaseFirst([{ id: 9, type: "normal", focused: true, tabs: [{ id: 99, title: "오래된 목록", url: "https://old.test", active: true }] }]); await new Promise(resolve => setTimeout(resolve, 0)); });
+    expect([...picker().options].map(o => o.textContent)).toEqual(["자동", "메일", "결재 팝업"]);
+  });
+  it("still reads the tab list while tabs keep changing", async () => {
+    setup(); await render();
+    const getAll = (chrome as any).windows.getAll as ReturnType<typeof vi.fn>, before = getAll.mock.calls.length;
+    const updated = ((chrome as any).tabs.onCreated.addListener as ReturnType<typeof vi.fn>).mock.calls.map(([f]: any[]) => f).at(-1);
+    vi.useFakeTimers();
+    try { await act(async () => { for (let i = 0; i < 30; i++) { updated({ id: i }); vi.advanceTimersByTime(200); } }); } finally { vi.useRealTimers(); }
+    expect(getAll.mock.calls.length).toBeGreaterThan(before);
+  });
+  it("still renders the automatic target when the windows API is unavailable", async () => {
+    setup(); delete (chrome as any).windows.getAll; await render();
+    expect([...picker().options].map(o => o.textContent)).toEqual(["자동"]);
+  });
+  it("sends the chosen tab with a 현재 탭 attachment request", async () => {
+    const runtime = setup(); await render(); await choose("55");
+    await act(async () => button("현재 탭").click());
+    expect(runtime.mock.calls.map(([m]) => m).find(m => m.kind === "browser-context")).toMatchObject({ reference: "current-tab", tabId: 55 });
+  });
+});
