@@ -432,3 +432,31 @@ test("W18 typed draft text survives closing the panel and a sent draft does not 
   await expect(panel.getByRole("heading", { name: "새 합성 세션", exact: true })).toBeVisible();
   await expect(composer()).toHaveValue("");
 });
+
+test("W19 a tab of a popup-type window chosen in the panel becomes the request's tab", async ({}, info) => {
+  const popup = await world.adminPage.evaluate(url => (globalThis as any).chrome.windows.create({ url, type: "popup", focused: false }), world.fixture.base + "/board.html");
+  try {
+    const tabId = popup.tabs[0].id;
+    await expect.poll(async () => (await world.adminPage.evaluate(id => (globalThis as any).chrome.tabs.get(id), tabId)).status).toBe("complete");
+    await createSession();
+    const picker = panel.getByRole("combobox", { name: "작업 대상", exact: true });
+    // With the automatic target the send row stays one row at a common panel width.
+    await panel.setViewportSize({ width: 440, height: 900 });
+    const tools = await panel.getByRole("button", { name: "선택 영역", exact: true }).boundingBox(), sendButton = await panel.getByRole("button", { name: "보내기", exact: true }).boundingBox();
+    expect(Math.abs(tools!.y - sendButton!.y)).toBeLessThan(8);
+    await expect(picker.locator("optgroup", { hasText: "Board" })).toHaveAttribute("label", /팝업 창/);
+    await picker.selectOption(String(tabId));
+    for (const width of [320, 440]) {
+      await panel.setViewportSize({ width, height: 700 });
+      const image = info.outputPath(`target-picker-${width}.png`); await panel.screenshot({ path: image });
+      await info.attach(`target-picker-${width}`, { path: image, contentType: "image/png" });
+      // The picker shares the send row; it must not push 보내기 off the composer.
+      const send = await panel.getByRole("button", { name: "보내기", exact: true }).boundingBox();
+      expect(send && send.x + send.width).toBeLessThanOrEqual(width);
+    }
+    const before = api.state.requests.length;
+    await send("이 팝업의 내용을 요약해 줘");
+    const prompt = api.state.requests.slice(before).find((request: any) => request.path.endsWith("/prompt_async"));
+    expect(prompt?.body?.system).toContain(`The captured tab is ${tabId}`);
+  } finally { await world.adminPage.evaluate(id => (globalThis as any).chrome.windows.remove(id), popup.id).catch(() => {}); }
+});

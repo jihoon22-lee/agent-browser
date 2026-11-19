@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listRequestTargets, type TargetChoice } from "./request-target";
 
-const AUTO = "대상: 자동(보고 있는 탭)";
+const AUTO = "자동";
 const windowLabel = (win: TargetChoice, normalIndex: number) =>
   (win.type === "popup" ? "팝업 창" : `창 ${normalIndex}`) + (win.focused ? " · 현재 창" : "");
 
@@ -27,13 +27,13 @@ export function TargetPicker({ chosen, onChange }: { chosen: number | null; onCh
   }, []);
   let normal = 0;
   const known = chosen !== null && windows.some(win => win.tabs.some(tab => tab.tabId === chosen));
-  const title = chosen === null ? AUTO : `작업 대상: ${windows.flatMap(win => win.tabs).find(tab => tab.tabId === chosen)?.title || "선택한 탭"}`;
-  return <select className="target-select" aria-label="작업 대상" title={title} value={chosen === null ? "" : String(chosen)}
+  const title = chosen === null ? "자동: 보낼 때 보고 있는 탭" : `작업 대상: ${windows.flatMap(win => win.tabs).find(tab => tab.tabId === chosen)?.title || "선택한 탭"}`;
+  return <label className="target-picker" title={title}><span aria-hidden="true">대상</span><select aria-label="작업 대상" value={chosen === null ? "" : String(chosen)}
     onChange={event => onChange(event.target.value === "" ? null : Number(event.target.value))}>
     <option value="">{AUTO}</option>
     {windows.map(win => <optgroup key={win.windowId} label={windowLabel(win, win.type === "popup" ? normal : ++normal)}>
       {win.tabs.map(tab => <option key={tab.tabId} value={String(tab.tabId)}>{tab.title || new URL(tab.url).host}</option>)}
     </optgroup>)}
     {chosen !== null && !known && <option value={String(chosen)}>선택한 탭(지금 쓸 수 없음)</option>}
-  </select>;
+  </select></label>;
 }

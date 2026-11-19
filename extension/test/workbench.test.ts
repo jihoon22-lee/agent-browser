@@ -1228,7 +1228,7 @@ describe("work target picker", () => {
     setup(); await render();
     expect(picker().value).toBe("");
     expect([...picker().querySelectorAll("optgroup")].map(g => g.label)).toEqual(["창 1 · 현재 창", "팝업 창"]);
-    expect([...picker().options].map(o => o.textContent)).toEqual(["대상: 자동(보고 있는 탭)", "메일", "결재 팝업"]);
+    expect([...picker().options].map(o => o.textContent)).toEqual(["자동", "메일", "결재 팝업"]);
   });
   it("sends the chosen tab as the request target", async () => {
     const runtime = setup(async id => ({ id, windowId: 8, url: "https://erp.test/approve" }));
@@ -1258,7 +1258,7 @@ describe("work target picker", () => {
   });
   it("still renders the automatic target when the windows API is unavailable", async () => {
     setup(); delete (chrome as any).windows.getAll; await render();
-    expect([...picker().options].map(o => o.textContent)).toEqual(["대상: 자동(보고 있는 탭)"]);
+    expect([...picker().options].map(o => o.textContent)).toEqual(["자동"]);
   });
   it("sends the chosen tab with a 현재 탭 attachment request", async () => {
     const runtime = setup(); await render(); await choose("55");
