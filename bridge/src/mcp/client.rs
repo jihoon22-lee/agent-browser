@@ -181,7 +181,7 @@ pub(crate) struct Lanes {
     routes: std::sync::Mutex<Routes>,
 }
 #[derive(Default)]
-struct Routes { next: usize, requests: Vec<(String, usize)>, operations: Vec<(String, usize)> }
+struct Routes { next: usize, requests: Vec<(String, usize)>, operations: Vec<(String, usize)>, inflight: [usize; LANES] }
 const LANES: usize = 4;
 const REMEMBERED: usize = 64;
 
@@ -198,9 +198,16 @@ impl Lanes {
         }
         let Some(request) = args.get("requestId").and_then(Value::as_str) else { return 0 };
         if let Some((_, lane)) = routes.requests.iter().find(|(id, _)| id == request) { return *lane; }
-        let lane = 1 + routes.next % LANES; routes.next += 1;
+        // A new request takes the lane with the fewest calls waiting, so it does not queue behind a slow one.
+        let start = routes.next % LANES; routes.next += 1;
+        let lane = 1 + (0..LANES).map(|step| (start + step) % LANES).min_by_key(|index| routes.inflight[*index]).unwrap_or(start);
         Self::remember(&mut routes.requests, request, lane);
         lane
+    }
+    /// Counts a call on its lane until the returned guard drops.
+    fn enter(&self, lane: usize) -> Flight<'_> {
+        if lane > 0 { self.routes.lock().unwrap().inflight[lane - 1] += 1; }
+        Flight { lanes: self, lane }
     }
     fn bind_operation(&self, operation: &str, lane: usize) {
         if lane == 0 { return; }
@@ -211,6 +218,11 @@ impl Lanes {
         list.push((id.to_string(), lane));
         if list.len() > REMEMBERED { list.remove(0); }
     }
+}
+
+struct Flight<'a> { lanes: &'a Lanes, lane: usize }
+impl Drop for Flight<'_> {
+    fn drop(&mut self) { if self.lane > 0 { let mut routes = self.lanes.routes.lock().unwrap(); routes.inflight[self.lane - 1] = routes.inflight[self.lane - 1].saturating_sub(1); } }
 }
 
 pub struct ServeClient {
@@ -361,6 +373,7 @@ impl ServeClient {
         tokio::pin!(cancel);
         let class = tools::class_of(name, &args);
         let lane = self.lanes.lane_for(&args);
+        let _flight = self.lanes.enter(lane);
         let mut conn = tokio::select! {
             biased;
             _ = &mut cancel => return Ok(self.cancelled(name, &args, false)),
@@ -437,7 +450,7 @@ impl ServeClient {
         let cause = match reply {
             Ok(Ok(outcome)) if outcome.get("rpcError").is_none() => {
                 // The operation this call created keeps its request's lane.
-                if let (None, Some(op)) = (args.get("operationId"), outcome.get("operationId").and_then(Value::as_str)) { self.lanes.bind_operation(op, lane); }
+                if let (None, Some(op)) = (args.get("operationId").and_then(Value::as_str), outcome.get("operationId").and_then(Value::as_str)) { self.lanes.bind_operation(op, lane); }
                 return Ok(outcome);
             }
             Ok(Ok(rpc_failure)) => {
@@ -563,6 +576,10 @@ mod auth_tests {
         assert_eq!(lanes.lane_for(&json!({"requestId":"a","action":"new"})), a);
         assert_eq!(lanes.lane_for(&json!({"operationId":"op-a"})), 0, "an operation this proxy did not create uses the shared connection");
         lanes.bind_operation("op-a", a);
+        let busy = lanes.enter(b);
+        let (c, d) = (lanes.lane_for(&json!({"requestId":"c"})), lanes.lane_for(&json!({"requestId":"d"})));
+        assert!(c != b && d != b, "a new request avoids a lane with a call waiting");
+        drop(busy);
         assert_eq!(lanes.lane_for(&json!({"operationId":"op-a","requestId":"b"})), a, "the operation decides, not a stray requestId");
     }
 

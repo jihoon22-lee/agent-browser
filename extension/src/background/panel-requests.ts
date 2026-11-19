@@ -127,6 +127,8 @@ export function panelRequests(call:Call,concurrent:()=>boolean|Promise<boolean>=
       const open=await leases(),side=await concurrent();
       const blocking=side?open.filter(saved=>sameLeaseScope(saved,lease)):open;
       for(const saved of blocking)if(!await complete(saved,clientId))throw Error('이전 요청이 아직 실행 중이거나 완료를 확인하지 못했습니다. 완료를 기다리거나 해당 세션에서 응답을 중단하세요.');
+      // Other conversations keep running, but a finished request or one whose profile is gone is let go, as before.
+      if(side)for(const saved of open.filter(saved=>!sameLeaseScope(saved,lease)))await complete(saved,clientId).catch(()=>false);
       if(!blocking.length&&previousOperationId) {
         const api=await client(lease);
         if(!api)throw Error('이전 작업의 실행 상태를 확인하지 못했습니다. 해당 작업을 중단한 뒤 다시 시도하세요.');
@@ -138,7 +140,9 @@ export function panelRequests(call:Call,concurrent:()=>boolean|Promise<boolean>=
       await saveLeases([...(await leases()).filter(saved=>saved.requestId!==lease.requestId),lease]);
       try {
         check(lease.profileId,generation);
-        await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null,profileId:lease.profileId,sessionId:lease.sessionId,directory:lease.directory,...(side?{concurrent:true}:{})});
+        // Another conversation's attach briefly holds browser selection; wait for it instead of failing the send.
+        for(let attempt=0;;attempt++){try{await call('request.begin',{requestId:lease.requestId,clientId,tabId:target?.tabId??null,profileId:lease.profileId,sessionId:lease.sessionId,directory:lease.directory,...(side?{concurrent:true}:{})});break;}
+          catch(error){if(!side||attempt>=15||(error as any)?.message!=='Browser selection or attach is in progress.')throw error;await new Promise(resolve=>setTimeout(resolve,200));check(lease.profileId,generation);}}
         check(lease.profileId,generation);
       }
       catch(error){

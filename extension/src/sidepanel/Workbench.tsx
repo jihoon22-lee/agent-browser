@@ -322,7 +322,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   }
   async function addBrowserReference(reference: string) {
     const current = wb.captureScope();
-    const response = await chrome.runtime.sendMessage({ kind: "browser-context", reference, ...(target === null ? {} : { tabId: target }) });
+    const response = await chrome.runtime.sendMessage({ kind: "browser-context", reference, ...(target === null ? {} : { tabId: target }), ...(operation ? { operationId: operation.id } : {}) });
     if (!response?.ok) throw new Error(response?.error?.message ?? "브라우저 참조를 읽지 못했습니다.");
     const value = response.result;
     // The page text is cut at 16,000 characters; both the model and the user are told when that happened.

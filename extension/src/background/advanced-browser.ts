@@ -36,7 +36,7 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
    }else observer?.notify(dialog);
  });
  const orphan=(d:Dialog)=>{d.state='uncertain';d.owned=false;d.detached=true;};
- debug.onDetach(tabId=>{const d=pending.get(tabId);if(d)orphan(d);forget();});
+ debug.onDetach(tabId=>{const d=pending.get(tabId);if(d)orphan(d);const owner=current(tabId)?.id;if(owner)forget(owner);for(const [key,c] of captures)if(c.geometry.tabId===tabId){c.bitmap.close();captures.delete(key);}});
  /** Without the debugger no closed event arrives, so a detached dialog would block the tab for good.
   * A page with a modal dialog open cannot run script: one that answers again has none.
   * True when no dialog blocks the tab (any more); false while one may still be open. */
@@ -99,7 +99,7 @@ export function advancedBrowser(api:ChromeApi,debug:DebuggerApi,trusted:TrustedI
    const image=await bitmap(shot.data);c.imageWidth=image.width;c.imageHeight=image.height;
    // A full-page image is for reading only. Action coordinates always refer to the visible viewport.
    const captureId=scope==='fullPage'?undefined:crypto.randomUUID();
-   if(captureId){while(captures.size>=3){const key=captures.keys().next().value!;captures.get(key)!.bitmap.close();captures.delete(key);}captures.set(captureId,{geometry:c,bitmap:image});}else image.close();
+   if(captureId){const own=()=>[...captures].filter(([,s])=>s.geometry.operationId===c.operationId);while(own().length>=3){const [key,old]=own()[0]!;old.bitmap.close();captures.delete(key);}captures.set(captureId,{geometry:c,bitmap:image});}else image.close();
    return {mimeType:'image/png',base64:shot.data,captureId,scope,geometry:c,coordinates:'Use image pixel coordinates with browser_pointer; capture expires after 30s or any input. Full-page images cannot authorize input.'};
  }
  async function pointer(req:Req,signal:AbortSignal,started:()=>void) {

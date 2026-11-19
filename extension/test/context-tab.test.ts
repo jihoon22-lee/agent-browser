@@ -25,3 +25,14 @@ it("explains a chosen tab that has closed instead of passing Chrome's message th
   const gone = { get: vi.fn(async () => { throw new Error("No tab with id: 5."); }), active: vi.fn() };
   await expect(contextTab({}, "me", 5, gone)).rejects.toThrow("대상을 다시 고르세요");
 });
+describe("while several operations run", () => {
+  const status = { operations: [{ id: "op-a", clientId: "me", currentTab: 1 }, { id: "op-b", clientId: "me", currentTab: 2 }] };
+  const api = () => ({ get: vi.fn(async (id: number) => ({ id } as chrome.tabs.Tab)), active: vi.fn(async () => ({ id: 9 } as chrome.tabs.Tab)) });
+  it("reads this conversation's operation tab", async () => {
+    expect((await contextTab(status, "me", undefined, api(), "op-b"))?.id).toBe(2);
+  });
+  it("never reads another conversation's tab when its own operation is unknown", async () => {
+    expect((await contextTab(status, "me", undefined, api()))?.id).toBe(9);
+    expect((await contextTab(status, "me", 5, api()))?.id).toBe(5);
+  });
+});

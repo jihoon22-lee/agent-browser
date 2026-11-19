@@ -288,3 +288,19 @@ describe('conversations running side by side',()=>{
     expect(storage.panelBrowserRequest).toEqual(lease('one'));
   });
 });
+describe('cleanup and waiting while running side by side',()=>{
+  it('lets go of another conversation\'s request whose profile is gone',async()=>{
+    storage.panelBrowserRequest={...lease('one'),profileId:'deleted'};
+    call.mockImplementation(async(method:string,params:any)=>method==='runtime.status'?(params.profileId==='deleted'?null:{state:'ready',baseUrl:'http://127.0.0.1:4444'}):{});
+    await panelRequests(call,()=>true).prepare(lease('two'),null);
+    expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
+    expect(storage.panelBrowserRequest).toEqual(lease('two'));
+  });
+  it('waits for another conversation\'s attach instead of failing the send',async()=>{
+    let busy=2;
+    call.mockImplementation(async(method:string)=>{if(method==='request.begin'&&busy-->0)throw Object.assign(Error('Browser selection or attach is in progress.'),{code:'BROWSER_BUSY'});return method==='runtime.status'?{state:'ready',baseUrl:'http://127.0.0.1:4444'}:{};});
+    await panelRequests(call,()=>true).prepare(lease('two'),null);
+    expect(call.mock.calls.filter(([method])=>method==='request.begin')).toHaveLength(3);
+    expect(storage.panelBrowserRequest).toEqual(lease('two'));
+  });
+});
