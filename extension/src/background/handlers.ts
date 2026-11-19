@@ -613,7 +613,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         try {
             await check(req, controller.signal);
             if (WRITE.has(req.method)) {
-                if(req.method!=='browser.pointer'&&req.method!=='browser.dialog')advanced?.clear();
+                if(req.method!=='browser.pointer'&&req.method!=='browser.dialog')advanced?.clear(typeof req.params.operationId==='string'?req.params.operationId:undefined);
                 const entry = await store.claim(req.id);
                 if (entry?.state === 'done')
                     return unpack(entry.outcome);

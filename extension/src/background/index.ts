@@ -11,7 +11,10 @@ import { ProtocolError } from "../protocol/errors";
 import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
-import { chromeDebugger, trustedInput, trustedTargets } from './trusted-input';
+import { chromeDebugger, trustedInput, trustedTargetsFor } from './trusted-input';
+import { storedLeases } from '../sidepanel/request-target';
+import { concurrentRequestsOn } from './concurrency';
+import { operationChanges, statusOperations, type LiveOperation } from './operations';
 import { acceptTrustedRequest } from './trusted-message';
 import { groupTargets, loadGroupState, saveGroupState, chromeGroups, syncGroup, type GroupState } from './tab-groups';
 import { contextTab } from './context-tab';
@@ -27,13 +30,12 @@ const trusted = trustedInput(debuggerApi,()=>advancedEnabled&&advancedAvailable(
 let trustedEnabled = false, ownClientId: string | undefined;
 void chrome.storage.local.get(["trustedInput", "advancedBrowser", "clientId"]).then(({ trustedInput: on, advancedBrowser:advanced, clientId }) => { advancedEnabled=advanced===true;trustedEnabled = on === true; if (typeof clientId === "string") ownClientId = clientId; }).catch(() => {});
 // The person holding the browser (paused operation) gets every tab back, debugger detached.
-const trustedState = () => trustedTargets(lastOperation, ownClientId, trustedEnabled);
+const trustedState = () => trustedTargetsFor(liveOperations, ownClientId, trustedEnabled);
 const syncTrusted = () => void trusted.sync(trustedState()).catch(() => {});
 // Optional tab groups: serialized so status bursts cannot group a tab twice.
 let everConnected = false, groups: GroupState | undefined, grouping: Promise<unknown> = Promise.resolve();
 const syncGroups = () => { grouping = grouping.then(async () => {
-  const mine = lastOperation && ownClientId && lastOperation.clientId === ownClientId ? lastOperation : null;
-  const targets = groupTargets({ connected: lastStatus.state === "connected", everConnected }, mine?.tabs ?? []);
+  const targets = groupTargets({ connected: lastStatus.state === "connected", everConnected }, ownOperations().flatMap(op => op.tabs ?? []));
   if (targets === null) return;
   groups ??= await loadGroupState(chrome.storage.session);
   const granted = await chrome.permissions.contains({ permissions: ["tabGroups"] }).catch(() => false);
@@ -43,33 +45,37 @@ const syncGroups = () => { grouping = grouping.then(async () => {
 // Allowing or revoking tab groups in the options applies now, not at the next status change.
 chrome.permissions.onAdded.addListener(syncGroups);
 chrome.permissions.onRemoved.addListener(syncGroups);
-const advanced=advancedBrowser(realChromeApi,debuggerApi,trusted,()=>advancedEnabled,tabId=>trusted.ensure(tabId,trustedState()),(requestId,args)=>requests.vision(requestId,args),()=>lastOperation as any,tabId=>recovery.status(tabId));
-const downloadTracker=downloads(()=>lastOperation?.clientId===ownClientId?lastOperation?.id:undefined,()=>advanced.enabled());
+const advanced=advancedBrowser(realChromeApi,debuggerApi,trusted,()=>advancedEnabled,tabId=>trusted.ensure(tabId,trustedState()),(requestId,args)=>requests.vision(requestId,args),tabId=>ownOperations().find(op=>op.tabs?.includes(tabId))??null,tabId=>recovery.status(tabId));
+// Chrome does not say which tab started a download: new downloads are kept only while one operation runs.
+const downloadTracker=downloads(()=>{const mine=ownOperations();return mine.length===1?mine[0]!.id:undefined;},()=>advanced.enabled(),id=>ownOperations().some(op=>op.id===id));
 const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), {
   ensure: tabId => trusted.ensure(tabId, trustedState()),
   screenshot: tabId => trusted.screenshot(tabId),
   stopping:tabId=>trusted.isStopping(tabId),
 }, async (name, panelRequestId) => {
   // Only the panel request that holds the browser now; its files are forgotten when it ends.
-  const { panelBrowserRequest } = await chrome.storage.local.get("panelBrowserRequest") as { panelBrowserRequest?: { requestId?: unknown } };
-  return attachmentFor(uploads, panelBrowserRequest, panelRequestId, name);
+  const { panelBrowserRequest } = await chrome.storage.local.get("panelBrowserRequest");
+  return attachmentFor(uploads, storedLeases(panelBrowserRequest).find(lease => lease.requestId === panelRequestId), panelRequestId, name);
 },advanced,downloadTracker,recovery);
 let lastStatus: ConnStatus = { state: "disconnected" };
 // Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
-let lastOperation: { clientId: string; paused?: boolean; tabs?: number[]; id?: string } | null = null, waiting = false;
+let liveOperations: LiveOperation[] = [], waiting = false;
+function ownOperations(clientId: unknown = ownClientId) { return typeof clientId === "string" ? liveOperations.filter(op => op.clientId === clientId) : []; }
+/** The icon shows a hand-over first: the person is holding one of this browser's operations. */
+const badgeOperation = (clientId: string | undefined) => { const mine = ownOperations(clientId); return mine.find(op => op.paused) ?? mine[0] ?? null; };
 let marked: Set<number> | null = null, marking: Promise<unknown> = Promise.resolve();
 const markerApi = { executeScript: (tabId: number, func: (...args: any[]) => void, args: [boolean, string]) => chrome.scripting.executeScript({ target: { tabId }, func, args }) };
 /** Frames this browser's operation tabs; serialized so quick status bursts cannot interleave. */
 const refreshMarkers = () => { marking = marking.then(async () => {
   const { clientId } = await chrome.storage.local.get("clientId");
-  const mine = lastOperation && lastOperation.clientId === clientId ? lastOperation : null;
+  const mine = ownOperations(clientId);
   const webTabs = async () => (await chrome.tabs.query({ url: ["http://*/*", "https://*/*"] })).map(tab => tab.id).filter((id): id is number => Number.isInteger(id));
   const previous = await markedBefore(chrome.storage.session, webTabs, marked);
-  marked = await syncMarkers(markerApi, previous, mine ? { tabs: mine.tabs ?? [], paused: !!mine.paused } : null);
+  marked = await syncMarkers(markerApi, previous, mine.map(op => ({ tabs: op.tabs ?? [], paused: !!op.paused })));
   await chrome.storage.session.set({ markedTabs: [...marked] });
 }).catch(() => {}); };
 const refreshBadge = () => void chrome.storage.local.get("clientId")
-  .then(({ clientId }) => applyBadge(badgeFor({ operation: lastOperation, clientId: typeof clientId === "string" ? clientId : undefined, waiting })))
+  .then(({ clientId }) => applyBadge(badgeFor({ operation: badgeOperation(typeof clientId === "string" ? clientId : undefined), clientId: typeof clientId === "string" ? clientId : undefined, waiting })))
   .catch(() => {});
 const conn = new BridgeConnection({
   WebSocketImpl: WebSocket,
@@ -79,16 +85,23 @@ const conn = new BridgeConnection({
   clearTimer: (id) => clearTimeout(id),
   onRequest: (req) => handleBridgeRequest(req),
   onDisconnect: () => handleBridgeRequest.disconnect(),
-  onStatus: (s) => { lastStatus = s; if (s.state === "connected") everConnected = true; if (s.state !== "connected") { lastOperation = null; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
+  onStatus: (s) => { lastStatus = s; if (s.state === "connected") everConnected = true; if (s.state !== "connected") { liveOperations = []; waiting = false; refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); } void chrome.runtime.sendMessage({ kind: "conn-status", status: s }).catch(() => {}); },
   extensionVersion: chrome.runtime.getManifest().version,
   reload: () => chrome.runtime.reload(),
   onEvent: (event, data) => {
-    if (event === "status.changed") { const next=(data as {operation?:typeof lastOperation})?.operation??null;if(next?.id!==lastOperation?.id)advanced.reset();else if((next as any)?.currentTab!==(lastOperation as any)?.currentTab||next?.paused!==lastOperation?.paused)advanced.clear();lastOperation = next;void downloadTracker.observe(next?.clientId===ownClientId?next?.id:undefined).catch(()=>{}); refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups(); }
+    if (event === "status.changed") {
+      const next = statusOperations(data), { ended, moved } = operationChanges(liveOperations, next);
+      // Each operation keeps its own screenshots and dialogs; only an ended or retargeted one loses them.
+      if (!liveOperations.length || !next.length) advanced.reset(); else { for (const id of ended) advanced.forgetOperation(id); for (const id of moved) advanced.clear(id); }
+      liveOperations = next;
+      const mine = ownOperations(); void downloadTracker.observe(mine.length === 1 ? mine[0]!.id : undefined).catch(() => {});
+      refreshBadge(); refreshMarkers(); syncTrusted(); syncGroups();
+    }
     void chrome.runtime.sendMessage({ kind: "bridge-event", event, data }).catch(() => {});
   },
 });
 
-const requests=panelRequests((method,params)=>conn.request(method,params));
+const requests=panelRequests((method,params)=>conn.request(method,params),()=>chrome.storage.local.get('concurrentRequests').then(concurrentRequestsOn,()=>false));
 chrome.runtime.onStartup.addListener(() => conn.ensure());
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create("bridge-keepalive", { periodInMinutes: 1 });
@@ -160,14 +173,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
   if(msg?.kind==='advanced-status'){
-    const op=lastOperation?.clientId===ownClientId?lastOperation:undefined;
-    if(op?.id!==msg.operationId){sendResponse({ok:false});return;}
-    const tabId=(op as any).currentTab;
+    const op=ownOperations().find(op=>op.id===msg.operationId);
+    if(!op){sendResponse({ok:false});return;}
+    const tabId=op.currentTab!;
     void recovery.status(tabId).then(status=>sendResponse({ok:true,result:{dialog:advanced.pending(tabId),inputRecoveryRequired:status.required}}),()=>sendResponse({ok:false}));return true;
   }
   if(msg?.kind==='downloads-list'||msg?.kind==='download-bind'){
-    const op=lastOperation?.clientId===ownClientId?lastOperation?.id:undefined;
-    if(!op||msg.operationId!==op){sendResponse({ok:false,error:{message:'현재 브라우저 작업이 아닙니다.'}});return;}
+    const op=ownOperations().find(op=>op.id===msg.operationId)?.id;
+    if(!op){sendResponse({ok:false,error:{message:'현재 브라우저 작업이 아닙니다.'}});return;}
     const work=msg.kind==='downloads-list'?downloadTracker.list(op):downloadTracker.bind(op,Number(msg.downloadId));
     work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:String(error.message)}}));return true;
   }
@@ -185,10 +198,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.kind === "get-conn-status") { sendResponse(lastStatus); return; }
   if (msg?.kind === "browser-context" && ["current-tab", "selection"].includes(msg.reference)) {
     void (async () => {
-      const status = lastStatus.state === "connected" ? await conn.request("status.get", {}) as { operation?: { clientId: string; currentTab: number } } : undefined;
+      const status = lastStatus.state === "connected" ? await conn.request("status.get", {}) as Parameters<typeof contextTab>[0] : undefined;
       const clientId = (await chrome.storage.local.get("clientId")).clientId;
       const tab = await contextTab(status, clientId, typeof msg.tabId === "number" ? msg.tabId : undefined,
-        { get: id => chrome.tabs.get(id), active: async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0] });
+        { get: id => chrome.tabs.get(id), active: async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0] },
+        typeof msg.operationId === "string" ? msg.operationId : undefined);
       if (!tab?.id || !tab.url || !["http:", "https:"].includes(new URL(tab.url).protocol)) throw new Error("일반 HTTP(S) 페이지에서만 브라우저 참조를 첨부할 수 있습니다.");
       const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, args: [msg.reference], func: (reference: string) => { const text = reference === "selection" ? getSelection()?.toString() ?? "" : document.body?.innerText ?? ""; return { title: document.title, url: location.href, text: text.slice(0, text.length > 16000 && /[\ud800-\udbff]/.test(text[15999]!) ? 15999 : 16000), length: text.length }; } });
       if (!result?.result || (msg.reference === "selection" && !result.result.text)) throw new Error("선택한 텍스트가 없습니다.");
@@ -213,7 +227,7 @@ chrome.tabs.onRemoved.addListener((tabId) => { conn.sendEvent("tab.closed", { ta
 chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
   if (!shouldRemark(tabId, frameId, marked)) return;
   marking = remarkInQueue(marking, tabId, frameId, () => marked, tabId => {
-    const label = lastOperation?.paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
+    const label = ownOperations().find(op => op.tabs?.includes(tabId))?.paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
     return chrome.scripting.executeScript({ target: { tabId }, func: markerScript, args: [true, label] });
   });
 });

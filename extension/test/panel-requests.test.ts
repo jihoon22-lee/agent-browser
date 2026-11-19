@@ -256,3 +256,51 @@ it('names files the panel left out in the request instructions', async () => {
   const prepared=await panelRequests(call).prepare(lease('two'),null,undefined,[],['huge.zip']);
   expect(prepared.system).toContain('huge.zip');
 });
+
+describe('conversations running side by side',()=>{
+  const busy=(id:string)=>api.get.mockImplementation(async(path:string)=>path==='/session/status'?{['session-'+id]:{type:'busy'}}:[]);
+  it('starts a request in another conversation without waiting for the open one',async()=>{
+    storage.panelBrowserRequest=lease('one');busy('one');
+    await panelRequests(call,()=>true).prepare(lease('two'),null);
+    expect(call.mock.calls.some(([method])=>method==='request.end')).toBe(false);
+    expect(storage.panelBrowserRequest).toEqual([lease('one'),lease('two')]);
+  });
+  it('still waits for the same conversation\'s open request',async()=>{
+    storage.panelBrowserRequest=[lease('one'),lease('two')];busy('one');
+    await expect(panelRequests(call,()=>true).prepare({...lease('one'),requestId:'three'},null)).rejects.toThrow('이전 요청이 아직 실행 중');
+    expect(storage.panelBrowserRequest).toEqual([lease('one'),lease('two')]);
+  });
+  it('waits for every open request while running side by side is off',async()=>{
+    storage.panelBrowserRequest=lease('one');busy('one');
+    await expect(panelRequests(call).prepare(lease('two'),null)).rejects.toThrow('이전 요청이 아직 실행 중');
+  });
+  it('stops one conversation and keeps the other request open',async()=>{
+    storage.panelBrowserRequest=[lease('one'),lease('two')];
+    await panelRequests(call,()=>true).cancel(lease('two'));
+    expect(call).toHaveBeenCalledWith('request.end',{requestId:'two',clientId:'browser',abort:true});
+    expect(storage.panelBrowserRequest).toEqual(lease('one'));
+  });
+  it('ends each finished request on its own',async()=>{
+    storage.panelBrowserRequest=[lease('one'),lease('two')];busy('one');
+    api.get.mockImplementation(async(path:string)=>path==='/session/status'?{'session-one':{type:'busy'}}:path.includes('session-two')?[{info:{id:'msg-two',role:'user'}},{info:{role:'assistant',sessionID:'session-two',parentID:'msg-two',finish:'stop',time:{completed:1}}}]:[]);
+    await panelRequests(call,()=>true).reconcile();
+    expect(call).toHaveBeenCalledWith('request.end',{requestId:'two',clientId:'browser'});
+    expect(storage.panelBrowserRequest).toEqual(lease('one'));
+  });
+});
+describe('cleanup and waiting while running side by side',()=>{
+  it('lets go of another conversation\'s request whose profile is gone',async()=>{
+    storage.panelBrowserRequest={...lease('one'),profileId:'deleted'};
+    call.mockImplementation(async(method:string,params:any)=>method==='runtime.status'?(params.profileId==='deleted'?null:{state:'ready',baseUrl:'http://127.0.0.1:4444'}):{});
+    await panelRequests(call,()=>true).prepare(lease('two'),null);
+    expect(call).toHaveBeenCalledWith('request.end',{requestId:'one',clientId:'browser',abort:true});
+    expect(storage.panelBrowserRequest).toEqual(lease('two'));
+  });
+  it('waits for another conversation\'s attach instead of failing the send',async()=>{
+    let busy=2;
+    call.mockImplementation(async(method:string)=>{if(method==='request.begin'&&busy-->0)throw Object.assign(Error('Browser selection or attach is in progress.'),{code:'BROWSER_BUSY'});return method==='runtime.status'?{state:'ready',baseUrl:'http://127.0.0.1:4444'}:{};});
+    await panelRequests(call,()=>true).prepare(lease('two'),null);
+    expect(call.mock.calls.filter(([method])=>method==='request.begin')).toHaveLength(3);
+    expect(storage.panelBrowserRequest).toEqual(lease('two'));
+  });
+});

@@ -56,3 +56,13 @@ it("ignores unknown or malformed status messages", () => {
   expect(reduceStatus(initialPanelState, { kind: "something" })).toBe(initialPanelState);
   expect(reduceStatus(initialPanelState, { kind: "bridge-event", event: "status.changed", data: {} })).toBe(initialPanelState);
 });
+
+it("keeps every running operation and drops a stopped one", () => {
+  const op = (id: string) => ({ id, tabs: [1], currentTab: 1, state: "active", clientId: "me" });
+  const status = (data: object) => ({ kind: "bridge-event", event: "status.changed", data: { browsers: [], timeline: [], ...data } });
+  let state = reduceStatus(initialPanelState, status({ operation: op("a"), operations: [op("a"), op("b")] }));
+  expect(state.operations.map(o => o.id)).toEqual(["a", "b"]);
+  expect(reduceStatus(initialPanelState, status({ operation: op("a") })).operations.map(o => o.id)).toEqual(["a"]);
+  state = reduceStatus(state, { kind: "stop-completed", operationId: "b", confirmed: true });
+  expect(state.operations.map(o => o.id)).toEqual(["a"]);
+});

@@ -13,7 +13,8 @@ export type InputPhase = "prepare" | "press" | "continue" | "release" | "keyRele
 export type ActiveInput = (phase?:InputPhase) => boolean | Promise<boolean>;
 type InputStep=(()=>Promise<unknown>) & {phase?:InputPhase};
 const step=(run:()=>Promise<unknown>,phase:InputPhase):InputStep=>Object.assign(run,{phase});
-export type TrustedState = { enabled: boolean; operationTabs: number[]; operationId?: string | null };
+/** `owners` names each tab's operation when this browser runs several; without it every tab belongs to `operationId`. */
+export type TrustedState = { enabled: boolean; operationTabs: number[]; operationId?: string | null; owners?: Record<number, string>; live?: string[] };
 export type Dialog = { type: string; message: string };
 
 const KEYS: Record<string, { key: string; code: string; windowsVirtualKeyCode: number; text?: string }> = {
@@ -65,6 +66,16 @@ export function trustedTargets(operation: { id?: string; clientId?: string; tabs
   return { enabled, operationTabs: mine && !mine.paused ? mine.tabs ?? [] : [], operationId: mine?.id ?? null };
 }
 
+type OwnOperation = { id?: string; clientId?: string; tabs?: number[]; paused?: boolean };
+/** The input state for every operation of this browser: each tab with its operation; a held operation's tabs are left alone. */
+export function trustedTargetsFor(operations: OwnOperation[], clientId: string | undefined, enabled: boolean): TrustedState & { operationId: string | null } {
+  const mine = clientId ? operations.filter(op => op.clientId === clientId && typeof op.id === "string") : [];
+  const owners: Record<number, string> = {};
+  for (const op of mine) if (!op.paused) for (const tab of op.tabs ?? []) owners[tab] = op.id!;
+  // `live` includes held operations and ones without a tab: a cancellation outlives a hand-over.
+  return { enabled, operationTabs: Object.keys(owners).map(Number), operationId: mine[0]?.id ?? null, owners, live: mine.map(op => op.id!) };
+}
+
 /** An attempted input may have reached the page even if its first callback failed. */
 export class PartlyDelivered extends Error { readonly dispatched = true; constructor(message:string,readonly inputRecoveryRequired=false){super(message);} }
 class InputNotDelivered extends Error {
@@ -78,7 +89,7 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
   type Held={id:string;tabId:number;session:number|undefined;operation:string|null|undefined;document?:InputDocument;active:ActiveInput;lease:boolean;keys:Map<string,Record<string,unknown>>;upAttempts:Set<string>;mouse?:Record<string,unknown>;attempted:boolean;pressed:boolean;settled:boolean;quarantined:boolean;epoch:number;cleanupDeadline?:number};
   const heldInputs=new Map<number,Held>();
   const outstanding=(h:Held)=>!!h.mouse||h.keys.size>0;
-  const owns=(h:Held)=>attached.has(h.tabId)&&sessions.get(h.tabId)===h.session&&operationId===h.operation&&!isCancelled();
+  const owns=(h:Held)=>attached.has(h.tabId)&&sessions.get(h.tabId)===h.session&&ownerOf(h.tabId)===h.operation&&!isCancelled(h.operation);
   async function markUnresolved(h:Held){
     if(!outstanding(h)||h.settled)return;
     h.quarantined=true;
@@ -86,12 +97,13 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
   }
 
   // [Cancel] on Chrome's debugging bar applies to the whole operation, not one tab.
-  let cancelled: { operationId: string | null | undefined; reason: string } | undefined;
+  const cancelled = new Map<string | null | undefined, string>();
   const dialogs = new Map<number, Dialog>();
   const dialogEpoch=new Map<number,number>(), openDialogs=new Set<number>();
   // Dialogs are answered only during an agent input and shortly after; others belong to the person.
   const inputUntil = new Map<number, number>();
   let operationId: string | null | undefined;
+  const ownerOf = (tabId: number) => current.owners ? current.owners[tabId] : operationId;
   let current: TrustedState = { enabled: false, operationTabs: [] };
   // Attach, detach and sync run one at a time, so a session can never escape tracking.
   let queue: Promise<unknown> = Promise.resolve();
@@ -102,7 +114,7 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
     attached.delete(tabId);sessions.delete(tabId);
     // No closed event follows a detach: a remembered dialog would outlive the session.
     openDialogs.delete(tabId);dialogs.delete(tabId);
-    if (reason === "canceled_by_user") cancelled = { operationId, reason };
+    if (reason === "canceled_by_user") cancelled.set(ownerOf(tabId), reason);
   });
   api.onEvent((tabId, method, params) => {
     if(method==='Page.javascriptDialogClosed'){openDialogs.delete(tabId);return;}
@@ -117,7 +129,9 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
   });
 
   const takeDialog = (tabId: number) => { const dialog = dialogs.get(tabId); dialogs.delete(tabId); return dialog ? { dialog } : {}; };
-  const isCancelled = () => !!cancelled && cancelled.operationId === operationId;
+  const isCancelled = (owner: string | null | undefined) => cancelled.has(owner);
+  /** A cancellation is remembered only while its operation still runs. */
+  const forgetEnded = () => { const live = new Set<string | null | undefined>(current.live ?? (current.owners ? Object.values(current.owners) : [operationId])); for (const op of [...cancelled.keys()]) if (!live.has(op) && op !== operationId) cancelled.delete(op); };
 
   async function release(tabId: number) {
     const held=heldInputs.get(tabId);if(held)await markUnresolved(held);
@@ -158,11 +172,11 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
     return result;
   }
   function deliver(tabId:number,steps:InputStep[],active:ActiveInput,sourceDocumentId?:string) {
-    const owner=operationId,session=sessions.get(tabId),document=recovery?.capture(tabId,sourceDocumentId);
+    const owner=ownerOf(tabId),session=sessions.get(tabId),document=recovery?.capture(tabId,sourceDocumentId);
     void document?.catch(()=>{});
     const next=(inputs.get(tabId)??Promise.resolve()).then(async()=>{
       const captured=await document?.catch(error=>{throw Object.assign(error instanceof Error?error:Error(String(error)),{dispatched:false,verificationFailed:true});});
-      if(owner!==operationId||session!==sessions.get(tabId)||!attached.has(tabId)||captured&&!await recovery!.current(captured))throw new InputNotDelivered('The queued input context changed.',true);
+      if(owner!==ownerOf(tabId)||session!==sessions.get(tabId)||!attached.has(tabId)||captured&&!await recovery!.current(captured))throw new InputNotDelivered('The queued input context changed.',true);
       return deliverNow(tabId,steps,active,captured,owner,session);
     });
     const tail=next.catch(()=>{});inputs.set(tabId,tail);void tail.then(()=>{if(inputs.get(tabId)===tail)inputs.delete(tabId);});return next;
@@ -235,9 +249,9 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
   return {
     ensure(tabId: number, state: TrustedState): Promise<boolean> {
       return serial(async () => {
-        if (state.operationId !== undefined && state.operationId !== operationId) { operationId = state.operationId; if (cancelled && cancelled.operationId !== operationId) cancelled = undefined; }
-        current = state;
-        if (!state.enabled || !state.operationTabs.includes(tabId) || isCancelled() || detaching.has(tabId)) return false;
+        if (state.operationId !== undefined && state.operationId !== operationId) operationId = state.operationId;
+        current = state; forgetEnded();
+        if (!state.enabled || !state.operationTabs.includes(tabId) || isCancelled(ownerOf(tabId)) || detaching.has(tabId)) return false;
         if (attached.has(tabId)) return true;
         try {
           await api.attach(tabId);
@@ -249,9 +263,9 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
     },
     sync(state: TrustedState & { operationId: string | null }): Promise<void> {
       return serial(async () => {
-        if (state.operationId !== operationId) { cancelled = undefined; operationId = state.operationId; }
-        current = state;
-        for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !state.operationTabs.includes(tabId)) await release(tabId);
+        operationId = state.operationId;
+        current = state; forgetEnded();
+        for (const tabId of [...attached]) if (!state.enabled || !state.operationId || !ownerOf(tabId) || !state.operationTabs.includes(tabId)) await release(tabId);
       });
     },
     click(tabId: number, x: number, y: number, mode: ClickMode = "click", active:ActiveInput = () => true,sourceDocumentId?:string) {
@@ -295,7 +309,7 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
       const { data } = await api.send<{ data: string }>(tabId, "Page.captureScreenshot", { format: "png" });
       return `data:image/png;base64,${data}`;
     },
-    cancelledReason: (_tabId: number) => isCancelled() ? cancelled!.reason : undefined,
+    cancelledReason: (tabId: number) => cancelled.get(ownerOf(tabId)),
     isStopping:(tabId:number)=>detaching.has(tabId),
     isAttached: (tabId: number) => attached.has(tabId) && current.operationTabs.includes(tabId),
   };

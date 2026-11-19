@@ -82,3 +82,8 @@ it("explains a start failure by its last check when that cause is known", () => 
   expect(friendlyError(other).text).toContain("60초 안에 준비되지 않았습니다");
   expect(friendlyError(other).original).toBe(other);
 });
+
+it("explains the limit of side-by-side browser requests", () => {
+  expect(friendlyError("4 browser requests are already running. Wait for one to finish or stop it.").text).toContain("최대 개수");
+  expect(friendlyError("Another user request owns the browser. Wait for it to finish or stop it.").text).toContain("동시 작업");
+});

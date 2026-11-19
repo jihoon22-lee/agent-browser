@@ -39,14 +39,14 @@ pub async fn probe(port: u16) -> bool {
 /// Authenticate an existing Bridge for diagnostics, without starting a process.
 pub async fn probe_authenticated(home: &Path, port: u16) -> bool {
     let Ok(cfg) = config::load_or_init(home) else { return false; };
-    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
+    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None), lanes: Lanes::default() };
     client.open().await.is_ok()
 }
 
 /// One authenticated request to a running serve for local tools such as the installer. Never starts serve.
 pub async fn admin_request(home: &Path, port: u16, method: &str, params: Value) -> anyhow::Result<Value> {
     let cfg = config::load_or_init(home)?;
-    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None) };
+    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None), lanes: Lanes::default() };
     let mut ws = client.open().await.map_err(|error| anyhow::anyhow!("No authenticated Bridge at 127.0.0.1:{port}: {error}"))?;
     auth_exchange(&mut ws, &Envelope::req(method, params)).await.map_err(|error| anyhow::anyhow!(error))
 }
@@ -173,6 +173,58 @@ fn spawn_windows_without_handles(exe: &Path, port: u16, home: &Path) -> std::io:
     unreachable!("the final spawn attempt always returns")
 }
 
+/// Extra connections to serve, so one panel request's slow call does not hold up another's.
+/// A request keeps one lane for all its calls: the Bridge pins visual input to the connection
+/// that created the operation, and calls of one operation stay in the order they were sent.
+pub(crate) struct Lanes {
+    extra: Vec<tokio::sync::Mutex<Option<Ws>>>,
+    routes: std::sync::Mutex<Routes>,
+}
+#[derive(Default)]
+struct Routes { next: usize, requests: Vec<(String, usize)>, operations: Vec<(String, usize)>, inflight: [usize; LANES] }
+const LANES: usize = 4;
+const REMEMBERED: usize = 64;
+
+impl Default for Lanes {
+    fn default() -> Self { Self { extra: (0..LANES).map(|_| tokio::sync::Mutex::new(None)).collect(), routes: Default::default() } }
+}
+
+impl Lanes {
+    /// 0 is the shared connection: calls outside a panel request, and operations this proxy did not create.
+    fn lane_for(&self, args: &Value) -> usize {
+        let mut routes = self.routes.lock().unwrap();
+        if let Some(op) = args.get("operationId").and_then(Value::as_str) {
+            return routes.operations.iter().find(|(id, _)| id == op).map_or(0, |(_, lane)| *lane);
+        }
+        let Some(request) = args.get("requestId").and_then(Value::as_str) else { return 0 };
+        if let Some((_, lane)) = routes.requests.iter().find(|(id, _)| id == request) { return *lane; }
+        // A new request takes the lane with the fewest calls waiting, so it does not queue behind a slow one.
+        let start = routes.next % LANES; routes.next += 1;
+        let lane = 1 + (0..LANES).map(|step| (start + step) % LANES).min_by_key(|index| routes.inflight[*index]).unwrap_or(start);
+        Self::remember(&mut routes.requests, request, lane);
+        lane
+    }
+    /// Counts a call on its lane until the returned guard drops.
+    fn enter(&self, lane: usize) -> Flight<'_> {
+        if lane > 0 { self.routes.lock().unwrap().inflight[lane - 1] += 1; }
+        Flight { lanes: self, lane }
+    }
+    fn bind_operation(&self, operation: &str, lane: usize) {
+        if lane == 0 { return; }
+        Self::remember(&mut self.routes.lock().unwrap().operations, operation, lane);
+    }
+    fn remember(list: &mut Vec<(String, usize)>, id: &str, lane: usize) {
+        list.retain(|(known, _)| known != id);
+        list.push((id.to_string(), lane));
+        if list.len() > REMEMBERED { list.remove(0); }
+    }
+}
+
+struct Flight<'a> { lanes: &'a Lanes, lane: usize }
+impl Drop for Flight<'_> {
+    fn drop(&mut self) { if self.lane > 0 { let mut routes = self.lanes.routes.lock().unwrap(); routes.inflight[self.lane - 1] = routes.inflight[self.lane - 1].saturating_sub(1); } }
+}
+
 pub struct ServeClient {
     port: u16,
     exe: PathBuf,
@@ -182,9 +234,13 @@ pub struct ServeClient {
     last_error: std::sync::Mutex<Option<String>>,
     /// When the last full start attempt gave up; calls inside `START_COOLDOWN` only try to connect once.
     start_failed_at: std::sync::Mutex<Option<tokio::time::Instant>>,
+    lanes: Lanes,
 }
 
 impl ServeClient {
+    fn lane(&self, index: usize) -> &tokio::sync::Mutex<Option<Ws>> {
+        if index == 0 { &self.conn } else { &self.lanes.extra[index - 1] }
+    }
     pub async fn connected(&self) -> bool { self.conn.lock().await.is_some() }
     /// Never fails because serve is unreachable: `tools/list` must work without it, and a failed
     /// start is reported by each tool call instead.
@@ -198,6 +254,7 @@ impl ServeClient {
             conn: tokio::sync::Mutex::new(None),
             last_error: std::sync::Mutex::new(None),
             start_failed_at: std::sync::Mutex::new(None),
+            lanes: Lanes::default(),
         };
         {
             let mut conn = client.conn.lock().await;
@@ -315,10 +372,12 @@ impl ServeClient {
     pub async fn call_tool_cancellable(&self, name: &str, args: Value, cancel: impl std::future::Future<Output = ()> + Send) -> anyhow::Result<Value> {
         tokio::pin!(cancel);
         let class = tools::class_of(name, &args);
+        let lane = self.lanes.lane_for(&args);
+        let _flight = self.lanes.enter(lane);
         let mut conn = tokio::select! {
             biased;
             _ = &mut cancel => return Ok(self.cancelled(name, &args, false)),
-            conn = self.conn.lock() => conn,
+            conn = self.lane(lane).lock() => conn,
         };
         let req = Envelope::req("tool.call", json!({ "name": name, "arguments": args }));
         let req_text = req.to_text();
@@ -389,7 +448,11 @@ impl ServeClient {
             }) => reply,
         };
         let cause = match reply {
-            Ok(Ok(outcome)) if outcome.get("rpcError").is_none() => return Ok(outcome),
+            Ok(Ok(outcome)) if outcome.get("rpcError").is_none() => {
+                // The operation this call created keeps its request's lane.
+                if let (None, Some(op)) = (args.get("operationId").and_then(Value::as_str), outcome.get("operationId").and_then(Value::as_str)) { self.lanes.bind_operation(op, lane); }
+                return Ok(outcome);
+            }
             Ok(Ok(rpc_failure)) => {
                 let message = rpc_failure["rpcError"]["message"].as_str().unwrap_or("serve rejected the request").to_string();
                 return Ok(self.failure(name, &args, false, "no", RpcError::new(ErrorCode::Internal, Retry::Never, message)));
@@ -467,7 +530,7 @@ mod auth_tests {
         });
         let (ws,_) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}")).await.unwrap();
         let mut peer = server.await.unwrap();
-        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(Some(ws)),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
+        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(Some(ws)),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes:Lanes::default()};
         let mut polls = 0;
         // First poll: before the mutex. Second: before the cached connection.
         // Third: the send select, before its send future has ever been polled.
@@ -489,6 +552,56 @@ mod auth_tests {
         next.await.unwrap();
     }
 
+    async fn socket_pair() -> (Ws, WebSocketStream<TcpStream>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move { let (stream,_) = listener.accept().await.unwrap(); tokio_tungstenite::accept_async(stream).await.unwrap() });
+        let (ws,_) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}")).await.unwrap();
+        (ws, server.await.unwrap())
+    }
+
+    async fn answer(peer: &mut WebSocketStream<TcpStream>, result: Value) -> Value {
+        let Message::Text(text) = peer.next().await.unwrap().unwrap() else { panic!("expected tool.call") };
+        let Envelope::Req { id, params, .. } = parse_envelope(&text).unwrap() else { panic!("expected request") };
+        peer.send(Message::text(Envelope::ok(id, result).to_text())).await.unwrap();
+        params
+    }
+
+    #[test]
+    fn a_request_keeps_its_lane_and_calls_outside_requests_share_the_first() {
+        let lanes = Lanes::default();
+        assert_eq!(lanes.lane_for(&json!({"action":"list"})), 0);
+        let (a, b) = (lanes.lane_for(&json!({"requestId":"a"})), lanes.lane_for(&json!({"requestId":"b"})));
+        assert!(a > 0 && b > 0 && a != b);
+        assert_eq!(lanes.lane_for(&json!({"requestId":"a","action":"new"})), a);
+        assert_eq!(lanes.lane_for(&json!({"operationId":"op-a"})), 0, "an operation this proxy did not create uses the shared connection");
+        lanes.bind_operation("op-a", a);
+        let busy = lanes.enter(b);
+        let (c, d) = (lanes.lane_for(&json!({"requestId":"c"})), lanes.lane_for(&json!({"requestId":"d"})));
+        assert!(c != b && d != b, "a new request avoids a lane with a call waiting");
+        drop(busy);
+        assert_eq!(lanes.lane_for(&json!({"operationId":"op-a","requestId":"b"})), a, "the operation decides, not a stray requestId");
+    }
+
+    #[tokio::test]
+    async fn two_requests_wait_for_their_replies_side_by_side() {
+        let (lane_a, mut peer_a) = socket_pair().await;
+        let (lane_b, mut peer_b) = socket_pair().await;
+        let lanes = Lanes::default();
+        *lanes.extra[0].lock().await = Some(lane_a); *lanes.extra[1].lock().await = Some(lane_b);
+        let client = std::sync::Arc::new(ServeClient {port:0,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes});
+        let slow = { let client = client.clone(); tokio::spawn(async move { client.call_tool("browser_tabs", json!({"action":"attach","requestId":"a","tabId":1})).await.unwrap() }) };
+        let quick = { let client = client.clone(); tokio::spawn(async move { client.call_tool("browser_tabs", json!({"action":"attach","requestId":"b","tabId":2})).await.unwrap() }) };
+        assert_eq!(answer(&mut peer_b, json!({"ok":true,"operationId":"op-b"})).await["arguments"]["requestId"], "b");
+        assert_eq!(tokio::time::timeout(Duration::from_secs(2), quick).await.unwrap().unwrap()["operationId"], "op-b", "b finished while a still waits");
+        assert!(!slow.is_finished());
+        answer(&mut peer_a, json!({"ok":true,"operationId":"op-a"})).await;
+        assert_eq!(slow.await.unwrap()["operationId"], "op-a");
+        let next = { let client = client.clone(); tokio::spawn(async move { client.call_tool("browser_snapshot", json!({"operationId":"op-a"})).await.unwrap() }) };
+        assert_eq!(answer(&mut peer_a, json!({"ok":true})).await["arguments"]["operationId"], "op-a", "the operation's later calls use the lane that created it");
+        next.await.unwrap();
+    }
+
     #[tokio::test]
     async fn r01_cancellation_interrupts_connection_authentication() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -501,7 +614,7 @@ mod auth_tests {
             // The client must drop auth instead of waiting for its five-second timeout.
             assert!(tokio::time::timeout(Duration::from_secs(1),ws.next()).await.is_ok());
         });
-        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None)};
+        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes:Lanes::default()};
         let outcome = tokio::time::timeout(Duration::from_secs(1), client.call_tool_cancellable("browser_tabs",json!({"action":"list"}),async {let _ = cancel.await;})).await.unwrap().unwrap();
         assert_eq!(outcome["error"]["code"],"CANCELLED"); assert_eq!(outcome["delivered"],false);
         fake.await.unwrap();
@@ -522,7 +635,7 @@ mod auth_tests {
         });
         let client = ServeClient {
             port, exe: PathBuf::new(), home: PathBuf::new(), token: "secret-test-token".into(),
-            conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None),
+            conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None), lanes: Lanes::default(),
         };
         assert!(client.open().await.unwrap_err().contains("server proof is invalid"));
         fake.await.unwrap();

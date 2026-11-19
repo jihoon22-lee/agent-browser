@@ -10,7 +10,7 @@ import { MessageCard, PermissionCard, QuestionCard, hasVisibleContent, messageTe
 import { RenameField, SessionMenu, type SessionAction } from "./SessionActions";
 import { THEMES, themeNames, themeTokens, useTheme } from "../theme/themes";
 import type { Operation } from "./status-store";
-import { completedRequest, resolveRequestTarget, type RequestLease } from './request-target';
+import { completedRequest, leaseOf, resolveRequestTarget, type RequestLease } from './request-target';
 import { TargetPicker } from './TargetPicker';
 import { OpenCodeApiError } from '../agents/opencode-v1/client';
 import type { ConnStatus } from "../background/bridge-connection";
@@ -24,9 +24,11 @@ const EXAMPLES = ["지금 보는 페이지를 요약해줘", "이 페이지의 �
 // Longer drafts, such as a pasted log, stay in memory only: session storage also holds the input-recovery records.
 const MAX_STORED_DRAFT = 20_000;
 type StartAction = { label: string; run: (trigger: HTMLButtonElement) => void; primary?: boolean };
-type Props = { operation: Operation | null; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void; conn: ConnStatus };
-export function Workbench({ operation, stopHandler, view, onViewChange, conn }: Props) {
+type Props = { operation: Operation | null; operations?: Operation[]; stopHandler: RefObject<(operationId: string) => Promise<void>>; view: WorkspaceView; onViewChange: (view: WorkspaceView) => void; conn: ConnStatus };
+export function Workbench({ operation: oldest, operations, stopHandler, view, onViewChange, conn }: Props) {
   const wb = useWorkbench();
+  // This conversation's operation. While only one runs it is shown here even before the panel can tell whose it is.
+  const operation = operations?.find(op => wb.operationOwner(op.id) === wb.sessionId) ?? ((operations?.length ?? 0) <= 1 ? oldest : null);
   const [requestHeld,setRequestHeld]=useState(false);
   const [stopping,setStopping]=useState(false);
   // This browser's id, so take-over is offered only for an operation it runs.
@@ -43,13 +45,14 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   const stopLock=useRef(false);
   useEffect(()=>{
     let active=true,revision=0;
-    const sync=(r:RequestLease|undefined)=>{if(active)setRequestHeld(r?.profileId===wb.profileId&&r?.directory===wb.directory&&r?.sessionId===wb.sessionId);};
+    const scope={profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId};
+    const sync=(stored:unknown)=>{if(active)setRequestHeld(!!leaseOf(stored,scope));};
     const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{
-      if(area==='local'&&Object.hasOwn(changes,'panelBrowserRequest')){revision++;sync(changes.panelBrowserRequest?.newValue as RequestLease|undefined);}
+      if(area==='local'&&Object.hasOwn(changes,'panelBrowserRequest')){revision++;sync(changes.panelBrowserRequest?.newValue);}
     };
     chrome.storage.onChanged?.addListener(changed);
     const initial=revision;
-    void chrome.storage.local?.get('panelBrowserRequest').then(saved=>{if(revision===initial)sync(saved.panelBrowserRequest as RequestLease|undefined);}).catch(()=>{});
+    void chrome.storage.local?.get('panelBrowserRequest').then(saved=>{if(revision===initial)sync(saved.panelBrowserRequest);}).catch(()=>{});
     return ()=>{active=false;chrome.storage.onChanged?.removeListener(changed);};
   },[wb.profileId,wb.directory,wb.sessionId]);
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
@@ -98,8 +101,8 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
     if(!requestHeld||running)return;
     let active=true;
     void chrome.storage.local?.get('panelBrowserRequest').then(async saved=>{
-      const lease=saved.panelBrowserRequest as RequestLease|undefined;
-      if(!lease||lease.sessionId!==wb.sessionId||lease.profileId!==wb.profileId||lease.directory!==wb.directory||!completedRequest(lease,messages))return;
+      const lease=leaseOf(saved.panelBrowserRequest,{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId});
+      if(!lease||!completedRequest(lease,messages))return;
       const response=await chrome.runtime.sendMessage({kind:'request-finish',scope:{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId}});
       if(active&&response?.ok&&response.result===true)setRequestHeld(false);
     }).catch(()=>{});
@@ -306,10 +309,9 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
         // A rejected next submission must not replace the still-running owner's
         // Stop token with the rejected attempt's token.
         try {
-          const saved=(await chrome.storage.local.get('panelBrowserRequest')).panelBrowserRequest as RequestLease|undefined;
+          const saved=leaseOf((await chrome.storage.local.get('panelBrowserRequest')).panelBrowserRequest,{profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId});
           if(current()&&submission.current===attempt){
-            const owned=saved?.profileId===wb.profileId&&saved.directory===wb.directory&&saved.sessionId===wb.sessionId;
-            attempt.requestId=owned?saved.requestId:undefined;setRequestHeld(owned);
+            attempt.requestId=saved?.requestId;setRequestHeld(!!saved);
           }
         }catch{/* Keep the uncertain identity when storage itself is unavailable. */}
       }
@@ -320,7 +322,7 @@ export function Workbench({ operation, stopHandler, view, onViewChange, conn }: 
   }
   async function addBrowserReference(reference: string) {
     const current = wb.captureScope();
-    const response = await chrome.runtime.sendMessage({ kind: "browser-context", reference, ...(target === null ? {} : { tabId: target }) });
+    const response = await chrome.runtime.sendMessage({ kind: "browser-context", reference, ...(target === null ? {} : { tabId: target }), ...(operation ? { operationId: operation.id } : {}) });
     if (!response?.ok) throw new Error(response?.error?.message ?? "브라우저 참조를 읽지 못했습니다.");
     const value = response.result;
     // The page text is cut at 16,000 characters; both the model and the user are told when that happened.

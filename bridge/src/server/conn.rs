@@ -79,7 +79,8 @@ impl ServerState {
             home,
             cfg: tokio::sync::Mutex::new(cfg),
             registry,
-            ops: OperationGate::default(),
+            // Panel requests that allow it run side by side; everything else runs alone.
+            ops: OperationGate::with_limit(4),
             timeline: Timeline::default(),
             selection: tokio::sync::Mutex::new(()),
             pairing: StdMutex::new(None),
@@ -91,6 +92,8 @@ impl ServerState {
     pub fn status(&self) -> Value {
         json!({
             "operation": self.ops.current(),
+            // Every running operation; `operation` stays the oldest for older extensions.
+            "operations": self.ops.all(),
             "browsers": self.registry.snapshot(),
             "timeline": self.timeline.entries(),
         })
@@ -588,7 +591,7 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
                 _=>None,
             };
             let result=if method=="request.begin" {
-                state.ops.begin_scoped_request(request,client,params["tabId"].as_i64().filter(|n|*n>0),scope).map(|_|None)
+                state.ops.begin_request_with(request,client,params["tabId"].as_i64().filter(|n|*n>0),scope,params["concurrent"]==true).map(|_|None)
             } else if params["abort"] == true { state.ops.cancel_request(request,client) }
             else { state.ops.end_request(request,client) };
             match result {
@@ -611,13 +614,11 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
         }
         "operation.abort" => {
             let operation_id = params.get("operationId").and_then(Value::as_str);
-            match state.ops.abort_user(operation_id) {
-                Some(op) => {
-                    // The closed operation's owner receives cancellation, never a later selection.
-                    state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation }));
-                    state.broadcast_status();
-                    Envelope::ok(id, json!({ "aborted": true, "operationId": op.id }))
-                }
+            let aborted = state.ops.abort_user(operation_id);
+            // The closed operation's owner receives cancellation, never a later selection.
+            for op in &aborted { state.registry.notify_for(&op.client_id, "browser.cancel", json!({ "operationId": op.id, "generation": op.generation })); }
+            match aborted.first() {
+                Some(op) => { state.broadcast_status(); Envelope::ok(id, json!({ "aborted": true, "operationId": op.id })) }
                 None => Envelope::ok(id, json!({ "aborted": false, "operationId": Value::Null })),
             }
         }

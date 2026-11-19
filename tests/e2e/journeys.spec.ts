@@ -231,3 +231,20 @@ test('J28 automatic popup return requires a fresh observation before another pag
  const result=await call('browser_navigate',{operationId,url:url('journey-detail.html?id=B')});expect(result.error?.code).toBe('STALE_ELEMENT');
  expect(page.url()).toBe(url('journey.html'));await snap(operationId);await editAndSave(operationId,'비교 메모','대상 확인 후 계속');
 });
+
+test('J40 two conversations work side by side in their own tabs; stopping one leaves the other running',async()=>{
+ const pageA=await world.context.newPage();await pageA.goto(url('journey.html'));
+ const pageB=await world.context.newPage();await pageB.goto(url('journey-detail.html?id=B'));
+ const first=await attach(pageA),requestA=lease!;
+ const second=await attach(pageB),requestB=lease!;
+ expect(second).not.toBe(first);
+ expect((await world.admin('status.get')).operations.map((op:any)=>op.id).sort()).toEqual([first,second].sort());
+ const taken=await call('browser_tabs',{action:'attach',requestId:requestB,tabId:await world.tabId(pageA)});
+ expect(taken.ok).toBe(false);
+ await editAndSave(first,'비교 메모','A 대화');
+ await editAndSave(second,'상세 메모','B 대화');
+ await panel({kind:'request-discard',requestId:requestA});
+ expect((await call('browser_snapshot',{operationId:first})).ok).toBe(false);
+ expect((await snap(second)).tabId).toBe(await world.tabId(pageB));
+ lease=requestB;
+});
