@@ -14,7 +14,7 @@ export type ActiveInput = (phase?:InputPhase) => boolean | Promise<boolean>;
 type InputStep=(()=>Promise<unknown>) & {phase?:InputPhase};
 const step=(run:()=>Promise<unknown>,phase:InputPhase):InputStep=>Object.assign(run,{phase});
 /** `owners` names each tab's operation when this browser runs several; without it every tab belongs to `operationId`. */
-export type TrustedState = { enabled: boolean; operationTabs: number[]; operationId?: string | null; owners?: Record<number, string> };
+export type TrustedState = { enabled: boolean; operationTabs: number[]; operationId?: string | null; owners?: Record<number, string>; live?: string[] };
 export type Dialog = { type: string; message: string };
 
 const KEYS: Record<string, { key: string; code: string; windowsVirtualKeyCode: number; text?: string }> = {
@@ -72,7 +72,8 @@ export function trustedTargetsFor(operations: OwnOperation[], clientId: string |
   const mine = clientId ? operations.filter(op => op.clientId === clientId && typeof op.id === "string") : [];
   const owners: Record<number, string> = {};
   for (const op of mine) if (!op.paused) for (const tab of op.tabs ?? []) owners[tab] = op.id!;
-  return { enabled, operationTabs: Object.keys(owners).map(Number), operationId: mine[0]?.id ?? null, owners };
+  // `live` includes held operations and ones without a tab: a cancellation outlives a hand-over.
+  return { enabled, operationTabs: Object.keys(owners).map(Number), operationId: mine[0]?.id ?? null, owners, live: mine.map(op => op.id!) };
 }
 
 /** An attempted input may have reached the page even if its first callback failed. */
@@ -130,7 +131,7 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
   const takeDialog = (tabId: number) => { const dialog = dialogs.get(tabId); dialogs.delete(tabId); return dialog ? { dialog } : {}; };
   const isCancelled = (owner: string | null | undefined) => cancelled.has(owner);
   /** A cancellation is remembered only while its operation still runs. */
-  const forgetEnded = () => { const live = new Set(current.owners ? Object.values(current.owners) : [operationId]); for (const op of [...cancelled.keys()]) if (!live.has(op) && op !== operationId) cancelled.delete(op); };
+  const forgetEnded = () => { const live = new Set<string | null | undefined>(current.live ?? (current.owners ? Object.values(current.owners) : [operationId])); for (const op of [...cancelled.keys()]) if (!live.has(op) && op !== operationId) cancelled.delete(op); };
 
   async function release(tabId: number) {
     const held=heldInputs.get(tabId);if(held)await markUnresolved(held);

@@ -1,6 +1,16 @@
 import { isWeb } from '../background/tabs';
 export type RequestTarget = { tabId: number; windowId: number };
 export type RequestLease = { requestId: string; messageId: string; sessionId: string; profileId: string; directory: string; vision?: {model:string;image:'supported'|'unsupported'|'unknown';toolcall:boolean} };
+type LeaseScope = Pick<RequestLease, 'profileId' | 'directory' | 'sessionId'>;
+/** Open panel requests in storage. One request is stored as before; several as a list. */
+export function storedLeases(value: unknown): RequestLease[] {
+  const valid = (lease: unknown): lease is RequestLease => !!lease && typeof lease === 'object' && typeof (lease as RequestLease).requestId === 'string';
+  return Array.isArray(value) ? value.filter(valid) : valid(value) ? [value] : [];
+}
+export const leaseStorageValue = (leases: RequestLease[]): RequestLease | RequestLease[] | undefined => leases.length > 1 ? leases : leases[0];
+export const sameLeaseScope = (lease: LeaseScope, scope: LeaseScope) => lease.profileId === scope.profileId && lease.directory === scope.directory && lease.sessionId === scope.sessionId;
+/** The open request of one conversation, if any. */
+export const leaseOf = (value: unknown, scope: LeaseScope) => storedLeases(value).find(lease => sameLeaseScope(lease, scope));
 export async function captureRequestTarget(): Promise<RequestTarget | null> {
   try {
     const win=await chrome.windows.getLastFocused({populate:true,windowTypes:['normal','popup']});

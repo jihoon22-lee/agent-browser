@@ -341,4 +341,11 @@ describe("several operations of this browser", () => {
     expect(t.cancelledReason(3)).toBe("canceled_by_user");
     expect(await t.ensure(3, trustedTargetsFor([{ id: "op-b", clientId: "me", tabs: [3] }], "me", true))).toBe(false);
   });
+  it("remembers a cancellation while its operation is held by the person", async () => {
+    const d = fakeDebugger(), t = trustedInput(d.api);
+    await t.ensure(3, two());
+    d.detach(3, "canceled_by_user");
+    await t.sync(two(true));
+    expect(await t.ensure(3, two())).toBe(false);
+  });
 });

@@ -12,6 +12,7 @@ import { chromeStorage, realChromeApi } from "./chrome-api";
 import { isExtensionPage } from "./sender";
 import { panelRequests } from './panel-requests';
 import { chromeDebugger, trustedInput, trustedTargetsFor } from './trusted-input';
+import { storedLeases } from '../sidepanel/request-target';
 import { operationChanges, statusOperations, type LiveOperation } from './operations';
 import { acceptTrustedRequest } from './trusted-message';
 import { groupTargets, loadGroupState, saveGroupState, chromeGroups, syncGroup, type GroupState } from './tab-groups';
@@ -52,8 +53,8 @@ const handleBridgeRequest = createHandlers(realChromeApi, chromeSessionStore(), 
   stopping:tabId=>trusted.isStopping(tabId),
 }, async (name, panelRequestId) => {
   // Only the panel request that holds the browser now; its files are forgotten when it ends.
-  const { panelBrowserRequest } = await chrome.storage.local.get("panelBrowserRequest") as { panelBrowserRequest?: { requestId?: unknown } };
-  return attachmentFor(uploads, panelBrowserRequest, panelRequestId, name);
+  const { panelBrowserRequest } = await chrome.storage.local.get("panelBrowserRequest");
+  return attachmentFor(uploads, storedLeases(panelBrowserRequest).find(lease => lease.requestId === panelRequestId), panelRequestId, name);
 },advanced,downloadTracker,recovery);
 let lastStatus: ConnStatus = { state: "disconnected" };
 // Toolbar badge inputs: the Bridge's current operation and whether the panel request awaits an answer.
