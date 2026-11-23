@@ -88,6 +88,9 @@ impl Registry {
 
     pub fn use_browser(&self, client_id: &str) { self.inner.lock().unwrap().selected = Some(client_id.into()); }
     pub fn selected_client(&self) -> Option<String> { self.inner.lock().unwrap().selected.clone() }
+    pub fn client_id_of(&self, conn: ConnId) -> Option<String> {
+        self.inner.lock().unwrap().conns.get(&conn).map(|c| c.client_id.clone())
+    }
 
     /// Only the selected profile's newest authenticated worker may send tab lifecycle events.
     pub fn selected_connection_client(&self, conn: ConnId) -> Option<String> {

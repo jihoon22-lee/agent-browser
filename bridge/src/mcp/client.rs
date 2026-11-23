@@ -39,14 +39,13 @@ pub async fn probe(port: u16) -> bool {
 /// Authenticate an existing Bridge for diagnostics, without starting a process.
 pub async fn probe_authenticated(home: &Path, port: u16) -> bool {
     let Ok(cfg) = config::load_or_init(home) else { return false; };
-    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None), lanes: Lanes::default() };
-    client.open().await.is_ok()
+    ServeClient::ephemeral(home, port, cfg.token).open().await.is_ok()
 }
 
 /// One authenticated request to a running serve for local tools such as the installer. Never starts serve.
 pub async fn admin_request(home: &Path, port: u16, method: &str, params: Value) -> anyhow::Result<Value> {
     let cfg = config::load_or_init(home)?;
-    let client = ServeClient { port, exe: Path::new("").into(), home: home.to_path_buf(), token: cfg.token, conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None), lanes: Lanes::default() };
+    let client = ServeClient::ephemeral(home, port, cfg.token);
     let mut ws = client.open().await.map_err(|error| anyhow::anyhow!("No authenticated Bridge at 127.0.0.1:{port}: {error}"))?;
     auth_exchange(&mut ws, &Envelope::req(method, params)).await.map_err(|error| anyhow::anyhow!(error))
 }
@@ -196,13 +195,21 @@ impl Lanes {
         if let Some(op) = args.get("operationId").and_then(Value::as_str) {
             return routes.operations.iter().find(|(id, _)| id == op).map_or(0, |(_, lane)| *lane);
         }
-        let Some(request) = args.get("requestId").and_then(Value::as_str) else { return 0 };
-        if let Some((_, lane)) = routes.requests.iter().find(|(id, _)| id == request) { return *lane; }
-        // A new request takes the lane with the fewest calls waiting, so it does not queue behind a slow one.
-        let start = routes.next % LANES; routes.next += 1;
-        let lane = 1 + (0..LANES).map(|step| (start + step) % LANES).min_by_key(|index| routes.inflight[*index]).unwrap_or(start);
-        Self::remember(&mut routes.requests, request, lane);
-        lane
+        if let Some(request) = args.get("requestId").and_then(Value::as_str) {
+            if let Some((_, lane)) = routes.requests.iter().find(|(id, _)| id == request) { return *lane; }
+            // A new request takes the lane with the fewest calls waiting, so it does not queue behind a slow one.
+            let start = routes.next % LANES; routes.next += 1;
+            let lane = 1 + (0..LANES).map(|step| (start + step) % LANES).min_by_key(|index| routes.inflight[*index]).unwrap_or(start);
+            Self::remember(&mut routes.requests, request, lane);
+            return lane;
+        }
+        // When exactly one operation created by this proxy is active, id-less calls (such as
+        // auto-bound browser_pointer after an explicit requestId attach) stay on that same lane
+        // so input_connection matches and ordering is preserved.
+        if routes.operations.len() == 1 {
+            return routes.operations[0].1;
+        }
+        0
     }
     /// Counts a call on its lane until the returned guard drops.
     fn enter(&self, lane: usize) -> Flight<'_> {
@@ -212,6 +219,9 @@ impl Lanes {
     fn bind_operation(&self, operation: &str, lane: usize) {
         if lane == 0 { return; }
         Self::remember(&mut self.routes.lock().unwrap().operations, operation, lane);
+    }
+    fn unbind_operation(&self, operation: &str) {
+        self.routes.lock().unwrap().operations.retain(|(id, _)| id != operation);
     }
     fn remember(list: &mut Vec<(String, usize)>, id: &str, lane: usize) {
         list.retain(|(known, _)| known != id);
@@ -231,6 +241,7 @@ pub struct ServeClient {
     home: PathBuf,
     token: String,
     conn: tokio::sync::Mutex<Option<Ws>>,
+    spawn_lock: tokio::sync::Mutex<()>,
     last_error: std::sync::Mutex<Option<String>>,
     /// When the last full start attempt gave up; calls inside `START_COOLDOWN` only try to connect once.
     start_failed_at: std::sync::Mutex<Option<tokio::time::Instant>>,
@@ -238,6 +249,19 @@ pub struct ServeClient {
 }
 
 impl ServeClient {
+    fn ephemeral(home: &Path, port: u16, token: String) -> Self {
+        Self {
+            port,
+            exe: PathBuf::new(),
+            home: home.to_path_buf(),
+            token,
+            conn: tokio::sync::Mutex::new(None),
+            spawn_lock: tokio::sync::Mutex::new(()),
+            last_error: std::sync::Mutex::new(None),
+            start_failed_at: std::sync::Mutex::new(None),
+            lanes: Lanes::default(),
+        }
+    }
     fn lane(&self, index: usize) -> &tokio::sync::Mutex<Option<Ws>> {
         if index == 0 { &self.conn } else { &self.lanes.extra[index - 1] }
     }
@@ -252,6 +276,7 @@ impl ServeClient {
             home: home.to_path_buf(),
             token: cfg.token,
             conn: tokio::sync::Mutex::new(None),
+            spawn_lock: tokio::sync::Mutex::new(()),
             last_error: std::sync::Mutex::new(None),
             start_failed_at: std::sync::Mutex::new(None),
             lanes: Lanes::default(),
@@ -301,10 +326,28 @@ impl ServeClient {
         let mut cause = match self.open().await {
             Ok(ws) => {
                 *slot = Some(ws);
+                *self.last_error.lock().unwrap() = None;
+                *self.start_failed_at.lock().unwrap() = None;
                 return;
             }
             Err(e) => e,
         };
+        // Serialize detached serve spawning across lanes so simultaneous disconnects do not double-spawn.
+        let (waited, _spawn_guard) = match self.spawn_lock.try_lock() {
+            Ok(guard) => (false, guard),
+            Err(_) => (true, self.spawn_lock.lock().await),
+        };
+        if waited {
+            match self.open().await {
+                Ok(ws) => {
+                    *slot = Some(ws);
+                    *self.last_error.lock().unwrap() = None;
+                    *self.start_failed_at.lock().unwrap() = None;
+                    return;
+                }
+                Err(e) => cause = e,
+            }
+        }
         let cooling_down = self.start_failed_at.lock().unwrap().is_some_and(|at| at.elapsed() < START_COOLDOWN);
         if cooling_down {
             *self.last_error.lock().unwrap() = Some(cause);
@@ -449,13 +492,25 @@ impl ServeClient {
         };
         let cause = match reply {
             Ok(Ok(outcome)) if outcome.get("rpcError").is_none() => {
-                // The operation this call created keeps its request's lane.
-                if let (None, Some(op)) = (args.get("operationId").and_then(Value::as_str), outcome.get("operationId").and_then(Value::as_str)) { self.lanes.bind_operation(op, lane); }
+                let op_out = outcome.get("operationId").and_then(Value::as_str);
+                let is_release = name == "browser_tabs" && args["action"] == "release" && outcome["ok"] == true;
+                let ended = matches!(outcome["error"]["code"].as_str(), Some("OPERATION_INVALID" | "CANCELLED"));
+                if is_release || ended {
+                    if let Some(op) = op_out.or_else(|| args.get("operationId").and_then(Value::as_str)) {
+                        self.lanes.unbind_operation(op);
+                    }
+                } else if let (None, Some(op)) = (args.get("operationId").and_then(Value::as_str), op_out) {
+                    // The operation this call created keeps its request's lane.
+                    self.lanes.bind_operation(op, lane);
+                }
                 return Ok(outcome);
             }
             Ok(Ok(rpc_failure)) => {
-                let message = rpc_failure["rpcError"]["message"].as_str().unwrap_or("serve rejected the request").to_string();
-                return Ok(self.failure(name, &args, false, "no", RpcError::new(ErrorCode::Internal, Retry::Never, message)));
+                let err = serde_json::from_value::<RpcError>(rpc_failure["rpcError"].clone()).unwrap_or_else(|_| {
+                    let message = rpc_failure["rpcError"]["message"].as_str().unwrap_or("serve rejected the request").to_string();
+                    RpcError::new(ErrorCode::Internal, Retry::Never, message)
+                });
+                return Ok(self.failure(name, &args, false, "no", err));
             }
             Ok(Err(cause)) => cause,
             Err(_) => "no reply from serve".to_string(),
@@ -530,7 +585,7 @@ mod auth_tests {
         });
         let (ws,_) = tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{port}")).await.unwrap();
         let mut peer = server.await.unwrap();
-        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(Some(ws)),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes:Lanes::default()};
+        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(Some(ws)),spawn_lock:tokio::sync::Mutex::new(()),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes:Lanes::default()};
         let mut polls = 0;
         // First poll: before the mutex. Second: before the cached connection.
         // Third: the send select, before its send future has ever been polled.
@@ -581,6 +636,8 @@ mod auth_tests {
         assert!(c != b && d != b, "a new request avoids a lane with a call waiting");
         drop(busy);
         assert_eq!(lanes.lane_for(&json!({"operationId":"op-a","requestId":"b"})), a, "the operation decides, not a stray requestId");
+        // Single active bound operation: an id-less visual input call must stay on that operation's lane.
+        assert_eq!(lanes.lane_for(&json!({"captureId":"c1","x":10,"y":20})), a, "id-less call after explicit requestId attach keeps the same lane");
     }
 
     #[tokio::test]
@@ -589,7 +646,7 @@ mod auth_tests {
         let (lane_b, mut peer_b) = socket_pair().await;
         let lanes = Lanes::default();
         *lanes.extra[0].lock().await = Some(lane_a); *lanes.extra[1].lock().await = Some(lane_b);
-        let client = std::sync::Arc::new(ServeClient {port:0,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes});
+        let client = std::sync::Arc::new(ServeClient {port:0,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),spawn_lock:tokio::sync::Mutex::new(()),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes});
         let slow = { let client = client.clone(); tokio::spawn(async move { client.call_tool("browser_tabs", json!({"action":"attach","requestId":"a","tabId":1})).await.unwrap() }) };
         let quick = { let client = client.clone(); tokio::spawn(async move { client.call_tool("browser_tabs", json!({"action":"attach","requestId":"b","tabId":2})).await.unwrap() }) };
         assert_eq!(answer(&mut peer_b, json!({"ok":true,"operationId":"op-b"})).await["arguments"]["requestId"], "b");
@@ -614,7 +671,7 @@ mod auth_tests {
             // The client must drop auth instead of waiting for its five-second timeout.
             assert!(tokio::time::timeout(Duration::from_secs(1),ws.next()).await.is_ok());
         });
-        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes:Lanes::default()};
+        let client = ServeClient {port,exe:PathBuf::new(),home:PathBuf::new(),token:"fixture".into(),conn:tokio::sync::Mutex::new(None),spawn_lock:tokio::sync::Mutex::new(()),last_error:std::sync::Mutex::new(None),start_failed_at:std::sync::Mutex::new(None),lanes:Lanes::default()};
         let outcome = tokio::time::timeout(Duration::from_secs(1), client.call_tool_cancellable("browser_tabs",json!({"action":"list"}),async {let _ = cancel.await;})).await.unwrap().unwrap();
         assert_eq!(outcome["error"]["code"],"CANCELLED"); assert_eq!(outcome["delivered"],false);
         fake.await.unwrap();
@@ -635,7 +692,7 @@ mod auth_tests {
         });
         let client = ServeClient {
             port, exe: PathBuf::new(), home: PathBuf::new(), token: "secret-test-token".into(),
-            conn: tokio::sync::Mutex::new(None), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None), lanes: Lanes::default(),
+            conn: tokio::sync::Mutex::new(None), spawn_lock: tokio::sync::Mutex::new(()), last_error: std::sync::Mutex::new(None), start_failed_at: std::sync::Mutex::new(None), lanes: Lanes::default(),
         };
         assert!(client.open().await.unwrap_err().contains("server proof is invalid"));
         fake.await.unwrap();

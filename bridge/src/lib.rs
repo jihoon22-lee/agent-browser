@@ -24,10 +24,16 @@ impl BoundedLog {
         use std::io::Write;
         if self.written + line.len() as u64 > self.limit {
             // On Windows an append handle has no right to truncate (os error 5): empty the file through
-            // a second handle. Appends then continue at the new end.
-            std::fs::OpenOptions::new().write(true).open(&self.path)?.set_len(0)?;
-            self.file.write_all(b"log truncated\n")?;
-            self.written = 14;
+            // a second handle. If a viewer transiently locks the file, keep logging up to a hard cap
+            // instead of dropping every future line forever.
+            match std::fs::OpenOptions::new().write(true).open(&self.path).and_then(|f| f.set_len(0)) {
+                Ok(()) => {
+                    self.file.write_all(b"log truncated\n")?;
+                    self.written = 14;
+                }
+                Err(_) if self.written < self.limit.saturating_mul(2) => {}
+                Err(err) => return Err(err),
+            }
         }
         self.file.write_all(line)?;
         self.written += line.len() as u64;
@@ -39,13 +45,15 @@ impl std::io::Write for Tee {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let _ = std::io::stderr().write_all(buf);
         if let Some(file) = &self.file {
-            let _ = file.lock().unwrap().write_line(buf);
+            let mut guard = file.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = guard.write_line(buf);
         }
         Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
         if let Some(file) = &self.file {
-            let _ = file.lock().unwrap().file.flush();
+            let mut guard = file.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = guard.file.flush();
         }
         std::io::stderr().flush()
     }
@@ -70,6 +78,37 @@ pub fn init_logging(log_file: Option<std::path::PathBuf>) {
         .init();
 }
 
+async fn wait_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = signal(SignalKind::terminate()).ok();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = async { if let Some(s) = term.as_mut() { let _ = s.recv().await; } else { std::future::pending::<()>().await; } } => {}
+        }
+    }
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows::{ctrl_break, ctrl_close};
+        let mut brk = ctrl_break().ok();
+        let mut cls = ctrl_close().ok();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = async { if let Some(s) = brk.as_mut() { let _ = s.recv().await; } else { std::future::pending::<()>().await; } } => {}
+            _ = async { if let Some(s) = cls.as_mut() { let _ = s.recv().await; } else { std::future::pending::<()>().await; } } => {}
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+fn resolve_port(explicit: Option<u16>, cfg: &config::Config) -> u16 {
+    explicit.unwrap_or_else(|| bridge_port(cfg))
+}
+
 pub fn run_serve(port: Option<u16>) -> anyhow::Result<()> {
     let home = config::home_dir()?;
     let cfg = config::load_or_init(&home)?;
@@ -77,18 +116,19 @@ pub fn run_serve(port: Option<u16>) -> anyhow::Result<()> {
     rt.block_on(async move {
         // Lets `start`, the installer, and tests find the detached process; removed again on a graceful exit.
         let pid_file = home.join("serve.pid");
-        let handle = server::start_publishing_pid(server::ServeOptions { home: home.clone(), port: port.unwrap_or(cfg.port) }, &pid_file).await?;
-        tokio::signal::ctrl_c().await.ok();
+        let handle = server::start_publishing_pid(server::ServeOptions { home: home.clone(), port: resolve_port(port, &cfg) }, &pid_file).await?;
+        wait_shutdown_signal().await;
         // Removed while this process still holds the port, so no successor's PID can be in it yet.
         server::remove_own_pid_file(&pid_file);
         let _ = handle.shutdown.send(());
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), handle.join).await;
         Ok(())
     })
 }
 pub fn run_mcp() -> anyhow::Result<()> {
     let home = config::home_dir()?;
     let cfg = config::load_or_init(&home)?;
-    let port = std::env::var("AGENT_BROWSER_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(cfg.port);
+    let port = bridge_port(&cfg);
     let exe = std::env::current_exe()?;
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async move {
@@ -129,7 +169,7 @@ pub fn run_status() -> anyhow::Result<()> {
 
 pub fn run_start(port: Option<u16>) -> anyhow::Result<()> {
     let home = config::home_dir()?; let cfg = config::load_or_init(&home)?;
-    let port = port.unwrap_or(cfg.port); let exe = std::env::current_exe()?;
+    let port = resolve_port(port, &cfg); let exe = std::env::current_exe()?;
     tokio::runtime::Runtime::new()?.block_on(async {
         let client = mcp::client::ServeClient::connect_or_start(&home,port,&exe).await?;
         anyhow::ensure!(client.connected().await,"Cannot start or authenticate the resident Bridge");

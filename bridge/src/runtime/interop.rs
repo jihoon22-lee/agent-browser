@@ -143,7 +143,7 @@ impl Manager {
         if result.is_err() {
             // Use the in-memory record too: server spawn may have preceded a failed write.
             if self.terminate_wsl(profile,&record).await.is_some() {
-                self.store.update(|config| {config.runtimes.remove(&profile.id); Ok(())})?;
+                let _ = self.store.update(|config| {config.runtimes.remove(&profile.id); Ok(())});
                 self.remove_wsl_markers(&record);
             }
         }

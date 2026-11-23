@@ -149,6 +149,7 @@ fn spawn_windows(executable: &str, args: &[String], directory: Option<&str>, env
     for (key,value) in env { merged.insert(key.to_ascii_uppercase(),(std::ffi::OsString::from(key),std::ffi::OsString::from(value))); }
     let mut block = Vec::<u16>::new();
     for (key,value) in merged.values() { block.extend(key.encode_wide()); block.push(b'=' as u16); block.extend(value.encode_wide()); block.push(0); }
+    if block.is_empty() { block.push(0); }
     block.push(0);
     // DETACHED_PROCESS makes Windows ignore CREATE_NO_WINDOW. Its console-less
     // descendants may then allocate visible consoles (including WSL launchers).
@@ -190,21 +191,49 @@ fn owners_of_port(rows: impl Iterator<Item = (u32,u32)>, port: u16) -> Vec<u32> 
     for (local_port,pid) in rows { if u16::from_be(local_port as u16) == port && !owners.contains(&pid) { owners.push(pid); } }
     owners
 }
+/// Parses raw bytes of Windows `MIB_TCPTABLE_OWNER_PID` without creating an over-sized `&MIB_TCPTABLE_OWNER_PID`
+/// reference when there are 0 entries (`len == 4`), and verifies row count against the buffer size.
+#[cfg(any(windows,test))]
+fn parse_tcp_table_rows(bytes: &[u8], table_offset: usize, row_size: usize, local_port_offset: usize, owning_pid_offset: usize) -> Vec<(u32, u32)> {
+    if bytes.len() < 4 || row_size == 0 || local_port_offset + 4 > row_size || owning_pid_offset + 4 > row_size {
+        return Vec::new();
+    }
+    let count = u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+    let available = bytes.len().saturating_sub(table_offset) / row_size;
+    let n = count.min(available);
+    let mut rows = Vec::with_capacity(n);
+    for idx in 0..n {
+        let base = table_offset + idx * row_size;
+        let port = u32::from_ne_bytes(bytes[base + local_port_offset..base + local_port_offset + 4].try_into().unwrap());
+        let pid = u32::from_ne_bytes(bytes[base + owning_pid_offset..base + owning_pid_offset + 4].try_into().unwrap());
+        rows.push((port, pid));
+    }
+    rows
+}
+
 #[cfg(windows)]
 pub fn listeners(port: u16) -> Vec<Identity> {
     use windows_sys::Win32::{Foundation::ERROR_INSUFFICIENT_BUFFER, NetworkManagement::IpHelper::*, Networking::WinSock::AF_INET};
     unsafe {
-        // The table can grow between the size query and the read: ask once more.
-        for _ in 0..2 {
+        // The table can grow between the size query and the read: retry a few times with headroom.
+        for _ in 0..4 {
             let mut len = 0u32;
             GetExtendedTcpTable(std::ptr::null_mut(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0);
-            let mut buffer = vec![0u64; (len as usize).div_ceil(8)];
+            let alloc_bytes = (len as usize).saturating_add(256);
+            let mut buffer = vec![0u64; alloc_bytes.div_ceil(8)];
+            len = (buffer.len() * 8) as u32;
             match GetExtendedTcpTable(buffer.as_mut_ptr().cast(), &mut len, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_LISTENER, 0) {
                 0 => {
-                    if buffer.is_empty() { return Vec::new(); }
-                    let table = &*(buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
-                    let rows = std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize);
-                    return owners_of_port(rows.iter().map(|row| (row.dwLocalPort,row.dwOwningPid)),port).into_iter().filter_map(identity).collect();
+                    let valid_bytes = (len as usize).min(buffer.len() * 8);
+                    let raw = std::slice::from_raw_parts(buffer.as_ptr().cast::<u8>(), valid_bytes);
+                    let rows = parse_tcp_table_rows(
+                        raw,
+                        std::mem::offset_of!(MIB_TCPTABLE_OWNER_PID, table),
+                        std::mem::size_of::<MIB_TCPROW_OWNER_PID>(),
+                        std::mem::offset_of!(MIB_TCPROW_OWNER_PID, dwLocalPort),
+                        std::mem::offset_of!(MIB_TCPROW_OWNER_PID, dwOwningPid),
+                    );
+                    return owners_of_port(rows.into_iter(), port).into_iter().filter_map(identity).collect();
                 }
                 ERROR_INSUFFICIENT_BUFFER => continue,
                 _ => return Vec::new(),
@@ -226,15 +255,37 @@ fn snapshot() -> Option<Vec<(u32,u32)>> {
         Some(links)
     }
 }
+
+/// Verifies `child` is a descendant of `parent` by checking creation times at every intermediate hop,
+/// preventing false attribution through a recycled intermediate PID.
+#[cfg(any(windows,test))]
+fn descendant_in(child: &Identity, parent: &Identity, links: &[(u32, u32)], inspect: impl Fn(u32) -> Option<Identity>) -> bool {
+    if child.created < parent.created { return false; }
+    if child.pid == parent.pid { return child.created == parent.created && child.image == parent.image; }
+    let parents: BTreeMap<u32, u32> = links.iter().copied().collect();
+    let mut seen = std::collections::BTreeSet::from([child.pid]);
+    let mut cur_pid = child.pid;
+    let mut cur_created = child.created;
+    for _ in 0..64 {
+        let Some(&next) = parents.get(&cur_pid) else { return false };
+        if next == parent.pid { return cur_created >= parent.created; }
+        if next == cur_pid || !seen.insert(next) { return false; }
+        let Some(ancestor) = inspect(next) else { return false };
+        if ancestor.pid != next || ancestor.created > cur_created || ancestor.created < parent.created {
+            return false;
+        }
+        cur_pid = next;
+        cur_created = ancestor.created;
+    }
+    false
+}
+
 #[cfg(windows)]
 pub fn descendant(child: &Identity, parent: &Identity) -> bool {
     if !matches(parent) || child.created < parent.created { return false; }
     if child.pid == parent.pid { return child.created == parent.created && child.image == parent.image; }
     let Some(links) = snapshot() else { return false; };
-    let parents: BTreeMap<u32,u32> = links.into_iter().collect();
-    let mut pid = child.pid;
-    for _ in 0..64 { let Some(next) = parents.get(&pid) else { return false }; if *next == parent.pid { return true; } if *next == pid { break; } pid = *next; }
-    false
+    descendant_in(child, parent, &links, identity)
 }
 
 /// Live processes started, directly or indirectly, by `root`: parents before their children.
@@ -290,7 +341,8 @@ pub fn wsl_executable() -> String {
 
 pub fn windows_to_wsl(path: &str) -> Option<String> {
     let bytes = path.as_bytes();
-    (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':').then(|| format!("/mnt/{}/{}", (bytes[0] as char).to_ascii_lowercase(), path[2..].trim_start_matches(['\\','/']).replace('\\', "/")))
+    (bytes.len() > 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'\\' | b'/'))
+        .then(|| format!("/mnt/{}/{}", (bytes[0] as char).to_ascii_lowercase(), path[2..].trim_start_matches(['\\','/']).replace('\\', "/")))
 }
 
 #[cfg(test)]
@@ -316,6 +368,43 @@ mod tree_tests {
         let spare = |process: &Identity| same_program(&process.image,r"c:\app\Browser-Bridge.exe");
         let found: Vec<u32> = descendants_in(&root,&links,inspect,spare).iter().map(|process| process.pid).collect();
         assert_eq!(found,vec![11,12],"parents first; reused ids, the Bridge, its tree, and exited processes are left alone");
+    }
+
+    #[test]
+    fn windows_to_wsl_rejects_drive_relative_paths() {
+        assert_eq!(super::windows_to_wsl(r"C:\Work\App"), Some("/mnt/c/Work/App".into()));
+        assert_eq!(super::windows_to_wsl("C:/Work/App"), Some("/mnt/c/Work/App".into()));
+        assert_eq!(super::windows_to_wsl("C:foo"), None, "drive-relative path must not map to /mnt/c/foo");
+        assert_eq!(super::windows_to_wsl("C:"), None);
+    }
+
+    #[test]
+    fn tcp_table_parsing_handles_empty_and_truncated_buffers_without_oob() {
+        // 0 listeners (4-byte buffer): must not panic or read out of bounds.
+        assert!(super::parse_tcp_table_rows(&0u32.to_ne_bytes(), 4, 24, 8, 20).is_empty());
+        // Claims 5 rows but buffer only holds 1 row (4 + 24 = 28 bytes).
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&5u32.to_ne_bytes());
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // state
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // local addr
+        buf.extend_from_slice(&(u32::from(4317u16.to_be())).to_ne_bytes()); // local port
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // remote addr
+        buf.extend_from_slice(&0u32.to_ne_bytes()); // remote port
+        buf.extend_from_slice(&999u32.to_ne_bytes()); // owning pid
+        let rows = super::parse_tcp_table_rows(&buf, 4, 24, 8, 20);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(super::owners_of_port(rows.into_iter(), 4317), vec![999]);
+    }
+
+    #[test]
+    fn descendant_in_rejects_reused_intermediate_ancestor_pid() {
+        let root = process(10, 100, r"C:\cmd.exe");
+        let mid_ok = process(11, 110, r"C:\node.exe");
+        let mid_reused = process(11, 130, r"C:\other.exe"); // created AFTER child
+        let child = process(12, 120, r"C:\opencode.exe");
+        let links = [(11, 10), (12, 11)];
+        assert!(super::descendant_in(&child, &root, &links, |pid| (pid == 11).then(|| mid_ok.clone())));
+        assert!(!super::descendant_in(&child, &root, &links, |pid| (pid == 11).then(|| mid_reused.clone())));
     }
 
     #[test]
