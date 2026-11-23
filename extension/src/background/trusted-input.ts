@@ -114,7 +114,8 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
     attached.delete(tabId);sessions.delete(tabId);
     // No closed event follows a detach: a remembered dialog would outlive the session.
     openDialogs.delete(tabId);dialogs.delete(tabId);
-    if (reason === "canceled_by_user") cancelled.set(ownerOf(tabId), reason);
+    const owner = ownerOf(tabId);
+    if (reason === "canceled_by_user" && owner !== undefined) cancelled.set(owner, reason);
   });
   api.onEvent((tabId, method, params) => {
     if(method==='Page.javascriptDialogClosed'){openDialogs.delete(tabId);return;}
@@ -203,7 +204,7 @@ export function trustedInput(api: DebuggerApi, advanced = () => false, recovery?
     let uncertain=h.quarantined||outstanding(h);
     if(h.document&&h.lease){try{await recovery!.finish(h.document,h.id,uncertain);}catch{uncertain=true;}}
     h.settled=true;
-    if(uncertain)await release(h.tabId);
+    if(uncertain)await serial(()=>release(h.tabId));
     return {...(hadKeys?{keysReleased:h.keys.size===0}:{}),...(uncertain?{inputRecoveryRequired:true}:{})};
   }
   async function deliverNow(tabId:number,steps:InputStep[],active:ActiveInput,document:InputDocument|undefined,owner:string|null|undefined,session:number|undefined) {

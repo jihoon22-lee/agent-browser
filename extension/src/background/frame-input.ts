@@ -6,11 +6,13 @@ export async function frameInputTarget(tabId:number,documentId:string,point:{x:n
   const original=await chrome.webNavigation.getAllFrames({tabId}) ?? [];
   let child=original.find(f=>f.documentId===documentId);
   if(!child)throw stale();
+  const chain=[child];
   let current=point;
   while(child.parentFrameId!==-1) {
     if(!active())throw stale();
     const parent=original.find(f=>f.frameId===child!.parentFrameId);
     if(!parent)throw stale();
+    chain.push(parent);
     const nonce=crypto.randomUUID();
     // Register the listener before posting from the child. executeScript completion awaits the probe.
     const listening=chrome.scripting.executeScript({target:{tabId,documentIds:[parent.documentId]},args:[nonce,current??null],func:async(nonce:string,point:{x:number;y:number}|null)=>{
@@ -24,7 +26,7 @@ export async function frameInputTarget(tabId:number,documentId:string,point:{x:n
           const frame=all(document).find(frame=>frame.contentWindow===event.source);if(!frame)return;
           if(!point) {let focused:Element|null=document.activeElement;while(focused?.shadowRoot?.activeElement)focused=focused.shadowRoot.activeElement;finish(focused===frame?true:null);return;}
           // Rectangles preserve translation/axis-aligned scaling only. Reject transforms we cannot verify.
-          for(let node:Element|null=frame;node;node=node.parentElement??(node.getRootNode() as ShadowRoot).host??null){
+          for(let node:Element|null=frame;node;node=node.parentElement??(node.getRootNode() instanceof ShadowRoot?(node.getRootNode() as ShadowRoot).host:null)){
             const s=getComputedStyle(node);if(s.perspective!=='none'){finish(null);return;}
             if(s.transform!=='none'){const m=new DOMMatrixReadOnly(s.transform);if(!m.is2D||m.b!==0||m.c!==0||m.a<=0||m.d<=0){finish(null);return;}}
           }
@@ -51,7 +53,7 @@ export async function frameInputTarget(tabId:number,documentId:string,point:{x:n
     child=parent;
   }
   const live=await chrome.webNavigation.getAllFrames({tabId}) ?? [];
-  for(const f of original)if(!live.some(n=>n.frameId===f.frameId&&n.documentId===f.documentId))throw stale();
+  for(const f of chain)if(!live.some(n=>n.frameId===f.frameId&&n.documentId===f.documentId))throw stale();
   if(!active())throw stale();
   return current;
 }

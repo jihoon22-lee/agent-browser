@@ -28,7 +28,11 @@ const recovery=inputRecovery(chrome.storage.session,realChromeApi.listFrames);
 chrome.tabs.onRemoved.addListener(tabId=>{void recovery.removeTab(tabId).catch(()=>{});});
 const trusted = trustedInput(debuggerApi,()=>advancedEnabled&&advancedAvailable(),recovery);
 let trustedEnabled = false, ownClientId: string | undefined;
-void chrome.storage.local.get(["trustedInput", "advancedBrowser", "clientId"]).then(({ trustedInput: on, advancedBrowser:advanced, clientId }) => { advancedEnabled=advanced===true;trustedEnabled = on === true; if (typeof clientId === "string") ownClientId = clientId; }).catch(() => {});
+const ready = chrome.storage.local.get(["trustedInput", "advancedBrowser", "clientId"]).then(({ trustedInput: on, advancedBrowser: advanced, clientId }) => {
+  advancedEnabled = advanced === true;
+  trustedEnabled = on === true;
+  if (typeof clientId === "string") ownClientId = clientId;
+}).catch(() => {});
 // The person holding the browser (paused operation) gets every tab back, debugger detached.
 const trustedState = () => trustedTargetsFor(liveOperations, ownClientId, trustedEnabled);
 const syncTrusted = () => void trusted.sync(trustedState()).catch(() => {});
@@ -102,11 +106,11 @@ const conn = new BridgeConnection({
 });
 
 const requests=panelRequests((method,params)=>conn.request(method,params),()=>chrome.storage.local.get('concurrentRequests').then(concurrentRequestsOn,()=>false));
-chrome.runtime.onStartup.addListener(() => conn.ensure());
+chrome.runtime.onStartup.addListener(() => { void ready.then(() => conn.ensure()); });
 chrome.runtime.onInstalled.addListener(() => {
   void chrome.alarms.create("bridge-keepalive", { periodInMinutes: 1 });
   void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-  conn.ensure();
+  void ready.then(() => conn.ensure());
 });
 // Alarms wake a suspended worker; the timer makes completion prompt while the
 // WebSocket keeps it alive. Neither path starts an unavailable OpenCode profile.
@@ -115,11 +119,12 @@ const reconcile=()=>{
   void requests.reconcile().catch(()=>{});
   void requests.attention().then(found=>{ if(found.waiting!==waiting){ waiting=found.waiting; refreshBadge(); } });
 };
-// Keep the alarm compatible with the existing minimum Chrome 116.
+// Keep alarms compatible with the existing minimum Chrome 116 and recover if cleared.
+void chrome.alarms.create("bridge-keepalive", { periodInMinutes: 1 });
 void chrome.alarms.create('panel-request-reconcile',{periodInMinutes:1});
 setInterval(reconcile,15_000);
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === "bridge-keepalive") conn.ensure();
+  if (a.name === "bridge-keepalive") void ready.then(() => conn.ensure());
   if (a.name === 'panel-request-reconcile') reconcile();
 });
 chrome.storage.onChanged.addListener((changes, area) => {
@@ -127,62 +132,73 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if(changes.advancedBrowser){advancedEnabled=changes.advancedBrowser.newValue===true;advanced.clear();}
     if (changes.trustedInput) trustedEnabled = changes.trustedInput.newValue === true;
     if (typeof changes.clientId?.newValue === "string") ownClientId = changes.clientId.newValue;
-    syncTrusted();
+    syncTrusted(); syncGroups(); refreshMarkers();
   }
-  if (area === "local" && (changes.pairingToken || changes.bridgeUrl)) { conn.stop(); conn.start(); }
+  if (area === "local" && (changes.pairingToken || changes.bridgeUrl)) { void ready.then(() => { conn.stop(); conn.start(); }); }
 });
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // The one content-script request: trusted input for the click or key it is executing right now.
   if (msg?.kind === "trusted-input") {
-    const active = () => handleBridgeRequest.isRunning(sender.tab?.id ?? -1, msg.requestId, msg.action === 'text'?'browser.fill':msg.action === 'key' ? 'browser.press' : 'browser.click');
-    const ok = acceptTrustedRequest(msg, sender, { runtimeId: chrome.runtime.id, running: handleBridgeRequest.isRunning, enabled: trustedEnabled, attached: tabId => trusted.isAttached(tabId), frameAllowed: (sender,id)=>advanced.enabled()&&handleBridgeRequest.frameAllowed(sender,id) });
-    if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed", dispatched: false, cancelled: !active() }); return; }
-    const tabId = sender.tab!.id!;
-    (async()=>{
-      let from={x:msg.x,y:msg.y},to={x:msg.toX,y:msg.toY};
-      try { if(advanced.enabled()&&sender.documentId){
-        const focus=msg.action==='key'||msg.action==='text';
-        if(msg.ref){const valid=await chrome.tabs.sendMessage(tabId,{kind:'trusted-verify',ref:msg.ref,focus},{documentId:sender.documentId});if(!valid?.ok)throw Object.assign(Error('stale-target'),{dispatched:false,cancelled:true});}
-        const point=await frameInputTarget(tabId,sender.documentId,focus?undefined:from,active);if(point)from=point;
-        if(msg.action==='drag')to=(await frameInputTarget(tabId,sender.documentId,to,active))!;
-        if(!active())throw Object.assign(Error('cancelled'),{dispatched:false,cancelled:true});
-      }
-      }catch(error){throw Object.assign(error as object,{dispatched:false,verificationFailed:true});}
-      const checked=async(phase?:string)=>{
-        if(!active())return false;
-        if(phase==='continue'||phase==='release')return active();
-        if(advanced.enabled()&&sender.documentId){
-          if(msg.ref){const response=await chrome.tabs.sendMessage(tabId,{kind:'trusted-verify',ref:msg.ref,focus:msg.action==='text'||msg.action==='key',...(['click'].includes(msg.action)?{point:{x:msg.x,y:msg.y}}:{})},{documentId:sender.documentId}).catch(()=>null);if(!response?.ok)throw Object.assign(Error('The input target changed'),{dispatched:false,verificationFailed:true});}
-          try {
-            const mapped=await frameInputTarget(tabId,sender.documentId,msg.action==='text'||msg.action==='key'?undefined:{x:msg.x,y:msg.y},active);
-            if(mapped&&(mapped.x!==from.x||mapped.y!==from.y))throw Error('Frame geometry changed');
-            if(msg.action==='drag'){
-              const target=await chrome.tabs.sendMessage(tabId,{kind:'trusted-verify',ref:msg.toRef,point:{x:msg.toX,y:msg.toY}},{documentId:sender.documentId});
-              const end=await frameInputTarget(tabId,sender.documentId,{x:msg.toX,y:msg.toY},active);
-              if(!target?.ok||end?.x!==to.x||end?.y!==to.y)throw Error('Drag target changed');
-            }
-          }catch(error){throw Object.assign(error as object,{dispatched:false,verificationFailed:true});}
-          const documents=await chrome.webNavigation.getAllFrames({tabId});if(!documents?.some(f=>f.documentId===sender.documentId))throw Object.assign(Error('Frame document changed'),{dispatched:false,verificationFailed:true});
+    void ready.then(async () => {
+      const active = () => handleBridgeRequest.isRunning(sender.tab?.id ?? -1, msg.requestId, msg.action === 'text'?'browser.fill':msg.action === 'key' ? 'browser.press' : 'browser.click');
+      const ok = acceptTrustedRequest(msg, sender, { runtimeId: chrome.runtime.id, running: handleBridgeRequest.isRunning, enabled: trustedEnabled, attached: tabId => trusted.isAttached(tabId), frameAllowed: (sender,id)=>advanced.enabled()&&handleBridgeRequest.frameAllowed(sender,id) });
+      if (!ok) { sendResponse({ ok: false, reason: trusted.cancelledReason(sender.tab?.id ?? -1) ?? "not-allowed", dispatched: false, cancelled: !active() }); return; }
+      const tabId = sender.tab!.id!;
+      try {
+        let from={x:msg.x,y:msg.y},to={x:msg.toX,y:msg.toY};
+        try { if(advanced.enabled()&&sender.documentId){
+          const focus=msg.action==='key'||msg.action==='text';
+          if(msg.ref){const valid=await chrome.tabs.sendMessage(tabId,{kind:'trusted-verify',ref:msg.ref,focus},{documentId:sender.documentId});if(!valid?.ok)throw Object.assign(Error('stale-target'),{dispatched:false,cancelled:true});}
+          const point=await frameInputTarget(tabId,sender.documentId,focus?undefined:from,active);if(point)from=point;
+          if(msg.action==='drag')to=(await frameInputTarget(tabId,sender.documentId,to,active))!;
+          if(!active())throw Object.assign(Error('cancelled'),{dispatched:false,cancelled:true});
         }
-        return active();
-      };
-      return msg.action==='text'?trusted.text(tabId,msg.text,checked,sender.documentId):msg.action==='click'?trusted.click(tabId,from.x,from.y,msg.mode,checked,sender.documentId):msg.action==='drag'?trusted.drag(tabId,from,to,checked,sender.documentId):trusted.key(tabId,msg.key,msg.modifiers,checked,sender.documentId);
-    })().then(result=>sendResponse({ok:true,...result}),error=>sendResponse({ok:false,reason:trusted.cancelledReason(tabId)??'debugger-error',dispatched:error?.dispatched!==false,cancelled:error?.cancelled===true,verificationFailed:error?.verificationFailed===true,inputRecoveryRequired:error?.inputRecoveryRequired===true}));
+        }catch(error){throw Object.assign(error as object,{dispatched:false,verificationFailed:true});}
+        const checked=async(phase?:string)=>{
+          if(!active())return false;
+          if(phase==='continue'||phase==='release')return active();
+          if(advanced.enabled()&&sender.documentId){
+            if(msg.ref){const response=await chrome.tabs.sendMessage(tabId,{kind:'trusted-verify',ref:msg.ref,focus:msg.action==='text'||msg.action==='key',...(['click'].includes(msg.action)?{point:{x:msg.x,y:msg.y}}:{})},{documentId:sender.documentId}).catch(()=>null);if(!response?.ok)throw Object.assign(Error('The input target changed'),{dispatched:false,verificationFailed:true});}
+            try {
+              const mapped=await frameInputTarget(tabId,sender.documentId,msg.action==='text'||msg.action==='key'?undefined:{x:msg.x,y:msg.y},active);
+              if(mapped&&(mapped.x!==from.x||mapped.y!==from.y))throw Error('Frame geometry changed');
+              if(msg.action==='drag'){
+                const target=await chrome.tabs.sendMessage(tabId,{kind:'trusted-verify',ref:msg.toRef,point:{x:msg.toX,y:msg.toY}},{documentId:sender.documentId});
+                const end=await frameInputTarget(tabId,sender.documentId,{x:msg.toX,y:msg.toY},active);
+                if(!target?.ok||end?.x!==to.x||end?.y!==to.y)throw Error('Drag target changed');
+              }
+            }catch(error){throw Object.assign(error as object,{dispatched:false,verificationFailed:true});}
+            const documents=await chrome.webNavigation.getAllFrames({tabId});if(!documents?.some(f=>f.documentId===sender.documentId))throw Object.assign(Error('Frame document changed'),{dispatched:false,verificationFailed:true});
+          }
+          return active();
+        };
+        const result = await (msg.action==='text'?trusted.text(tabId,msg.text,checked,sender.documentId):msg.action==='click'?trusted.click(tabId,from.x,from.y,msg.mode,checked,sender.documentId):msg.action==='drag'?trusted.drag(tabId,from,to,checked,sender.documentId):trusted.key(tabId,msg.key,msg.modifiers,checked,sender.documentId));
+        sendResponse({ok:true,...result});
+      } catch (error: any) {
+        sendResponse({ok:false,reason:trusted.cancelledReason(tabId)??'debugger-error',dispatched:error?.dispatched!==false,cancelled:error?.cancelled===true,verificationFailed:error?.verificationFailed===true,inputRecoveryRequired:error?.inputRecoveryRequired===true});
+      }
+    });
     return true;
   }
   // Extension pages only; a content script must never be able to reach the bridge or read its status.
   if (!isExtensionPage(sender, chrome.runtime.id)) return;
   if(msg?.kind==='advanced-status'){
-    const op=ownOperations().find(op=>op.id===msg.operationId);
-    if(!op){sendResponse({ok:false});return;}
-    const tabId=op.currentTab!;
-    void recovery.status(tabId).then(status=>sendResponse({ok:true,result:{dialog:advanced.pending(tabId),inputRecoveryRequired:status.required}}),()=>sendResponse({ok:false}));return true;
+    void ready.then(()=>{
+      const op=ownOperations().find(op=>op.id===msg.operationId);
+      if(!op){sendResponse({ok:false});return;}
+      const tabId=op.currentTab!;
+      return recovery.status(tabId).then(status=>sendResponse({ok:true,result:{dialog:advanced.pending(tabId),inputRecoveryRequired:status.required}}),()=>sendResponse({ok:false}));
+    });
+    return true;
   }
   if(msg?.kind==='downloads-list'||msg?.kind==='download-bind'){
-    const op=ownOperations().find(op=>op.id===msg.operationId)?.id;
-    if(!op){sendResponse({ok:false,error:{message:'현재 브라우저 작업이 아닙니다.'}});return;}
-    const work=msg.kind==='downloads-list'?downloadTracker.list(op):downloadTracker.bind(op,Number(msg.downloadId));
-    work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:String(error.message)}}));return true;
+    void ready.then(()=>{
+      const op=ownOperations().find(op=>op.id===msg.operationId)?.id;
+      if(!op){sendResponse({ok:false,error:{message:'현재 브라우저 작업이 아닙니다.'}});return;}
+      const work=msg.kind==='downloads-list'?downloadTracker.list(op):downloadTracker.bind(op,Number(msg.downloadId));
+      return work.then(result=>sendResponse({ok:true,result}),error=>sendResponse({ok:false,error:{message:String(error.message)}}));
+    });
+    return true;
   }
   if(['request-prepare','request-cancel','request-finish','request-discard'].includes(msg?.kind)) {
     const work=msg.kind==='request-prepare'?requests.prepare(msg.lease,msg.target,msg.previousOperationId,msg.files,msg.skippedFiles):msg.kind==='request-discard'?requests.discard(msg.requestId):msg.kind==='request-finish'?requests.finish(msg.scope):requests.cancel(msg.scope);
@@ -225,10 +241,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 chrome.tabs.onRemoved.addListener((tabId) => { conn.sendEvent("tab.closed", { tabId }); });
 // A navigation replaces the document and its marker; put it back on a tab that is still marked.
 chrome.webNavigation.onCommitted.addListener(({ tabId, frameId }) => {
+  if (frameId !== 0) return;
+  if (marked === null) { refreshMarkers(); return; }
   if (!shouldRemark(tabId, frameId, marked)) return;
   marking = remarkInQueue(marking, tabId, frameId, () => marked, tabId => {
     const label = ownOperations().find(op => op.tabs?.includes(tabId))?.paused ? "AgentBrowser · 사용자가 조작 중" : "AgentBrowser 작업 중";
     return chrome.scripting.executeScript({ target: { tabId }, func: markerScript, args: [true, label] });
   });
 });
-conn.start();
+void ready.then(() => { conn.start(); });
