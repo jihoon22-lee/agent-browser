@@ -106,14 +106,24 @@ export function App() {
   const stop = async () => {
     if (!op || state.stopping) return;
     dispatch({ kind: "stop-requested" });
+    const targets = state.operations.length > 1 ? state.operations : [op];
+    const errors: string[] = [];
+    let lastConfirmed: { id: string; confirmed: boolean } | undefined;
     try {
-      // The header stops every browser operation; each conversation also stops its own.
-      for (const target of state.operations.length > 1 ? state.operations : [op]) {
-        const result = await request("operation.abort", { operationId: target.id });
-        if (!mounted.current) return;
-        dispatch({ kind: "stop-completed", operationId: target.id, confirmed: result?.aborted === true });
-        if (result?.aborted === true) await stopHandler.current(target.id);
+      // The header stops every browser operation; do not let one failure skip remaining operations.
+      for (const target of targets) {
+        try {
+          const result = await request("operation.abort", { operationId: target.id });
+          if (!mounted.current) return;
+          lastConfirmed = { id: target.id, confirmed: result?.aborted === true };
+          if (result?.aborted === true) await stopHandler.current(target.id);
+        } catch (error) {
+          errors.push(errorText(error));
+        }
       }
+      if (!mounted.current) return;
+      if (lastConfirmed) dispatch({ kind: "stop-completed", operationId: lastConfirmed.id, confirmed: lastConfirmed.confirmed });
+      if (errors.length) dispatch({ kind: "request-failed", message: errors.join(" · ") });
       await refresh.current();
     } catch (error) { if (mounted.current) dispatch({ kind: "request-failed", message: errorText(error) }); }
   };

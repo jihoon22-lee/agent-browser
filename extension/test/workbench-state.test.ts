@@ -100,3 +100,24 @@ it("keeps the code and retry class of a failed Bridge request", async () => {
     expect(codeOf(new Error("Failed to fetch"))).toBeUndefined();
   } finally { vi.unstubAllGlobals(); }
 });
+
+it("forget clears stale statuses, errors, questions and permissions for the deleted session", () => {
+  let state: typeof initialWorkbench = {
+    messages: { s1: [{ info: { id: "m1" }, parts: [] }], s2: [] },
+    statuses: { s1: { type: "busy" }, s2: { type: "idle" } },
+    errors: { s1: "failed", s2: "ok" },
+    questions: [{ id: "q1", sessionID: "s1" }, { id: "q2", sessionID: "s2" }],
+    permissions: [{ id: "p1", sessionID: "s1" }, { id: "p2", sessionID: "s2" }],
+  };
+  state = workbenchReducer(state, { type: "forget", sessionID: "s1" });
+  expect(state.messages.s1).toBeUndefined();
+  expect(state.statuses.s1).toBeUndefined();
+  expect(state.errors.s1).toBeUndefined();
+  expect(state.questions.map(q => q.id)).toEqual(["q2"]);
+  expect(state.permissions.map(p => p.id)).toEqual(["p2"]);
+});
+
+it("ignores malformed message.updated without info", () => {
+  const next = workbenchReducer(initialWorkbench, { type: "event", event: { type: "message.updated", properties: { sessionID: "s1", messageID: "m1" } } });
+  expect(next.messages.s1).toBeUndefined();
+});

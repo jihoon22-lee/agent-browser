@@ -17,7 +17,20 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
     });
     return { ...state, messages: { ...state.messages, [action.sessionID]: next } };
   }
-  if (action.type === "forget") { const messages = { ...state.messages }; delete messages[action.sessionID]; return { ...state, messages }; }
+  if (action.type === "forget") {
+    const messages = { ...state.messages }, statuses = { ...state.statuses }, errors = { ...state.errors };
+    delete messages[action.sessionID];
+    delete statuses[action.sessionID];
+    delete errors[action.sessionID];
+    return {
+      ...state,
+      messages,
+      statuses,
+      errors,
+      questions: state.questions.filter(q => q.sessionID !== action.sessionID),
+      permissions: state.permissions.filter(p => p.sessionID !== action.sessionID),
+    };
+  }
   if (action.type === "pending") return { ...state, questions: byId(action.questions), permissions: byId(action.permissions) };
   if (action.type === "statuses") return { ...state, statuses: action.statuses };
   if (action.type !== "event") return state;
@@ -40,15 +53,16 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
   if (!sessionID || !messageID) return next;
   const list = [...(state.messages[sessionID] ?? [])];
   if (event.type === "message.removed") return { ...next, messages: { ...state.messages, [sessionID]: list.filter(m => m.info.id !== messageID) } };
+  if (event.type === "message.updated" && (!p.info || typeof p.info !== "object" || typeof p.info.id !== "string")) return next;
   let index = list.findIndex(m => m.info.id === messageID);
   if (index < 0) { index = list.length; list.push({ info: { id: messageID, sessionID, role: "assistant", time: { created: 0 } }, parts: [] }); }
   const message = { ...list[index]!, parts: [...list[index]!.parts] };
   if (event.type === "message.updated") message.info = p.info;
-  if (event.type === "message.part.updated") message.parts = byId([...message.parts, p.part]);
+  if (event.type === "message.part.updated" && p.part && typeof p.part === "object") message.parts = byId([...message.parts, p.part]);
   if (event.type === "message.part.removed") message.parts = message.parts.filter(part => part.id !== p.partID);
   if (event.type === "message.part.delta") {
     const i = message.parts.findIndex(part => part.id === p.partID);
-    const part = i >= 0 ? { ...message.parts[i]! } : { id: p.partID, messageID, sessionID, type: "text", text: "" };
+    const part = i >= 0 ? { ...message.parts[i]! } : { id: p.partID, messageID, sessionID, type: p.part?.type ?? "text", text: "" };
     // Only text fields are appended; arbitrary event properties cannot rewrite object prototypes.
     if (p.field === "text" && typeof p.delta === "string") part.text = String(part.text ?? "") + p.delta;
     if (i >= 0) message.parts[i] = part; else message.parts.push(part);

@@ -31,17 +31,18 @@ export function computeUsage(records: MessageRecord[], model?: Model, sessionID 
       for (const step of steps) { const tokens = usage(step.tokens); if (tokens) calls.push({ tokens, cost: finite(step.cost) ? step.cost : null, message }); }
     } else {
       const tokens = usage(message.tokens);
-      if (tokens) calls.push({ tokens, cost: finite(message.cost) ? message.cost : null, message });
+      // An in-progress or errored assistant message starts with all-zero tokens before any step finishes.
+      if (tokens && tokens.total > 0) calls.push({ tokens, cost: finite(message.cost) ? message.cost : null, message });
     }
   }
   const lastUser = messages.filter(record => record.info.role === "user" && !record.parts.some(part => part.type === "compaction")).at(-1);
-  const requestCalls = calls.filter(call => call.message.parentID === lastUser?.info.id);
+  const requestCalls = lastUser ? calls.filter(call => call.message.parentID === lastUser.info.id) : [];
   const latest = calls.at(-1);
   const compact = messages.filter(record => record.parts.some(part => part.type === "compaction")).at(-1);
   const compacted = compact && messages.some(record => record.info.role === "assistant" && record.info.summary && record.info.parentID === compact.info.id && record.info.time.completed !== undefined);
   const compaction: "none" | "pending" | "completed" = compact ? compacted ? "completed" : "pending" : "none";
-  const lastContextCall = calls.filter(call => !call.message.summary).at(-1);
-  const currentContext = lastContextCall && (!compact || lastContextCall.message.time.created > compact.info.time.created) ? lastContextCall : undefined;
+  const lastContextCall = calls.filter(call => !call.message.summary && call.tokens.total > 0).at(-1);
+  const currentContext = lastContextCall && (compaction !== "completed" || lastContextCall.message.time.created >= compact!.info.time.created) ? lastContextCall : undefined;
   return {
     latest: latest?.tokens ?? null, request: sum(requestCalls), session: sum(calls),
     latestCost: latest?.cost ?? null, requestCost: cost(requestCalls), sessionCost: cost(calls),

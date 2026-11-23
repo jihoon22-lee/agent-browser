@@ -49,11 +49,15 @@ export async function* parseSse(stream: ReadableStream<Uint8Array>, signal?: Abo
         buffer = buffer.slice(newline + 1);
         if (!line) {
           if (data.length) {
-            const parsed: unknown = JSON.parse(data.join("\n"));
-            if (parsed && typeof parsed === "object" && typeof (parsed as OpenCodeEvent).type === "string") {
-              const event = parsed as OpenCodeEvent;
-              if (!event.properties || typeof event.properties !== "object" || Array.isArray(event.properties)) throw new Error("OpenCode 이벤트 형식이 올바르지 않습니다.");
-              yield { ...event, ...(event.id === undefined && id ? { id } : {}) };
+            const payload = data.join("\n").trim();
+            if (payload) {
+              let parsed: unknown;
+              try { parsed = JSON.parse(payload); } catch { parsed = undefined; }
+              if (parsed && typeof parsed === "object" && typeof (parsed as OpenCodeEvent).type === "string") {
+                const event = parsed as OpenCodeEvent;
+                if (!event.properties || typeof event.properties !== "object" || Array.isArray(event.properties)) throw new Error("OpenCode 이벤트 형식이 올바르지 않습니다.");
+                yield { ...event, ...(event.id === undefined && id ? { id } : {}) };
+              }
             }
           }
           data = []; id = undefined; eventBytes = 0;
@@ -75,7 +79,7 @@ export class OpenCodeV1Client {
   readonly directory: string;
   readonly baseUrl: string;
   private readonly authorization?: string;
-  constructor(connection: Connection, private readonly fetcher: Fetch = (input, init) => globalThis.fetch(input, init), private readonly options: { retryDelayMs?: number } = {}) {
+  constructor(connection: Connection, private readonly fetcher: Fetch = (input, init) => globalThis.fetch(input, init), private readonly options: { retryDelayMs?: number; connectTimeoutMs?: number } = {}) {
     const url = new URL(connection.baseUrl);
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("OpenCode 서버 주소는 인증정보가 없는 HTTP(S) origin이어야 합니다.");
     this.baseUrl = url.origin;
@@ -114,7 +118,7 @@ export class OpenCodeV1Client {
   delete<T = unknown>(path: string, query?: Query) { return this.request<T>("DELETE", path, { query }); }
   async findFiles(query: string, limit = 12): Promise<string[]> {
     const matches = await this.get<string[]>("/find/file", { query, limit });
-    if (matches.length) return matches.slice(0, limit);
+    if (matches.length) return matches.slice(0, limit).map(item => item.replaceAll("\\", "/"));
     // Native 1.18.29 can return an empty index while /file still lists real files.
     // Offer directory-prefix navigation using that same server, without reading local OS paths.
     const normalized = query.replaceAll("\\", "/"), slash = normalized.lastIndexOf("/");
@@ -127,10 +131,21 @@ export class OpenCodeV1Client {
   async events(onEvent: (event: OpenCodeEvent) => void, onConnection: (connected: boolean) => void, signal: AbortSignal): Promise<void> {
     const seen = new Set<string>();
     let retry = 0;
+    const connectTimeoutMs = this.options.connectTimeoutMs ?? 15_000;
     while (!signal.aborted) {
+      const connectController = new AbortController();
+      const onOuterAbort = () => connectController.abort(signal.reason);
+      signal.addEventListener("abort", onOuterAbort, { once: true });
+      const connectTimer = setTimeout(() => connectController.abort(new Error("OpenCode 이벤트 스트림 연결 시간이 초과되었습니다.")), connectTimeoutMs);
       try {
-        const response = await this.fetcher(this.url("/event"), { headers: this.headers(true), signal, redirect: "error", cache: "no-store", credentials: "omit" });
-        if (!response.ok) throw new OpenCodeApiError(response.status, await response.text());
+        const response = await this.fetcher(this.url("/event"), { headers: this.headers(true), signal: connectController.signal, redirect: "error", cache: "no-store", credentials: "omit" });
+        clearTimeout(connectTimer);
+        if (!response.ok) {
+          const text = await response.text();
+          let body: unknown = text;
+          try { body = text ? JSON.parse(text) : text; } catch { /* plain text */ }
+          throw new OpenCodeApiError(response.status, body);
+        }
         if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) throw new Error("OpenCode 이벤트 스트림을 열 수 없습니다.");
         onConnection(true); retry = 0;
         for await (const event of parseSse(response.body, signal)) {
@@ -140,8 +155,12 @@ export class OpenCodeV1Client {
           onEvent(event);
         }
       } catch (error) {
+        clearTimeout(connectTimer);
         if (signal.aborted) break;
         if (error instanceof OpenCodeApiError && [401, 403, 404].includes(error.status)) { onConnection(false); throw error; }
+      } finally {
+        clearTimeout(connectTimer);
+        signal.removeEventListener("abort", onOuterAbort);
       }
       if (!signal.aborted) {
         onConnection(false);
