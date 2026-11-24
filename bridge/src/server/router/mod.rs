@@ -1,4 +1,12 @@
 //! `tool.call` → browser command routing and outcome classification.
+mod batch;
+mod tabs;
+mod validate;
+
+pub use validate::validate;
+use batch::run_batch;
+use tabs::{add_open_tabs, run_tabs};
+use validate::{check_url, invalid, summarize, timeout_for, validate_action, without_null_options};
 use super::{conn::ServerState, now_ms, registry::{CommandClass, QueuedCommand}, timeline::TimelineEntry};
 use crate::mcp::tools;
 use crate::rpc::{ErrorCode, Retry, RpcError};
@@ -6,10 +14,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::time::Duration;
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
-const NAVIGATE_TIMEOUT: Duration = Duration::from_secs(35);
+pub(super) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
+pub(super) const NAVIGATE_TIMEOUT: Duration = Duration::from_secs(35);
 /// Each read attached to a result. With the longest tool wait it must stay inside the MCP client's REPLY_WAIT.
-const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
+pub(super) const FOLLOW_UP_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -34,11 +42,11 @@ pub struct ToolOutcome {
 }
 
 impl ToolOutcome {
-    fn success(tool: &str, operation_id: Option<&str>, delivered: bool, executed: Executed, verified: Value, data: Value) -> Self {
+    pub(super) fn success(tool: &str, operation_id: Option<&str>, delivered: bool, executed: Executed, verified: Value, data: Value) -> Self {
         Self { ok: true, tool: tool.into(), operation_id: operation_id.map(str::to_string), delivered, executed, verified, data, error: None, created_operation: false }
     }
 
-    fn failure(tool: &str, operation_id: Option<&str>, delivered: bool, error: RpcError) -> Self {
+    pub(super) fn failure(tool: &str, operation_id: Option<&str>, delivered: bool, error: RpcError) -> Self {
         let executed = if error.code == ErrorCode::ExecutionUnknown {
             Executed::Unknown
         } else if error.details.get("executed") == Some(&Value::Bool(true)) {
@@ -60,205 +68,15 @@ impl ToolOutcome {
     }
 
     /// A failure before anything was sent to the browser.
-    fn rejected(tool: &str, operation_id: Option<&str>, error: RpcError) -> Self {
+    pub(super) fn rejected(tool: &str, operation_id: Option<&str>, error: RpcError) -> Self {
         Self::failure(tool, operation_id, false, error)
     }
 
     /// A failed browser command: delivered unless no browser was connected to receive it.
-    fn from_browser(tool: &str, operation_id: Option<&str>, error: RpcError) -> Self {
+    pub(super) fn from_browser(tool: &str, operation_id: Option<&str>, error: RpcError) -> Self {
         let delivered = error.code != ErrorCode::BrowserDisconnected;
         Self::failure(tool, operation_id, delivered, error)
     }
-}
-
-fn invalid(message: impl Into<String>) -> RpcError {
-    RpcError::new(ErrorCode::InvalidParams, Retry::Never, message)
-}
-
-fn validate_value(key: &str, prop: &Value, value: &Value) -> Result<(), RpcError> {
-    match prop["type"].as_str() {
-        Some("string") => {
-            let Some(s) = value.as_str() else { return Err(invalid(format!("`{key}` must be a string"))); };
-            if prop["minLength"].as_u64().is_some_and(|min| (s.chars().count() as u64) < min) {
-                return Err(invalid(format!("`{key}` is too short")));
-            }
-            if prop["maxLength"].as_u64().is_some_and(|max| (s.chars().count() as u64) > max) {
-                return Err(invalid(format!("`{key}` exceeds maximum length")));
-            }
-        }
-        Some("boolean") if !value.is_boolean() => return Err(invalid(format!("`{key}` must be a boolean"))),
-        Some("number") => {
-            let Some(n) = value.as_f64() else { return Err(invalid(format!("`{key}` must be a number"))) };
-            if !n.is_finite()
-                || prop["minimum"].as_f64().is_some_and(|min| n < min)
-                || prop["exclusiveMinimum"].as_f64().is_some_and(|min| n <= min)
-                || prop["maximum"].as_f64().is_some_and(|max| n > max)
-                || prop["exclusiveMaximum"].as_f64().is_some_and(|max| n >= max)
-            {
-                return Err(invalid(format!("`{key}` is out of range")));
-            }
-        }
-        Some("integer") => {
-            let Some(n) = value.as_i64() else { return Err(invalid(format!("`{key}` must be an integer"))) };
-            if prop["minimum"].as_i64().is_some_and(|min| n < min) || prop["maximum"].as_i64().is_some_and(|max| n > max) {
-                return Err(invalid(format!(
-                    "`{key}` must be between {} and {}",
-                    prop["minimum"].as_i64().map_or("-inf".into(), |v| v.to_string()),
-                    prop["maximum"].as_i64().map_or("inf".into(), |v| v.to_string()),
-                )));
-            }
-        }
-        Some("array") => {
-            let Some(items) = value.as_array() else { return Err(invalid(format!("`{key}` must be an array"))); };
-            if prop["minItems"].as_u64().is_some_and(|min| (items.len() as u64) < min) {
-                return Err(invalid(format!("`{key}` has too few items")));
-            }
-            if prop["maxItems"].as_u64().is_some_and(|max| (items.len() as u64) > max) {
-                return Err(invalid(format!("`{key}` has too many items")));
-            }
-            if let Some(item_schema) = prop.get("items").filter(|s| s.is_object()) {
-                for (idx, item) in items.iter().enumerate() {
-                    validate_value(&format!("{key}[{idx}]"), item_schema, item)?;
-                }
-            }
-        }
-        Some("object") => {
-            if !value.is_object() { return Err(invalid(format!("`{key}` must be an object"))); }
-            if prop.get("properties").is_some() || prop.get("required").is_some() {
-                validate(prop, value)?;
-            }
-        }
-        _ => {}
-    }
-    if let Some(allowed) = prop["enum"].as_array() && !allowed.contains(value) {
-        let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
-        return Err(invalid(format!("`{key}` must be one of: {}", names.join(", "))));
-    }
-    Ok(())
-}
-
-/// Hand-rolled check of the parts of the tool schema that matter: required, type, enum, integer range, nested object/array, string length.
-pub fn validate(schema: &Value, args: &Value) -> Result<(), RpcError> {
-    let obj = args.as_object().ok_or_else(|| invalid("arguments must be an object"))?;
-    if let Some(required) = schema["required"].as_array() {
-        for key in required.iter().filter_map(Value::as_str) {
-            if obj.get(key).is_none_or(Value::is_null) {
-                return Err(invalid(format!("missing required argument `{key}`")));
-            }
-        }
-    }
-    let props = schema["properties"].as_object();
-    for (key, value) in obj {
-        // A null optional field is an omitted one (free models often send them); it is never forwarded.
-        if value.is_null() { continue; }
-        let Some(prop) = props.and_then(|p| p.get(key)) else { continue };
-        validate_value(key, prop, value)?;
-    }
-    Ok(())
-}
-
-/// Only http(s) pages are operated on. The extension enforces this too; checking here keeps
-/// `javascript:`, `file:` and browser-internal URLs from ever being sent.
-fn check_url(url: &str) -> Result<(), RpcError> {
-    let lower = url.trim().to_ascii_lowercase();
-    if (lower.starts_with("http://") || lower.starts_with("https://")) && !url.chars().any(char::is_control) {
-        return Ok(());
-    }
-    Err(RpcError::new(
-        ErrorCode::UnsupportedPage,
-        Retry::Never,
-        "Only http: and https: URLs can be opened. chrome:, file:, javascript: and other schemes are not supported.",
-    ))
-}
-
-/// Checks that depend on which action was asked for.
-fn validate_action(name: &str, args: &Value) -> Result<(), RpcError> {
-    if name=="browser_pointer" {
-        let drag=args["mode"]=="drag";
-        if drag != (args["toX"].is_number() && args["toY"].is_number()) || (!drag && (args["toX"].is_number() || args["toY"].is_number())) { return Err(invalid("drag requires toX and toY; other modes do not use them")); }
-        if args["mode"]!="wheel" && (args["deltaX"].is_number() || args["deltaY"].is_number()) { return Err(invalid("wheel deltas are only for wheel mode")); }
-    }
-    if name=="browser_dialog" && args["action"]=="respond" && (!args["dialogId"].is_string() || !args["accept"].is_boolean()) {return Err(invalid("respond requires dialogId and accept"));}
-    if name=="browser_downloads" && args["action"]!="list" && !args["downloadId"].is_i64() {return Err(invalid("status/wait requires downloadId"));}
-    if name=="browser_screenshot" && ((args["scope"]=="region") != args["region"].is_object()) {return Err(invalid("region is required only for scope=region"));}
-    if let Some(wait) = args.get("waitFor").filter(|v| !v.is_null()) {
-        if !matches!(name,"browser_click"|"browser_press") || args["newTab"]==true {
-            return Err(invalid("waitFor is only for click/press in the same tab, without newTab"));
-        }
-        let fields=wait.as_object().ok_or_else(||invalid("waitFor must be an object"))?;
-        if fields.keys().any(|k| !["text","textGone","urlIncludes","match","timeoutMs"].contains(&k.as_str())) {
-            return Err(invalid("Unknown waitFor condition"));
-        }
-        let mut count=0;
-        for key in ["text","textGone","urlIncludes"] {
-            if let Some(value)=fields.get(key).filter(|v|!v.is_null()) {
-                let text=value.as_str().ok_or_else(||invalid("waitFor conditions must be text"))?;
-                if text.trim().is_empty()||text.encode_utf16().count()>2000 {return Err(invalid("waitFor conditions need 1..2000 characters"));}
-                count+=1;
-            }
-        }
-        if count==0 {return Err(invalid("waitFor needs text, textGone or urlIncludes"));}
-        if fields.get("match").is_some_and(|v|!v.is_null() && !matches!(v.as_str(),Some("all"|"any"))) {return Err(invalid("waitFor match must be all or any"));}
-        if fields.get("timeoutMs").is_some_and(|v|!v.is_null() && !v.as_u64().is_some_and(|ms|(100..=30000).contains(&ms))) {return Err(invalid("waitFor timeoutMs must be 100..30000"));}
-    }
-    if name=="browser_wait" && args["match"]=="all" && args.get("refGone").is_some_and(|v|!v.is_null()) {
-        return Err(invalid("match=all combines text and URL conditions; wait for refGone separately"));
-    }
-    match name {
-        "browser_tabs" => match args["action"].as_str() {
-            Some("new") if args["url"].as_str().is_some_and(|url| url != "about:blank") => check_url(args["url"].as_str().unwrap()),
-            Some("switch") if args["tabId"].as_i64().is_none() => Err(invalid("action=switch requires `tabId`")),
-            _ => Ok(()),
-        },
-        "browser_click" if args["newTab"] == true && args["mode"].as_str().is_some_and(|mode| mode != "click") => Err(invalid("`newTab` opens a link with a plain click; omit `mode`")),
-        "browser_click" => match (args["mode"].as_str(), args.get("toRef").is_some_and(|v| !v.is_null())) {
-            (Some("drag"), false) => Err(invalid("mode=drag requires `toRef`")),
-            (mode, true) if mode != Some("drag") => Err(invalid("`toRef` is only for mode=drag")),
-            _ => Ok(()),
-        },
-        "browser_navigate" if args["action"].as_str().unwrap_or("goto") == "goto" => {
-            check_url(args["url"].as_str().ok_or_else(|| invalid("action=goto requires `url`"))?)
-        }
-        _ => Ok(()),
-    }
-}
-
-fn timeout_for(name: &str, args: &Value) -> Duration {
-    if matches!(name,"browser_click"|"browser_press") && args.get("waitFor").is_some_and(|v|!v.is_null()) {
-        return DEFAULT_TIMEOUT+Duration::from_millis(args["waitFor"]["timeoutMs"].as_u64().unwrap_or(5000))+Duration::from_secs(3);
-    }
-    match name {
-        "browser_wait" | "browser_downloads" => Duration::from_millis(args["timeoutMs"].as_u64().unwrap_or(5000)) + Duration::from_secs(3),
-        "browser_navigate" => NAVIGATE_TIMEOUT,
-        "browser_tabs" if args["action"] == "new" => NAVIGATE_TIMEOUT,
-        _ => DEFAULT_TIMEOUT,
-    }
-}
-
-/// One line for the timeline: tool, selectors and URLs, never typed or page text (only its length).
-fn summarize(name: &str, args: &Value) -> String {
-    let mut parts = vec![name.to_string()];
-    for key in ["action", "kind", "key", "mode", "direction", "ref", "toRef", "file", "tabId", "url", "urlIncludes", "refGone"] {
-        match args.get(key) {
-            Some(Value::String(s)) => parts.push(format!("{key}={}", s.chars().take(200).collect::<String>())),
-            Some(v @ (Value::Number(_) | Value::Bool(_))) => parts.push(format!("{key}={v}")),
-            _ => {}
-        }
-    }
-    if let Some(keys) = args.get("modifiers").and_then(Value::as_array) {
-        let names: Vec<&str> = keys.iter().filter_map(Value::as_str).take(4).collect();
-        if !names.is_empty() { parts.push(format!("modifiers={}", names.join("+"))); }
-    }
-    if name == "browser_batch" && let Some(steps) = args.get("steps").and_then(Value::as_array) {
-        let names: Vec<&str> = steps.iter().filter_map(|step| step["tool"].as_str()).take(6).collect();
-        parts.push(format!("steps={} ({})", steps.len(), names.join(",")));
-    }
-    for key in ["text", "textGone", "option"] {
-        if let Some(s) = args.get(key).and_then(Value::as_str) {
-            parts.push(format!("{key}({} chars)", s.chars().count()));
-        }
-    }
-    parts.join(" ")
 }
 
 /// Who is calling: a managed runtime's proxy names its launch id and OpenCode directory.
@@ -267,14 +85,6 @@ pub struct Caller { pub runtime_id: Option<String>, pub cwd: Option<String>, pub
 
 pub async fn call_tool(state: &ServerState, name: &str, args: Value) -> ToolOutcome {
     call_tool_as(state, &Caller::default(), name, args).await
-}
-
-/// A null optional argument is an omitted one (free models often send them). Removing it once here
-/// keeps every later `get(..).is_some()` and `as_str()` agreeing; a null required argument stays and fails.
-fn without_null_options(name: &str, mut args: Value) -> Value {
-    let required = tools::find(name).and_then(|t| t.schema["required"].as_array());
-    if let Some(map) = args.as_object_mut() { map.retain(|key, value| !value.is_null() || required.is_some_and(|r| r.iter().any(|k| k == key))); }
-    args
 }
 
 pub async fn call_tool_as(state: &ServerState, caller: &Caller, name: &str, args: Value) -> ToolOutcome {
@@ -367,7 +177,7 @@ async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value
     run_with_budget(state, caller, name, args, follow_up, None).await
 }
 
-async fn run_with_budget(state: &ServerState, caller: &Caller, name: &str, args: &Value, follow_up: bool, budget: Option<Duration>) -> ToolOutcome {
+pub(super) async fn run_with_budget(state: &ServerState, caller: &Caller, name: &str, args: &Value, follow_up: bool, budget: Option<Duration>) -> ToolOutcome {
     let Some(def) = tools::find(name) else {
         return ToolOutcome::rejected(name, None, invalid(format!("unknown tool `{name}`")));
     };
@@ -423,7 +233,7 @@ async fn run_with_budget(state: &ServerState, caller: &Caller, name: &str, args:
     outcome
 }
 
-fn operation_required(name: &str) -> ToolOutcome {
+pub(super) fn operation_required(name: &str) -> ToolOutcome {
     ToolOutcome::rejected(
         name,
         None,
@@ -471,7 +281,7 @@ impl OperationCommand<'_> { async fn wait(self) -> Result<Value,RpcError> { self
 
 /// The extension is told how long this wait is (replyWithinMs), so a page that went silent behind a
 /// dialog is reported by the extension, which knows why, before this side gives up.
-fn reply_within(params: &mut serde_json::Map<String, Value>, timeout: Duration) {
+pub(super) fn reply_within(params: &mut serde_json::Map<String, Value>, timeout: Duration) {
     params.insert("replyWithinMs".into(), json!(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)));
 }
 
@@ -547,64 +357,9 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
     }
 }
 
-async fn open_tabs(state: &ServerState, client: &str, window: Option<i64>) -> Value {
-    let params = match window { Some(id) => json!({ "windowId": id }), None => json!({}) };
-    let Ok(queued) = state.registry.queue_command_for(client, "browser.tabs.list", params, CommandClass::Read) else { return Value::Null };
-    let Ok(listed) = queued.wait(FOLLOW_UP_TIMEOUT).await else { return Value::Null };
-    let tabs: Vec<Value> = listed["tabs"].as_array().into_iter().flatten().take(20).map(|tab| json!({
-        "tabId": tab["tabId"], "active": tab["active"], "attachable": tab["attachable"],
-        "title": clip_chars(&tab["title"], TAB_TITLE_CHARS), "url": clip_chars(&tab["url"], TAB_URL_CHARS),
-    })).collect();
-    json!(tabs)
-}
-
-const TAB_TITLE_CHARS: usize = 60;
-const TAB_URL_CHARS: usize = 100;
-/// The `tabs` array of `browser_tabs list`; with the outcome's own fields it stays under the MCP text limit.
-const TAB_LIST_BYTES: usize = 32_000;
-
-fn clip_chars(value: &Value, max: usize) -> String {
-    value.as_str().unwrap_or("").chars().take(max).collect()
-}
-
-/// A tab list is a menu of ids: titles and URLs are clipped like `openTabs`, and a list that still
-/// does not fit keeps its first tabs and says how many were left out.
-fn bounded_tab_list(mut data: Value) -> Value {
-    let Some(tabs) = data.get_mut("tabs").and_then(Value::as_array_mut) else { return data };
-    let (total, mut bytes, mut kept) = (tabs.len(), 0, 0);
-    for tab in tabs.iter_mut() {
-        for (key, max) in [("title", TAB_TITLE_CHARS), ("url", TAB_URL_CHARS)] {
-            if tab[key].is_string() { tab[key] = json!(clip_chars(&tab[key], max)); }
-        }
-        bytes += tab.to_string().len() + 1;
-        if bytes > TAB_LIST_BYTES { break; }
-        kept += 1;
-    }
-    tabs.truncate(kept);
-    if kept < total {
-        data["omittedTabs"] = json!(total - kept);
-        data["note"] = json!(format!("Only the first {kept} of {total} tabs are listed. Use action=windows, then list with windowId to read one window."));
-    }
-    data
-}
-
-/// Tab choices travel with the results that need them, so the model never guesses a tabId.
-async fn add_open_tabs(state: &ServerState, args: &Value, outcome: &mut ToolOutcome) {
-    let action = args["action"].as_str().unwrap_or_default();
-    let failed_switch = action == "switch" && outcome.error.as_ref().is_some_and(|error| matches!(error.code, ErrorCode::TabNotFound | ErrorCode::UnsupportedPage));
-    if !((outcome.ok && matches!(action, "attach" | "new")) || failed_switch) { return; }
-    let client = outcome.operation_id.as_deref().and_then(|op| state.ops.check_active(op).ok()).map(|op| op.client_id).or_else(|| state.registry.selected_client());
-    let Some(client) = client else { return };
-    let window = if failed_switch { None } else { outcome.data["tab"]["windowId"].as_i64() };
-    let tabs = open_tabs(state, &client, window).await;
-    if tabs.is_null() { return; }
-    if !outcome.data.is_object() { outcome.data = json!({}); }
-    outcome.data["openTabs"] = tabs;
-}
-
 /// Page-changing tools return the page they produced, so the model needs no extra snapshot call.
 /// Unchanged pages keep their refs, so an unchanged click returns none and saves context.
-fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
+pub(super) fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
     if outcome.verified["dialogPending"] == true { return false; }
     match name {
         "browser_click" | "browser_upload" => outcome.verified["expectationMet"] == true || outcome.verified["urlChanged"] == true || outcome.verified["domChanged"] == true || outcome.data["currentTab"].is_number(),
@@ -617,75 +372,6 @@ fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
         },
         _ => false,
     }
-}
-
-const BATCH_TOOLS: [&str; 4] = ["click", "fill", "select", "press"];
-/// A batch starts no new step after this, so its reply stays well inside the MCP reply window.
-const BATCH_TIME: Duration = Duration::from_secs(20);
-/// Hard cap for the entire batch (steps + handoff waits), leaving headroom for follow-up snapshot inside REPLY_WAIT (60s).
-const BATCH_BUDGET: Duration = Duration::from_secs(45);
-
-/// Each step runs exactly as its own tool would (checks, handoff wait, gate), without follow-up reads.
-/// A step that changed the page ends the batch: later refs may no longer point where the model meant.
-async fn run_batch(state: &ServerState, caller: &Caller, args: &Value) -> ToolOutcome {
-    const NAME: &str = "browser_batch";
-    let op_id = args["operationId"].as_str().unwrap_or_default().to_string();
-    let reject = |message: String| ToolOutcome::rejected(NAME, Some(&op_id), invalid(message));
-    let steps = args["steps"].as_array().cloned().unwrap_or_default();
-    if steps.is_empty() || steps.len() > 6 { return reject("steps must list 1 to 6 actions".into()); }
-    let mut planned = vec![];
-    // Every step is checked before the first runs: a batch never stops on a typo halfway through.
-    for (index, step) in steps.iter().enumerate() {
-        let Some(tool) = step["tool"].as_str().filter(|tool| BATCH_TOOLS.contains(tool)) else { return reject(format!("step {} needs tool click, fill, select or press", index + 1)) };
-        let name = format!("browser_{tool}");
-        let mut step_args = step.clone();
-        let Some(fields) = step_args.as_object_mut() else { return reject(format!("step {} must be an object", index + 1)) };
-        fields.remove("tool"); fields.insert("operationId".into(), json!(op_id));
-        let def = tools::find(&name).expect("batch tools exist");
-        if let Err(error) = validate(&def.schema, &step_args).and_then(|_| validate_action(&name, &step_args)) { return reject(format!("step {}: {}", index + 1, error.message)); }
-        planned.push((name, step_args));
-    }
-    let started = tokio::time::Instant::now();
-    let (mut ran, mut executed, mut stop, mut last) = (vec![], Executed::No, None::<&str>, None::<ToolOutcome>);
-    for (index, (name, step_args)) in planned.iter().enumerate() {
-        if index > 0 && started.elapsed() > BATCH_TIME { stop = Some("time"); break; }
-        let remaining = BATCH_BUDGET.saturating_sub(started.elapsed());
-        if index > 0 && remaining < Duration::from_secs(1) { stop = Some("time"); break; }
-        let outcome = Box::pin(run_with_budget(state, caller, name, step_args, false, Some(remaining))).await;
-        executed = match (executed, outcome.executed) { (Executed::Unknown, _) | (_, Executed::Unknown) => Executed::Unknown, (Executed::Yes, _) | (_, Executed::Yes) => Executed::Yes, _ => Executed::No };
-        let dialog_pending = outcome.verified["dialogPending"] == true;
-        let changed = outcome.verified["urlChanged"] == true || outcome.data["currentTab"].is_number()
-            || (name != "browser_fill" && name != "browser_select" && (outcome.verified["domChanged"] == true || outcome.verified["expectationMet"] == true));
-        ran.push(json!({"step": index + 1, "tool": name, "ok": outcome.ok, "executed": outcome.executed, "verified": outcome.verified, "error": outcome.error}));
-        let ok = outcome.ok; last = Some(outcome);
-        if !ok { stop = Some("failed"); break; }
-        if dialog_pending { stop = Some("dialogPending"); break; }
-        if changed { if index + 1 < planned.len() { stop = Some("pageChanged"); } break; }
-    }
-    let (completed, last) = (ran.len(), last.expect("a batch runs at least one step"));
-    let dialog_pending = stop == Some("dialogPending") || last.verified["dialogPending"] == true;
-    let page_changed = last.ok && !dialog_pending && (stop == Some("pageChanged") || wants_snapshot(&planned[completed - 1].0, &planned[completed - 1].1, &last));
-    let mut data = json!({"steps": ran});
-    // Preserve important step data from the terminal step (openedTabs, currentTab, operationTabs, dialog, nextStep, etc.).
-    if let (Some(dst), Some(src)) = (data.as_object_mut(), last.data.as_object()) {
-        for (k, v) in src {
-            if k != "steps" && k != "note" { dst.insert(k.clone(), v.clone()); }
-        }
-    }
-    match stop {
-        Some("dialogPending") if completed < planned.len() => data["note"] = json!(format!("Stopped after step {completed}: a dialog opened. Steps {}-{} did not run; handle the dialog with browser_dialog.", completed + 1, planned.len())),
-        Some("pageChanged") => data["note"] = json!(format!("Stopped after step {completed}: the page changed. Steps {}-{} did not run; use the returned snapshot.", completed + 1, planned.len())),
-        Some("time") => data["note"] = json!(format!("Stopped before step {}: time ran out. Later steps did not run; take browser_snapshot first.", completed + 1)),
-        _ => {}
-    }
-    let mut verified = json!({"completed": completed, "total": planned.len(), "pageChanged": page_changed});
-    if dialog_pending { verified["dialogPending"] = json!(true); }
-    if let Some(error) = last.error.filter(|_| stop == Some("failed")) {
-        let mut failed = ToolOutcome::failure(NAME, Some(&op_id), last.delivered, error);
-        failed.executed = executed; failed.verified = verified; failed.data = data;
-        return failed;
-    }
-    ToolOutcome::success(NAME, Some(&op_id), true, executed, verified, data)
 }
 
 /// Follow-up snapshots ride on every page-changing action; on busy pages the next step rarely
@@ -733,7 +419,7 @@ impl Drop for CreatedOperation<'_> {
 }
 
 /// The user may take the browser over between the handoff wait and the enqueue.
-fn ensure_not_held(op: &super::operation::Operation) -> Result<(), RpcError> {
+pub(super) fn ensure_not_held(op: &super::operation::Operation) -> Result<(), RpcError> {
     if !op.paused { return Ok(()); }
     Err(RpcError::new(ErrorCode::BrowserBusy, Retry::Safe,
         "The user has taken over this tab. Wait, then try again; take a fresh snapshot before acting.").with_details(json!({"handoff": true})))
@@ -741,7 +427,7 @@ fn ensure_not_held(op: &super::operation::Operation) -> Result<(), RpcError> {
 
 /// Why the next write needs a fresh snapshot: the user handled the browser, or a closed tab sent
 /// the operation back to an earlier one.
-fn observation_required(op: &super::operation::Operation) -> RpcError {
+pub(super) fn observation_required(op: &super::operation::Operation) -> RpcError {
     if op.handed_back {
         RpcError::new(ErrorCode::StaleElement,Retry::Safe,"The user handled the browser and handed it back. Take browser_snapshot to see the current page before changing it.")
     } else { restored_target_needs_snapshot() }
@@ -751,170 +437,6 @@ fn restored_target_needs_snapshot() -> RpcError {
     RpcError::new(ErrorCode::StaleElement,Retry::Safe,"The current tab closed and this operation returned to a previously visited tab. Take browser_snapshot to confirm the restored target before changing or closing it.")
 }
 
-async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
-    const NAME: &str = "browser_tabs";
-    let action = args["action"].as_str().unwrap_or_default();
-    let read = |method: &'static str, params: Value| state.registry.send_command(method, params, CommandClass::Read, DEFAULT_TIMEOUT);
-    let delivered_failure = |op: Option<&str>, e: RpcError| ToolOutcome::from_browser(NAME, op, e);
-    // Tab actions inside an operation wait while the user holds the browser, like page tools.
-    if let Some(op_id) = args["operationId"].as_str().filter(|_| matches!(action, "new" | "switch" | "close"))
-        && let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await
-    {
-        return ToolOutcome::rejected(NAME, Some(op_id), error);
-    }
-    match action {
-        "list" | "windows" => match read(if action == "windows" {"browser.windows.list"} else {"browser.tabs.list"}, json!({"windowId":args["windowId"]})).await {
-            Ok(data) => ToolOutcome::success(NAME, None, true, Executed::No, Value::Null, if action == "list" { bounded_tab_list(data) } else { data }),
-            Err(e) => delivered_failure(None, e),
-        },
-        "attach" => {
-            // Read lock blocks browser.use (write lock) during tabs.get, while allowing concurrent request.begin (try_read).
-            let _selection = state.selection.read().await;
-            let client = state.registry.selected_client().unwrap_or_default();
-            let target=match state.ops.request_target(args["requestId"].as_str(),&client,args["tabId"].as_i64()) {
-                Ok(target)=>target,Err(e)=>return ToolOutcome::rejected(NAME,None,e),
-            };
-            let params = match target {
-                Some(id) => json!({ "tabId": id }),
-                None => json!({}),
-            };
-            let queued = match state.registry.queue_command_for(&client, "browser.tabs.get", params, CommandClass::Read) {
-                Ok(queued) => queued,
-                Err(error) => return delivered_failure(None, error),
-            };
-            let tab = match queued.wait(DEFAULT_TIMEOUT).await {
-                Ok(tab) => tab,
-                Err(e) => return delivered_failure(None, e),
-            };
-            let Some(tab_id) = tab["tabId"].as_i64() else {
-                return ToolOutcome::failure(NAME, None, true, RpcError::new(ErrorCode::Internal, Retry::Never, "browser did not report a tab id"));
-            };
-            match state.ops.attach_request(tab_id, &client,args["requestId"].as_str()) {
-                Ok(op) => ToolOutcome::success(
-                    NAME,
-                    Some(&op.id),
-                    true,
-                    Executed::No,
-                    Value::Null,
-                    json!({ "operationId": op.id, "generation": op.generation, "tab": tab }),
-                ),
-                Err(e) => ToolOutcome::failure(NAME, None, true, e),
-            }
-        }
-        "new" => {
-            // A dropped/cancelled creation must not strand a pending operation.
-            struct Reservation<'a> { state: &'a ServerState, id: Option<String> }
-            // A cancelled call never reaches call_tool_as's broadcast, so the release announces itself.
-            impl Drop for Reservation<'_> { fn drop(&mut self) { if let Some(id) = &self.id && self.state.ops.release(id).is_ok() { self.state.broadcast_status(); } } }
-            let selection = state.selection.read().await;
-            let mut reservation = Reservation {state, id:None};
-            let new_id;
-            let explicit_op = args["operationId"].as_str().is_some();
-            let op_id = if let Some(id) = args["operationId"].as_str() { id } else {
-                let client = state.registry.selected_client().unwrap_or_default();
-                match state.ops.reserve_new(&client,args["requestId"].as_str()) {
-                    Ok(op) => { new_id = op.id; reservation.id=Some(new_id.clone()); &new_id }
-                    Err(error) => return ToolOutcome::rejected(NAME,None,error),
-                }
-            };
-            let fail_op = explicit_op.then_some(op_id);
-            let queued = state.ops.with_checked(op_id, false, |op| {
-                ensure_not_held(op)?;
-                let params = json!({ "url": args["url"].as_str().unwrap_or("about:blank"), "operationId": op.id, "generation": op.generation,
-                    "windowId":args["windowId"],"sourceTabId":if op.current_tab_closed {None} else {Some(op.current_tab)} });
-                state.registry.queue_command_for(&op.client_id, "browser.tabs.create", params, CommandClass::Write)
-            });
-            drop(selection);
-            let queued = match queued {
-                Ok(queued) => queued,
-                Err(error) => return ToolOutcome::rejected(NAME, fail_op, error),
-            };
-            let created = queued.wait(timeout_for(NAME, args)).await;
-            let tab = match created {
-                Ok(tab) => tab,
-                Err(e) => return delivered_failure(fail_op, e),
-            };
-            let joined = tab["tabId"].as_i64().ok_or_else(|| {
-                RpcError::new(ErrorCode::Internal, Retry::Never, "browser did not report the new tab id").with_details(json!({ "executed": true }))
-            });
-            let joined = joined.and_then(|tab_id| state.ops.add_and_switch_tab(op_id, tab_id));
-            match joined {
-                Ok(()) => {
-                    reservation.id=None;
-                    ToolOutcome::success(NAME, Some(op_id), true, Executed::Yes, Value::Null, json!({ "tab": tab, "nextStep":"Use browser_snapshot before page actions; for about:blank first browser_navigate to an HTTP(S) URL." }))
-                },
-                Err(mut e) => {
-                    // The tab exists even though the operation could not take it.
-                    e.details = json!({ "executed": true, "tab": tab });
-                    ToolOutcome::failure(NAME, fail_op, true, e)
-                }
-            }
-        }
-        "switch" => {
-            let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
-            let tab_id = args["tabId"].as_i64().unwrap_or_default();
-            let queued = state.ops.with_checked(op_id, false, |op| {
-                ensure_not_held(op)?;
-                state.registry.queue_command_for(&op.client_id, "browser.tabs.get", json!({ "tabId": tab_id }), CommandClass::Read)
-            });
-            let queued = match queued {
-                Ok(queued) => queued,
-                Err(error) => return ToolOutcome::rejected(NAME, Some(op_id), error),
-            };
-            match queued.wait(DEFAULT_TIMEOUT).await {
-                Ok(tab) if tab["tabId"].as_i64()==Some(tab_id) && (tab["attachable"]==true || (matches!(tab["url"].as_str(),Some(""|"about:blank")) && state.ops.check_active(op_id).is_ok_and(|op|op.tabs.contains(&tab_id)))) => match state.ops.visit_verified_tab(op_id, tab_id) {
-                    Ok(()) => ToolOutcome::success(NAME, Some(op_id), true, Executed::No, Value::Null, json!({ "tab": tab })),
-                    Err(e) => ToolOutcome::failure(NAME, Some(op_id), true, e),
-                },
-                Ok(_) => delivered_failure(Some(op_id),RpcError::new(ErrorCode::UnsupportedPage,Retry::Never,"Select an ordinary HTTP(S) tab from browser_tabs list")),
-                Err(e) => {
-                    if e.code == ErrorCode::TabNotFound {
-                        state.ops.forget_missing_tab(op_id, tab_id);
-                    }
-                    delivered_failure(Some(op_id), e)
-                }
-            }
-        }
-        "close" => {
-            let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
-            // Target is the current operation tab; never accept an arbitrary tabId.
-            let queued = state.ops.with_checked(op_id, true, |op| {
-                ensure_not_held(op)?;
-                if op.needs_observation {return Err(observation_required(op));}
-                if args.get("tabId").is_some() { return Err(invalid("close targets the current tab; switch first")); }
-                let mut params = json!({"operationId":op.id,"generation":op.generation,"tabId":op.current_tab}).as_object().cloned().expect("object");
-                reply_within(&mut params, DEFAULT_TIMEOUT);
-                let queued = state.registry.queue_command_for(&op.client_id,"browser.tabs.close",Value::Object(params),CommandClass::Write)?;
-                Ok((op.current_tab, queued))
-            });
-            let (tab_id, queued) = match queued {
-                Ok(value) => value,
-                Err(error) => return ToolOutcome::rejected(NAME,Some(op_id),error),
-            };
-            match queued.wait(DEFAULT_TIMEOUT).await {
-                Ok(data) if data["closed"] == true => {
-                    state.ops.remove_tab_for_operation(op_id, tab_id);
-                    let remaining = state.ops.check_active(op_id).ok();
-                    ToolOutcome::success(NAME,Some(op_id),true,Executed::Yes,json!({"closed":true}),
-                        json!({"tabId":tab_id,"operationTabs":remaining.as_ref().map(|op| &op.tabs),
-                            "abortedAfter":remaining.is_none(),
-                            "currentTab":remaining.as_ref().filter(|op|!op.current_tab_closed).map(|op|op.current_tab),
-                            "nextStep":"Snapshot the restored target before continuing; if none remains, switch to an explicit listed HTTP(S) tab or create a new tab with this operationId."}))
-                }
-                Ok(_) => delivered_failure(Some(op_id),RpcError::new(ErrorCode::ExecutionUnknown,Retry::Unsafe,"Closure was not confirmed. Inspect tabs before retrying.")),
-                Err(error) => delivered_failure(Some(op_id),error),
-            }
-        }
-        "release" => {
-            let Some(op_id) = args["operationId"].as_str() else { return operation_required(NAME) };
-            match state.ops.release(op_id) {
-                Ok(()) => ToolOutcome::success(NAME, Some(op_id), false, Executed::No, Value::Null, json!({ "released": true })),
-                Err(e) => ToolOutcome::rejected(NAME, Some(op_id), e),
-            }
-        }
-        other => ToolOutcome::rejected(NAME, None, invalid(format!("unknown action `{other}`"))),
-    }
-}
 
 #[cfg(test)]
 mod tests {

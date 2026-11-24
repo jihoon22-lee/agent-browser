@@ -4,19 +4,19 @@ import { watchesLateNavigation } from './late-navigation';
 import { ProtocolError, type Req, type RpcError } from '../protocol/envelope';
 import type { SessionStore, Outcome } from './dedupe';
 import type { ChromeApi, FrameInfo } from './chrome-api';
-import { frameRouter, type FrameError } from './frames';
-import { RefTable, snapshotToken } from '../content/refs';
+import { frameRouter } from './frames';
+import { RefTable } from '../content/refs';
 import { clipText } from '../content/text';
 import { getTab, describeTab, requireWeb, isWeb, loadedTab, aborted, interruptible } from './tabs';
 import { readBookmarks } from './bookmarks';
 import { trackCreatedTabs } from './tab-routing';
-import { pageConditions, CONDITION_KEYS, type PageConditions } from '../protocol/conditions';
+import { pageConditions, CONDITION_KEYS } from '../protocol/conditions';
+import { readSnapshot } from './snapshot-handler';
+import { urlWait as runUrlWait, waitForConditions as runWaitForConditions } from './wait-handler';
 const WRITE = new Set(['browser.pointer', 'browser.dialog', 'browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.navigate', 'browser.tabs.create', 'browser.tabs.close']);
 const CONTENT = new Set(['browser.click', 'browser.upload', 'browser.fill', 'browser.select', 'browser.press', 'browser.scroll', 'browser.wait', 'browser.extract']);
-const SNAPSHOT_RESPONSE_BYTES = 28_000;
 /** How long a click or key press that changed nothing is watched for a script navigation. */
 const LATE_NAVIGATION_MS = 1000;
-const jsonBytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).length;
 const cancelled = () => new ProtocolError('CANCELLED', 'This browser command was stopped.');
 /** The tab shows Chrome's own error page (unreachable host, refused connection): final, not a page still loading. */
 const errorPage = (url: string | undefined, executed: boolean) => new ProtocolError('UNSUPPORTED_PAGE',
@@ -355,61 +355,14 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             } finally { off(); clearTimeout(timer); }
         }
         if (req.method === 'browser.snapshot') {
-            // A slow subresource must not prevent reading an already available DOM.
-            const snapshotId = await store.nextSnapshotId(), results: unknown[] = [], errors: FrameError[] = [], bindings: FrameInfo[] = [];
-            const allFrames = (await frames.list(tabId)).map(f => ({...f})).sort((a,b)=>a.frameId-b.frameId);
-            const frameOffset = Math.max(0,Number(p.frameOffset??0));
-            let used=0, framesNextOffset:number|null=null;
-            for(let index=frameOffset;index<allFrames.length;index++) {
-                const f=allFrames[index]!;
-                if(index-frameOffset>=20){framesNextOffset=index;break;}
-                // Out of time after the first frame: hand back what was read; frameOffset reads on.
-                if(index>frameOffset&&within(run,PAGE_REPLY_MS)<=0){framesNextOffset=index;break;}
-                await check(req,signal);
-                try {
-                    // Injection into a page blocked by a dialog never returns either.
-                    await onPage(run, () => frames.inject(tabId,f));
-                    const result = await send(tabId,f,'snapshot',{...p,snapshotId,frameId:f.frameId,maxChars:p.maxChars??(f.frameId===0?4000:1000),offset:p.offset??0,elementOffset:p.elementOffset??0},run);
-                    const withDocument={...result,documentId:f.documentId,frameRef:`s${snapshotToken(snapshotId)}f${f.frameId}`};
-                    const length=jsonBytes(withDocument);
-                    if(length>SNAPSHOT_RESPONSE_BYTES)throw new ProtocolError('FRAME_UNAVAILABLE','The frame exceeded the snapshot response budget.');
-                    if(used+length>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
-                    results.push(withDocument);bindings.push(f);used+=length;
-                }catch(e){
-                    if(signal.aborted||asError(e).code==='CANCELLED')throw e;
-                    if(f.frameId===0&&f.errorOccurred)throw errorPage(tab.url,false);
-                    // A top document that does not answer at all will not answer a second attempt either.
-                    if(f.frameId===0&&unanswered(e))throw e;
-                    const error:FrameError={frameId:f.frameId,url:clipText(f.url,2048),code:'FRAME_UNAVAILABLE',message:clipText(asError(e).message,500)};
-                    const errorSize=jsonBytes(error);
-                    if(used+errorSize>SNAPSHOT_RESPONSE_BYTES){framesNextOffset=index;break;}
-                    errors.push(error);used+=errorSize;
-                }
-            }
-            if(frameOffset===0&&!bindings.some(f=>f.frameId===0)) {
-                if(tab.status==='loading'&&Date.now()<snapshotDeadline){
-                    await interruptible(new Promise(r=>setTimeout(r,50)),signal);
-                    return dispatch(run,snapshotAttempt,snapshotDeadline);
-                }
-                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1,snapshotDeadline);
-                throw new ProtocolError('FRAME_UNAVAILABLE','The top document could not be read.','safe',{frameErrors:errors});
-            }
-            const live = await frames.list(tabId);
-            const current = await getTab(api, tabId);
-            if (bindings.some(f => !live.some(now => now.frameId === f.frameId && now.documentId === f.documentId)) || current.url !== tab.url || current.pendingUrl) {
-                if (snapshotAttempt < 2) return dispatch(run, snapshotAttempt + 1,snapshotDeadline);
-                throw new ProtocolError('FRAME_UNAVAILABLE', 'Navigation changed the snapshot repeatedly. Wait for the expected page state and take a fresh snapshot.', 'safe');
-            }
-            await store.bind(snapshotId,bindings.map(f=>({...f,tabId,operationId:String(p.operationId)})));
-            // A query answers for the whole page: a match in any frame clears every frame's "no match".
-            const queryMatched = typeof p.query === 'string' && p.query.trim()
-                // Totals count every match, not just the page returned (elementOffset/offset).
-                ? results.some((f: any) => (f.elementsTotal ?? f.elements?.length ?? 0) > 0 || (f.text?.totalChars ?? (f.text?.content ? 1 : 0)) > 0) : undefined;
-            if (queryMatched) for (const f of results as any[]) if (Array.isArray(f.limits)) f.limits = f.limits.filter((l: string) => l !== 'query-no-match');
-            return {snapshotId,...(queryMatched === undefined ? {} : {queryMatched}),loading:current.status==='loading',url:tab.url===undefined?undefined:clipText(tab.url,2048),title:tab.title===undefined?undefined:clipText(tab.title,256),tabId,frames:results,frameErrors:errors,
-                framesOffset:frameOffset,framesTotal:allFrames.length,framesNextOffset,framesTruncated:framesNextOffset!==null,
-                limits:[...(Number(tab.url?.length)>2048?['url-truncated']:[]),...(Number(tab.title?.length)>256?['title-truncated']:[])],
-                note:'DOM element list, not the accessibility tree. After navigation, sorting, pagination, or rerender, wait for expected text then snapshot again and identify the target by name/href; never reuse an element index. Use frameOffset, elementOffset, or text offset to continue truncated results. Pass query to read only matching lines, rows and elements.'};
+            return readSnapshot({
+                api, store, frames, check,
+                onPage: work => onPage(run, work),
+                hasFrameBudget: () => within(run, PAGE_REPLY_MS) > 0,
+                sendFrameSnapshot: (id, frame, params) => send(id, frame, 'snapshot', params, run),
+                asError, unanswered, errorPage,
+                retry: (nextAttempt, deadline) => dispatch(run, nextAttempt, deadline),
+            }, tab, tabId, req, signal, snapshotAttempt, snapshotDeadline);
         }
         if (req.method === 'browser.navigate') {
             const action = p.action ?? 'goto';
@@ -528,103 +481,16 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         }
         throw new ProtocolError('FORBIDDEN_METHOD', `Unknown browser method ${req.method}.`);
     }
-    /** Re-read conditions in the current document; navigation retries only these read-only probes.
-     * The click/key is never resent, and the whole waiter (including Chrome API calls) is bounded. */
-    async function waitForConditions(tabId:number, original:FrameInfo, expected:PageConditions, run:Running, action?:any, sourceUrl?:string) {
-        const executed=action!==undefined;
-        if(action?.openedTabs?.length)throw new ProtocolError('ELEMENT_NOT_INTERACTABLE','The action opened another tab. Inspect its snapshot before waiting there.','never',{executed:true});
-        const controller=new AbortController(),signal=controller.signal;
-        const cancel=()=>controller.abort(run.controller.signal.reason??cancelled());
-        run.controller.signal.addEventListener('abort',cancel,{once:true});
-        if(run.controller.signal.aborted)cancel();
-        const waitBudget = Math.max(50, within(run, expected.timeoutMs));
-        const timer=setTimeout(()=>controller.abort(new ProtocolError('TIMEOUT','The requested page conditions were not met. Inspect the page before another action.',executed?'never':'safe',{executed,expectationMet:false})),waitBudget);
-        const started=Date.now(),keys=CONDITION_KEYS.filter(k=>expected[k]!==undefined),originalDocumentId=original.documentId;
-        const staleWait=()=>new ProtocolError('STALE_ELEMENT','The waited-for document changed. Take a fresh snapshot before waiting again.');
-        let injected=originalDocumentId;
-        try {
-            return await interruptible((async()=>{
-                while(true){
-                    aborted(signal);
-                    const tab=await interruptible(getTab(api,tabId),signal);
-                    requireWeb(tab.url);
-                    const checks:Record<string,boolean>={};
-                    if(expected.urlIncludes!==undefined)checks.urlIncludes=!tab.pendingUrl&&!!tab.url?.includes(expected.urlIncludes);
-                    let live:FrameInfo|undefined;
-                    if(!tab.pendingUrl && (expected.text!==undefined||expected.textGone!==undefined)){
-                        try{
-                            const documents=await interruptible(frames.list(tabId),signal),top=documents.find(f=>f.frameId===0);
-                            // A child can disappear without navigation. Follow frame 0 only after
-                            // the enclosing document was actually replaced, including same-URL loads.
-                            live=run.sourceTopDocument && top && top.documentId!==run.sourceTopDocument
-                                ? top : documents.find(f=>f.frameId===original.frameId);
-                            if(!executed && live?.documentId!==originalDocumentId)throw staleWait();
-                            if(live){
-                                if(injected!==live.documentId){await interruptible(frames.inject(tabId,live),signal);injected=live.documentId;}
-                                const reply=await interruptible(api.sendToFrame(tabId,live,{kind:'cmd',method:'conditions',params:{...run.req.params,...expected,requestId:run.req.id+':conditions'}}),signal);
-                                const current=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===live!.frameId);
-                                if(!executed && current?.documentId!==originalDocumentId)throw staleWait();
-                                if(reply?.ok && current?.documentId===live.documentId) {
-                                    for(const key of ['text','textGone'])if(typeof reply.result?.conditions?.[key]==='boolean')checks[key]=reply.result.conditions[key];
-                                }
-                            }
-                        }catch(error){aborted(signal);if(error instanceof ProtocolError&&((!executed&&error.code==='STALE_ELEMENT')||!['FRAME_UNAVAILABLE','STALE_ELEMENT'].includes(error.code)))throw error;}
-                    }
-                    const met=keys.filter(k=>checks[k]===true);
-                    if(expected.match==='all'?met.length===keys.length:met.length>0){
-                        const current=await interruptible(getTab(api,tabId),signal);
-                        if(current.pendingUrl||current.url!==tab.url)continue;
-                        if(live){
-                            const finalFrame=(await interruptible(frames.list(tabId),signal)).find(f=>f.frameId===live!.frameId);
-                            if(!executed && finalFrame?.documentId!==originalDocumentId)throw staleWait();
-                            if(finalFrame?.documentId!==live.documentId)continue;
-                        }
-                        return {...(action??{executed:false}),verified:{...(action?.verified??{}),met:expected.match==='all'?'all':met[0],conditions:met,
-                            ...(executed?{expectationMet:true,urlChanged:action?.verified?.urlChanged===true||(sourceUrl!==undefined&&tab.url!==sourceUrl)||(live!==undefined&&live.documentId!==originalDocumentId)}:{})},elapsedMs:Date.now()-started};
-                    }
-                    await interruptible(new Promise(r=>setTimeout(r,100)),signal);
-                }
-            })(),signal);
-        }catch(error){
-            if(executed && error instanceof ProtocolError)throw new ProtocolError(error.code,error.message,'never',{...(error.details&&typeof error.details==='object'?error.details:{}),executed:true,expectationMet:false});
-            throw error;
-        }finally{clearTimeout(timer);controller.abort(cancelled());run.controller.signal.removeEventListener('abort',cancel);}
-    }
-    async function urlWait(tabId: number, p: Record<string, unknown>, run: Running, prepare: () => Promise<FrameInfo>) {
-        const signal = run.controller.signal;
-        let frame: FrameInfo | undefined, finished=false, matched=false;
-        let resolve!: (r: unknown) => void, reject!: (e: unknown) => void;
-        const url = new Promise((r, j) => { resolve = r; reject = j; });
-        const match = (t: chrome.tabs.Tab) => { if (t.url?.includes(String(p.urlIncludes))) {
-            matched = true;
-            resolve({ executed: false, verified: { met: 'urlIncludes' } }); } };
-        const off = api.onTabUpdated((id, _change, t) => { if (id === tabId)
-            match(t); });
-        const timer = setTimeout(() => reject(new ProtocolError('TIMEOUT', 'The requested URL condition was not reached.', 'safe')), Math.min(Number(p.timeoutMs ?? 5000), 30000));
-        void url.catch(() => { });
-        try {
-            match(await getTab(api, tabId));
-            if (matched) return await interruptible(url, signal);
-            const content = (async () => {
-                if (p.text === undefined && p.textGone === undefined && p.refGone === undefined) return url;
-                frame = await prepare();
-                if(finished)return url;
-                // URL is always the tab URL, even when content conditions use an iframe.
-                const {urlIncludes:_url,...contentParams}=p;
-                return send(tabId, frame, 'wait', contentParams, run);
-            })().catch(e => {
-                if (['STALE_ELEMENT', 'FRAME_UNAVAILABLE'].includes(asError(e).code)) return url;
-                throw e;
-            });
-            return await interruptible(Promise.race([url, content]), signal);
-        }
-        finally {
-            finished=true;
-            off();
-            clearTimeout(timer);
-            if (frame) void api.sendToFrame(tabId, frame, { kind: 'cancel', requestId: run.req.id }).catch(() => { });
-        }
-    }
+    const waitDeps = (run: Running) => ({
+        api, frames,
+        within: (ms: number) => within(run, ms),
+        cancelled, asError,
+        sendWait: (id: number, frame: FrameInfo, params: Record<string, unknown>) => send(id, frame, 'wait', params, run),
+    });
+    const waitForConditions = (tabId: number, original: FrameInfo, expected: ReturnType<typeof pageConditions>, run: Running, action?: any, sourceUrl?: string) =>
+        runWaitForConditions(waitDeps(run), tabId, original, expected, run, action, sourceUrl);
+    const urlWait = (tabId: number, p: Record<string, unknown>, run: Running, prepare: () => Promise<FrameInfo>) =>
+        runUrlWait(waitDeps(run), tabId, p, run, prepare);
     async function execute(run: Running) {
         const { req, controller } = run;
         let claimed = false;
