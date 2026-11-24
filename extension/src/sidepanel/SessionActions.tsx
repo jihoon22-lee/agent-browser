@@ -14,15 +14,35 @@ export function SessionMenu({ label, actions }: { label: string; actions: Sessio
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
-  useEffect(() => { if (open) root.current?.querySelector<HTMLButtonElement>(".session-menu-popover button")?.focus(); }, [open, confirming]);
+  useEffect(() => {
+    if (!open) return;
+    const preferred = confirming
+      ? root.current?.querySelector<HTMLButtonElement>(".session-menu-popover button[data-safe-focus]")
+      : root.current?.querySelector<HTMLButtonElement>(".session-menu-popover button");
+    preferred?.focus();
+  }, [open, confirming]);
   const choose = (action: SessionAction) => { if (action.confirm) { setConfirming(action); return; } close(); action.run(); };
-  return <div className="session-menu" ref={root} onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); event.stopPropagation(); close(true); } }}>
+  const menuKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!open) return;
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(true); return; }
+    const items = [...(root.current?.querySelectorAll<HTMLButtonElement>(".session-menu-popover button") ?? [])];
+    if (!items.length) return;
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const shift = event.key === "ArrowDown" ? 1 : -1;
+      items[(index + shift + items.length) % items.length]?.focus();
+    } else if (event.key === "Tab") {
+      if ((event.shiftKey && index <= 0) || (!event.shiftKey && index >= items.length - 1)) close();
+    }
+  };
+  return <div className="session-menu" ref={root} onKeyDown={menuKeys}>
     <button ref={trigger} type="button" className="quiet session-menu-trigger" aria-label={label} aria-expanded={open} aria-haspopup="true" onClick={() => open ? close() : setOpen(true)}>⋯</button>
-    {open && <div className="session-menu-popover">
+    {open && <div className="session-menu-popover" role="group" aria-label={label}>
       {confirming ? <>
         <p>{confirming.confirm}</p>
         <button type="button" className="stop" onClick={() => { const action = confirming; close(); action.run(); }}>{confirming.label} 확인</button>
-        <button type="button" onClick={() => setConfirming(undefined)}>취소</button>
+        <button type="button" data-safe-focus="true" onClick={() => setConfirming(undefined)}>취소</button>
       </> : actions.map(action => <button type="button" key={action.label} className={action.confirm ? "danger-text" : undefined} onClick={() => choose(action)}>{action.label}</button>)}
     </div>}
   </div>;

@@ -46,3 +46,31 @@ it("confirms a copy and reports a clipboard failure", async () => {
   await act(async () => buttons()[0]!.click());
   expect(buttons()[0]!.textContent).toBe("복사 실패");
 });
+
+it("displays tool execution duration, closes revert confirm on Escape, and offers retry on failed assistant turns", async () => {
+  const onRetry = vi.fn();
+  await act(async () => root.render(createElement(MessageCard, {
+    message: {
+      info: { id: "msg-err", role: "assistant", error: { message: "모델 응답 시간 초과" } },
+      parts: [{ id: "prt-1", type: "tool", tool: "browser_browser_click", state: { status: "completed", time: { start: 1000, end: 2400 }, input: { ref: "s1f0e1" }, output: "ok" } }],
+    },
+    onFork: vi.fn(),
+    onRevert: vi.fn(),
+    onRetry,
+  })));
+  expect(host.querySelector(".tool-duration")?.textContent).toBe("1.4초");
+  const retryButton = buttons().find(button => button.textContent === "수정 후 재전송")!;
+  await act(async () => retryButton.click());
+  expect(onRetry).toHaveBeenCalledTimes(1);
+
+  await act(async () => root.render(createElement(MessageCard, {
+    message: { info: { id: "msg-u", role: "user" }, parts: [{ id: "p-u", type: "text", text: "질문" }] },
+    onFork: vi.fn(),
+    onRevert: vi.fn(),
+  })));
+  await act(async () => buttons().find(button => button.textContent === "이전으로 되돌리기")!.click());
+  const confirmBox = host.querySelector<HTMLDivElement>(".inline-confirm")!;
+  expect(confirmBox).not.toBeNull();
+  await act(async () => { confirmBox.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(host.querySelector(".inline-confirm")).toBeNull();
+});

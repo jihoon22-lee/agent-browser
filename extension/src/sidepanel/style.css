@@ -6,6 +6,14 @@
   --accent: #245ac8; --accent-on: #eff1f5; --danger: #b51c3e; --danger-on: #eff1f5;
   --success: #347a34; --focus: #8839ef;
 }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --base: #1e1e2e; --canvas: #181825; --surface: #1e1e2e; --raised: #313244; --hover: #313244; --bubble: #2f3b54;
+    --text: #cdd6f4; --muted: #bac2de; --line: #45475a; --control-border: #9399b2;
+    --accent: #89b4fa; --accent-on: #11111b; --danger: #f38ba8; --danger-on: #11111b;
+    --success: #a6e3a1; --focus: #cba6f7;
+  }
+}
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body, #root { height: 100%; margin: 0; overflow: hidden; }
@@ -46,12 +54,13 @@ summary { cursor: pointer; line-height: 1.5; }
 .error, .notice { position: relative; padding: 10px 12px; margin: 8px 0; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--surface); font-size: 12px; overflow-wrap: anywhere; }
 .error { color: var(--danger); border-left-color: var(--danger); }
 .notice { color: var(--text); }
-.notice > button.quiet { float: right; margin: -5px -7px 0 3px; min-height: 28px; }
+.notice > button.quiet, .error > button.error-dismiss { float: right; margin: -5px -7px 0 3px; min-height: 28px; }
+.context-pressure { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .workbench, .chat-view { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .workspace-summary { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px 7px; border-bottom: 1px solid var(--line); }
 .workspace-identity { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; }
 .workspace-actions { flex: none; display: flex; gap: 2px; }
-.connection-line { font-size: 11px; color: var(--muted); padding-left: 8px; }
+.connection-line { font-size: 11px; color: var(--muted); padding-left: 8px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The environment chip names the profile; it opens the run settings drawer. */
 .control-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; min-height: 28px; padding: 3px 8px; border-color: transparent; background: transparent; }
 .control-chip > strong { font-size: 12px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -63,7 +72,9 @@ summary { cursor: pointer; line-height: 1.5; }
 .conversation > .error, .conversation > .notice { flex: none; margin: 0 12px 8px; max-height: 100px; overflow: auto; }
 .status-pill { flex: none; font-size: 11px; color: var(--muted); background: var(--canvas); padding: 3px 7px; border-radius: 99px; }
 .status-pill.busy { color: var(--accent); }
+.viewport-wrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; overflow: hidden; }
 .message-viewport { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 16px 12px; scrollbar-width: thin; scrollbar-color: var(--control-border) transparent; }
+.jump-to-bottom { position: absolute; right: 14px; bottom: 10px; z-index: 2; padding: 5px 10px; min-height: 28px; border-radius: 99px; background: var(--raised); border-color: var(--control-border); box-shadow: 0 2px 10px #0003; font-size: 11px; }
 /* A turn is one user prompt or one assistant reply (all of its steps). Turns, not steps, get the spacing. */
 .turn { margin: 18px 0; min-width: 0; }
 .turn:first-child { margin-top: 12px; }
@@ -73,6 +84,7 @@ summary { cursor: pointer; line-height: 1.5; }
 .message.continued { margin-top: 2px; }
 .message.user { max-width: 88%; padding: 10px 12px; border-radius: 14px 14px 4px 14px; background: var(--bubble); }
 .message > header { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.message.user > header { flex-wrap: wrap; }
 .message.assistant > header strong { color: var(--accent); font-weight: 650; }
 .message.user > header strong { color: var(--text); }
 .message-actions { display: flex; gap: 2px; margin-left: auto; }
@@ -88,24 +100,36 @@ summary { cursor: pointer; line-height: 1.5; }
 .inline-confirm p { margin: 0 0 6px; line-height: 1.5; }
 .inline-confirm .toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
 .waiting { font-size: 12px; margin: 14px 0; }
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes pulse-wait { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+  .waiting { animation: pulse-wait 1.6s ease-in-out infinite; }
+}
+code, pre { font-family: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regular, monospace; }
 .workbench pre { overflow: auto; max-height: 300px; max-width: 100%; font-size: 11px; line-height: 1.65; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--canvas); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-view .diff-add { display: block; color: var(--success); }
+.diff-view .diff-del { display: block; color: var(--danger); }
+.diff-view .diff-hunk { display: block; color: var(--accent); font-weight: 600; }
+.diff-view .diff-meta { display: block; color: var(--muted); }
 .markdown p { margin: 7px 0; white-space: pre-wrap; }
 .message .markdown > :first-child { margin-top: 0; }
 .message .markdown > :last-child { margin-bottom: 0; }
-.markdown h1 { font-size: 19px; margin: 16px 0 8px; }
-.markdown h2 { font-size: 17px; margin: 14px 0 8px; }
-.markdown h3 { font-size: 15px; margin: 12px 0 7px; }
+.markdown h1, .markdown h3.md-h1 { font-size: 18px; margin: 16px 0 8px; }
+.markdown h2, .markdown h4.md-h2 { font-size: 16px; margin: 14px 0 8px; }
+.markdown h3, .markdown h5.md-h3 { font-size: 14px; margin: 12px 0 7px; }
+.markdown h6.md-h4 { font-size: 13px; margin: 10px 0 6px; }
 .markdown blockquote { margin: 12px 0; padding: 3px 12px; border-left: 3px solid var(--control-border); color: var(--muted); }
 .markdown code { background: var(--canvas); border-radius: 4px; padding: 2px 4px; font-size: 11px; }
 .code-block > div { display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--muted); }
 .table-scroll { overflow: auto; max-width: 100%; }
 .markdown table { border-collapse: collapse; font-size: 12px; width: 100%; }
 .markdown td, .markdown th { padding: 7px; border: 1px solid var(--line); white-space: pre-wrap; }
-.tool-card { border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; padding: 7px 10px; background: var(--surface); }
+.tool-card { border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; padding: 7px 10px; background: var(--raised); }
 .tool-card > summary { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; font-weight: 600; }
 .tool-card .tool-hint { display: block; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-card > summary > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .tool-card > summary > span:last-child { flex: none; }
+.tool-meta { display: inline-flex; align-items: center; gap: 6px; }
+.tool-duration { font-weight: 400; color: var(--muted); }
 .tool-card.error { border-color: var(--danger); color: var(--text); }
 .tool-card.error > summary, .tool-card.error [role=alert] { color: var(--danger); }
 .tool-card.running { border-color: var(--accent); }
@@ -136,6 +160,7 @@ summary { cursor: pointer; line-height: 1.5; }
 .error-original > summary { font-size: 11px; }
 .error-original code { display: block; margin-top: 4px; font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .composer { flex: none; position: relative; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--surface); }
+.composer.drag-over { outline: 2px dashed var(--accent); outline-offset: -3px; background: var(--raised); }
 .workbench label { display: block; font-size: 12px; font-weight: 600; margin: 12px 0; }
 .workbench input:not([type=checkbox]):not([type=radio]):not([type=file]), .workbench select, .workbench textarea { display: block; width: 100%; min-width: 0; margin-top: 6px; padding: 9px 10px; border: 1px solid var(--control-border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 12px; line-height: 1.6; }
 .workbench input::placeholder, .workbench textarea::placeholder { color: var(--muted); opacity: 1; }
@@ -153,11 +178,14 @@ summary { cursor: pointer; line-height: 1.5; }
 .target-picker > select { field-sizing: content; width: auto; min-width: 0; max-width: 130px; min-height: 30px; margin: 0; padding: 4px 6px; font-size: 11px; color: var(--text); }
 .workbench label.attach-button { position: relative; display: inline-flex; align-items: center; margin: 0; font-weight: 500; }
 .attach-button input { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); overflow: hidden; }
-.attachments { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; max-height: 78px; overflow: auto; }
-.chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; overflow-wrap: anywhere; background: var(--canvas); padding: 3px 7px; border-radius: 6px; font-size: 11px; }
+.attachments { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 8px; max-height: 86px; overflow: auto; }
+.chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; overflow-wrap: anywhere; background: var(--canvas); padding: 3px 7px; border-radius: 6px; font-size: 11px; }
+.chip .attachment-thumb { width: 22px; height: 22px; object-fit: cover; border-radius: 4px; flex: none; }
+.chip .chip-size { display: inline; font-size: 10px; color: var(--muted); }
 .chip button { min-height: 25px; padding: 1px 5px; border: 0; background: transparent; }
-.suggestions { position: absolute; z-index: 2; bottom: calc(100% - 4px); left: 14px; right: 14px; display: flex; flex-direction: column; max-height: min(230px, 40vh); overflow: auto; padding: 5px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--surface); box-shadow: 0 4px 16px #0002; }
-.suggestions button { text-align: left; margin: 2px 0; border: 0; overflow-wrap: anywhere; }
+.suggestions { position: absolute; z-index: 2; bottom: calc(100% - 4px); left: 14px; right: 14px; display: flex; flex-direction: column; max-height: min(230px, 40vh); overflow: auto; padding: 5px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--raised); box-shadow: 0 4px 16px #0003; }
+.suggestions button { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; text-align: left; margin: 2px 0; border: 0; overflow-wrap: anywhere; background: transparent; }
+.suggestions .suggestion-desc { display: inline; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .view-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px 16px 24px; scrollbar-width: thin; }
 .view-heading { margin-bottom: 18px; }
 .eyebrow { display: block; font-size: 11px; letter-spacing: 1.2px; color: var(--muted); font-weight: 700; margin-bottom: 4px; }
@@ -208,6 +236,7 @@ summary { cursor: pointer; line-height: 1.5; }
   .app-header { padding: 12px 10px; } .header-actions { gap: 3px; }
   .workspace-summary { padding: 10px 12px; } .message-viewport { padding: 0 12px 10px; }
   .composer { padding: 8px 10px 10px; } .composer-send { flex-wrap: wrap; justify-content: flex-end; }
+  .composer-selectors { flex-wrap: wrap; } .composer-selectors select { max-width: 48%; }
   .view-scroll { padding: 16px 12px 22px; }
 }
 @media (prefers-reduced-motion: no-preference) { button { transition: background-color .12s, border-color .12s; } }
@@ -222,7 +251,7 @@ summary { cursor: pointer; line-height: 1.5; }
 .session-menu { position: relative; flex: none; }
 .session-list .session-menu button, .session-menu button { display: block; width: auto; margin: 0; }
 .session-menu-trigger { min-height: 30px; padding: 2px 8px; font-size: 16px; line-height: 1; }
-.session-menu-popover { position: absolute; z-index: 3; right: 0; top: calc(100% + 2px); min-width: 150px; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--surface); box-shadow: 0 4px 16px #0003; }
+.session-menu-popover { position: absolute; z-index: 3; right: 0; top: calc(100% + 2px); min-width: 150px; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid var(--control-border); border-radius: 9px; background: var(--raised); box-shadow: 0 4px 16px #0004; }
 .session-menu-popover button { width: 100%; text-align: left; border-color: transparent; }
 .session-menu-popover button.stop { text-align: center; }
 .session-menu-popover p { margin: 4px 6px 6px; font-size: 11px; line-height: 1.5; }

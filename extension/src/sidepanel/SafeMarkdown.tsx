@@ -50,7 +50,12 @@ export const SafeMarkdown = memo(function SafeMarkdown({ text }: { text: string 
       }
       if (!line.trim()) continue;
       const heading = /^(#{1,6})\s+(.+)$/.exec(line);
-      if (heading) { const level = heading[1]!.length; out.push(level === 1 ? <h1 key={i}>{inline(heading[2]!)}</h1> : level === 2 ? <h2 key={i}>{inline(heading[2]!)}</h2> : <h3 key={i}>{inline(heading[2]!)}</h3>); continue; }
+      if (heading) {
+        const level = heading[1]!.length;
+        const body = inline(heading[2]!);
+        out.push(level === 1 ? <h3 key={i} className="md-h1">{body}</h3> : level === 2 ? <h4 key={i} className="md-h2">{body}</h4> : level === 3 ? <h5 key={i} className="md-h3">{body}</h5> : <h6 key={i} className="md-h4">{body}</h6>);
+        continue;
+      }
       if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
         const start = i, ordered = /^\s*\d+\.\s+/.test(line), items: ReactNode[] = [];
         const matcher = ordered ? /^\s*\d+\.\s+/ : /^\s*[-*]\s+/;

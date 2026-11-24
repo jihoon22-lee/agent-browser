@@ -53,10 +53,14 @@ namespace AgentBrowser.Installer {
         // The picture must be the window as Windows composes it. DrawToBitmap paints child controls in
         // another order than the screen does, so a label covering a field does not show in it.
         static void Capture(Form form, string path) {
-            Application.DoEvents();form.Update();
+            form.Refresh();Application.DoEvents();form.Update();
             using (var bitmap = new Bitmap(form.Width, form.Height)) {
                 bool drawn;
                 using (var graphics = Graphics.FromImage(bitmap)) { IntPtr dc = graphics.GetHdc(); try { drawn = PrintWindow(form.Handle, dc, 2); } finally { graphics.ReleaseHdc(dc); } }
+                // Modal dialogs captured right after ShowDialog can return an uncomposited black surface with PW_RENDERFULLCONTENT(2); fall back to WM_PRINT(0).
+                if (drawn && bitmap.Width > 80 && bitmap.Height > 80 && bitmap.GetPixel(bitmap.Width / 2, bitmap.Height / 2).ToArgb() == Color.Black.ToArgb()) {
+                    using (var graphics = Graphics.FromImage(bitmap)) { IntPtr dc = graphics.GetHdc(); try { drawn = PrintWindow(form.Handle, dc, 0); } finally { graphics.ReleaseHdc(dc); } }
+                }
                 if (!drawn) { form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); Console.WriteLine("WARN capture fallback: " + path); }
                 bitmap.Save(path);
             }
@@ -99,7 +103,16 @@ namespace AgentBrowser.Installer {
                                 foreach(Form dialog in Application.OpenForms) {
                                     if(dialog==form)continue;
                                     timer.Stop();
-                                    try {Check(dialog);CheckOverlap(dialog, size + "pt advanced");CheckButton(dialog,"CloseAdvanced");Capture(dialog, Path.Combine(args[0],"font-"+size+"-advanced.png"));}
+                                    try {
+                                        Check(dialog);CheckOverlap(dialog, size + "pt advanced");
+                                        foreach (string name in new [] {"CancelAdvanced", "CloseAdvanced"}) {
+                                            CheckButton(dialog, name);
+                                            var b = dialog.Controls.Find(name, true)[0];
+                                            var rect = dialog.RectangleToClient(b.RectangleToScreen(b.ClientRectangle));
+                                            if (!dialog.ClientRectangle.Contains(rect)) throw new Exception("Dialog button clipped: " + name + " rect=" + rect + " client=" + dialog.ClientRectangle);
+                                        }
+                                        Capture(dialog, Path.Combine(args[0],"font-"+size+"-advanced.png"));
+                                    }
                                     catch(Exception error){dialogError=error;}
                                     dialog.Close();break;
                                 }

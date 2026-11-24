@@ -363,6 +363,8 @@
           "enum": [
             "up",
             "down",
+            "left",
+            "right",
             "top",
             "bottom"
           ],

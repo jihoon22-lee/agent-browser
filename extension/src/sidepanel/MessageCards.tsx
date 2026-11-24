@@ -27,6 +27,14 @@ function FileResult({ part, onOpenFile }: { part: Data; onOpenFile?: (part: Data
   const url = String(part.url ?? ""), data = url.startsWith("data:"), href = data ? url : safeLink(url);
   return <div className="file-result">{data && /^data:image\/(png|jpeg|webp|gif);/i.test(url) && <img src={url} alt={part.filename ?? "첨부 이미지"} />}{href ? <a href={href} download={data ? safeDownloadName(part.filename) : undefined} target={data ? undefined : "_blank"} rel="noopener noreferrer">{part.filename ?? "첨부 결과 열기"}</a> : <span>{part.filename ?? "파일 결과"} · 서버 경로: {url}{onOpenFile && (url.startsWith("file:") || part.source?.path) && <button onClick={() => onOpenFile(part)}>서버 파일 열기</button>}</span>}</div>;
 }
+function formatDuration(start: unknown, end: unknown): string {
+  if (typeof start !== "number" || typeof end !== "number" || !Number.isFinite(start) || !Number.isFinite(end) || end < start) return "";
+  const ms = Math.round(end - start);
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}초`;
+  const min = Math.floor(ms / 60_000), sec = Math.round((ms % 60_000) / 1000);
+  return `${min}분 ${sec}초`;
+}
 function ToolCard({ part, onOpenFile }: { part: Data; onOpenFile?: (part: Data) => void }) {
   const state = part.state ?? {}, raw = state.status === "error" ? state.error ?? state.output : state.output ?? state.error, outcome = toolOutcome(raw);
   const status = outcome?.ok === false ? "error" : state.status;
@@ -34,7 +42,8 @@ function ToolCard({ part, onOpenFile }: { part: Data; onOpenFile?: (part: Data) 
   // A call that fails after its card was drawn opens just like one that arrived failed.
   useEffect(() => { if (status === "error") setOpen(true); }, [status]);
   const hint = toolHint(state.input);
-  return <details className={`tool-card ${status ?? "pending"}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}><summary><span>{state.title || toolLabel(part.tool) || part.tool || "도구"}{hint && <small className="tool-hint">{hint}</small>}</span><span>{({ pending: "대기", running: "실행 중", completed: "완료", error: "오류" } as Data)[status] ?? status}</span></summary>
+  const duration = formatDuration(state.time?.start, state.time?.end);
+  return <details className={`tool-card ${status ?? "pending"}`} open={open} onToggle={event => setOpen(event.currentTarget.open)}><summary><span>{state.title || toolLabel(part.tool) || part.tool || "도구"}{hint && <small className="tool-hint">{hint}</small>}</span><span className="tool-meta">{duration && <small className="tool-duration">{duration}</small>}{({ pending: "대기", running: "실행 중", completed: "완료", error: "오류" } as Data)[status] ?? status}</span></summary>
     {open && <ToolDetails part={part} raw={raw} outcome={outcome} onOpenFile={onOpenFile} />}
   </details>;
 }
@@ -81,17 +90,17 @@ export function hasVisibleContent(message: UiMessage): boolean {
 }
 export const messageText = (message: UiMessage) => message.parts.filter(part => part.type === "text" && !part.synthetic && !part.ignored).map(part => String(part.text ?? "")).join("\n");
 const time = (message: UiMessage) => message.info.time?.created ? new Date(message.info.time.created).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "";
-type CardProps = { message: UiMessage; continued?: boolean; onFork: (messageID: string) => void; onRevert: (messageID: string) => void; onOpenFile?: (part: Data) => void };
+type CardProps = { message: UiMessage; continued?: boolean; onFork: (messageID: string) => void; onRevert: (messageID: string) => void; onOpenFile?: (part: Data) => void; onRetry?: () => void };
 /** Assistant steps of one reply share a header (`continued`); fork and revert belong to the user's prompt. */
-export const MessageCard = memo(function MessageCard({ message, continued, onFork, onRevert, onOpenFile }: CardProps) {
+export const MessageCard = memo(function MessageCard({ message, continued, onFork, onRevert, onOpenFile, onRetry }: CardProps) {
   const user = message.info.role === "user";
   const [confirmRevert, setConfirmRevert] = useState(false);
   const parts = message.parts.map((part, index) => { const node = renderPart(part, onOpenFile); return node === null ? null : <div key={part.id ?? index}>{node}</div>; }).filter(Boolean);
   return <article className={`message ${user ? "user" : "assistant"}${continued ? " continued" : ""}`} data-message-id={message.info.id}>
     {!continued && <header><strong>{user ? "나" : message.info.agent ?? "OpenCode"}</strong><time>{time(message)}</time>
       {user && <span className="message-actions"><button onClick={() => onFork(message.info.id)}>여기서 분기</button><button onClick={() => setConfirmRevert(true)}>이전으로 되돌리기</button></span>}</header>}
-    {confirmRevert && <div className="inline-confirm" role="group" aria-label="되돌리기 확인"><p>이 메시지 이전으로 대화·서버 파일 변경을 되돌릴까요? 이미 완료된 웹사이트 작업은 되돌리지 않습니다.</p><div className="toolbar"><button className="stop" onClick={() => { setConfirmRevert(false); onRevert(message.info.id); }}>되돌리기 확인</button><button autoFocus onClick={() => setConfirmRevert(false)}>취소</button></div></div>}
+    {confirmRevert && <div className="inline-confirm" role="group" aria-label="되돌리기 확인" onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setConfirmRevert(false); } }}><p>이 메시지 이전으로 대화·서버 파일 변경을 되돌릴까요? 이미 완료된 웹사이트 작업은 되돌리지 않습니다.</p><div className="toolbar"><button className="stop" onClick={() => { setConfirmRevert(false); onRevert(message.info.id); }}>되돌리기 확인</button><button autoFocus onClick={() => setConfirmRevert(false)}>취소</button></div></div>}
     {parts}
-    {message.info.error && <p className="error" role="alert">{message.info.error.data?.message ?? message.info.error.message ?? message.info.error.name}</p>}
+    {message.info.error && <div className="error" role="alert"><span>{message.info.error.data?.message ?? message.info.error.message ?? message.info.error.name}</span>{!user && onRetry && <div className="toolbar"><button type="button" onClick={onRetry}>수정 후 재전송</button></div>}</div>}
   </article>;
 });

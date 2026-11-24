@@ -38,3 +38,18 @@ it("does not cap a long cell at the row-search limit", () => {
   document.body.innerHTML = `<table><tr><td><b>${"word ".repeat(400)}</b></td></tr></table>`;
   expect(tableToRows(document.querySelector("table")!).rows[0]![0]!.length).toBe(1999);
 });
+
+it("treats thead td cells as headers and extracts ARIA role=grid tables inside shadow DOM", async () => {
+  document.body.innerHTML = `<table><thead><tr><td>Col A</td><td>Col B</td></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>`;
+  const htmlTable = await runAction("extract", { kind: "table", maxChars: 8000, offset: 0, generation: 1 });
+  expect(htmlTable).toMatchObject({ header: ["Col A", "Col B"], rows: [["1", "2"]] });
+
+  document.body.innerHTML = `<div id="host"></div>`;
+  const shadow = document.getElementById("host")!.attachShadow({ mode: "open" });
+  shadow.innerHTML = `<div role="grid">
+    <div role="row"><div role="columnheader">Name</div><div role="columnheader">Score</div></div>
+    <div role="row"><div role="gridcell">Alice</div><div role="gridcell">95</div></div>
+  </div>`;
+  const ariaTable = await runAction("extract", { kind: "table", maxChars: 8000, offset: 0, generation: 1 });
+  expect(ariaTable).toMatchObject({ header: ["Name", "Score"], rows: [["Alice", "95"]], rowCount: 1, colCount: 2 });
+});

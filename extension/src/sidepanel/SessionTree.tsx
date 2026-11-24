@@ -20,8 +20,13 @@ type Props = {
 export const SessionTree = memo(function SessionTree({ sessions, selectedId, statuses, directory, childIndex, ensureChildren, loadChildren, onSelect, actions, renamingId, onRename, onRenameEnd }: Props) {
   const [expanded, setExpanded] = useState(new Set<string>());
   const [loading, setLoading] = useState(new Set<string>()), [errors, setErrors] = useState<Record<string, string>>({});
+  const [, setClockTick] = useState(0);
   const mounted = useRef(true), pending = useRef(new Set<string>());
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    mounted.current = true;
+    const timer = setInterval(() => setClockTick(tick => tick + 1), 60_000);
+    return () => { mounted.current = false; clearInterval(timer); };
+  }, []);
   // Only rows on screen are checked for children: the roots plus the children of expanded rows.
   const visible: string[] = [];
   const collect = (list: Data[], ancestry: Set<string>) => { for (const session of list) if (!ancestry.has(session.id)) { visible.push(session.id); if (expanded.has(session.id)) collect(childIndex[session.id] ?? [], new Set(ancestry).add(session.id)); } };

@@ -2,8 +2,8 @@ import { highlight } from "./highlight";
 import { clipText } from "./text";
 import { assertTrustedFallback, requestTrusted, trustedFrame, trustedDetails } from "./trusted";
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, composedParent, isDisabled, isInteractive, isRendered, walkDeep } from "./dom";
-import { resolveRef } from "./refs";
+import { accessibleName, composedParent, deepActiveElement, isDisabled, isInteractive, isRendered, walkDeep } from "./dom";
+import { findRef, resolveRef } from "./refs";
 import { waitFor, textConditions } from "./wait";
 import { extract } from "./extract";
 import { observePage } from "./observe";
@@ -49,7 +49,7 @@ function topAt({ clientX: x, clientY: y }: Point): Element | null {
 }
 function reaches(top: Element | null, el: Element): boolean {
   let hit: Element | null = top;
-  while (hit && hit !== el) hit = hit.parentElement ?? ((hit.getRootNode() as ShadowRoot).host ?? null);
+  while (hit && hit !== el) hit = composedParent(hit);
   if (hit) return true;
   // A visually hidden native control is commonly covered by its own styled label.
   const label = top?.closest("label");
@@ -92,8 +92,9 @@ function assertInteractable(el: Element, allowScroll = true): Point | undefined 
   if (centred) return centred;
   const top = points[0] ? topAt(points[0]) : null;
   if (top) {
+    const coveringRef = findRef(top);
     throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", `${accessibleName(el)} is covered by another element.`, "never",
-      { coveredBy: { tag: top.tagName.toLowerCase(), name: accessibleName(top) } });
+      { coveredBy: { tag: top.tagName.toLowerCase(), name: accessibleName(top), ...(coveringRef ? { ref: coveringRef } : {}) } });
   }
   // Nothing is hit outside the viewport: the element could not be scrolled into it (fixed or
   // clipped off screen). A visually hidden native control is used through its label instead.
@@ -110,8 +111,7 @@ function quietState(el: Element): unknown[] {
   const controls: Element[] = [el, ...Array.from(el.querySelectorAll("input,select")).slice(0, 20)];
   const labelled = el instanceof HTMLLabelElement ? el.control : el.closest("label")?.control;
   if (labelled) controls.push(labelled);
-  let active: Element | null = document.activeElement;
-  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  const active = deepActiveElement(document);
   const typing = active instanceof HTMLTextAreaElement || (active instanceof HTMLInputElement && !["button", "submit", "reset", "checkbox", "radio", "image", "file", "color", "range"].includes(active.type)) || (active as HTMLElement | null)?.isContentEditable;
   return [typing ? active : null, ...controls.map(control => control instanceof HTMLInputElement ? `${control.checked}|${control.value}` : control instanceof HTMLSelectElement ? control.value : "")];
 }
@@ -417,7 +417,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         // Editors such as ProseMirror, Draft or Slate update their own model from insertText.
         let usedTrusted=false, trustedResult:ReturnType<typeof trustedDetails>={};
         if(p.trusted===true&&p.trustedFrames===true){const answer=await requestTrusted(String(p.requestId??''),'text',{ref:p.ref,text});if(answer.ok){usedTrusted=true;trustedResult=trustedDetails(answer);}else assertTrustedFallback(answer,p,signal);}
-        const inserted = usedTrusted || typeof doc.execCommand === "function" && doc.execCommand("insertText", false, text);
+        const inserted = usedTrusted || (typeof doc.execCommand === "function" && (text === "" ? doc.execCommand("delete", false) : doc.execCommand("insertText", false, text)));
         if (!inserted) {
           host.textContent = text;
           host.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true, inputType: "insertReplacementText", data: text }));
@@ -448,16 +448,17 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         if (opt.disabled || (opt.parentElement instanceof HTMLOptGroupElement && opt.parentElement.disabled)) {
           throw new ProtocolError("ELEMENT_NOT_INTERACTABLE", "The requested option is disabled.");
         }
-        // Select the option itself: assigning its value would pick the first option sharing that
+        // Select or deselect the option itself: assigning value would pick the first option sharing that
         // value, and would clear the other choices of a multiple select.
-        if (el.multiple) opt.selected = true; else el.selectedIndex = opt.index;
+        const selectWant = el.multiple && typeof p.checked === "boolean" ? p.checked : true;
+        if (el.multiple) opt.selected = selectWant; else el.selectedIndex = opt.index;
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
         await afterInput(String(p.ref),signal);
-        const matches = el.multiple ? opt.selected : el.selectedOptions[0] === opt;
+        const matches = el.multiple ? opt.selected === selectWant : el.selectedOptions[0] === opt;
         const shown = el.multiple && opt.selected ? opt : el.selectedOptions[0];
         const label = shown?.text.trim() ?? "";
-        return { executed: true, verified: { ...verificationValue(shown?.value ?? el.value), matches, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}) } };
+        return { executed: true, verified: { ...verificationValue(shown?.value ?? el.value), matches, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}), ...(el.multiple ? { selected: [...el.selectedOptions].map(o => o.text.trim()) } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
@@ -557,34 +558,53 @@ const scrollsVertically = (el: Element) => {
   if (el === document.body && getComputedStyle(document.documentElement).overflowY === "visible") return false;
   return !(/auto|scroll|overlay/.test(style.overflowX) && el.scrollWidth > el.clientWidth + 1 && extra < 32);
 };
+const scrollsHorizontally = (el: Element) => {
+  const extra = el.scrollWidth - el.clientWidth;
+  if (extra <= 1) return false;
+  const style = getComputedStyle(el);
+  if (!/auto|scroll|overlay/.test(style.overflowX)) return false;
+  if (el === document.body && getComputedStyle(document.documentElement).overflowX === "visible") return false;
+  return true;
+};
 /** What can actually move: the ref (or its nearest scrollable ancestor), the document, or — when the
  * document itself cannot scroll, as in an app shell — the largest scrollable area on screen. */
-function scrollTarget(p: P): { el: HTMLElement; target: "document" | "ancestor" | "region" } {
+function scrollTarget(p: P, horizontal = false): { el: HTMLElement; target: "document" | "ancestor" | "region" } {
   const doc = (document.scrollingElement ?? document.documentElement) as HTMLElement;
+  const canScroll = horizontal ? scrollsHorizontally : scrollsVertically;
+  const docOverflows = horizontal ? doc.scrollWidth > doc.clientWidth + 1 : doc.scrollHeight > doc.clientHeight + 1;
   if (p.ref) {
     const start = resolveRef(String(p.ref));
-    if (scrollsVertically(start)) return { el: start as HTMLElement, target: "region" };
+    if (canScroll(start)) return { el: start as HTMLElement, target: "region" };
     for (let node = composedParent(start); node && node !== document.body && node !== document.documentElement; node = composedParent(node))
-      if (scrollsVertically(node)) return { el: node as HTMLElement, target: "ancestor" };
-    return { el: pageScroller(doc), target: "document" };
+      if (canScroll(node)) return { el: node as HTMLElement, target: "ancestor" };
+    return { el: pageScroller(doc, horizontal), target: "document" };
   }
-  if (doc.scrollHeight > doc.clientHeight + 1) return { el: doc, target: "document" };
-  if (pageScroller(doc) !== doc) return { el: document.body, target: "document" };
-  let best: HTMLElement | null = null, bestArea = 0;
-  for (const el of Array.from(document.querySelectorAll<HTMLElement>("body *")).slice(0, 5000)) {
-    if (!scrollsVertically(el)) continue;
+  if (docOverflows) return { el: doc, target: "document" };
+  if (pageScroller(doc, horizontal) !== doc) return { el: document.body, target: "document" };
+  let best: HTMLElement | null = null, bestArea = 0, inspected = 0;
+  walkDeep(document, el => {
+    if (inspected >= 5000 || !(el instanceof HTMLElement) || el === document.body || el === document.documentElement) return;
+    inspected++;
+    if (!canScroll(el)) return;
     const r = el.getBoundingClientRect();
     const area = Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)) * Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0));
     if (area > bestArea) { best = el; bestArea = area; }
-  }
+  });
   return best ? { el: best, target: "region" } : { el: doc, target: "document" };
 }
 /** The element that scrolls the page: the document, or the body when the root is overflow:hidden and
  * the body holds the scroll bar. */
-const pageScroller = (doc: HTMLElement): HTMLElement =>
-  doc.scrollHeight > doc.clientHeight + 1 || !document.body || !scrollsVertically(document.body) ? doc : document.body;
+const pageScroller = (doc: HTMLElement, horizontal = false): HTMLElement =>
+  (horizontal ? doc.scrollWidth > doc.clientWidth + 1 : doc.scrollHeight > doc.clientHeight + 1) || !document.body || !(horizontal ? scrollsHorizontally : scrollsVertically)(document.body) ? doc : document.body;
 function scroll(p: P) {
-  const { el, target } = scrollTarget(p);
+  const horizontal = p.direction === "left" || p.direction === "right";
+  const { el, target } = scrollTarget(p, horizontal);
+  if (horizontal) {
+    const before = el.scrollLeft, page = el.clientWidth * 0.8;
+    if (p.direction === "left") el.scrollBy({ left: -page, behavior: 'instant' });
+    else el.scrollBy({ left: page, behavior: 'instant' });
+    return Promise.resolve({ executed: true, verified: { scrollLeft: el.scrollLeft, scrollWidth: el.scrollWidth, scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart: el.scrollLeft <= 0, atEnd: el.scrollLeft + el.clientWidth >= el.scrollWidth - 1, moved: el.scrollLeft !== before, target } });
+  }
   const before = el.scrollTop;
   const page = el.clientHeight * 0.8;
   switch (p.direction) {
@@ -592,8 +612,8 @@ function scroll(p: P) {
     case "down": el.scrollBy({ top: page, behavior: 'instant' }); break;
     case "top": el.scrollTo({ top: 0, behavior: 'instant' }); break;
     case "bottom": el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }); break;
-    default: throw new ProtocolError("INVALID_PARAMS", "direction must be up, down, top or bottom");
+    default: throw new ProtocolError("INVALID_PARAMS", "direction must be up, down, top, bottom, left or right");
   }
   // `moved:false` with atEnd means the end was already reached, not that more content is hidden.
-  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1, moved: el.scrollTop !== before, target } });
+  return Promise.resolve({ executed: true, verified: { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, scrollLeft: el.scrollLeft, scrollWidth: el.scrollWidth, atStart:el.scrollTop<=0, atEnd:el.scrollTop+el.clientHeight>=el.scrollHeight-1, moved: el.scrollTop !== before, target } });
 }

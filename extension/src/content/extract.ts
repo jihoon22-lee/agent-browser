@@ -1,5 +1,8 @@
 import { ProtocolError } from "../protocol/errors";
+import { composedClosest, walkDeep } from "./dom";
 import { pageText, renderedText, sliceText, utf8Bytes } from "./snapshot";
+import { resolveRef } from "./refs";
+import { clipText } from "./text";
 
 export const EXTRACT_BYTES = 28_000;
 function boundedSlice(full: string, offset: number, maxChars: number) {
@@ -7,8 +10,6 @@ function boundedSlice(full: string, offset: number, maxChars: number) {
   while (utf8Bytes(JSON.stringify(slice)) > EXTRACT_BYTES && slice.returnedChars > 1) slice = sliceText(full, offset, Math.floor(slice.returnedChars * 0.8));
   return slice;
 }
-import { resolveRef } from "./refs";
-import { clipText } from "./text";
 
 /** What a person reads in the cell: <br> and blocks separate words, script and undisplayed text are left out.
  * A cell without child elements has nothing to separate or hide. */
@@ -45,7 +46,24 @@ function tableGrid(table: HTMLTableElement) {
   if (grid.length * colCount > 100000) throw new ProtocolError("INVALID_PARAMS", "This sparse table is too large for structured extraction. Extract page text instead.");
   const normalized = grid.map(row => Array.from({ length: colCount }, (_, col) => row[col] ?? ""));
   const first = source[0];
-  const hasHeader = !!first?.cells.length && [...first.cells].every(cell => cell.tagName === "TH");
+  const hasHeader = !!first?.cells.length && ([...first.cells].every(cell => cell.tagName === "TH") || first.parentElement?.tagName === "THEAD");
+  const header = hasHeader ? normalized.shift()! : null;
+  return { header, rows: normalized, rowCount: normalized.length, colCount };
+}
+
+function ariaTableGrid(container: Element) {
+  const rowEls = [...container.querySelectorAll('[role="row"]')].filter(r => composedClosest(r.parentElement, '[role="table"],[role="grid"],table') === container);
+  const grid: string[][] = [];
+  let hasHeader = false;
+  for (let r = 0; r < rowEls.length; r++) {
+    const cells = [...rowEls[r]!.querySelectorAll('[role="columnheader"],[role="rowheader"],[role="cell"],[role="gridcell"]')].filter(c => composedClosest(c.parentElement, '[role="row"]') === rowEls[r]);
+    if (!cells.length) continue;
+    if (grid.length === 0 && cells.every(c => c.getAttribute("role") === "columnheader")) hasHeader = true;
+    grid.push(cells.map(cellText));
+  }
+  const colCount = grid.reduce((max, row) => Math.max(max, row.length), 0);
+  if (grid.length * colCount > 100000) throw new ProtocolError("INVALID_PARAMS", "This sparse table is too large for structured extraction. Extract page text instead.");
+  const normalized = grid.map(row => Array.from({ length: colCount }, (_, col) => row[col] ?? ""));
   const header = hasHeader ? normalized.shift()! : null;
   return { header, rows: normalized, rowCount: normalized.length, colCount };
 }
@@ -62,8 +80,8 @@ export function tableToRows(table: HTMLTableElement) {
   return { ...result, markdown: markdownTable(result.header, result.rows, result.colCount) };
 }
 
-function tablePage(table: HTMLTableElement, maxChars: number, offset: number) {
-  const full = tableGrid(table), limits = new Set<string>();
+function tablePage(table: Element, maxChars: number, offset: number) {
+  const full = table instanceof HTMLTableElement ? tableGrid(table) : ariaTableGrid(table), limits = new Set<string>();
   const columns = Math.min(full.colCount, Math.max(1, Math.floor((maxChars - 80) / 24)));
   if (columns < full.colCount) limits.add("table-columns-truncated");
   const header = full.header?.slice(0, columns) ?? null;
@@ -95,6 +113,16 @@ function tablePage(table: HTMLTableElement, maxChars: number, offset: number) {
     truncated: nextOffset !== null || limits.size > 0, limits: [...limits] };
 }
 
+function findFirstTable(): Element | null {
+  const light = document.querySelector('table,[role="table"],[role="grid"]');
+  if (light) return light;
+  let found: Element | null = null;
+  walkDeep(document, (el) => {
+    if (!found && el.matches('table,[role="table"],[role="grid"]')) found = el;
+  });
+  return found;
+}
+
 export async function extract(p: Record<string, unknown>): Promise<Record<string, unknown>> {
   const maxChars = Math.max(200, Math.min(50000, Number(p.maxChars ?? 8000))), offset = Math.max(0, Math.floor(Number(p.offset ?? 0)));
   switch (p.kind) {
@@ -105,8 +133,8 @@ export async function extract(p: Record<string, unknown>): Promise<Record<string
       return { executed: false, verified: {}, text: boundedSlice(s, offset, maxChars) };
     }
     case "table": {
-      const el = p.ref ? resolveRef(String(p.ref)) : document.querySelector("table");
-      const table = el instanceof HTMLTableElement ? el : el?.closest("table");
+      const el = p.ref ? resolveRef(String(p.ref)) : findFirstTable();
+      const table = el instanceof HTMLTableElement ? el : composedClosest(el, 'table,[role="table"],[role="grid"]');
       if (!table) throw new ProtocolError("ELEMENT_NOT_FOUND", "No table found. Use browser_snapshot to find one, or extract text.");
       return { executed: false, verified: {}, ...tablePage(table, maxChars, offset) };
     }

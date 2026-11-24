@@ -65,7 +65,7 @@ fn build() -> Vec<ToolDef> {
             schema: json!({"type":"object","properties":{"operationId":op(),"steps":{"type":"array","maxItems":6,"items":{"type":"object","properties":{"tool":{"type":"string","enum":["click","fill","select","press"]}},"required":["tool"]}}},"required":["steps"],"additionalProperties":false}) },
         ToolDef { name: "browser_scroll", description: "Scroll the page or a ref container.",
             schema: json!({"type":"object","properties":{"operationId":op(),"ref":r#ref(),
-                "direction":{"type":"string","enum":["up","down","top","bottom"]}},"required":["direction"],"additionalProperties":false}) },
+                "direction":{"type":"string","enum":["up","down","left","right","top","bottom"]}},"required":["direction"],"additionalProperties":false}) },
         ToolDef { name: "browser_wait", description: "Wait for text/textGone/refGone/urlIncludes. Default any; match=all combines text and URL conditions (without refGone).",
             schema: json!({"type":"object","properties":{"operationId":op(),"text":{"type":"string"},"textGone":{"type":"string"},
                 "refGone":{"type":"string"},"urlIncludes":{"type":"string"},"frameRef":{"type":"string"},

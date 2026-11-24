@@ -57,6 +57,12 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
   }
   if (action.type === "pending") return { ...state, questions: byId(action.questions), permissions: byId(action.permissions) };
   if (action.type === "statuses") return { ...state, statuses: action.statuses };
+  if (action.type === "clear-error") {
+    const errors = { ...state.errors };
+    if (action.sessionID) delete errors[action.sessionID];
+    delete errors.global;
+    return { ...state, errors };
+  }
   if (action.type !== "event") return state;
   const event = action.event, p = event.properties ?? {};
   // Replayed events are dropped by event ID in the stream client (OpenCodeV1Client.events), not here.
@@ -118,6 +124,23 @@ export function operationBindings(messages: UiMessage[]): Record<string, string>
   return bindings;
 }
 export const shouldSubmit = (event: { key: string; isComposing?: boolean; shiftKey?: boolean; keyCode?: number }) => event.key === "Enter" && !event.isComposing && !event.shiftKey && event.keyCode !== 229;
+export function dataUrlBytes(url: unknown): number | null {
+  if (typeof url !== "string" || !url.startsWith("data:")) return null;
+  const comma = url.indexOf(",");
+  if (comma < 0) return null;
+  const meta = url.slice(5, comma);
+  const payload = url.slice(comma + 1);
+  if (meta.includes(";base64")) {
+    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
+  }
+  return new TextEncoder().encode(decodeURIComponent(payload)).length;
+}
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes >= 100 * 1024 ? 0 : 1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 export async function filePart(file: File): Promise<Data> {
   if (file.size > 10 * 1024 * 1024) throw new Error("첨부 파일은 각각 10MB 이하로 선택하세요.");
   const url = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onerror = () => reject(new Error("첨부 파일을 읽지 못했습니다.")); reader.onload = () => resolve(String(reader.result)); reader.readAsDataURL(file); });
