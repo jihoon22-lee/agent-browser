@@ -378,5 +378,6 @@ export function useWorkbench() {
     const binding = bindings.current.get(operationId); if (!binding) return false;
     await binding.client.post(`/session/${encodeURIComponent(binding.sessionID)}/abort`); return true;
   }, []);
-  return { state, dispatch, profiles, profilesLoaded, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, errorCode, setError, fail, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown, operationOwner };
+  const clearSessionError = useCallback(() => { dispatch({ type: "clear-error", sessionID: selected.current }); }, []);
+  return { state, dispatch, profiles, profilesLoaded, profileId, runtime, directory, sessions, sessionId, session: knownSessions[sessionId], knownSessions, sessionsLoading, hasMoreSessions, loadMoreSessions, loadChildren, childIndex, ensureChildren, updateSession, removeSession, connectionRevision: epoch.current, catalog, agents, commands, skills, todos, children, diff, mcp, connected, loading, error, errorCode, setError, clearSessionError, fail, client, captureScope, watchResponse, connect, selectSession, resync, refreshSessions, abortKnown, operationOwner };
 }

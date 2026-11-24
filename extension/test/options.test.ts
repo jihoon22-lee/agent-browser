@@ -82,3 +82,28 @@ it("tells an open side panel when a profile's server was stopped or started", as
   await act(async () => button("서버 중지").click());
   expect(notices()).toHaveLength(2);
 });
+
+it("uses inline confirmation for profile deletion and supports canceling profile edit", async () => {
+  const confirm = vi.fn(() => true);
+  vi.stubGlobal("confirm", confirm);
+  await render();
+  expect(host.textContent).toContain("비밀번호 저장됨");
+  expect(host.textContent).toContain("환경변수 1개");
+  expect(host.textContent).not.toContain("PRIVATE_KEY");
+
+  await act(async () => button("편집").click());
+  expect(button("편집 취소")).toBeDefined();
+  await act(async () => button("편집 취소").click());
+  expect(button("편집 취소")).toBeUndefined();
+
+  await act(async () => button("삭제").click());
+  expect(confirm).not.toHaveBeenCalled();
+  expect(host.querySelector(".inline-confirm")).not.toBeNull();
+  await act(async () => button("취소").click());
+  expect(host.querySelector(".inline-confirm")).toBeNull();
+  expect(send.mock.calls.some(([message]) => message.method === "profile.delete")).toBe(false);
+
+  await act(async () => button("삭제").click());
+  await act(async () => button("삭제 확인").click());
+  expect(send.mock.calls.some(([message]) => message.method === "profile.delete" && message.params.profileId === "native")).toBe(true);
+});
