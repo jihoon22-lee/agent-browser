@@ -11,10 +11,11 @@ use std::{
 };
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    accept_hdr_async,
+    accept_hdr_async_with_config,
     tungstenite::{
         handshake::server::{ErrorResponse, Request, Response},
         http::StatusCode,
+        protocol::WebSocketConfig,
         Message,
     },
     WebSocketStream,
@@ -198,7 +199,12 @@ pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
         }
     };
     // A socket that connects and never finishes the upgrade must not hold its task forever.
-    let mut ws = match tokio::time::timeout(HELLO_TIMEOUT, accept_hdr_async(stream, callback)).await {
+    // Tighten the WebSocket buffer cap from tungstenite's 64 MiB default while leaving room for
+    // authenticated screenshots and 10 MiB base64 uploads; authenticate() enforces 16 KiB pre-auth.
+    let ws_cfg = WebSocketConfig::default()
+        .max_message_size(Some(24 * 1024 * 1024))
+        .max_frame_size(Some(16 * 1024 * 1024));
+    let mut ws = match tokio::time::timeout(HELLO_TIMEOUT, accept_hdr_async_with_config(stream, callback, Some(ws_cfg))).await {
         Ok(Ok(ws)) => ws,
         Ok(Err(e)) => {
             tracing::debug!("handshake refused: {e}");
@@ -251,7 +257,7 @@ async fn handle_pair_request(ws: &mut Ws, role: Role, extension_id: Option<&str>
         let mut guard = state.pairing.lock().unwrap();
         match guard.as_mut() {
             Some(window) if window.until > std::time::Instant::now() && window.extension_id == extension_id => {
-                if window.code == code { *guard = None; Some(true) }
+                if crate::config::tokens_equal(&window.code, code) { *guard = None; Some(true) }
                 else { window.failures += 1; if window.failures >= PAIRING_MAX_FAILURES { *guard = None; } Some(false) }
             }
             _ => None,
@@ -652,12 +658,11 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             let Some(auth_client) = authenticated_client.filter(|s| !s.is_empty()) else {
                 return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "Authenticated browser clientId is missing."));
             };
-            if let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty())
-                && claimed != auth_client
-            {
-                return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
-            } else if params.get("clientId").is_none() {
+            let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty()) else {
                 return Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "operationId and clientId are required"));
+            };
+            if claimed != auth_client {
+                return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
             }
             let result = if method == "operation.pause" { state.ops.pause(operation_id, auth_client) } else { state.ops.resume(operation_id, auth_client) };
             match result {

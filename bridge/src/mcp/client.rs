@@ -203,11 +203,13 @@ impl Lanes {
             Self::remember(&mut routes.requests, request, lane);
             return lane;
         }
-        // When exactly one operation created by this proxy is active, id-less calls (such as
-        // auto-bound browser_pointer after an explicit requestId attach) stay on that same lane
-        // so input_connection matches and ordering is preserved.
-        if routes.operations.len() == 1 {
-            return routes.operations[0].1;
+        // When calls are not concurrently in flight on multiple lanes, an id-less call (such as
+        // auto-bound browser_pointer after an explicit requestId attach or implicit screenshot attach)
+        // stays on the most recently bound operation's lane so input_connection matches even if
+        // earlier panel turns ended via request.end without an explicit MCP release.
+        let active_lanes = routes.inflight.iter().filter(|&&count| count > 0).count();
+        if active_lanes <= 1 && let Some((_, lane)) = routes.operations.last() {
+            return *lane;
         }
         0
     }
@@ -638,6 +640,13 @@ mod auth_tests {
         assert_eq!(lanes.lane_for(&json!({"operationId":"op-a","requestId":"b"})), a, "the operation decides, not a stray requestId");
         // Single active bound operation: an id-less visual input call must stay on that operation's lane.
         assert_eq!(lanes.lane_for(&json!({"captureId":"c1","x":10,"y":20})), a, "id-less call after explicit requestId attach keeps the same lane");
+        // A second turn's operation (after the first ended via request.end without MCP release) becomes
+        // the latest bound operation; id-less calls must follow it rather than dropping back to lane 0.
+        lanes.bind_operation("op-b", b);
+        assert_eq!(lanes.lane_for(&json!({"captureId":"c2","x":10,"y":20})), b, "id-less call follows the latest bound operation across turns");
+        // Implicit attach on the same lane also preserves that lane for subsequent id-less calls.
+        lanes.bind_operation("op-b2", b);
+        assert_eq!(lanes.lane_for(&json!({"captureId":"c3","x":10,"y":20})), b);
     }
 
     #[tokio::test]

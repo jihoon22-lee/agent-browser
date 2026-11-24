@@ -63,15 +63,24 @@ impl Store {
                 return Ok(cached_cfg.clone());
             }
         }
-        let config: RuntimeConfig = match std::fs::read(&path) {
-            // The file holds credentials and a serde message can quote a value: log the position only.
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| { tracing::warn!(line = error.line(), column = error.column(), "runtime.json is invalid"); invalid("runtime.json is invalid; its contents were preserved") })?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => RuntimeConfig { version: 1, ..Default::default() },
+        use std::io::Read;
+        let (file_stamp, config): (Option<FileStamp>, RuntimeConfig) = match std::fs::File::open(&path) {
+            Ok(mut file) => {
+                // Capture metadata and contents from the same opened file handle so an atomic rename
+                // by another process cannot pair stale bytes with the replacement file's FileStamp.
+                let meta_stamp = file.metadata().ok().map(|meta| FileStamp::of(&meta));
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).map_err(os_failure("Cannot read runtime.json"))?;
+                // The file holds credentials and a serde message can quote a value: log the position only.
+                let parsed = serde_json::from_slice(&bytes).map_err(|error| { tracing::warn!(line = error.line(), column = error.column(), "runtime.json is invalid"); invalid("runtime.json is invalid; its contents were preserved") })?;
+                (meta_stamp, parsed)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (None, RuntimeConfig { version: 1, ..Default::default() }),
             Err(error) => return Err(os_failure("Cannot read runtime.json")(error)),
         };
         if config.version != 1 { return Err(invalid("Unsupported runtime.json version")); }
-        if let Ok(meta) = std::fs::metadata(&path) {
-            *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((FileStamp::of(&meta), config.clone()));
+        if let Some(s) = file_stamp {
+            *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((s, config.clone()));
         }
         Ok(config)
     }
