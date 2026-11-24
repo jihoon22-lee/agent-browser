@@ -2,6 +2,20 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.5.4 Windows preview — 게시 완료 (2026-11-24)
+
+[v0.5.4](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.5.4)(prerelease)를 **2026-11-24 07:55:07 UTC / 16:55:07 KST**에 게시했다. 주석 태그는 [PR #53](https://github.com/jihoon22-lee/agent-browser/pull/53)의 main 병합 커밋 **`b16dff19c48395cab1b131779465e0a56bca81d7`**를 가리킨다.
+
+- **배포 ZIP:** **4,100,273 bytes / 37 files**, SHA256 **`b1d7f0b6662f2caf0f91531285805270daea716f301fab3184aa2cc8e79009ce`**. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/45348430192)의 Windows 작업이 만든 아티팩트다. main CI의 Linux(12m56s)·Windows(23m49s) 작업이 모두 성공했다.
+- **포함 PR (전체 코드베이스 리뷰 개선 Track 1–4):**
+  - Track 1 안정성·신뢰성: [PR #50](https://github.com/jihoon22-lee/agent-browser/pull/50) (`f72450c`)
+  - Track 2 핫패스 성능 최적화: [PR #51](https://github.com/jihoon22-lee/agent-browser/pull/51) (`da35d1c`)
+  - Track 3 브라우저 제어·UI/접근성·Windows 설치 마법사 UX/DPI: [PR #52](https://github.com/jihoon22-lee/agent-browser/pull/52) (`b6e3d12`)
+  - Track 4 Clippy/데드코드 정리·대형 파일 책임별 분리·문서·`0.5.4` 버전 갱신: [PR #53](https://github.com/jihoon22-lee/agent-browser/pull/53) (`b16dff1`)
+- **로컬 검증(Linux):** `cargo clippy --locked --workspace --all-targets -- -D warnings`(경고 0건), `cargo test --locked --workspace`(전체 통과), 확장 Vitest(**74 파일 / 947 테스트 통과**), 확장 빌드, `node scripts/ci-checks.mjs`, `tests/install/package_release_test.py`, Linux Playwright E2E(**262 통과 / 5 제외**).
+- **로컬 실제 Windows 검증(WSL interop):** `cargo xwin build --release`, `scripts/package-release.py`(`csc.exe` 분리 C# 빌드·버전·인벤토리 검증), `SetupFlowTests`(**33/33 통과**), `SetupDisplayTests`(10pt/12.5pt/15pt/20pt 통과 및 PR #52에서 실제 `PrintWindow` PNG 육안 확인 — 마법사 0–7단계·`final-actions`·고급 설정 대화상자), `ManagedPathTests`(**3/3 통과**), `tests/install/package.tests.ps1`(**5/5 통과**, `build-release.ps1` 결정적 ZIP 및 PS 5.1 설치/재설치/제거).
+- **게시본 검증:** CI 아티팩트에서 `package-manifest.json`(36개 파일 SHA-256 일치, `Version: "0.5.4"`), `extension/manifest.json`(`0.5.4`), 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.5.4`)을 확인했다. 게시 후 GitHub Release에서 ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치(`cmp`) 및 `sha256sum -c`를 확인했다. 병합된 브랜치를 정리했다. 최종 파일은 `release/v0.5.4-main/`.
+
 ## v0.5.1 Windows preview — 게시 완료 (2026-11-19)
 
 [v0.5.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.5.1)(prerelease)를 **2026-11-19 12:15:49 UTC / 21:15:49 KST**에 게시했다. 주석 태그는 [PR #49](https://github.com/jihoon22-lee/agent-browser/pull/49)의 main 병합 커밋 **`071bc8f0dbde9da324c4ced061cc5c10afb75f39`**를 가리킨다.
