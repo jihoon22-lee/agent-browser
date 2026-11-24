@@ -2,6 +2,18 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.5.5 Windows preview — 게시 완료 (2026-11-24)
+
+[v0.5.5](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.5.5)(prerelease)를 **2026-11-24 09:48:25 UTC / 18:48:25 KST**에 게시했다. 주석 태그는 [PR #54](https://github.com/jihoon22-lee/agent-browser/pull/54)의 main 병합 커밋 **`249157ef46b5bd70532215c6df4e0b7e8c3c28f7`**를 가리킨다.
+
+- **배포 ZIP:** **4,094,555 bytes / 37 files**, SHA256 **`228a9a091aa5e60aa9442d4dcffe8ca0e603a18c399209f96c871591b4084b5f`**. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/45364779540)의 Windows 작업이 만든 아티팩트다. main CI의 Linux(12m4s)·Windows(23m50s) 작업이 모두 성공했다.
+- **반영 내용 (`v0.5.4` 최종 코드 리뷰 핫픽스):**
+  - Critical 1건: `SafeMarkdown.tsx` 인라인 링크 정규식의 중첩 수량자(ReDoS) 제거 및 이스케이프 기울임체(`\*`) 수정.
+  - Medium 9건 및 주요 Low/Nit: `MessageCard` `onRetry` 메모이제이션 복구, 320px 미디어 쿼리 캐스케이드 및 Options 하단 여백 수정, SSE 델타 rAF 버퍼 정리(`clearDeltas`), `ServeClient` 멀티턴 최신 오퍼레이션 레인 유지, `Store::read()` 단일 핸들 TOCTOU 해소, WebSocket 버퍼 상한 및 `operation.pause`/`resume`·페어링 비교 보강, Shadow DOM `rowText` 쿼리·ARIA 테이블/그리드 스냅샷 `ref` 및 Shadow 행 추출, `overflow-x: hidden` 가로 스크롤 폴백, `urlWait` 마감 반영, `<select multiple>` 상한, `dedupe` 쓰기 실패 캐시 무효화, PowerShell `finally` 개별 `try/catch` 보호·root→leaf `Assert-PlainPath`/`PlainPath` 통일, `SetupForm` 좁은 창 리사이즈 최소 폭 유지 및 `DetectExtension` 창 닫힘 가드.
+- **로컬 검증(Linux):** `cargo clippy --locked --workspace --all-targets -- -D warnings`(경고 0건), `cargo test --locked --workspace`(전체 통과), 확장 Vitest(**74 파일 / 949 테스트 통과**, ReDoS·Shadow DOM·ARIA 테이블 회귀 추가), 확장 빌드, `node scripts/ci-checks.mjs`, `tests/install/package_release_test.py`, Linux Playwright E2E(**262 통과 / 5 제외**).
+- **로컬 실제 Windows 검증(WSL interop):** `cargo xwin build --release`, `scripts/package-release.py`(37 files, `0.5.5`), `SetupFlowTests`(**33/33 통과**), `SetupDisplayTests`(10pt/12.5pt/15pt/20pt 통과), `ManagedPathTests`(**3/3 통과**), `tests/install/package.tests.ps1`(**5/5 통과**).
+- **게시본 검증:** CI 아티팩트에서 `package-manifest.json`(36개 파일 SHA-256 일치, `Version: "0.5.5"`), `extension/manifest.json`(`0.5.5`), 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.5.5`)을 확인했다. 게시 후 GitHub Release에서 ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치(`cmp`) 및 `sha256sum -c`를 확인했다. 병합된 브랜치와 임시 테스트 산출물을 정리했다. 최종 파일은 `release/v0.5.5-main/`.
+
 ## v0.5.4 Windows preview — 게시 완료 (2026-11-24)
 
 [v0.5.4](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.5.4)(prerelease)를 **2026-11-24 07:55:07 UTC / 16:55:07 KST**에 게시했다. 주석 태그는 [PR #53](https://github.com/jihoon22-lee/agent-browser/pull/53)의 main 병합 커밋 **`b16dff19c48395cab1b131779465e0a56bca81d7`**를 가리킨다.
