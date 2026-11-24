@@ -35,10 +35,11 @@ pub struct RuntimeRecord {
     pub wsl_keeper: Option<interop::Keeper>,
 }
 
-#[derive(Serialize,Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PortReservation { pub port: u16, pub controller: Identity }
-struct ReservedPort<'a> { store: &'a Store, profile: String, port: u16 }
-impl Drop for ReservedPort<'_> { fn drop(&mut self) { let _ = self.store.update(|config| { config.reservations.remove(&self.profile); Ok(()) }); } }
+struct ReservedPort<'a> { store: &'a Store, profile: String, port: u16, armed: bool }
+impl ReservedPort<'_> { fn disarm(&mut self) { self.armed = false; } }
+impl Drop for ReservedPort<'_> { fn drop(&mut self) { if self.armed { let _ = self.store.update(|config| { config.reservations.remove(&self.profile); Ok(()) }); } } }
 
 type DocCache = std::sync::Mutex<std::collections::HashSet<String>>;
 
@@ -79,7 +80,7 @@ impl Manager {
             let port = choose_port(requested,&excluded)?;
             config.reservations.insert(profile.into(),PortReservation {port,controller}); Ok(port)
         })?;
-        Ok(ReservedPort {store:&self.store,profile:profile.into(),port})
+        Ok(ReservedPort { store: &self.store, profile: profile.into(), port, armed: true })
     }
     fn overlay_current(&self, record: &RuntimeRecord) -> bool {
         record.bridge_port == Some(self.port) && record.bridge_executable.as_ref().is_some_and(|path| std::path::Path::new(path).is_file())
@@ -173,7 +174,7 @@ impl Manager {
             self.store.update(|config| { config.runtimes.remove(&profile.id); Ok(()) })?;
             self.remove_wsl_markers(&record);
         }
-        let reservation = self.reserve_port(&profile.id,profile.port)?;
+        let mut reservation = self.reserve_port(&profile.id,profile.port)?;
         let port = reservation.port;
         let instance = uuid::Uuid::new_v4().simple().to_string();
         let password = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
@@ -193,7 +194,12 @@ impl Manager {
             RuntimeRecord {profile_id:profile.id.clone(),instance,base_url:format!("http://127.0.0.1:{port}"),username:"opencode".into(),password,launcher,server:None,wsl_owner_file:None,version:None,bridge_port:Some(self.port),bridge_executable:std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()),wsl_keeper:None}
         };
         if profile.kind != Kind::Wsl {
-            if let Err(error) = self.persist(&record) { self.terminate(profile, &record).await; return Err(error); }
+            // Atomically persist the runtime record and drop its port reservation in one lock+write cycle.
+            if let Err(error) = self.store.update(|config| { config.reservations.remove(&profile.id); config.runtimes.insert(record.profile_id.clone(), record.clone()); Ok(()) }) {
+                self.terminate(profile, &record).await;
+                return Err(error);
+            }
+            reservation.disarm();
         }
         drop(reservation);
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
@@ -737,35 +743,35 @@ inspect_orphan_group() {
   return 12
 }
 validate_owner() {
-  [ -f "$1" ] || return 21
-  [ -r "$1" ] || return 22
-  read -r pid ticks instance boot < "$1" || return 23
-  if [ "$pid" = pending ]; then [ "$ticks" = "$2" ] && [ -z "$instance$boot" ] || return 24; return 10; fi
+  owner_file=$1; owner_instance=$2; owner_mode=${3:-}
+  [ -f "$owner_file" ] || return 21
+  [ -r "$owner_file" ] || return 22
+  read -r pid ticks instance boot < "$owner_file" || return 23
+  if [ "$pid" = pending ]; then [ "$ticks" = "$owner_instance" ] && [ -z "$instance$boot" ] || return 24; return 10; fi
   case $pid in ''|*[!0-9]*) return 23;; esac
   case $ticks in ''|*[!0-9]*) return 23;; esac
   [ "$pid" -gt 1 ] || return 23
-  [ "$instance" = "$2" ] || return 24
+  [ "$instance" = "$owner_instance" ] || return 24
   if [ -n "$boot" ]; then
     case $boot in *[!0-9a-f-]*) return 12;; esac
     case $boot in ????????-????-????-????-????????????) ;; *) return 12;; esac
     [ "$boot" = "$(cat /proc/sys/kernel/random/boot_id)" ] || return 11
   fi
   if [ ! -d /proc/$pid ]; then
-    [ "${3:-}" != leader ] || return 11
-    inspect_orphan_group "$pid" "$2"; return $?
+    [ "$owner_mode" != leader ] || return 11
+    inspect_orphan_group "$pid" "$owner_instance"; return $?
   fi
-  stat=$(cat /proc/$pid/stat) || return 12; rest=${stat##*) }
-  actual=$(printf '%s\n' "$rest" | awk '{print $20}')
-  group=$(printf '%s\n' "$rest" | awk '{print $3}')
-  state=$(printf '%s\n' "$rest" | awk '{print $1}')
+  stat=$(cat /proc/$pid/stat) || return 12; rest=${stat##*) }; set -- $rest
+  state=$1; group=$3; actual=${20}
   [ "$actual" = "$ticks" ] || return 11
   if [ "$state" = Z ]; then
-    [ "${3:-}" != leader ] || return 11
-    inspect_orphan_group "$pid" "$2"; return $?
+    [ "$owner_mode" != leader ] || return 11
+    inspect_orphan_group "$pid" "$owner_instance"; return $?
   fi
   [ "$group" = "$pid" ] || return 12
-  tr '\000' '\n' </proc/$pid/environ | grep -Fqx "AGENT_BROWSER_RUNTIME_ID=$2" || return 12
+  tr '\000' '\n' </proc/$pid/environ | grep -Fqx "AGENT_BROWSER_RUNTIME_ID=$owner_instance" || return 12
 }
+stat_group() { set -- $1; procgroup=$3; }
 if validate_owner "$1" "$2"; then code=0; else code=$?; fi
 if [ "$code" != 0 ]; then
   case $3 in state|inspect) exit "$code";; *) exit 12;; esac
@@ -786,8 +792,7 @@ if [ "$3" = inspect ]; then
   done
   for statfile in /proc/[0-9]*/stat; do
     procstat=$(cat "$statfile" 2>/dev/null) || continue
-    procrest=${procstat##*) }
-    procgroup=$(printf '%s\n' "$procrest" | awk '{print $3}')
+    procrest=${procstat##*) }; stat_group "$procrest"
     [ "$procgroup" = "$pid" ] || continue
     procpid=${statfile#/proc/}; procpid=${procpid%/stat}
     for fd in /proc/$procpid/fd/*; do
@@ -901,10 +906,19 @@ async fn browser_mcp(profile: &Profile, record: &RuntimeRecord) -> Result<(),Rpc
     Ok(())
 }
 fn http_client(base: &str) -> Result<reqwest::Client,RpcError> {
-    let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(3));
+    static LOOPBACK: std::sync::OnceLock<Result<reqwest::Client, String>> = std::sync::OnceLock::new();
+    static PROXY: std::sync::OnceLock<Result<reqwest::Client, String>> = std::sync::OnceLock::new();
     let url = reqwest::Url::parse(base).map_err(|_| invalid("Invalid OpenCode URL"))?;
-    if matches!(url.host_str(),Some("localhost"|"127.0.0.1"|"[::1]"|"::1")) { builder = builder.no_proxy(); }
-    builder.build().map_err(|_| failure("Cannot initialize the system TLS client"))
+    let is_loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    let slot = if is_loopback { &LOOPBACK } else { &PROXY };
+    slot.get_or_init(|| {
+        let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(3));
+        if is_loopback { builder = builder.no_proxy(); }
+        builder.build().map_err(|_| "Cannot initialize the system TLS client".to_string())
+    })
+    .as_ref()
+    .cloned()
+    .map_err(|msg| failure(msg.as_str()))
 }
 
 async fn limited_json(mut response: reqwest::Response, limit: usize) -> Result<Value,RpcError> {

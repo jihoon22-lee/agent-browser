@@ -528,14 +528,21 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                     Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                     Some(Ok(_)) => continue,
                 };
-                // A reply that cannot be read still names its command: fail it now, not at its timeout.
-                if let Err(error) = parse_envelope(&text) && let Some(id) = crate::rpc::response_id_of_unreadable(&text) {
-                    state.registry.fail_unreadable_response(conn, &id, &error.message);
-                }
-                let env = match parse_or_reject(ws, &text).await {
+                let env = match parse_envelope(&text) {
                     Ok(env) => env,
-                    Err(true) => break,
-                    Err(false) => continue,
+                    Err(error) => {
+                        // A reply that cannot be read still names its command: fail it now, not at its timeout.
+                        if let Some(id) = crate::rpc::response_id_of_unreadable(&text) {
+                            state.registry.fail_unreadable_response(conn, &id, &error.message);
+                        }
+                        let fatal = error.code == ErrorCode::ProtocolVersionUnsupported;
+                        let _ = send(ws, &Envelope::err(raw_id(&text), error)).await;
+                        if fatal {
+                            let _ = ws.close(None).await;
+                            break;
+                        }
+                        continue;
+                    }
                 };
                 match env {
                     Envelope::Res { .. } => state.registry.handle_response(conn, env),
@@ -559,8 +566,9 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                                 state.registry.selected_connection_client(conn),
                                 data.get("tabId").and_then(Value::as_i64),
                             ) {
-                                state.ops.remove_tab_for_client(&client, tab_id);
+                            if state.ops.remove_tab_for_client(&client, tab_id) {
                                 state.broadcast_status();
+                            }
                             }
                         }
                     }

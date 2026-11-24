@@ -19,29 +19,52 @@ export function isDisabled(el: Element): boolean {
   return false;
 }
 
+export type StyleCache = { style: WeakMap<Element, CSSStyleDeclaration>; rendered: WeakMap<Element, boolean> };
+export function createStyleCache(): StyleCache { return { style: new WeakMap(), rendered: new WeakMap() }; }
+function styleOf(el: Element, cache?: StyleCache): CSSStyleDeclaration {
+  if (!cache) return getComputedStyle(el);
+  let cs = cache.style.get(el);
+  if (!cs) { cs = getComputedStyle(el); cache.style.set(el, cs); }
+  return cs;
+}
+function isStyleRendered(el: Element, cache?: StyleCache): boolean {
+  if (cache) {
+    const cached = cache.rendered.get(el);
+    if (cached !== undefined) return cached;
+  }
+  let ok = true;
+  if ((el as HTMLElement).hidden) ok = false;
+  else {
+    const cs = styleOf(el, cache);
+    if (cs.display === "none" || cs.visibility === "hidden") ok = false;
+    else {
+      const parent = composedParent(el);
+      if (parent) ok = isStyleRendered(parent, cache);
+    }
+  }
+  cache?.rendered.set(el, ok);
+  return ok;
+}
+
 /** Frameworks attach click handlers at the root, so a pointer cursor is often the only DOM
  * signal. Count only the outermost pointer region outside an existing control. */
-export function isPointerTarget(el: Element): boolean {
+export function isPointerTarget(el: Element, cache?: StyleCache): boolean {
   const doc = el.ownerDocument;
   if (!(el instanceof HTMLElement) || el === doc.body || el === doc.documentElement) return false;
-  if (getComputedStyle(el).cursor !== "pointer") return false;
+  if (styleOf(el, cache).cursor !== "pointer") return false;
   const parent = el.parentElement;
-  if (parent && getComputedStyle(parent).cursor === "pointer") return false;
+  if (parent && styleOf(parent, cache).cursor === "pointer") return false;
   // A card that holds its own button or link is acted on through that control.
   // Hidden or disabled controls cannot stand in for the card, so it stays listed then.
-  if ([...el.querySelectorAll(INTERACTIVE)].some(control => !isDisabled(control) && isRendered(control, { checkLayout: false }))) return false;
+  if ([...el.querySelectorAll(INTERACTIVE)].some(control => !isDisabled(control) && isRendered(control, { checkLayout: false, cache }))) return false;
   return !parent?.closest(INTERACTIVE);
 }
 
-export function isRendered(el: Element, opts: { checkLayout: boolean }): boolean {
-  for (let n: Element | null = el; n; n = composedParent(n)) {
-    if ((n as HTMLElement).hidden) return false;
-    const cs = getComputedStyle(n);
-    if (cs.display === "none" || cs.visibility === "hidden") return false;
-  }
+export function isRendered(el: Element, opts: { checkLayout: boolean; cache?: StyleCache }): boolean {
+  if (!isStyleRendered(el, opts.cache)) return false;
   if (!opts.checkLayout) return true;
   // checkVisibility (Chrome 105+) also knows a collapsed <details> and content-visibility:hidden.
-  return el.getClientRects().length > 0 && (typeof el.checkVisibility !== "function" || el.checkVisibility());
+  return el.getClientRects().length > 0 && (typeof el.checkVisibility !== "function" || el.checkVisibility({ checkVisibilityCSS: true }));
 }
 
 export function roleOf(el: Element): string {
@@ -129,12 +152,15 @@ function nameOf(el: Element, excludeEditableValue: boolean, visiting: Set<Elemen
   return "";
 }
 
-export function walkDeep(root: Document | ShadowRoot, visit: (el: Element, inShadow: boolean) => void, inShadow = false) {
+export function walkDeep(root: Document | ShadowRoot, visit: (el: Element, inShadow: boolean) => void, inShadow = false, skipSubtree?: (el: Element) => boolean) {
   const doc = root.ownerDocument ?? (root as Document);
-  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+  const filter = skipSubtree
+    ? { acceptNode: (node: Node) => skipSubtree(node as Element) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT }
+    : null;
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, filter);
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     const el = n as Element;
     visit(el, inShadow);
-    if (el.shadowRoot) walkDeep(el.shadowRoot, visit, true);
+    if (el.shadowRoot) walkDeep(el.shadowRoot, visit, true, skipSubtree);
   }
 }

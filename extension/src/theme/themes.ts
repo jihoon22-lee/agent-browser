@@ -15,14 +15,23 @@ function readable(color: string, text: string, backgrounds: string[], minimum: n
   for (let step = 0; step <= 100; step++) { const next = mix(color, text, step / 100); if (backgrounds.every(background => contrast(next, background) >= minimum)) return next; }
   return text;
 }
-export function themeTokens(theme: Theme) {
+type ThemeTokenMap = {
+  "--base": string; "--canvas": string; "--surface": string; "--raised": string; "--hover": string; "--bubble": string;
+  "--text": string; "--muted": string; "--line": string; "--control-border": string;
+  "--accent": string; "--accent-on": string; "--danger": string; "--danger-on": string;
+  "--success": string; "--focus": string;
+};
+const tokenCache = new Map<Theme, ThemeTokenMap>();
+export function themeTokens(theme: Theme): ThemeTokenMap {
+  const cached = tokenCache.get(theme);
+  if (cached) return cached;
   const flavor = palette[theme], colors = flavor.colors;
   const base = colors.base.hex, canvas = colors.mantle.hex, raised = flavor.dark ? colors.surface0.hex : colors.base.hex, hover = flavor.dark ? colors.surface0.hex : colors.crust.hex;
   // User bubbles are tinted toward the accent so turns stay distinguishable without borders.
   const bubble = mix(base, colors.blue.hex, flavor.dark ? .16 : .12);
   const backgrounds = [base, canvas, raised, hover, bubble], text = colors.text.hex;
   const accent = readable(colors.blue.hex, text, backgrounds, 4.5), danger = readable(colors.red.hex, text, backgrounds, 4.5);
-  return {
+  const tokens: ThemeTokenMap = {
     "--base": base, "--canvas": canvas, "--surface": base, "--raised": raised, "--hover": hover, "--bubble": bubble,
     "--text": text, "--muted": readable(colors.subtext1.hex, text, backgrounds, 4.5),
     "--line": colors.surface1.hex, "--control-border": readable(colors.overlay2.hex, text, backgrounds, 3),
@@ -31,6 +40,8 @@ export function themeTokens(theme: Theme) {
     "--success": readable(colors.green.hex, text, backgrounds, 4.5),
     "--focus": readable(colors.mauve.hex, text, backgrounds, 3),
   };
+  tokenCache.set(theme, tokens);
+  return tokens;
 }
 export function normalizeTheme(value: unknown): ThemePreference {
   if (value === "light") return "latte";

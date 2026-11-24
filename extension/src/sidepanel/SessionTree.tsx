@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { Data } from "./workbench-state";
 import { RenameField, SessionMenu, type SessionAction } from "./SessionActions";
 
@@ -17,7 +17,7 @@ type Props = {
   onSelect: (session: Data) => void; actions: (session: Data) => SessionAction[];
   renamingId?: string; onRename: (session: Data, title: string) => void; onRenameEnd: () => void;
 };
-export function SessionTree({ sessions, selectedId, statuses, directory, childIndex, ensureChildren, loadChildren, onSelect, actions, renamingId, onRename, onRenameEnd }: Props) {
+export const SessionTree = memo(function SessionTree({ sessions, selectedId, statuses, directory, childIndex, ensureChildren, loadChildren, onSelect, actions, renamingId, onRename, onRenameEnd }: Props) {
   const [expanded, setExpanded] = useState(new Set<string>());
   const [loading, setLoading] = useState(new Set<string>()), [errors, setErrors] = useState<Record<string, string>>({});
   const mounted = useRef(true), pending = useRef(new Set<string>());
@@ -61,4 +61,4 @@ export function SessionTree({ sessions, selectedId, statuses, directory, childIn
     </div>}</li>;
   };
   return <ul className="session-list session-tree">{sessions.map(session => render(session, new Set()))}</ul>;
-}
+});

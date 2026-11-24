@@ -58,36 +58,45 @@ export function chromeSessionStore(): SessionStore {
 }
 function storeOver(read: () => Promise<State | undefined>, write: (s: State) => Promise<void>): SessionStore {
     let tail: Promise<unknown> = Promise.resolve();
+    let cached: State | undefined;
     const transaction = <T>(fn: (s: State) => T, mutates = true): Promise<T> => {
         const work = tail.then(async () => {
-            const s = (await read()) ?? empty();
+            if (!cached) cached = (await read()) ?? empty();
+            const s = cached;
             const now = Date.now();
             let pruned = false;
-            for (const [k, v] of Object.entries(s.requests))
+            let doneCount = 0, inflightCount = 0;
+            for (const [k, v] of Object.entries(s.requests)) {
                 if ((v.state === 'done' && now - v.at > TTL) || (v.state === 'inflight' && now - v.at > INFLIGHT_TTL)) {
                     delete s.requests[k]; pruned = true;
-                }
-            for (const [k, v] of Object.entries(s.bindings))
+                } else if (v.state === 'done') doneCount++;
+                else inflightCount++;
+            }
+            let bindingCount = 0;
+            for (const [k, v] of Object.entries(s.bindings)) {
                 if (now - v.at > TTL) {
                     delete s.bindings[k]; pruned = true;
-                }
+                } else bindingCount++;
+            }
             for (const [k, v] of Object.entries(s.cancelled))
                 if (now - v > TTL) {
                     delete s.cancelled[k]; pruned = true;
                 }
             const result = fn(s);
-            // Evict completed results above 200; cap orphaned inflight markers only at a high bound so recent interrupted writes are never made replayable.
-            const done = Object.entries(s.requests).filter(([, e]) => e.state === 'done').sort((a, b) => b[1].at - a[1].at);
-            for (const [k] of done.slice(200)) {
-                delete s.requests[k]; pruned = true;
-            }
-            const inflight = Object.entries(s.requests).filter(([, e]) => e.state === 'inflight').sort((a, b) => b[1].at - a[1].at);
-            for (const [k] of inflight.slice(INFLIGHT_CAP)) {
-                delete s.requests[k]; pruned = true;
-            }
-            const snaps = Object.entries(s.bindings).sort((a, b) => b[1].at - a[1].at);
-            for (const [k] of snaps.slice(200)) {
-                delete s.bindings[k]; pruned = true;
+            if (mutates) {
+                // Recount only when the mutation may have pushed counts over the eviction cap.
+                if (doneCount >= 200) {
+                    const done = Object.entries(s.requests).filter(([, e]) => e.state === 'done').sort((a, b) => b[1].at - a[1].at);
+                    for (const [k] of done.slice(200)) { delete s.requests[k]; pruned = true; }
+                }
+                if (inflightCount >= INFLIGHT_CAP) {
+                    const inflight = Object.entries(s.requests).filter(([, e]) => e.state === 'inflight').sort((a, b) => b[1].at - a[1].at);
+                    for (const [k] of inflight.slice(INFLIGHT_CAP)) { delete s.requests[k]; pruned = true; }
+                }
+                if (bindingCount >= 200) {
+                    const snaps = Object.entries(s.bindings).sort((a, b) => b[1].at - a[1].at);
+                    for (const [k] of snaps.slice(200)) { delete s.bindings[k]; pruned = true; }
+                }
             }
             if (mutates || pruned) await write(s);
             return result;

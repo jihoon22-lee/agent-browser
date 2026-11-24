@@ -5,8 +5,32 @@ export type WorkbenchState = { messages: Record<string, UiMessage[]>; questions:
 export const initialWorkbench: WorkbenchState = { messages: {}, questions: [], permissions: [], statuses: {}, errors: {} };
 const byId = <T extends Data>(items: T[]) => [...new Map(items.map(item => [item.id, item])).values()];
 /** Whether a message fetched from the server is exactly what the view already holds. */
-export const sameMessage = (held: UiMessage | undefined, fetched: UiMessage) => !!held && JSON.stringify(held) === JSON.stringify({ ...fetched, parts: byId(fetched.parts ?? []) });
+export function sameMessage(held: UiMessage | undefined, fetched: UiMessage): boolean {
+  if (!held) return false;
+  const fetchedParts = byId(fetched.parts ?? []);
+  // Fast-path structural checks avoid serializing multi-MB base64 attachments when messages obviously differ.
+  if (held.info?.id !== fetched.info?.id) return false;
+  if (held.info?.time?.completed !== fetched.info?.time?.completed) return false;
+  if (held.info?.finish !== fetched.info?.finish) return false;
+  if (Boolean(held.info?.error) !== Boolean(fetched.info?.error)) return false;
+  if (held.parts.length !== fetchedParts.length) return false;
+  for (let i = 0; i < held.parts.length; i++) {
+    const a = held.parts[i]!, b = fetchedParts[i]!;
+    if (a.id !== b.id || a.type !== b.type) return false;
+    if (typeof a.text === "string" || typeof b.text === "string") {
+      if (a.text !== b.text) return false;
+    }
+    if (a.state?.status !== b.state?.status) return false;
+    if (typeof a.state?.output === "string" && typeof b.state?.output === "string" && a.state.output.length !== b.state.output.length) return false;
+  }
+  return JSON.stringify(held) === JSON.stringify({ ...fetched, parts: fetchedParts });
+}
 export function workbenchReducer(state: WorkbenchState, action: Data): WorkbenchState {
+  if (action.type === "events") {
+    let next = state;
+    for (const event of action.events as Data[]) next = workbenchReducer(next, { type: "event", event });
+    return next;
+  }
   if (action.type === "reset") return initialWorkbench;
   if (action.type === "messages") {
     // Snapshots are refetched while a response runs; keep unchanged messages identical so memoized cards skip rendering.

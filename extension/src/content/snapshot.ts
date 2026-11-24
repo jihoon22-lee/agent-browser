@@ -1,4 +1,4 @@
-import { accessibleName, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
+import { accessibleName, createStyleCache, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
 import { newTable } from "./refs";
 import { clipText, safeRange, safeSlice } from "./text";
 import { recordText, recordObservation, type RecordObservation } from './record-context';
@@ -131,6 +131,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   const rows = new Map<Element, string>();
   const records = new Map<Element, RecordObservation>();
   const names: NameCache = new WeakMap();
+  const styleCache = createStyleCache();
   const max = Math.max(1, Math.min(o.maxElements ?? 150, 150));
   const offset = Math.max(0, Math.floor(o.elementOffset ?? 0));
   const table = newTable(o.snapshotId, o.frameId);
@@ -159,12 +160,18 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
   let usedChars = JSON.stringify(result).length, usedBytes = utf8Bytes(JSON.stringify(result));
   // A PDF or image tab is a viewer around content the DOM does not hold.
   if (document.contentType && !/^text\/|html|xml/i.test(document.contentType)) limits.add("document-content-not-readable");
+  const skipSubtree = (el: Element) => {
+    if ((el as HTMLElement).hidden) return true;
+    let cs = styleCache.style.get(el);
+    if (!cs) { cs = getComputedStyle(el); styleCache.style.set(el, cs); }
+    return cs.display === "none";
+  };
   walkDeep(document, (el, inShadow) => {
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
     if ((el.tagName === "EMBED" || el.tagName === "OBJECT") && /pdf/i.test(el.getAttribute("type") ?? "")) limits.add("embedded-content-not-readable");
     const interactive = isInteractive(el);
-    const pointer = !interactive && el.tagName !== "TABLE" && isPointerTarget(el);
-    if ((!interactive && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout })) return;
+    const pointer = !interactive && el.tagName !== "TABLE" && isPointerTarget(el, styleCache);
+    if ((!interactive && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout, cache: styleCache })) return;
     // Match only what a snapshot would show: a password value must not become a search oracle.
     let name: string | undefined;
     if (query) {
@@ -209,11 +216,16 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     usedChars += encoded.length + 24; usedBytes += itemBytes;
     e.ref = table.add(el, records, names);
     elements.push(e); nodes.push(el);
-  });
+  }, false, skipSubtree);
   // Repeated controls ("취소" per row) are indistinguishable without their row or card.
   const key = (e: SnapElement) => `${e.role}\u0000${e.name}`;
   const groups = new Map<string, Element[]>();
-  elements.forEach((e, i) => groups.set(key(e), [...(groups.get(key(e)) ?? []), nodes[i]!]));
+  elements.forEach((e, i) => {
+    const k = key(e);
+    let group = groups.get(k);
+    if (!group) { group = []; groups.set(k, group); }
+    group.push(nodes[i]!);
+  });
   elements.forEach((e, i) => {
     const group = groups.get(key(e))!;
     let context = recordText(nodes[i]!,records);
@@ -228,8 +240,16 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     if (context && context !== e.name) e.context = clip(context, 80);
   });
   if (query) { result.query = query; if (!result.elementsTotal && !fullText) limits.add("query-no-match"); }
-  while (elements.length && utf8Bytes(JSON.stringify(result)) > MAX_SNAPSHOT_BYTES - 512) {
-    elements.pop(); nodes.pop(); limits.add("snapshot-size-limited");
+  if (elements.length && utf8Bytes(JSON.stringify(result)) > MAX_SNAPSHOT_BYTES - 512) {
+    let lo = 0, hi = elements.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      const probe = { ...result, elements: elements.slice(0, mid) };
+      if (utf8Bytes(JSON.stringify(probe)) <= MAX_SNAPSHOT_BYTES - 512) lo = mid; else hi = mid - 1;
+    }
+    elements.length = lo;
+    nodes.length = lo;
+    limits.add("snapshot-size-limited");
   }
   const next = offset + elements.length;
   result.elementsTruncated = next < result.elementsTotal;

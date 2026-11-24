@@ -270,10 +270,9 @@ namespace AgentBrowser.Installer {
                 if(page==4)extensionDetected.Text+=" [다음]을 누르세요.";
             }
         }
-        async Task OpenPairingCode(CancellationTokenSource wait){
-            var state=Installed();string id=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));
-            await Task.Run(()=>BridgeControl.Start(state));
-            var opened=await Task.Run(()=>NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"pair","--open","--extension-id",id,"--seconds","180"})));
+        async Task OpenPairingCode(CancellationTokenSource wait,InstallState verifiedState,string id,bool bridgeStarted=false){
+            if(!bridgeStarted)await Task.Run(()=>BridgeControl.Start(verifiedState));
+            var opened=await Task.Run(()=>NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(verifiedState,new[]{"pair","--open","--extension-id",id,"--seconds","180"})));
             // The user may have left the page or asked for another code meanwhile: show nothing and open nothing.
             if(wait.IsCancellationRequested||page!=5||IsDisposed)return;
             string code=(string)opened["code"];
@@ -282,19 +281,23 @@ namespace AgentBrowser.Installer {
             string chrome=ChromePath();
             if(chrome!=null&&!Has(args,"--no-browser-launch"))try{Process.Start(new ProcessStartInfo(chrome,"chrome-extension://"+id+"/src/options/index.html"){UseShellExecute=false});}catch(Exception){/* The user can open Options manually. */}
         }
-        async Task ConnectChrome(){
+        Task ConnectChrome(){return ConnectChromeWith(null,false);}
+        async Task ConnectChromeWith(InstallState verifiedState,bool bridgeStarted){
             // Waiting for Chrome is not an installer operation: it never takes `working`,
             // so the wizard stays usable and leaving this page or closing stops it.
             CancelPairingWait();
             var wait=new CancellationTokenSource();pairingWait=wait;bool connected=false;
             try{
                 pairingCode.Text="";pairingState.Text="코드를 준비하고 있습니다…";
-                var state=Installed();string id=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));
-                await Task.Run(()=>BridgeControl.Start(state));
+                string selectedFolder=folder.Text;
+                var state=verifiedState??await Task.Run(()=>Verified(selectedFolder));
+                if(wait.IsCancellationRequested||IsDisposed||Disposing)return;
+                string id=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));
+                if(!bridgeStarted)await Task.Run(()=>BridgeControl.Start(state));
                 if(wait.IsCancellationRequested||IsDisposed||Disposing)return;
                 if(Pairing.Connected(await Task.Run(()=>BridgeStatus(state)),id))connected=true;
                 else if(!wait.IsCancellationRequested&&!IsDisposed&&!Disposing){
-                    await OpenPairingCode(wait);
+                    await OpenPairingCode(wait,state,id,bridgeStarted:true);
                     for(int i=0;i<180&&!wait.IsCancellationRequested&&!IsDisposed&&!Disposing;i++){
                         var current=await Task.Run(()=>BridgeStatus(state));
                         if(wait.IsCancellationRequested||IsDisposed||Disposing)break;
@@ -314,7 +317,10 @@ namespace AgentBrowser.Installer {
             int run=++doneRun;
             MarkDone(true);doneChecks.Items.Clear();doneChecks.Items.Add("연결 상태를 확인하고 있습니다…");fixChrome.Visible=fixRuntime.Visible=false;recheck.Enabled=false;
             try{
-                var state=Installed();string id=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));
+                string selectedFolder=folder.Text;
+                var state=await Task.Run(()=>Verified(selectedFolder));
+                if(IsDisposed||doneChecks.IsDisposed||run!=doneRun)return;
+                string id=Pairing.ExtensionId(Path.Combine(state.InstallDir,"extension","manifest.json"));
                 var current=await Task.Run(()=>BridgeStatus(state));
                 var doctor=await Task.Run(()=>NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"doctor","--json"},60000)));
                 // The wizard may have closed or moved on while the checks ran.
@@ -351,7 +357,9 @@ namespace AgentBrowser.Installer {
         }
         async Task RefreshSavedProfiles(){
             try{
-                var state=Installed();
+                string selectedFolder=folder.Text;
+                var state=await Task.Run(()=>Verified(selectedFolder));
+                if(IsDisposed||Disposing||savedProfiles.IsDisposed)return;
                 var listed=await Task.Run(()=>NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"})));
                 if(IsDisposed||Disposing||savedProfiles.IsDisposed)return;
                 savedProfiles.Items.Clear();object def;listed.TryGetValue("defaultProfileId",out def);
@@ -411,11 +419,15 @@ namespace AgentBrowser.Installer {
         async Task SaveRuntime(){
             if(working)return;working=true;saveRuntime.Enabled=false;prepare.Enabled=false;back.Enabled=false;runtimeResult.Text="실행 환경을 확인하고 있습니다…";
             try{
-                var state=Installed();var chosen=runtimeCandidates.SelectedItem as OpenCodeCandidate;
+                string selectedFolder=folder.Text;
+                var chosen=runtimeCandidates.SelectedItem as OpenCodeCandidate;
                 var candidate=new OpenCodeCandidate{Kind=runtimeKind.SelectedIndex==1?"wsl":"windows",Distribution=runtimeDistribution.Text.Trim(),Executable=runtimeExecutable.Text.Trim()};
                 candidate.User=RuntimeUser(chosen,candidate.Kind,candidate.Distribution,candidate.Executable);
+                string directory=runtimeDirectory.Text.Trim();
+                var state=await Task.Run(()=>Verified(selectedFolder));
+                if(IsDisposed||Disposing)return;
                 bool replace=savedRuntimeId!=null,save=true;
-                string id=savedRuntimeId,name=candidate.Kind=="wsl"?"OpenCode ("+candidate.Distribution+")":"OpenCode (Windows)",directory=runtimeDirectory.Text.Trim();
+                string id=savedRuntimeId,name=candidate.Kind=="wsl"?"OpenCode ("+candidate.Distribution+")":"OpenCode (Windows)";
                 if(id==null) {
                     // An earlier wizard run may have saved this same runtime: reuse it instead of adding another.
                     var listed=await Task.Run(()=>NativeIO.Json.Deserialize<Dictionary<string,object>>(BridgeControl.Invoke(state,new[]{"profile","list","--json"})));
@@ -520,11 +532,15 @@ namespace AgentBrowser.Installer {
         }
         async Task PreparePairing(){
             if(working)return;working=true;prepare.Enabled=false;cancel.Enabled=false;status.Text="Chrome 연결을 준비하고 있습니다.";
-            bool entered=false;
-            try{var state=Installed();await Task.Run(()=>BridgeControl.Start(state));if(IsDisposed||Disposing)return;LoadPairingFields(state);pairingCode.Text="";pairingState.Clear();SetPage(5);status.Clear();entered=true;
-            }catch(Exception error){if(!IsDisposed&&!Disposing)status.Fail(Friendly.Message(error));}finally{working=false;if(!IsDisposed&&!Disposing){prepare.Enabled=true;cancel.Enabled=true;}}
-            // The code is issued as soon as the page opens; nobody has to find the button first.
-            if(entered&&!IsDisposed&&!Disposing){var waiting=ConnectChrome();}
+            InstallState state=null;
+            try{
+                string selectedFolder=folder.Text;
+                state=await Task.Run(()=>{var s=Verified(selectedFolder);BridgeControl.Start(s);return s;});
+                if(IsDisposed||Disposing)return;
+                LoadPairingFields(state);pairingCode.Text="";pairingState.Clear();SetPage(5);status.Clear();
+            }catch(Exception error){state=null;if(!IsDisposed&&!Disposing)status.Fail(Friendly.Message(error));}finally{working=false;if(!IsDisposed&&!Disposing){prepare.Enabled=true;cancel.Enabled=true;}}
+            // The code is issued as soon as the page opens; reuse the verified state and running Bridge.
+            if(state!=null&&!IsDisposed&&!Disposing){var waiting=ConnectChromeWith(state,true);}
         }
         /// The address and token for connecting by hand, from the data the running Bridge created.
         void LoadPairingFields(InstallState state){

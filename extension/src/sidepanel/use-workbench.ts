@@ -27,6 +27,23 @@ export function useWorkbench() {
   const setError = useCallback((message: string, code?: string) => { shownError.current = { message, code: message ? code : undefined }; setErrorText(message); setErrorCode(message ? code : undefined); }, []);
   const client = useRef<OpenCodeV1Client | undefined>(undefined), epoch = useRef(0), stream = useRef<AbortController | undefined>(undefined), selected = useRef("");
   const syncing = useRef(false), buffered = useRef<Data[]>([]), refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), listTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pendingDeltas = useRef<Data[]>([]), deltaFrame = useRef<number | undefined>(undefined);
+  const flushDeltas = useCallback(() => {
+    if (deltaFrame.current !== undefined) {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(deltaFrame.current);
+      else clearTimeout(deltaFrame.current);
+      deltaFrame.current = undefined;
+    }
+    if (!pendingDeltas.current.length) return;
+    const batch = pendingDeltas.current; pendingDeltas.current = [];
+    dispatch({ type: "events", events: batch });
+  }, []);
+  const queueDelta = useCallback((event: Data) => {
+    pendingDeltas.current.push(event);
+    if (deltaFrame.current !== undefined) return;
+    if (typeof requestAnimationFrame === "function") deltaFrame.current = requestAnimationFrame(() => { deltaFrame.current = undefined; flushDeltas(); });
+    else deltaFrame.current = setTimeout(() => { deltaFrame.current = undefined; flushDeltas(); }, 16) as unknown as number;
+  }, [flushDeltas]);
   const bindings = useRef(new Map<string, { client: OpenCodeV1Client; sessionID: string; profileId: string; directory: string }>());
   const recentSessions = useRef(new Map<string, string>()), metadataRevision = useRef(0);
   const responseWatch = useRef({ epoch: 0, sessionID: "", until: 0 }), latestState = useRef(state), lightPolls = useRef(0);
@@ -128,6 +145,7 @@ export function useWorkbench() {
     if (!api) return;
     // A detailed refresh requested mid-sync (e.g. the run just finished) must not be dropped.
     if (syncing.current) { if (refreshDetails) rerunDetails.current = true; return; }
+    flushDeltas();
     syncing.current = true; buffered.current = [];
     try {
       if (refreshDetails) void refreshSessions().catch(value => { if (revision === epoch.current) fail(value); });
@@ -219,7 +237,7 @@ export function useWorkbench() {
   const connect = useCallback(async (id: string, workdir?: string, restoreId?: string, automatic = false) => {
     let restored = restoreId ?? (id !== currentProfile.current ? recentSessions.current.get(id) : undefined) ?? "";
     if (currentProfile.current && selected.current) recentSessions.current.set(currentProfile.current, selected.current);
-    const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); syncing.current = false; buffered.current = [];
+    const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); flushDeltas(); syncing.current = false; buffered.current = [];
     bindings.current.clear();
     clearTimeout(offlineTimer.current); offlineTimer.current = undefined; streamOnline.current = false; if (!automatic) autoRecovered.current = false;
     setLoading(true); setConnected(false); setError(""); setProfileId(id); currentProfile.current = id;
@@ -255,10 +273,12 @@ export function useWorkbench() {
         autoRecovered.current = true;
         void reconnect.current(id, api.directory, selected.current || undefined, true);
       };
+      let syncedOnOnline = false;
       void api.events(event => {
         if (revision !== epoch.current) return;
         if (syncing.current) buffered.current.push(event);
-        else dispatch({ type: "event", event });
+        else if (event.type === "message.part.delta") queueDelta(event);
+        else { flushDeltas(); dispatch({ type: "event", event }); }
         const properties = event.properties as Data, part = properties.part;
         if (part?.type === "tool") remember([{ info: { sessionID: part.sessionID }, parts: [part] }], api);
         if (event.type.startsWith("message.")) { const sessionID = properties.sessionID ?? properties.info?.sessionID ?? part?.sessionID; if (sessionID) lastMessageEvent.current.set(sessionID, Date.now()); }
@@ -282,7 +302,10 @@ export function useWorkbench() {
       }, online => {
         if (revision !== epoch.current || controller.signal.aborted) return;
         setConnected(online); streamOnline.current = online;
-        if (online) { clearTimeout(offlineTimer.current); offlineTimer.current = undefined; autoRecovered.current = false; invalidateChildren(); void resync(); }
+        if (online) {
+          clearTimeout(offlineTimer.current); offlineTimer.current = undefined; autoRecovered.current = false;
+          syncedOnOnline = true; invalidateChildren(); void resync();
+        }
         else offlineTimer.current ??= setTimeout(() => recover(new Error(STREAM_LOST)), OFFLINE_RECOVERY_MS);
       }, controller.signal).catch(value => recover(value));
       const results = await Promise.allSettled([api.get<Data>("/provider"), api.get<Data[]>("/agent"), api.get<Data[]>("/command"), api.get<Data[]>("/skill"), api.get<Data>("/mcp")]);
@@ -290,7 +313,7 @@ export function useWorkbench() {
       const setters = [setCatalog, setAgents, setCommands, setSkills, setMcp] as Array<(value: any) => void>;
       results.forEach((result, index) => { if (result.status === "fulfilled") setters[index]!(result.value); else fail(result.reason); });
       await chrome.storage.local.set({ lastProfileId: id, [`recentSession:${id}`]: selected.current });
-      await resync();
+      if (!syncedOnOnline) await resync();
     } catch (value) { if (revision === epoch.current) fail(value); }
     finally { if (revision === epoch.current) setLoading(false); }
   }, [resync, refreshSessions, updateSession, removeSession, invalidateChildren]);

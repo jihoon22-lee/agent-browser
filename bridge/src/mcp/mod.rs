@@ -89,7 +89,7 @@ impl ServerHandler for BridgeMcp {
 
     async fn call_tool(&self, req: CallToolRequestParams, context: RequestContext<RoleServer>) -> Result<CallToolResponse, McpError> {
         let args = serde_json::Value::Object(req.arguments.unwrap_or_default());
-        let outcome = self
+        let mut outcome = self
             .client
             .call_tool_cancellable(&req.name, args, context.ct.cancelled())
             .await
@@ -97,12 +97,12 @@ impl ServerHandler for BridgeMcp {
         let mut ok = outcome["ok"].as_bool().unwrap_or(false);
         let mut content = vec![];
         if ok && req.name == "browser_screenshot" {
-            if let Some(b64) = outcome["data"]["base64"].as_str() {
-                content.push(ContentBlock::image(b64.to_string(), "image/png"));
+            if let Some(data) = outcome.get_mut("data").and_then(|v| v.as_object_mut()) {
+                if let Some(serde_json::Value::String(b64)) = data.insert("base64".into(), serde_json::Value::String("<image attached>".into())) {
+                    content.push(ContentBlock::image(b64, "image/png"));
+                }
             }
-            let mut summary = outcome.clone();
-            summary["data"]["base64"] = serde_json::Value::String("<image attached>".into());
-            let (text, bounded_ok) = bounded_text(&req.name, &summary);
+            let (text, bounded_ok) = bounded_text(&req.name, &outcome);
             ok = bounded_ok;
             content.push(ContentBlock::text(text));
         } else {

@@ -9,6 +9,7 @@ namespace AgentBrowser.Installer {
     internal static class Jsonc {
         sealed class Token { public string Kind,Raw,Value; public int Start,End; }
         sealed class Property { public string Name; public int Key,First,Last,Before=-1,After=-1; }
+        static readonly Regex ScalarRegex = new Regex(@"\G(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)", RegexOptions.Compiled);
         static List<Token> Tokens(string text) {
             var list=new List<Token>();int i=0;
             while(i<text.Length) {
@@ -26,7 +27,7 @@ namespace AgentBrowser.Installer {
                     list.Add(new Token{Kind="string",Raw=raw,Value=NativeIO.Json.Deserialize<string>(raw),Start=start,End=i});continue;
                 }
                 if("{}[]:,".IndexOf(ch)>=0) {i++;list.Add(new Token{Kind=ch.ToString(),Raw=ch.ToString(),Start=start,End=i});continue;}
-                var match=Regex.Match(text.Substring(i),@"^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)");
+                var match=ScalarRegex.Match(text,i);
                 if(!match.Success) throw new FormatException("Invalid JSON token at "+i+".");
                 i+=match.Length;list.Add(new Token{Kind="scalar",Raw=match.Value,Start=start,End=i});
             }

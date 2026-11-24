@@ -3,7 +3,7 @@ use crate::rpc::{RpcError, ErrorCode, Retry};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::{Path, PathBuf}};
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeConfig {
     #[serde(default = "version")]
@@ -19,15 +19,50 @@ pub struct RuntimeConfig {
 }
 fn version() -> u32 { 1 }
 
-pub struct Store { home: PathBuf }
+#[derive(Clone, PartialEq, Eq)]
+struct FileStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    #[cfg(unix)]
+    ino: u64,
+}
+impl FileStamp {
+    fn of(meta: &std::fs::Metadata) -> Self {
+        Self {
+            len: meta.len(),
+            modified: meta.modified().ok(),
+            #[cfg(unix)]
+            ino: { use std::os::unix::fs::MetadataExt; meta.ino() },
+        }
+    }
+}
+
+pub struct Store {
+    home: PathBuf,
+    cache: std::sync::Mutex<Option<(FileStamp, RuntimeConfig)>>,
+}
 pub(super) struct FileLock(pub std::fs::File);
 impl Drop for FileLock { fn drop(&mut self) { let _ = self.0.unlock(); } }
 #[cfg(all(test,unix))]
 impl FileLock { pub fn try_clone(&self) -> std::io::Result<std::fs::File> { self.0.try_clone() } }
 impl Store {
-    pub fn new(home: PathBuf) -> Self { Self { home } }
+    pub fn new(home: PathBuf) -> Self { Self { home, cache: Default::default() } }
     pub fn read(&self) -> Result<RuntimeConfig, RpcError> {
         let path = self.home.join("runtime.json");
+        let stamp = match std::fs::metadata(&path) {
+            Ok(meta) => Some(FileStamp::of(&meta)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
+                return Ok(RuntimeConfig { version: 1, ..Default::default() });
+            }
+            Err(_) => None,
+        };
+        if let Some(ref s) = stamp {
+            let guard = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((cached_stamp, cached_cfg)) = guard.as_ref() && cached_stamp == s {
+                return Ok(cached_cfg.clone());
+            }
+        }
         let config: RuntimeConfig = match std::fs::read(&path) {
             // The file holds credentials and a serde message can quote a value: log the position only.
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| { tracing::warn!(line = error.line(), column = error.column(), "runtime.json is invalid"); invalid("runtime.json is invalid; its contents were preserved") })?,
@@ -35,6 +70,9 @@ impl Store {
             Err(error) => return Err(os_failure("Cannot read runtime.json")(error)),
         };
         if config.version != 1 { return Err(invalid("Unsupported runtime.json version")); }
+        if let Ok(meta) = std::fs::metadata(&path) {
+            *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((FileStamp::of(&meta), config.clone()));
+        }
         Ok(config)
     }
     pub fn update<T>(&self, update: impl FnOnce(&mut RuntimeConfig) -> Result<T, RpcError>) -> Result<T, RpcError> {
@@ -56,9 +94,13 @@ impl Store {
         // Closing our descriptor alone can leave a Unix flock held by a concurrent
         // fork until exec; explicitly unlock the shared open-file description.
         let _held = FileLock(lock);
+        // Bypass cache inside the exclusive write lock so external writers are always observed.
+        *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let mut config = self.read()?;
         let result = update(&mut config)?;
-        write_private_json(&self.home.join("runtime.json"), &config)?;
+        let config_path = self.home.join("runtime.json");
+        write_private_json(&config_path, &config)?;
+        *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = std::fs::metadata(&config_path).ok().map(|m| (FileStamp::of(&m), config));
         Ok(result)
     }
 }

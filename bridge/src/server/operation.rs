@@ -416,9 +416,17 @@ impl OperationGate {
     }
 
     /// A close event from another browser must not change this request's target.
-    pub fn remove_tab_for_client(&self, client_id: &str, tab: i64) {
-        let mut g=self.inner.lock().unwrap();
-        for op in g.ops.iter_mut().filter(|op|op.client_id==client_id) {Self::remove_current_tab(op,tab);}
+    /// Returns true if any active operation of this browser owned the closed tab.
+    pub fn remove_tab_for_client(&self, client_id: &str, tab: i64) -> bool {
+        let mut g = self.inner.lock().unwrap();
+        let mut changed = false;
+        for op in g.ops.iter_mut().filter(|op| op.client_id == client_id) {
+            if op.tabs.contains(&tab) {
+                changed = true;
+            }
+            Self::remove_current_tab(op, tab);
+        }
+        changed
     }
 
     fn finish(g: &mut GateInner, id: &str, state: OpState) -> Option<Operation> {
@@ -690,8 +698,9 @@ mod tests {
     fn nested_close_returns_to_recent_targets_without_adopting_other_browsers() {
         let gate=OperationGate::default();let op=gate.attach(1,"A").unwrap();
         gate.add_and_switch_tab(&op.id,2).unwrap();gate.add_and_switch_tab(&op.id,3).unwrap();
-        gate.remove_tab_for_client("B",3);assert_eq!(gate.check(&op.id).unwrap().current_tab,3);
-        gate.remove_tab_for_client("A",3);assert_eq!(gate.check(&op.id).unwrap().current_tab,2);
+        assert!(!gate.remove_tab_for_client("B",3));assert_eq!(gate.check(&op.id).unwrap().current_tab,3);
+        assert!(gate.remove_tab_for_client("A",3));assert_eq!(gate.check(&op.id).unwrap().current_tab,2);
+        assert!(!gate.remove_tab_for_client("A",999));
         gate.remove_tab_for_operation(&op.id,2);assert_eq!(gate.check(&op.id).unwrap().current_tab,1);
         gate.observe_target(&op);assert!(gate.check(&op.id).unwrap().needs_observation,"An old snapshot from before the popup cannot acknowledge return");
         let returned=gate.check(&op.id).unwrap();gate.observe_target(&returned);assert!(!gate.check(&op.id).unwrap().needs_observation);
