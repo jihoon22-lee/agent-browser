@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { advancedAvailable, imageSupport, requestModelCapability } from "../agents/opencode-v1/capabilities";
 import { selectAttachments } from "../background/uploads";
 import { computeUsage } from "../agents/opencode-v1/usage";
@@ -111,7 +111,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     }).catch(()=>{});
     return ()=>{active=false;};
   },[requestHeld,running,messages,wb.profileId,wb.directory,wb.sessionId]);
-  const usage = computeUsage(messages as MessageRecord[], model as ModelInfo | undefined, wb.sessionId);
+  const usage = useMemo(() => computeUsage(messages as MessageRecord[], model as ModelInfo | undefined, wb.sessionId), [messages, model, wb.sessionId]);
   useEffect(() => { setDirectory(wb.directory); setSessionSearch(""); }, [wb.directory, wb.profileId]);
   const draftKey = JSON.stringify([wb.profileId, wb.directory, wb.sessionId]);
   useEffect(() => {
@@ -399,7 +399,24 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   const sessionError = wb.state.errors[wb.sessionId] ?? wb.state.errors.global;
   const questions = wb.state.questions.filter(request => request.sessionID === wb.sessionId), permissions = wb.state.permissions.filter(request => request.sessionID === wb.sessionId);
   const tokenLine = (value: Data | null) => value ? `입력 ${value.input.toLocaleString()} · 출력 ${value.output.toLocaleString()} · 추론 ${value.reasoning.toLocaleString()} · 캐시 읽기 ${value.cache.read.toLocaleString()} / 쓰기 ${value.cache.write.toLocaleString()}` : "정보 없음";
-  const filteredModels = models.filter(item => `${item.providerID}/${item.id}`===modelKey || `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(modelSearch.toLowerCase()));
+  const sessionHandlers = useRef({ select: (_: Data) => {}, actions: (_: Data): SessionAction[] => [], rename: (_: Data, __: string) => {} });
+  sessionHandlers.current = {
+    select: session => void perform(() => selectSession(session)),
+    actions: session => sessionActions(session, "list"),
+    rename: (session, title) => void perform(() => renameSession(session, title)),
+  };
+  const onTreeSelect = useCallback((session: Data) => sessionHandlers.current.select(session), []);
+  const onTreeActions = useCallback((session: Data) => sessionHandlers.current.actions(session), []);
+  const onTreeRename = useCallback((session: Data, title: string) => sessionHandlers.current.rename(session, title), []);
+  const onTreeRenameEnd = useCallback(() => setRenaming(null), []);
+  const filteredSessions = useMemo(
+    () => wb.sessions.filter(session => !sessionSearch || `${session.title} ${session.directory}`.toLowerCase().includes(sessionSearch.toLowerCase())),
+    [wb.sessions, sessionSearch],
+  );
+  const filteredModels = useMemo(() => {
+    const query = modelSearch.toLowerCase();
+    return models.filter(item => `${item.providerID}/${item.id}` === modelKey || `${item.name} ${item.id} ${item.providerName}`.toLowerCase().includes(query));
+  }, [models, modelKey, modelSearch]);
   const profileName = wb.profiles.find(profile => profile.id === wb.profileId)?.name as string | undefined;
   // What the empty conversation explains: the first missing link between Chrome, the Bridge and OpenCode.
   const stage = conn.state === "unpaired" || conn.state === "not_paired" || conn.state === "auth_failed" ? "pair"
@@ -433,20 +450,30 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     </section>;
   const sessionsPanel = <section className="sessions-panel"><div className="view-heading"><div><span className="eyebrow">CONVERSATIONS</span><h2>세션</h2></div><span className="muted">{wb.sessions.length}개</span></div><div className="toolbar"><input aria-label="세션 검색" value={sessionSearch} onChange={event => setSessionSearch(event.target.value)} placeholder="세션 검색" /><button disabled={!wb.connected} onClick={() => void perform(() => wb.refreshSessions(sessionSearch))}>검색</button><button disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 세션</button></div>
       <p className="muted session-scope">목록과 검색은 상위 세션 기준입니다. 하위 작업이 있는 세션은 화살표로 펼칠 수 있습니다.</p>
-      <SessionTree key={wb.connectionRevision} sessions={wb.sessions.filter(session => !sessionSearch || `${session.title} ${session.directory}`.toLowerCase().includes(sessionSearch.toLowerCase()))} selectedId={wb.sessionId} statuses={wb.state.statuses} directory={wb.directory} childIndex={wb.childIndex} ensureChildren={wb.ensureChildren} loadChildren={wb.loadChildren} onSelect={session => void perform(() => selectSession(session))}
-        actions={session => sessionActions(session, "list")} renamingId={renaming?.place === "list" ? renaming.id : undefined} onRename={(session, title) => void perform(() => renameSession(session, title))} onRenameEnd={() => setRenaming(null)} />
+      <SessionTree key={wb.connectionRevision} sessions={filteredSessions} selectedId={wb.sessionId} statuses={wb.state.statuses} directory={wb.directory} childIndex={wb.childIndex} ensureChildren={wb.ensureChildren} loadChildren={wb.loadChildren} onSelect={onTreeSelect}
+        actions={onTreeActions} renamingId={renaming?.place === "list" ? renaming.id : undefined} onRename={onTreeRename} onRenameEnd={onTreeRenameEnd} />
       {wb.hasMoreSessions && <button disabled={wb.sessionsLoading} onClick={() => void perform(wb.loadMoreSessions)}>{wb.sessionsLoading ? "불러오는 중…" : "더 보기"}</button>}
       {currentSession?.parentID && <div className="notice"><strong>현재 하위 세션: {currentSession.title}</strong><button onClick={() => onViewChange("chat")}>대화 열기</button></div>}
     </section>;
   const capability = `${{ supported: "이미지 입력 지원", unsupported: "이미지 입력 미지원", unknown: "이미지 지원 정보 없음" }[imageSupport(model)]} · ${imageSupport(model) !== "supported" ? "시각 조작: 이미지 모델 필요" : !advancedAvailable() ? "시각 조작: Chrome 125 이상 필요" : !browserFeatures.advanced || !browserFeatures.trusted ? "시각 조작: 고급 기능·신뢰 입력 설정 필요" : model?.capabilities?.toolcall !== true ? "시각 조작: 도구 호출 지원 확인 필요" : "시각 조작 사용 가능"}`;
   // Favorites get their own group first; the rest are grouped by provider so the closed select shows only the model name.
   const modelKeyOf = (item: Data) => `${item.providerID}/${item.id}`;
-  const modelGroups: Array<[string, Data[]]> = [];
-  for (const item of filteredModels) {
-    const label = favorites.includes(modelKeyOf(item)) ? FAVORITE_MODELS : item.providerName;
-    const group = modelGroups.find(([name]) => name === label);
-    if (group) group[1].push(item); else if (label === FAVORITE_MODELS) modelGroups.unshift([label, [item]]); else modelGroups.push([label, [item]]);
-  }
+  const modelGroups = useMemo(() => {
+    const favSet = new Set(favorites);
+    const favItems: Data[] = [];
+    const byProvider = new Map<string, Data[]>();
+    for (const item of filteredModels) {
+      if (favSet.has(modelKeyOf(item))) { favItems.push(item); continue; }
+      const label = item.providerName;
+      let group = byProvider.get(label);
+      if (!group) { group = []; byProvider.set(label, group); }
+      group.push(item);
+    }
+    const result: Array<[string, Data[]]> = [];
+    if (favItems.length) result.push([FAVORITE_MODELS, favItems]);
+    for (const entry of byProvider) result.push(entry);
+    return result;
+  }, [filteredModels, favorites]);
   const choose = (update: () => void) => { selectedControls.current.dirty = true; update(); };
   const modelsPanel = <div className="composer-settings">
       <div className="composer-selectors">
@@ -559,7 +586,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   </div>;
 }
 
-function TurnCopy({ messages }: { messages: UiMessage[] }) {
+const TurnCopy = memo(function TurnCopy({ messages }: { messages: UiMessage[] }) {
   const text = messages.map(messageText).filter(value => value.trim()).join("\n\n");
   return text ? <footer className="turn-actions"><CopyButton text={text} className="quiet" /></footer> : null;
-}
+});

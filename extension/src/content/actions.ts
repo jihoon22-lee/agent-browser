@@ -134,13 +134,13 @@ function observeChanges(ms: number, signal: AbortSignal, inTransit = false): Cha
   const startUrl = location.href;
   let mutated = false, delivered = () => {};
   const changes = new Promise<{ urlChanged: boolean; domChanged: boolean }>((resolve, reject) => {
-    const mo = observePage(() => { mutated = true; });
+    const mo = observePage(() => { mutated = true; mo.disconnect(); });
     let timer: ReturnType<typeof setTimeout> | undefined, finished = false;
     const done = () => { finished = true; mo.disconnect(); clearTimeout(timer); signal.removeEventListener("abort", abort); };
     const abort = () => { done(); reject(cancellationError(true)); };
     delivered = () => {
       if (finished || timer !== undefined) return;
-      timer = setTimeout(() => { mutated = mo.refresh() || mutated; done(); resolve({ urlChanged: location.href !== startUrl, domChanged: mutated }); }, ms);
+      timer = setTimeout(() => { if (!mutated) mutated = mo.refresh(); done(); resolve({ urlChanged: location.href !== startUrl, domChanged: mutated }); }, ms);
     };
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort(); else if (!inTransit) delivered();

@@ -36,13 +36,16 @@ it('cancellation markers are pruned after the session TTL',async()=>{
  }finally{vi.useRealTimers();}
 });
 class CountingMap extends Map<string,unknown> {
+    reads=0;
     writes=0;
+    override get(key:string){this.reads++;return super.get(key);}
     override set(key:string,value:unknown){this.writes++;return super.set(key,value);}
 }
 it('read-only transactions skip writes unless something was pruned',async()=>{
  vi.useFakeTimers();try {
   const backing=new CountingMap(),s=memorySessionStore(backing);
   await s.getResult('x');await s.isCancelled('x',{});await s.hasSnapshot('op');await s.binding(1,0);
+  expect(backing.reads).toBe(1);
   expect(backing.writes).toBe(0);
   await s.claim('x');expect(backing.writes).toBe(1);
   await s.saveResult('x',{ok:true,result:1});expect(backing.writes).toBe(2);

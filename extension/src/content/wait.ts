@@ -19,9 +19,9 @@ export function textConditions(p: Record<string,unknown>): Record<string,boolean
 
 export function waitFor(p: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
   if (signal?.aborted) return Promise.reject(cancellationError());
-  const conds: [string, () => boolean][] = [];
-  if (typeof p.text === "string") conds.push(["text", () => shows(pageText(document), p.text as string)]);
-  if (typeof p.textGone === "string") conds.push(["textGone", () => !shows(pageText(document), p.textGone as string)]);
+  const conds: [string, (text: () => string) => boolean][] = [];
+  if (typeof p.text === "string") conds.push(["text", text => shows(text(), p.text as string)]);
+  if (typeof p.textGone === "string") conds.push(["textGone", text => !shows(text(), p.textGone as string)]);
   if (typeof p.refGone === "string") {
     // Capture the known node once: snapshot-cache eviction says nothing about its DOM lifetime.
     try {
@@ -34,15 +34,19 @@ export function waitFor(p: Record<string, unknown>, signal?: AbortSignal): Promi
   const timeout = Math.min(Number(p.timeoutMs ?? 5000), 30_000);
   const start = Date.now();
   return new Promise((resolve, reject) => {
+    let settled = false;
     const check = () => {
-      const met = p.match==='all' ? (conds.every(([,f])=>f()) ? 'all' : undefined) : conds.find(([,f])=>f())?.[0];
+      if (settled) return true;
+      let cachedText: string | undefined;
+      const text = () => (cachedText ??= pageText(document));
+      const met = p.match === 'all' ? (conds.every(([, f]) => f(text)) ? 'all' : undefined) : conds.find(([, f]) => f(text))?.[0];
       if (met) { done(); resolve({ executed: false, verified: { met }, elapsedMs: Date.now() - start }); return true; }
       return false;
     };
-    const mo = observePage(() => check());
+    const mo = observePage(() => { check(); });
     const poll = setInterval(() => { mo.refresh(); check(); }, 250);
     const timer = setTimeout(() => { done(); reject(new ProtocolError("TIMEOUT", `Condition not met within ${timeout} ms.`, "safe", { conditions: conds.map(([k]) => k) })); }, timeout);
-    const done = () => { mo.disconnect(); clearInterval(poll); clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+    const done = () => { settled = true; mo.disconnect(); clearInterval(poll); clearTimeout(timer); signal?.removeEventListener("abort", abort); };
     const abort = () => { done(); reject(cancellationError()); };
     signal?.addEventListener("abort", abort, { once: true });
     check();

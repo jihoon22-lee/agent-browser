@@ -121,3 +121,20 @@ it("ignores malformed message.updated without info", () => {
   const next = workbenchReducer(initialWorkbench, { type: "event", event: { type: "message.updated", properties: { sessionID: "s1", messageID: "m1" } } });
   expect(next.messages.s1).toBeUndefined();
 });
+
+it("applies batched delta events in a single events dispatch", () => {
+  const next = workbenchReducer(initialWorkbench, {
+    type: "events",
+    events: [
+      { type: "message.part.delta", properties: { sessionID: "s1", messageID: "m1", partID: "p1", field: "text", delta: "안녕" } },
+      { type: "message.part.delta", properties: { sessionID: "s1", messageID: "m1", partID: "p1", field: "text", delta: "하세요" } },
+    ],
+  });
+  expect(next.messages.s1?.[0]?.parts[0]?.text).toBe("안녕하세요");
+});
+
+it("themeTokens returns a cached object for repeated calls", async () => {
+  const { themeTokens } = await import("../src/theme/themes");
+  expect(themeTokens("mocha")).toBe(themeTokens("mocha"));
+  expect(themeTokens("latte")).toBe(themeTokens("latte"));
+});
