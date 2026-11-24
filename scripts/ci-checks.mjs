@@ -13,7 +13,6 @@ function stripCodeSpans(text) {
       while (i + ticks < text.length && text[i + ticks] === '`') ticks++;
       const close = text.indexOf('`'.repeat(ticks), i + ticks);
       if (close >= 0) {
-        let end = close + ticks;
         // Require exact closing run length (not part of a longer run) and same line.
         const lineEnd = text.indexOf('\n', i + ticks);
         let search = i + ticks;

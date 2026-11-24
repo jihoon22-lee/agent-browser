@@ -98,8 +98,14 @@ try {
     }
     throw $failure
 } finally {
-    if ($transaction -and ($committed -or $rollbackOk)) { Remove-Item -LiteralPath $transaction.Stage -Recurse -Force }
-    if ($lock) { $lock.Dispose(); if (Test-Path -LiteralPath $lockPath) { Remove-Item -LiteralPath $lockPath -Force } }
+    if ($transaction -and ($committed -or $rollbackOk)) {
+        try { if (Test-Path -LiteralPath $transaction.Stage) { Remove-Item -LiteralPath $transaction.Stage -Recurse -Force } }
+        catch { Write-Warning ('Could not remove temporary stage folder ' + $transaction.Stage + ': ' + $_.Exception.Message) }
+    }
+    if ($lock) {
+        try { $lock.Dispose() } catch { }
+        try { if (Test-Path -LiteralPath $lockPath) { Remove-Item -LiteralPath $lockPath -Force } } catch { }
+    }
 }
 if ($committed) {
     try {

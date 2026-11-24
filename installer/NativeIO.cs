@@ -66,6 +66,10 @@ namespace AgentBrowser.Installer {
                 using(var process=Process.GetProcessById(pid)) {bool inside;if(!IsProcessInJob(process.Handle,job,out inside))throw Error("Cannot verify startup child ownership");if(!inside||process.HasExited)throw new IOException("Bridge PID does not belong to this startup.");}
             } catch(ArgumentException) {
                 throw new IOException("Bridge PID does not belong to this startup.");
+            } catch(InvalidOperationException) {
+                throw new IOException("Bridge PID does not belong to this startup.");
+            } catch(System.ComponentModel.Win32Exception) {
+                throw new IOException("Bridge PID does not belong to this startup.");
             }
         }
         void StartupLimit(bool killOnClose) {
@@ -146,7 +150,9 @@ namespace AgentBrowser.Installer {
                         throw new IOException("The selected command did not finish. No unrelated process was stopped.");
                     }
                     Task.WhenAll(output, error).Wait(2000);
-                    return new CommandResult { ExitCode=process.ExitCode, Output=DecodeOutput(stdout.ToArray(),encoding).Trim(), Error=DecodeOutput(stderr.ToArray(),encoding).Trim() };
+                    byte[] outBytes = output.IsCompleted ? stdout.ToArray() : new byte[0];
+                    byte[] errBytes = error.IsCompleted ? stderr.ToArray() : new byte[0];
+                    return new CommandResult { ExitCode=process.ExitCode, Output=DecodeOutput(outBytes,encoding).Trim(), Error=DecodeOutput(errBytes,encoding).Trim() };
                 }
             }
         }
@@ -160,8 +166,11 @@ namespace AgentBrowser.Installer {
             return m.Success ? new WslTarget { Distribution=m.Groups[1].Value, Path="/"+m.Groups[2].Value.Replace('\\','/') } : null;
         }
         public static void PlainPath(string path) {
-            for(var current=System.IO.Path.GetFullPath(path); !String.IsNullOrEmpty(current); current=System.IO.Path.GetDirectoryName(current)) {
-                if((File.Exists(current)||Directory.Exists(current)) && (File.GetAttributes(current)&FileAttributes.ReparsePoint)!=0) throw new IOException("A symbolic link or junction is not supported: "+current);
+            var chain=new List<string>();
+            for(var current=System.IO.Path.GetFullPath(path); !String.IsNullOrEmpty(current); current=System.IO.Path.GetDirectoryName(current)) chain.Add(current);
+            for(int i=chain.Count-1; i>=0; i--) {
+                var segment=chain[i];
+                if((File.Exists(segment)||Directory.Exists(segment)) && (File.GetAttributes(segment)&FileAttributes.ReparsePoint)!=0) throw new IOException("A symbolic link or junction is not supported: "+segment);
             }
         }
         public static string SafePath(string root,string relative) {

@@ -19,15 +19,21 @@ function Get-ProcessImage([string]$Path) {
     try { return Get-FullPath $Path } catch { return $null }
 }
 function Assert-PlainPath([string]$Path) {
-    $current = [IO.Path]::GetFullPath($Path)
+    $full = [IO.Path]::GetFullPath($Path)
+    $chain = New-Object 'System.Collections.Generic.List[string]'
+    $current = $full
     while ($current) {
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force
-            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse points are not supported for installation: $current" }
-        }
+        $chain.Add($current)
         $parent = [IO.Path]::GetDirectoryName($current)
         if (-not $parent -or $parent -eq $current) { break }
         $current = $parent
+    }
+    for ($i = $chain.Count - 1; $i -ge 0; $i--) {
+        $segment = $chain[$i]
+        if (Test-Path -LiteralPath $segment) {
+            $item = Get-Item -LiteralPath $segment -Force
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse points are not supported for installation: $segment" }
+        }
     }
 }
 function Assert-InstallRoot([string]$Path) {
@@ -633,7 +639,7 @@ function Start-OwnedBridge($State, $Transaction=$null) {
     if ($existing -and (Get-FullPath $existing.Marker.Executable) -eq (Get-FullPath $State.CurrentExe) -and [int]$existing.Marker.Port -eq [int]$State.Port) {
         return [pscustomobject]@{ running=$true; pid=[int]$existing.Marker.Pid; port=[int]$State.Port; reused=$true }
     }
-    if ($existing) { $null = Stop-OwnedBridge $State }
+    if ($existing) { $null = Stop-OwnedBridge $State $Transaction }
     $expectedExe = Get-FullPath $State.CurrentExe
     $owned = @($State.OwnedFiles | Where-Object { (Get-FullPath (Join-SafePath $State.InstallDir $_.Path)) -eq $expectedExe })
     if ($owned.Count -ne 1 -or (Get-FileSha256 $expectedExe) -ne $owned[0].Sha256) { throw 'The current Bridge executable does not match the installed package.' }

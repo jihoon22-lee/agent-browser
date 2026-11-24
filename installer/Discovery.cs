@@ -109,7 +109,7 @@ namespace AgentBrowser.Installer {
                     }
                 }
                 if(result.Distributions.Count==0) result.Notices.Add("등록된 WSL 배포판이 없습니다. WSL 설치를 자동으로 실행하지 않습니다.");
-            } catch(Exception error) { result.Notices.Add("WSL 검색을 완료하지 못했습니다: "+error.Message); }
+            } catch(Exception error) { var actual = error is AggregateException && error.InnerException != null ? error.InnerException : error; result.Notices.Add("WSL 검색을 완료하지 못했습니다: "+actual.Message); }
             return result;
         }
         static void AddConfigFiles(OpenCodeCandidate candidate,string directory) {
