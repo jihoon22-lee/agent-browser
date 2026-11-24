@@ -1517,18 +1517,21 @@ mod issue8_runtime_tests {
         server.abort();
         assert!(err.message.contains("503"), "expected 503 in error: {}", err.message);
 
+        let overlay_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let overlay_port = overlay_listener.local_addr().unwrap().port();
         let home = tempfile::tempdir().unwrap();
         let manager = Manager::new(home.path().into(), 4317);
         let profile: Profile = serde_json::from_value(json!({"id":"p1","name":"P1","kind":"windows","directory":home.path(),"executable":home.path().join("absent.exe")})).unwrap();
         manager.save(profile, false).unwrap();
         let identity = process::identity(std::process::id()).unwrap();
         manager.persist(&RuntimeRecord {
-            profile_id: "p1".into(), instance: "inst".into(), base_url: "http://127.0.0.1:4096".into(),
+            profile_id: "p1".into(), instance: "inst".into(), base_url: format!("http://127.0.0.1:{overlay_port}"),
             username: "opencode".into(), password: "pw".into(), launcher: identity.clone(), server: Some(identity),
             wsl_owner_file: None, version: None, bridge_port: Some(9999),
             bridge_executable: Some(std::env::current_exe().unwrap().to_string_lossy().into_owned()), wsl_keeper: None,
         }).unwrap();
         let st = manager.status("p1").await.unwrap();
+        drop(overlay_listener);
         assert_eq!(st["state"], "error");
         assert_eq!(st["reason"], "OVERLAY_OUTDATED");
     }
