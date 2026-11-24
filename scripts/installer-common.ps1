@@ -120,6 +120,7 @@ function Read-InstallState([string]$Root) {
 
 # JSONC token positions let us edit one property without serializing the user's
 # models, credentials, comments, formatting, or other MCP definitions.
+$script:JsonScalarRegex = New-Object System.Text.RegularExpressions.Regex('\G(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)', [System.Text.RegularExpressions.RegexOptions]::Compiled)
 function Get-JsonTokens([string]$Text) {
     $items = New-Object 'System.Collections.Generic.List[object]'
     $i = 0
@@ -148,7 +149,7 @@ function Get-JsonTokens([string]$Text) {
             continue
         }
         if ('{}[]:,'.Contains([string]$ch)) { $i++; $items.Add([pscustomobject]@{ Kind=[string]$ch; Start=$start; End=$i; Text=[string]$ch }); continue }
-        $match = [regex]::Match($Text.Substring($i), '^(?:true|false|null|-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)')
+        $match = $script:JsonScalarRegex.Match($Text, $i)
         if (-not $match.Success) { throw "Invalid JSON token at offset $i" }
         $i += $match.Length
         $items.Add([pscustomobject]@{ Kind='scalar'; Start=$start; End=$i; Text=$match.Value })
@@ -440,7 +441,7 @@ function Get-AdoptedBridgeProcess($State, $Transaction=$null) {
         $markerPath = Join-Path $State.DataDir '.installer-bridge-process.json'
         if ($Transaction) { Set-TransactionText $Transaction $markerPath (ConvertTo-Json $marker -Depth 5) }
         else { Write-Utf8Atomic $markerPath (ConvertTo-Json $marker -Depth 5) }
-        return Get-VerifiedBridgeProcess $State
+        return [pscustomobject]@{ Process=$process; Marker=[pscustomobject]$marker }
     } catch { return $null }
 }
 function Remove-StaleBridgeMarker($State, $Transaction=$null) {

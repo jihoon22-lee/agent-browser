@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using Microsoft.Win32;
 
 namespace AgentBrowser.Installer {
@@ -83,17 +84,29 @@ namespace AgentBrowser.Installer {
             try {
                 // wsl --list emits UTF-16LE on native Windows, unlike Linux --exec output; with WSL_UTF8=1
                 // it emits UTF-8. NativeIO.DecodeOutput tells them apart; UTF-16 is only the preference.
-                var listing=NativeIO.Run(NativeIO.WslExe,new [] {"--list","--quiet"},null,null,15000,Encoding.Unicode);
+                var listTask=Task.Run(()=>NativeIO.Run(NativeIO.WslExe,new [] {"--list","--quiet"},null,null,15000,Encoding.Unicode));
+                var runningTask=Task.Run(()=>NativeIO.Run(NativeIO.WslExe,new [] {"--list","--running","--quiet"},null,null,15000,Encoding.Unicode));
+                Task.WaitAll(listTask,runningTask);
+                var listing=listTask.Result;
                 if(listing.ExitCode!=0) { result.Notices.Add("WSL 배포판을 확인하지 못했습니다. WSL 또는 회사 정책 상태를 확인하세요."); return result; }
-                var runningResult=NativeIO.Run(NativeIO.WslExe,new [] {"--list","--running","--quiet"},null,null,15000,Encoding.Unicode);
+                var runningResult=runningTask.Result;
                 var running=new HashSet<string>((runningResult.ExitCode==0?runningResult.Output:"").Split(new [] {'\r','\n'},StringSplitOptions.RemoveEmptyEntries).Select(s=>s.Trim('\0',' ','\t')),StringComparer.OrdinalIgnoreCase);
+                var toProbe=new List<string>();
                 foreach(var value in listing.Output.Split(new [] {'\r','\n'},StringSplitOptions.RemoveEmptyEntries)) {
                     var distribution=value.Trim('\0',' ','\t');if(distribution.Length==0) continue;
                     if(distribution.StartsWith("docker-desktop",StringComparison.OrdinalIgnoreCase)) continue;
                     result.Distributions.Add(distribution);
                     if(!running.Contains(distribution)) {result.Stopped.Add(distribution);result.Notices.Add(distribution+": 중지된 배포판은 자동 시작하지 않았습니다. 사용할 배포판과 경로를 직접 선택하면 확인할 수 있습니다.");continue;}
-                    try { result.OpenCode.AddRange(FindWsl(distribution,null)); }
-                    catch(Exception error) { result.Notices.Add(distribution+": "+error.Message); }
+                    toProbe.Add(distribution);
+                }
+                if(toProbe.Count>0) {
+                    var probes=toProbe.Select(d=>Task.Run(()=>{try{return new KeyValuePair<List<OpenCodeCandidate>,string>(FindWsl(d,null),null);}catch(Exception error){return new KeyValuePair<List<OpenCodeCandidate>,string>(null,d+": "+error.Message);}})).ToArray();
+                    Task.WaitAll(probes);
+                    foreach(var probe in probes) {
+                        var outcome=probe.Result;
+                        if(outcome.Value!=null) result.Notices.Add(outcome.Value);
+                        else if(outcome.Key!=null) result.OpenCode.AddRange(outcome.Key);
+                    }
                 }
                 if(result.Distributions.Count==0) result.Notices.Add("등록된 WSL 배포판이 없습니다. WSL 설치를 자동으로 실행하지 않습니다.");
             } catch(Exception error) { result.Notices.Add("WSL 검색을 완료하지 못했습니다: "+error.Message); }
