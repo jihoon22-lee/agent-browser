@@ -37,13 +37,13 @@ export function SessionMenu({ label, actions }: { label: string; actions: Sessio
     }
   };
   return <div className="session-menu" ref={root} onKeyDown={menuKeys}>
-    <button ref={trigger} type="button" className="quiet session-menu-trigger" aria-label={label} aria-expanded={open} aria-haspopup="menu" onClick={() => open ? close() : setOpen(true)}>⋯</button>
-    {open && <div className="session-menu-popover" role={confirming ? "group" : "menu"} aria-label={label}>
+    <button ref={trigger} type="button" className="quiet session-menu-trigger" aria-label={label} aria-expanded={open} aria-haspopup="true" onClick={() => open ? close() : setOpen(true)}>⋯</button>
+    {open && <div className="session-menu-popover" role="group" aria-label={label}>
       {confirming ? <>
         <p>{confirming.confirm}</p>
         <button type="button" className="stop" onClick={() => { const action = confirming; close(); action.run(); }}>{confirming.label} 확인</button>
         <button type="button" data-safe-focus="true" onClick={() => setConfirming(undefined)}>취소</button>
-      </> : actions.map(action => <button type="button" role="menuitem" key={action.label} className={action.confirm ? "danger-text" : undefined} onClick={() => choose(action)}>{action.label}</button>)}
+      </> : actions.map(action => <button type="button" key={action.label} className={action.confirm ? "danger-text" : undefined} onClick={() => choose(action)}>{action.label}</button>)}
     </div>}
   </div>;
 }
