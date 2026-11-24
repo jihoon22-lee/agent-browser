@@ -130,11 +130,9 @@ fn validate_value(key: &str, prop: &Value, value: &Value) -> Result<(), RpcError
         }
         _ => {}
     }
-    if let Some(allowed) = prop["enum"].as_array() {
-        if !allowed.contains(value) {
-            let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
-            return Err(invalid(format!("`{key}` must be one of: {}", names.join(", "))));
-        }
+    if let Some(allowed) = prop["enum"].as_array() && !allowed.contains(value) {
+        let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
+        return Err(invalid(format!("`{key}` must be one of: {}", names.join(", "))));
     }
     Ok(())
 }
@@ -251,11 +249,9 @@ fn summarize(name: &str, args: &Value) -> String {
         let names: Vec<&str> = keys.iter().filter_map(Value::as_str).take(4).collect();
         if !names.is_empty() { parts.push(format!("modifiers={}", names.join("+"))); }
     }
-    if name == "browser_batch" {
-        if let Some(steps) = args.get("steps").and_then(Value::as_array) {
-            let names: Vec<&str> = steps.iter().filter_map(|step| step["tool"].as_str()).take(6).collect();
-            parts.push(format!("steps={} ({})", steps.len(), names.join(",")));
-        }
+    if name == "browser_batch" && let Some(steps) = args.get("steps").and_then(Value::as_array) {
+        let names: Vec<&str> = steps.iter().filter_map(|step| step["tool"].as_str()).take(6).collect();
+        parts.push(format!("steps={} ({})", steps.len(), names.join(",")));
     }
     for key in ["text", "textGone", "option"] {
         if let Some(s) = args.get(key).and_then(Value::as_str) {
@@ -312,7 +308,7 @@ pub const OPERATION_TOOLS: [&str; 15] = ["browser_batch","browser_snapshot","bro
 
 /// Fills ids a model omitted when the caller is bound to the open panel request.
 /// Returns the arguments to run with and whether an implicit attach created the operation.
-async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> Result<(Value, bool), ToolOutcome> {
+async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> Result<(Value, bool), Box<ToolOutcome>> {
     let action = args["action"].as_str();
     let tabs = name == "browser_tabs";
     // A null id is an omitted id: free models often send optional fields as null.
@@ -334,24 +330,24 @@ async fn bind_arguments(state: &ServerState, caller: &Caller, name: &str, args: 
             let read = tools::class_of(name, &args) == CommandClass::Read;
             let mut attached = Box::pin(run_with(state, caller, "browser_tabs", &json!({"action":"attach","requestId":bound.id}), !read)).await;
             // A concurrent id-less call may have attached first: join the operation it made.
-            if attached.error.as_ref().is_some_and(|error| error.code == ErrorCode::BrowserBusy) {
-                if let Some(operation) = state.ops.bound_request().filter(|now| now.id == bound.id).and_then(|now| now.operation) {
-                    // A write joining it has not seen the page either: hold it like a first write.
-                    if tools::class_of(name, &args) == CommandClass::Write {
-                        return Err(ToolOutcome::rejected(name, Some(&operation), RpcError::new(ErrorCode::StaleElement, Retry::Safe,
-                            "This request's tab was just attached by another call and the action did not run. Take browser_snapshot, then repeat the action.")));
-                    }
-                    args["operationId"] = json!(operation);
-                    return Ok((args, false));
+            if attached.error.as_ref().is_some_and(|error| error.code == ErrorCode::BrowserBusy)
+                && let Some(operation) = state.ops.bound_request().filter(|now| now.id == bound.id).and_then(|now| now.operation)
+            {
+                // A write joining it has not seen the page either: hold it like a first write.
+                if tools::class_of(name, &args) == CommandClass::Write {
+                    return Err(Box::new(ToolOutcome::rejected(name, Some(&operation), RpcError::new(ErrorCode::StaleElement, Retry::Safe,
+                        "This request's tab was just attached by another call and the action did not run. Take browser_snapshot, then repeat the action."))));
                 }
+                args["operationId"] = json!(operation);
+                return Ok((args, false));
             }
-            let Some(id) = attached.operation_id.clone().filter(|_| attached.ok) else { attached.tool = name.to_string(); return Err(attached) };
+            let Some(id) = attached.operation_id.clone().filter(|_| attached.ok) else { attached.tool = name.to_string(); return Err(Box::new(attached)) };
             // Never write on a page the model has not seen: return the attached page instead.
             if tools::class_of(name, &args) == CommandClass::Write {
                 let mut held = ToolOutcome::rejected(name, Some(&id), RpcError::new(ErrorCode::StaleElement, Retry::Safe,
                     "This request's tab was just attached and the action did not run. Review the attached snapshot, then repeat the action."));
                 held.data = attached.data; held.created_operation = true;
-                return Err(held);
+                return Err(Box::new(held));
             }
             (id, true)
         }
@@ -391,7 +387,7 @@ async fn run_with_budget(state: &ServerState, caller: &Caller, name: &str, args:
         }
         return ToolOutcome::rejected(name, operation_id, e);
     }
-    let (bound_args, implicit) = match bind_arguments(state, caller, name, args).await { Ok(bound) => bound, Err(failed) => return failed };
+    let (bound_args, implicit) = match bind_arguments(state, caller, name, args).await { Ok(bound) => bound, Err(failed) => return *failed };
     let args = &bound_args;
     let operation_id = args["operationId"].as_str();
     if needs_operation && operation_id.is_none() {
@@ -415,7 +411,7 @@ async fn run_with_budget(state: &ServerState, caller: &Caller, name: &str, args:
         run_operation_tool(state, caller, name, args, &def.schema, budget).await
     };
     let creates = name == "browser_tabs" && (args["action"] == "attach" || (args["action"] == "new" && args.get("operationId").is_none()));
-    if creates && outcome.ok {if let (Some(id),Some(conn))=(outcome.operation_id.as_deref(),caller.connection_id.as_deref()){state.ops.pin_input_connection(id,conn);}}
+    if creates && outcome.ok && let (Some(id),Some(conn))=(outcome.operation_id.as_deref(),caller.connection_id.as_deref()){state.ops.pin_input_connection(id,conn);}
     let mut created = CreatedOperation { state, id: if creates && outcome.ok { outcome.operation_id.clone() } else { None } };
     if follow_up {
         add_follow_up_snapshot(state, name, args, &mut outcome).await;
@@ -455,7 +451,7 @@ async fn run_operation_tool(state: &ServerState, caller:&Caller, name: &str, arg
         .collect();
     // The extension uploads only the attachments of the panel request that owns this operation; after a
     // Bridge restart or outside a panel request there is none, even if the extension still holds files.
-    if matches!(name,"browser_upload"|"browser_pointer") { if let Some(request) = state.ops.panel_request_of(op_id) { params.insert("panelRequestId".into(), json!(request)); } }
+    if matches!(name,"browser_upload"|"browser_pointer") && let Some(request) = state.ops.panel_request_of(op_id) { params.insert("panelRequestId".into(), json!(request)); }
     let class = tools::class_of(name, args);
     let method = format!("browser.{}", name.trim_start_matches("browser_"));
     let timeout = match budget {
@@ -761,8 +757,10 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
     let read = |method: &'static str, params: Value| state.registry.send_command(method, params, CommandClass::Read, DEFAULT_TIMEOUT);
     let delivered_failure = |op: Option<&str>, e: RpcError| ToolOutcome::from_browser(NAME, op, e);
     // Tab actions inside an operation wait while the user holds the browser, like page tools.
-    if let Some(op_id) = args["operationId"].as_str().filter(|_| matches!(action, "new" | "switch" | "close")) {
-        if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(NAME, Some(op_id), error); }
+    if let Some(op_id) = args["operationId"].as_str().filter(|_| matches!(action, "new" | "switch" | "close"))
+        && let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await
+    {
+        return ToolOutcome::rejected(NAME, Some(op_id), error);
     }
     match action {
         "list" | "windows" => match read(if action == "windows" {"browser.windows.list"} else {"browser.tabs.list"}, json!({"windowId":args["windowId"]})).await {
@@ -1192,7 +1190,7 @@ mod tests {
             assert!(futures_util::poll!(pending.as_mut()).is_pending());
             // Skip notifications such as browser.cancel from the previous operation's release.
             loop {
-                if let Envelope::Req { method, params, .. } = parse_envelope(&rx.try_recv().unwrap()).unwrap() { if method == "browser.upload" { return params; } }
+                if let Envelope::Req { method, params, .. } = parse_envelope(&rx.try_recv().unwrap()).unwrap() && method == "browser.upload" { return params; }
             }
         }
         let unscoped = state.ops.attach(1, "A").unwrap();

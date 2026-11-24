@@ -303,7 +303,6 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const advancedCapture=advanced?.enabled()&&req.method==='browser.screenshot'&&await trusted?.ensure(tabId).catch(()=>false);
         if(advancedMethod(req.method,p,!!advancedCapture)) {
           if(!advanced?.enabled())throw new ProtocolError('FORBIDDEN_METHOD','Advanced browser features require Chrome 125+ and Settings activation.');
-          if(req.method==='browser.downloads')return download!.handle(p,signal);
           return advanced.handle(req,signal,()=>{run.started=true;});
         }
 

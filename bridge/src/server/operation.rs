@@ -106,7 +106,7 @@ impl OperationGate {
     }
 
     pub fn pin_input_connection(&self,id:&str,connection:&str) {
-        let mut g=self.inner.lock().unwrap();if let Some(op)=g.op_mut(id) { if op.input_connection.is_none(){op.input_connection=Some(connection.into());} }
+        let mut g=self.inner.lock().unwrap();if let Some(op)=g.op_mut(id) && op.input_connection.is_none(){op.input_connection=Some(connection.into());}
     }
     pub fn input_connection_matches(&self,id:&str,connection:Option<&str>)->bool {
         let g=self.inner.lock().unwrap();g.op(id).is_some_and(|op|connection.is_some()&&op.input_connection.as_deref()==connection)

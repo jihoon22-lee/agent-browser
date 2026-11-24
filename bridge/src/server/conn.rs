@@ -145,10 +145,14 @@ fn reject(status: StatusCode, reason: &str) -> ErrorResponse {
     resp
 }
 
+fn is_valid_extension_id(id: &str) -> bool {
+    id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b))
+}
+
 /// `chrome-extension://<32 chars a-p>` → the 32-char extension id.
 fn extension_id_from_origin(origin: &str) -> Option<String> {
     let id = origin.strip_prefix("chrome-extension://")?;
-    (id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b))).then(|| id.to_string())
+    is_valid_extension_id(id).then(|| id.to_string())
 }
 
 fn raw_id(text: &str) -> String {
@@ -167,10 +171,13 @@ async fn send_err_and_close(ws: &mut Ws, id: &str, code: ErrorCode, message: &st
     let _ = ws.close(None).await;
 }
 
+type AcceptedSlot = Arc<StdMutex<Option<(Role, Option<String>)>>>;
+
 pub async fn handle(stream: TcpStream, state: Arc<ServerState>) {
-    let slot: Arc<StdMutex<Option<(Role, Option<String>)>>> = Arc::new(StdMutex::new(None));
+    let slot: AcceptedSlot = Arc::new(StdMutex::new(None));
     let callback = {
         let slot = slot.clone();
+        #[allow(clippy::result_large_err)]
         move |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
             let origin = req.headers().get("origin").and_then(|v| v.to_str().ok());
             let accepted = match req.uri().path() {
@@ -261,7 +268,7 @@ async fn handle_pair_request(ws: &mut Ws, role: Role, extension_id: Option<&str>
 }
 
 fn open_pairing(state: &ServerState, params: &Value) -> Result<Value, RpcError> {
-    let extension_id = params["extensionId"].as_str().filter(|id| id.len() == 32 && id.bytes().all(|b| (b'a'..=b'p').contains(&b)))
+    let extension_id = params["extensionId"].as_str().filter(|id| is_valid_extension_id(id))
         .ok_or_else(|| RpcError::new(ErrorCode::InvalidParams, Retry::Never, "extensionId must be a 32-character Chrome extension id"))?;
     let seconds = params["seconds"].as_u64().unwrap_or(120);
     if !(10..=300).contains(&seconds) { return Err(RpcError::new(ErrorCode::InvalidParams, Retry::Never, "seconds must be 10-300")); }
@@ -572,15 +579,14 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                         if !send(ws, &reply).await { break; }
                     }
                     Envelope::Evt { event, data, .. } => {
-                        if event == "tab.closed" {
-                            if let (Some(client), Some(tab_id)) = (
+                        if event == "tab.closed"
+                            && let (Some(client), Some(tab_id)) = (
                                 state.registry.selected_connection_client(conn),
                                 data.get("tabId").and_then(Value::as_i64),
-                            ) {
-                            if state.ops.remove_tab_for_client(&client, tab_id) {
-                                state.broadcast_status();
-                            }
-                            }
+                            )
+                            && state.ops.remove_tab_for_client(&client, tab_id)
+                        {
+                            state.broadcast_status();
                         }
                     }
                 }
@@ -613,10 +619,10 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             let Some(auth_client) = authenticated_client.filter(|s| !s.is_empty()) else {
                 return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "Authenticated browser clientId is missing."));
             };
-            if let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                if claimed != auth_client {
-                    return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
-                }
+            if let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty())
+                && claimed != auth_client
+            {
+                return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
             }
             if method != "request.end" && Some(auth_client) != state.registry.selected_client().as_deref() {
                 return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
@@ -646,10 +652,10 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             let Some(auth_client) = authenticated_client.filter(|s| !s.is_empty()) else {
                 return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "Authenticated browser clientId is missing."));
             };
-            if let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                if claimed != auth_client {
-                    return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
-                }
+            if let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty())
+                && claimed != auth_client
+            {
+                return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
             } else if params.get("clientId").is_none() {
                 return Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "operationId and clientId are required"));
             }

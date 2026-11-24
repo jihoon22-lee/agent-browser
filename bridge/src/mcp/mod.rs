@@ -97,10 +97,10 @@ impl ServerHandler for BridgeMcp {
         let mut ok = outcome["ok"].as_bool().unwrap_or(false);
         let mut content = vec![];
         if ok && req.name == "browser_screenshot" {
-            if let Some(data) = outcome.get_mut("data").and_then(|v| v.as_object_mut()) {
-                if let Some(serde_json::Value::String(b64)) = data.insert("base64".into(), serde_json::Value::String("<image attached>".into())) {
-                    content.push(ContentBlock::image(b64, "image/png"));
-                }
+            if let Some(data) = outcome.get_mut("data").and_then(|v| v.as_object_mut())
+                && let Some(serde_json::Value::String(b64)) = data.insert("base64".into(), serde_json::Value::String("<image attached>".into()))
+            {
+                content.push(ContentBlock::image(b64, "image/png"));
             }
             let (text, bounded_ok) = bounded_text(&req.name, &outcome);
             ok = bounded_ok;

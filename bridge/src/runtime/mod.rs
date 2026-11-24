@@ -303,12 +303,12 @@ impl Manager {
     }
     async fn terminate_wsl(&self, profile: &Profile, record: &RuntimeRecord) -> Option<bool> {
         let stopped = self.terminate_wsl_process(profile,record).await?;
-        if let Some(keeper) = &record.wsl_keeper {
-            if record.wsl_owner_file.as_deref() != Some(&keeper.owner_file) {
-                let mut keeper_record = record.clone();
-                keeper_record.launcher = keeper.launcher.clone(); keeper_record.wsl_owner_file = Some(keeper.owner_file.clone()); keeper_record.wsl_keeper = None;
-                return Some(self.terminate_wsl_process(profile,&keeper_record).await? || stopped);
-            }
+        if let Some(keeper) = &record.wsl_keeper
+            && record.wsl_owner_file.as_deref() != Some(&keeper.owner_file)
+        {
+            let mut keeper_record = record.clone();
+            keeper_record.launcher = keeper.launcher.clone(); keeper_record.wsl_owner_file = Some(keeper.owner_file.clone()); keeper_record.wsl_keeper = None;
+            return Some(self.terminate_wsl_process(profile,&keeper_record).await? || stopped);
         }
         Some(stopped)
     }
@@ -920,7 +920,7 @@ fn http_client(base: &str) -> Result<reqwest::Client,RpcError> {
     static LOOPBACK: std::sync::OnceLock<Result<reqwest::Client, String>> = std::sync::OnceLock::new();
     static PROXY: std::sync::OnceLock<Result<reqwest::Client, String>> = std::sync::OnceLock::new();
     let url = reqwest::Url::parse(base).map_err(|_| invalid("Invalid OpenCode URL"))?;
-    let is_loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    let is_loopback = profile::is_loopback_host(url.host_str());
     let slot = if is_loopback { &LOOPBACK } else { &PROXY };
     slot.get_or_init(|| {
         let mut builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).timeout(Duration::from_secs(3));

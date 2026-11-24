@@ -49,10 +49,8 @@ pub async fn call(ws: &mut Ws, method: &str, params: serde_json::Value) -> Envel
 /// Waits for the next `evt` with this name, ignoring everything else.
 pub async fn next_event(ws: &mut Ws, name: &str) -> serde_json::Value {
     loop {
-        if let Envelope::Evt { event, data, .. } = recv(ws).await {
-            if event == name {
-                return data;
-            }
+        if let Envelope::Evt { event, data, .. } = recv(ws).await && event == name {
+            return data;
         }
     }
 }

@@ -1,13 +1,13 @@
 import { ProtocolError } from "../protocol/errors";
 import { pageText } from "./snapshot";
+import { resolveRef } from "./refs";
+import { cancellationError } from "./cancellation";
+import { observePage } from "./observe";
 
 /** Words as a person reads them: case, runs of spaces, the tab between table cells and a
  * non-breaking space do not matter. browser_snapshot's query reads the page the same way. */
 const fold = (value: string) => value.replace(/\s+/g, " ").trim().toLowerCase();
 const shows = (text: string, wanted: string) => text.includes(wanted) || fold(text).includes(fold(wanted));
-import { resolveRef } from "./refs";
-import { cancellationError } from "./cancellation";
-import { observePage } from "./observe";
 
 /** Internal read-only probe used across document replacements by the background waiter. */
 export function textConditions(p: Record<string,unknown>): Record<string,boolean> {
