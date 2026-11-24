@@ -95,3 +95,15 @@ it('a cheap query prefilter never hides text joined around omitted script nodes'
   document.body.innerHTML='<div>A<script>noise</script>B<button>View</button></div>';
   expect(takeSnapshot({...opts,query:'AB'}).elements.some(e=>e.name==='View')).toBe(true);
 });
+it('matches shadow DOM row text and exposes ARIA table/grid refs in snapshots',()=>{
+  document.body.innerHTML='<div role="table" aria-label="매출표"><div role="row"><div role="cell">1월</div></div></div>';
+  const host=document.createElement('div');
+  host.setAttribute('role','row');
+  const shadow=host.attachShadow({mode:'open'});
+  shadow.innerHTML='<span>주문 S-9001</span><button>상세</button>';
+  document.body.appendChild(host);
+  const full=takeSnapshot(opts);
+  expect(full.elements.some(e=>e.role==='table'&&e.name==='매출표'&&e.ref.length>0)).toBe(true);
+  const queried=takeSnapshot({...opts,query:'S-9001'});
+  expect(queried.elements.some(e=>e.role==='button'&&e.name==='상세')).toBe(true);
+});

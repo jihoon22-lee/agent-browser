@@ -91,6 +91,7 @@ export function workbenchReducer(state: WorkbenchState, action: Data): Workbench
   if (event.type === "message.part.updated" && p.part && typeof p.part === "object") message.parts = byId([...message.parts, p.part]);
   if (event.type === "message.part.removed") message.parts = message.parts.filter(part => part.id !== p.partID);
   if (event.type === "message.part.delta") {
+    if (typeof p.partID !== "string" || !p.partID) return next;
     const i = message.parts.findIndex(part => part.id === p.partID);
     const part = i >= 0 ? { ...message.parts[i]! } : { id: p.partID, messageID, sessionID, type: p.part?.type ?? "text", text: "" };
     // Only text fields are appended; arbitrary event properties cannot rewrite object prototypes.
@@ -134,7 +135,7 @@ export function dataUrlBytes(url: unknown): number | null {
     const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
     return Math.max(0, Math.floor((payload.length * 3) / 4) - padding);
   }
-  return new TextEncoder().encode(decodeURIComponent(payload)).length;
+  try { return new TextEncoder().encode(decodeURIComponent(payload)).length; } catch { return null; }
 }
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

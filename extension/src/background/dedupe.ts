@@ -98,7 +98,10 @@ function storeOver(read: () => Promise<State | undefined>, write: (s: State) => 
                     for (const [k] of snaps.slice(200)) { delete s.bindings[k]; pruned = true; }
                 }
             }
-            if (mutates || pruned) await write(s);
+            if (mutates || pruned) {
+                try { await write(s); }
+                catch (error) { cached = undefined; throw error; }
+            }
             return result;
         });
         tail = work.catch(() => { });

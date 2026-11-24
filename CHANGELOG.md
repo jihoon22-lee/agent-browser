@@ -1,5 +1,24 @@
 # 변경 기록
 
+## [0.5.5] - 2026-11-24
+
+`v0.5.4` 최종 코드 리뷰에서 발견된 항목들을 수정한 핫픽스입니다.
+
+- **Side Panel · UI 안정성 및 성능:**
+  - `SafeMarkdown` 인라인 링크 정규식의 중첩 수량자(ReDoS)를 제거해 긴 URL을 스트리밍하는 도중 UI가 멈추는 문제를 수정하고, 이스케이프된 기울임체(`\*`) 처리를 바로잡았습니다.
+  - 어시스턴트 `MessageCard`의 `onRetry` 콜백을 안정화해 키 입력·스트리밍 중 과거 카드 전체가 불필요하게 리렌더링되던 회귀를 복구했습니다.
+  - 320px 좁은 패널의 `.composer-selectors` 미디어 쿼리 우선순위와 Options 모바일 하단 여백을 바로잡고, 프로필 삭제·전환·언마운트 시 SSE 델타 rAF 버퍼가 남지 않도록 정리했습니다.
+- **Rust Bridge:**
+  - 이전 턴이 패널 `request.end`로 종료된 뒤 이어지는 id-less `browser_pointer` 호출이 최신 오퍼레이션 레인을 유지하도록 수정했습니다.
+  - `runtime.json` 읽기 캐시가 동일 파일 핸들에서 메타데이터와 본문을 함께 읽어 동시 교체 시 TOCTOU 레이스를 방지하도록 개선했습니다.
+  - 사전 인증 WebSocket 프레임 버퍼를 64 KiB로 제한하고, `operation.pause`/`resume`의 빈 `clientId` 검증 및 페어링 코드 상수 시간 비교를 보강했습니다.
+- **Extension Core:**
+  - open Shadow DOM 행·카드에서 `browser_snapshot { query }` 단축 경로가 Shadow 내부 텍스트를 놓치던 문제와, ARIA `[role="table"]`/`[role="grid"]` 스냅샷 `ref` 발급 누락 및 호스트 Shadow DOM 내부 행 추출을 보완했습니다.
+  - `overflow-x: hidden` 문서에서의 가로 스크롤 폴백, `urlWait`의 Bridge 응답 마감 반영, `<select multiple>` 선택 목록 상한, `dedupe` 쓰기 실패 시 캐시 무효화를 적용했습니다.
+- **설치 관리자 · 스크립트:**
+  - `setup.ps1`·`uninstall.ps1` `finally` 정리를 개별 `try/catch`로 보호해 일시적 파일 잠금이 락 해제나 제거 후처리를 막지 않도록 수정하고, `Start-OwnedBridge`의 트랜잭션 전달과 root→leaf reparse point 검사를 통일했습니다.
+  - `AgentBrowser-Setup.exe` 창을 좁게 리사이즈할 때 페이지 패널 최소 폭을 유지해 가로 스크롤로 모든 컨트롤이 유지되도록 하고, `DetectExtension`의 창 닫힘 가드와 `NativeIO`/`Discovery` 예외 처리를 보강했습니다.
+
 ## [0.5.4] - 2026-11-24
 
 전체 코드베이스 리뷰 결과를 반영해 안정성·성능·브라우저 제어·UI/접근성·설치 마법사 UX를 전반적으로 개선했습니다.

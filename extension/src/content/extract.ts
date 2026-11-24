@@ -1,5 +1,5 @@
 import { ProtocolError } from "../protocol/errors";
-import { composedClosest, walkDeep } from "./dom";
+import { composedClosest, composedParent, walkDeep } from "./dom";
 import { pageText, renderedText, sliceText, utf8Bytes } from "./snapshot";
 import { resolveRef } from "./refs";
 import { clipText } from "./text";
@@ -51,12 +51,26 @@ function tableGrid(table: HTMLTableElement) {
   return { header, rows: normalized, rowCount: normalized.length, colCount };
 }
 
+function queryDeepAll(root: Element, selector: string): Element[] {
+  const out: Element[] = [];
+  const visit = (scope: Element | ShadowRoot) => {
+    for (const child of Array.from(scope.children)) {
+      if (child.matches(selector)) out.push(child);
+      if (child.shadowRoot) visit(child.shadowRoot);
+      visit(child);
+    }
+  };
+  if (root.shadowRoot) visit(root.shadowRoot);
+  visit(root);
+  return out;
+}
+
 function ariaTableGrid(container: Element) {
-  const rowEls = [...container.querySelectorAll('[role="row"]')].filter(r => composedClosest(r.parentElement, '[role="table"],[role="grid"],table') === container);
+  const rowEls = queryDeepAll(container, '[role="row"]').filter(r => composedClosest(composedParent(r), '[role="table"],[role="grid"],table') === container);
   const grid: string[][] = [];
   let hasHeader = false;
   for (let r = 0; r < rowEls.length; r++) {
-    const cells = [...rowEls[r]!.querySelectorAll('[role="columnheader"],[role="rowheader"],[role="cell"],[role="gridcell"]')].filter(c => composedClosest(c.parentElement, '[role="row"]') === rowEls[r]);
+    const cells = queryDeepAll(rowEls[r]!, '[role="columnheader"],[role="rowheader"],[role="cell"],[role="gridcell"]').filter(c => composedClosest(composedParent(c), '[role="row"]') === rowEls[r]);
     if (!cells.length) continue;
     if (grid.length === 0 && cells.every(c => c.getAttribute("role") === "columnheader")) hasHeader = true;
     grid.push(cells.map(cellText));

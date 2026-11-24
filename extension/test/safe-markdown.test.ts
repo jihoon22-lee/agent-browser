@@ -15,3 +15,12 @@ it("supports parentheses in URLs, nested inline formatting, separate lists, and 
   expect(html).toContain("<ul><li>bullet</li></ul><ol><li>ordered</li></ol>");
   expect(html.match(/<blockquote>/g)).toHaveLength(1);
 });
+it("parses unclosed long markdown links in linear time without backtracking and supports escaped italics", () => {
+  const start = performance.now();
+  const unclosed = `[Docs](https://example.com/${"a".repeat(80)}`;
+  const html = renderToStaticMarkup(createElement(SafeMarkdown, { text: unclosed }));
+  expect(performance.now() - start).toBeLessThan(200);
+  expect(html).toContain("[Docs](https://example.com/");
+  const italic = renderToStaticMarkup(createElement(SafeMarkdown, { text: "*hello \\* world*" }));
+  expect(italic).toContain("<em>hello \\* world</em>");
+});

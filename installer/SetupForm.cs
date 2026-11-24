@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace AgentBrowser.Installer {
@@ -208,7 +207,7 @@ namespace AgentBrowser.Installer {
             status.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;heading.Anchor=steps.Anchor=stepBar.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;
             FontChanged+=delegate{ReplaceFont(heading,ref headingFont,new Font(Font.FontFamily,Font.Size*1.8F,FontStyle.Bold));ReplaceFont(complete,ref completeFont,new Font(Font.FontFamily,Font.Size*1.6F,FontStyle.Bold));ReplaceFont(check,ref doneMarkFont,new Font("Segoe UI Symbol",Font.Size*3.2F));ReplaceFont(pairingCode,ref pairingCodeFont,PairingCodeFontFor(Font));RenderSteps();};
             body.Name="PageViewport";body.Size=new Size(ClientSize.Width,ClientSize.Height-header.Height-bottom.Height);body.Dock=DockStyle.Fill;body.AutoScroll=true;
-            foreach(var panel in panels){panel.Location=new Point(32,20);body.Controls.Add(panel);panel.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;panel.SizeChanged+=delegate{FitViewport();};}
+            foreach(var panel in panels){panel.Location=new Point(32,20);panel.MinimumSize=new Size(656,0);body.Controls.Add(panel);panel.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;panel.SizeChanged+=delegate{FitViewport();};}
             Controls.Add(body);Controls.Add(bottom);Controls.Add(header);FitViewport();
             FormBorderStyle=FormBorderStyle.Sizable;MaximizeBox=true;
             MinimumSize=new Size(520,420);

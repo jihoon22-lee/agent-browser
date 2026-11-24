@@ -22,7 +22,7 @@ export function useAdvancedNotice(operationId:string|undefined,active:boolean):A
 }
 export function BrowserExtras({operationId,visible,notice}:{operationId:string;visible:boolean;notice?:AdvancedNotice}) {
  const [enabled,setEnabled]=useState(false),[items,setItems]=useState<Item[]>([]),[message,setMessage]=useState('');
- useEffect(()=>{const refresh=()=>void chrome.storage.local.get('advancedBrowser').then(d=>setEnabled(d.advancedBrowser===true&&advancedAvailable()));const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{if(area==='local'&&changes.advancedBrowser)refresh();};refresh();chrome.storage.onChanged?.addListener(changed);return()=>chrome.storage.onChanged?.removeListener(changed);},[]);
+ useEffect(()=>{let live=true;const refresh=()=>void chrome.storage.local.get('advancedBrowser').then(d=>{if(live)setEnabled(d.advancedBrowser===true&&advancedAvailable());}).catch(()=>{});const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{if(area==='local'&&changes.advancedBrowser)refresh();};refresh();chrome.storage.onChanged?.addListener(changed);return()=>{live=false;chrome.storage.onChanged?.removeListener(changed);};},[]);
  const polled=useAdvancedNotice(operationId,visible&&!notice);
  const {recovery,dialog}=notice??polled;
  useEffect(()=>{setItems([]);setMessage('');},[operationId,visible]);

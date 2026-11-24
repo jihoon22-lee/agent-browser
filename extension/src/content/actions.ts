@@ -458,7 +458,8 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         const matches = el.multiple ? opt.selected === selectWant : el.selectedOptions[0] === opt;
         const shown = el.multiple && opt.selected ? opt : el.selectedOptions[0];
         const label = shown?.text.trim() ?? "";
-        return { executed: true, verified: { ...verificationValue(shown?.value ?? el.value), matches, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}), ...(el.multiple ? { selected: [...el.selectedOptions].map(o => o.text.trim()) } : {}) } };
+        const selectedLabels = el.multiple ? [...el.selectedOptions].slice(0, 20).map(o => clipText(o.text.trim(), 128)) : undefined;
+        return { executed: true, verified: { ...verificationValue(shown?.value ?? el.value), matches, label: clipText(label, 512), ...(label.length > 512 ? { labelTruncated: true } : {}), ...(selectedLabels ? { selected: selectedLabels, ...(el.selectedOptions.length > 20 ? { selectedTruncated: true } : {}) } : {}) } };
       }
       if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
         const want = p.checked ?? true;
@@ -566,12 +567,18 @@ const scrollsHorizontally = (el: Element) => {
   if (el === document.body && getComputedStyle(document.documentElement).overflowX === "visible") return false;
   return true;
 };
+const docCanScroll = (doc: HTMLElement, horizontal: boolean) => {
+  const overflows = horizontal ? doc.scrollWidth > doc.clientWidth + 1 : doc.scrollHeight > doc.clientHeight + 1;
+  if (!overflows) return false;
+  const ov = horizontal ? getComputedStyle(doc).overflowX : getComputedStyle(doc).overflowY;
+  return !/hidden|clip/.test(ov);
+};
 /** What can actually move: the ref (or its nearest scrollable ancestor), the document, or — when the
  * document itself cannot scroll, as in an app shell — the largest scrollable area on screen. */
 function scrollTarget(p: P, horizontal = false): { el: HTMLElement; target: "document" | "ancestor" | "region" } {
   const doc = (document.scrollingElement ?? document.documentElement) as HTMLElement;
   const canScroll = horizontal ? scrollsHorizontally : scrollsVertically;
-  const docOverflows = horizontal ? doc.scrollWidth > doc.clientWidth + 1 : doc.scrollHeight > doc.clientHeight + 1;
+  const docOverflows = docCanScroll(doc, horizontal);
   if (p.ref) {
     const start = resolveRef(String(p.ref));
     if (canScroll(start)) return { el: start as HTMLElement, target: "region" };
@@ -595,7 +602,7 @@ function scrollTarget(p: P, horizontal = false): { el: HTMLElement; target: "doc
 /** The element that scrolls the page: the document, or the body when the root is overflow:hidden and
  * the body holds the scroll bar. */
 const pageScroller = (doc: HTMLElement, horizontal = false): HTMLElement =>
-  (horizontal ? doc.scrollWidth > doc.clientWidth + 1 : doc.scrollHeight > doc.clientHeight + 1) || !document.body || !(horizontal ? scrollsHorizontally : scrollsVertically)(document.body) ? doc : document.body;
+  docCanScroll(doc, horizontal) || !document.body || !(horizontal ? scrollsHorizontally : scrollsVertically)(document.body) ? doc : document.body;
 function scroll(p: P) {
   const horizontal = p.direction === "left" || p.direction === "right";
   const { el, target } = scrollTarget(p, horizontal);

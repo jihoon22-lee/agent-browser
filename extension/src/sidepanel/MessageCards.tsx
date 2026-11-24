@@ -90,9 +90,9 @@ export function hasVisibleContent(message: UiMessage): boolean {
 }
 export const messageText = (message: UiMessage) => message.parts.filter(part => part.type === "text" && !part.synthetic && !part.ignored).map(part => String(part.text ?? "")).join("\n");
 const time = (message: UiMessage) => message.info.time?.created ? new Date(message.info.time.created).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "";
-type CardProps = { message: UiMessage; continued?: boolean; onFork: (messageID: string) => void; onRevert: (messageID: string) => void; onOpenFile?: (part: Data) => void; onRetry?: () => void };
+type CardProps = { message: UiMessage; continued?: boolean; onFork: (messageID: string) => void; onRevert: (messageID: string) => void; onOpenFile?: (part: Data) => void; retryText?: string; onRetry?: (text: string) => void };
 /** Assistant steps of one reply share a header (`continued`); fork and revert belong to the user's prompt. */
-export const MessageCard = memo(function MessageCard({ message, continued, onFork, onRevert, onOpenFile, onRetry }: CardProps) {
+export const MessageCard = memo(function MessageCard({ message, continued, onFork, onRevert, onOpenFile, retryText, onRetry }: CardProps) {
   const user = message.info.role === "user";
   const [confirmRevert, setConfirmRevert] = useState(false);
   const parts = message.parts.map((part, index) => { const node = renderPart(part, onOpenFile); return node === null ? null : <div key={part.id ?? index}>{node}</div>; }).filter(Boolean);
@@ -101,6 +101,6 @@ export const MessageCard = memo(function MessageCard({ message, continued, onFor
       {user && <span className="message-actions"><button onClick={() => onFork(message.info.id)}>여기서 분기</button><button onClick={() => setConfirmRevert(true)}>이전으로 되돌리기</button></span>}</header>}
     {confirmRevert && <div className="inline-confirm" role="group" aria-label="되돌리기 확인" onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setConfirmRevert(false); } }}><p>이 메시지 이전으로 대화·서버 파일 변경을 되돌릴까요? 이미 완료된 웹사이트 작업은 되돌리지 않습니다.</p><div className="toolbar"><button className="stop" onClick={() => { setConfirmRevert(false); onRevert(message.info.id); }}>되돌리기 확인</button><button autoFocus onClick={() => setConfirmRevert(false)}>취소</button></div></div>}
     {parts}
-    {message.info.error && <div className="error" role="alert"><span>{message.info.error.data?.message ?? message.info.error.message ?? message.info.error.name}</span>{!user && onRetry && <div className="toolbar"><button type="button" onClick={onRetry}>수정 후 재전송</button></div>}</div>}
+    {message.info.error && <div className="error" role="alert"><span>{message.info.error.data?.message ?? message.info.error.message ?? message.info.error.name}</span>{!user && retryText && onRetry && <div className="toolbar"><button type="button" onClick={() => onRetry(retryText)}>수정 후 재전송</button></div>}</div>}
   </article>;
 });

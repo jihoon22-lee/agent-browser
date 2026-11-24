@@ -232,13 +232,6 @@ code, pre { font-family: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regul
 .timeline p { margin: 5px 0 0; font-size: 12px; white-space: pre-wrap; }
 .outcome { color: var(--success); }
 .outcome.failed { color: var(--danger); }
-@media (max-width: 350px) {
-  .app-header { padding: 12px 10px; } .header-actions { gap: 3px; }
-  .workspace-summary { padding: 10px 12px; } .message-viewport { padding: 0 12px 10px; }
-  .composer { padding: 8px 10px 10px; } .composer-send { flex-wrap: wrap; justify-content: flex-end; }
-  .composer-selectors { flex-wrap: wrap; } .composer-selectors select { max-width: 48%; }
-  .view-scroll { padding: 16px 12px 22px; }
-}
 @media (prefers-reduced-motion: no-preference) { button { transition: background-color .12s, border-color .12s; } }
 .session-scope { font-size: 11px; }
 .session-row { display: flex; align-items: center; gap: 4px; }
@@ -275,3 +268,10 @@ code, pre { font-family: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regul
 .model-search > input { flex: 1; min-width: 80px !important; width: 100px !important; margin: 0 !important; padding: 5px 8px !important; }
 .composer-capability { margin: 5px 2px 0; font-size: 11px; line-height: 1.4; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer-warning { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--danger); }
+@media (max-width: 350px) {
+  .app-header { padding: 12px 10px; } .header-actions { gap: 3px; }
+  .workspace-summary { padding: 10px 12px; } .message-viewport { padding: 0 12px 10px; }
+  .composer { padding: 8px 10px 10px; } .composer-send { flex-wrap: wrap; justify-content: flex-end; }
+  .composer-selectors { flex-wrap: wrap; } .composer-selectors select { max-width: 48%; }
+  .view-scroll { padding: 16px 12px 22px; }
+}

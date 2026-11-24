@@ -113,7 +113,7 @@ export async function urlWait(
         }
     };
     const off = deps.api.onTabUpdated((id, _change, t) => { if (id === tabId) match(t); });
-    const timer = setTimeout(() => reject(new ProtocolError('TIMEOUT', 'The requested URL condition was not reached.', 'safe')), Math.min(Number(p.timeoutMs ?? 5000), 30000));
+    const timer = setTimeout(() => reject(new ProtocolError('TIMEOUT', 'The requested URL condition was not reached.', 'safe')), Math.max(50, deps.within(Math.min(Number(p.timeoutMs ?? 5000), 30000))));
     void url.catch(() => { });
     try {
         match(await getTab(deps.api, tabId));

@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -11,31 +10,32 @@ using System.Windows.Forms;
 namespace AgentBrowser.Installer {
     internal sealed partial class SetupForm {
         async Task DetectExtension(){
-            if(page!=4||detecting)return;detecting=true;bool advance=false;
+            if(page!=4||detecting||IsDisposed||Disposing)return;detecting=true;bool advance=false;
             try{
                 // Never hash every installed file on the UI thread per tick: the page verified the
                 // installation when it opened. Without that result, verify once in the background.
                 if(detectionState==null||detectionExtensionId==null){
                     string selected=folder.Text;
                     var verified=await Task.Run(()=>{var checkedState=Verified(selected);return new KeyValuePair<InstallState,string>(checkedState,Pairing.ExtensionId(Path.Combine(checkedState.InstallDir,"extension","manifest.json")));});
-                    if(page!=4)return;
+                    if(page!=4||IsDisposed||Disposing)return;
                     detectionState=verified.Key;detectionExtensionId=verified.Value;
                 }
                 var state=detectionState;string id=detectionExtensionId;
                 // Starting (or verifying) the Bridge hashes files and queries processes: once per page visit.
                 // One attempt per page visit, successful or not: a failing start must not be repeated every tick.
-                if(!detectionBridgeStarted){detectionBridgeStarted=true;await Task.Run(()=>BridgeControl.Start(state));}
+                if(!detectionBridgeStarted){detectionBridgeStarted=true;await Task.Run(()=>BridgeControl.Start(state));if(page!=4||IsDisposed||Disposing)return;}
                 var current=await Task.Run(()=>BridgeStatus(state));
+                if(IsDisposed||Disposing)return;
                 if(page==4&&Pairing.Seen(current,id)){
                     advance=connectionAuto;connectionAuto=false;
                     extensionDetected.ForeColor=Notice.Good;extensionDetected.Text="✓ Chrome에 AgentBrowser 확장이 추가되었습니다."+(advance?"":" [다음]을 누르세요.");
                 }
             }catch(Exception){/* Detection is only a hint; the next step reports real errors. */}
             finally{detecting=false;}
-            if(advance&&page==4){
+            if(advance&&page==4&&!IsDisposed&&!Disposing){
                 await PreparePairing();
                 // The step could not be opened (its error is in the status line): leave the manual way visible.
-                if(page==4)extensionDetected.Text+=" [다음]을 누르세요.";
+                if(page==4&&!IsDisposed&&!Disposing)extensionDetected.Text+=" [다음]을 누르세요.";
             }
         }
         async Task OpenPairingCode(CancellationTokenSource wait,InstallState verifiedState,string id,bool bridgeStarted=false){
