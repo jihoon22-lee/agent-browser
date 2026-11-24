@@ -6,8 +6,8 @@ export function safeLink(url: string): string | undefined {
 function inline(text: string, depth = 0): ReactNode[] {
   if (depth > 4) return [text];
   const result: ReactNode[] = [];
-  // Supports inline code, bold (allowing nested inline like `code` or *em*), italic, and links/images with balanced 1-level parentheses in URLs.
-  const pattern = /(`[^`]+`|\*\*(?:[^*]|(?:\*(?!\*)))+\*\*|\*(?!\s)(?:[^*]|\\\*)+(?<!\s)\*|!?\[[^\]]+\]\((?:[^\s()]+|\([^\s()]*\))+\))/g;
+  // Supports inline code, bold (allowing nested inline like `code` or *em*), italic (with \* escape), and links/images with balanced 1-level parentheses in URLs without nested quantifiers (linear time).
+  const pattern = /(`[^`]+`|\*\*(?:[^*]|(?:\*(?!\*)))+\*\*|\*(?!\s)(?:[^*\\]|\\.)+(?<!\s)\*|!?\[[^\]]+\]\((?:[^\s()]|\([^\s()]*\))+\))/g;
   let from = 0;
   for (const match of text.matchAll(pattern)) {
     const idx = match.index!;

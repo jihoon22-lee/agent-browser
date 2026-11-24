@@ -28,6 +28,14 @@ export function useWorkbench() {
   const client = useRef<OpenCodeV1Client | undefined>(undefined), epoch = useRef(0), stream = useRef<AbortController | undefined>(undefined), selected = useRef("");
   const syncing = useRef(false), buffered = useRef<Data[]>([]), refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), listTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const pendingDeltas = useRef<Data[]>([]), deltaFrame = useRef<number | undefined>(undefined);
+  const clearDeltas = useCallback(() => {
+    if (deltaFrame.current !== undefined) {
+      if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(deltaFrame.current);
+      else clearTimeout(deltaFrame.current);
+      deltaFrame.current = undefined;
+    }
+    pendingDeltas.current = [];
+  }, []);
   const flushDeltas = useCallback(() => {
     if (deltaFrame.current !== undefined) {
       if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(deltaFrame.current);
@@ -237,7 +245,7 @@ export function useWorkbench() {
   const connect = useCallback(async (id: string, workdir?: string, restoreId?: string, automatic = false) => {
     let restored = restoreId ?? (id !== currentProfile.current ? recentSessions.current.get(id) : undefined) ?? "";
     if (currentProfile.current && selected.current) recentSessions.current.set(currentProfile.current, selected.current);
-    const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); flushDeltas(); syncing.current = false; buffered.current = [];
+    const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); clearDeltas(); syncing.current = false; buffered.current = [];
     bindings.current.clear();
     clearTimeout(offlineTimer.current); offlineTimer.current = undefined; streamOnline.current = false; if (!automatic) autoRecovered.current = false;
     setLoading(true); setConnected(false); setError(""); setProfileId(id); currentProfile.current = id;
@@ -313,10 +321,11 @@ export function useWorkbench() {
       const setters = [setCatalog, setAgents, setCommands, setSkills, setMcp] as Array<(value: any) => void>;
       results.forEach((result, index) => { if (result.status === "fulfilled") setters[index]!(result.value); else fail(result.reason); });
       await chrome.storage.local.set({ lastProfileId: id, [`recentSession:${id}`]: selected.current });
+      if (revision !== epoch.current) return;
       if (!syncedOnOnline) await resync();
     } catch (value) { if (revision === epoch.current) fail(value); }
     finally { if (revision === epoch.current) setLoading(false); }
-  }, [resync, refreshSessions, updateSession, removeSession, invalidateChildren]);
+  }, [resync, refreshSessions, updateSession, removeSession, invalidateChildren, clearDeltas]);
   reconnect.current = connect;
   const selectSession = useCallback(async (session: Data) => {
     const rev = ++selectionRevision.current, ep = epoch.current;
@@ -344,7 +353,7 @@ export function useWorkbench() {
         if (!active || rev !== loadRevision) return;
         const id = list.some((p: Data) => p.id === saved.lastProfileId) ? saved.lastProfileId : result.defaultProfileId;
         if (client.current && !list.some((profile: Data) => profile.id === currentProfile.current)) {
-          epoch.current++; stream.current?.abort(); client.current = undefined; selected.current = ""; currentProfile.current = "";
+          epoch.current++; stream.current?.abort(); clearDeltas(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); client.current = undefined; selected.current = ""; currentProfile.current = "";
           setConnected(false); setRuntime(undefined); setProfileId(""); setSessionId(""); setSessions([]); setCatalog({ all: [], connected: [], default: {} }); dispatch({ type: "reset" });
         }
         if (changedId && changedId === currentProfile.current && client.current) { await connect(changedId); return; }
@@ -367,8 +376,8 @@ export function useWorkbench() {
       if (message.kind === "profiles-changed") void load(message.profileId);
     };
     chrome.runtime.onMessage.addListener(listener);
-    return () => { active = false; epoch.current++; stream.current?.abort(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); clearTimeout(offlineTimer.current); chrome.runtime.onMessage.removeListener(listener); };
-  }, [connect]);
+    return () => { active = false; epoch.current++; stream.current?.abort(); clearDeltas(); clearTimeout(refreshTimer.current); clearTimeout(listTimer.current); clearTimeout(offlineTimer.current); chrome.runtime.onMessage.removeListener(listener); };
+  }, [connect, clearDeltas]);
   // Which panel session owns a browser operation: its session ID, "other" for a different runtime, or undefined if unproven.
   const operationOwner = useCallback((operationId: string): string | undefined => {
     const binding = bindings.current.get(operationId); if (!binding) return undefined;

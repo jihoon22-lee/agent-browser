@@ -357,12 +357,10 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     const current = wb.captureScope();
     const parts = await Promise.all(selectedFiles.map(filePart));
     if (!current()) return;
-    setAttachments(previous => {
-      const next = [...previous, ...parts];
-      const check = selectAttachments(next.filter(a => a.type === "file" && typeof a.url === "string" && a.url.startsWith("data:")).map(a => ({ name: a.filename, mime: a.mime, dataUrl: a.url })));
-      if (check.skipped.length) setNotice(`파일 첨부는 최대 5개(총 25MB)까지 browser_upload로 전달됩니다. ${check.skipped.length}개는 메시지에만 포함됩니다.`);
-      return next;
-    });
+    const next = [...attachments, ...parts];
+    setAttachments(next);
+    const check = selectAttachments(next.filter(a => a.type === "file" && typeof a.url === "string" && a.url.startsWith("data:")).map(a => ({ name: a.filename, mime: a.mime, dataUrl: a.url })));
+    if (check.skipped.length) setNotice(`파일 첨부는 최대 5개(총 25MB)까지 browser_upload로 전달됩니다. ${check.skipped.length}개는 메시지에만 포함됩니다.`);
   }
   async function addBrowserReference(reference: string) {
     const current = wb.captureScope();
@@ -406,20 +404,27 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     await perform(async () => { const current = api(), active = wb.captureScope(); const done = await respondOnce(responding.current, request.id, () => current.get<Data[]>("/permission"), () => current.post(`/permission/${encodeURIComponent(request.id)}/reply`, { reply })); if (!active()) return; setNotice(done ? "권한 응답을 전달했습니다." : "이 권한 요청은 다른 곳에서 이미 처리되었습니다."); await wb.resync(); });
   }
   // Stable handlers let memoized message cards skip re-rendering while the user types or a reply streams.
-  const messageHandlers = useRef({ fork: (_: string) => {}, revert: (_: string) => {}, open: (_: Data) => {} });
+  const messageHandlers = useRef({ fork: (_: string) => {}, revert: (_: string) => {}, open: (_: Data) => {}, retry: (_: string) => {} });
   messageHandlers.current = {
     fork: messageID => void perform(() => forkSession(messageID)),
     // MessageCard has already asked for confirmation inside the message.
     revert: messageID => void perform(async () => { await api().post(sessionPath() + "/revert", { messageID }); await wb.resync(); }),
     open: part => void perform(() => openArtifact(part)),
+    retry: text => { setDraft(text); composer.current?.focus(); },
   };
-  const onFork = useCallback((id: string) => messageHandlers.current.fork(id), []), onRevert = useCallback((id: string) => messageHandlers.current.revert(id), []), onOpenFile = useCallback((part: Data) => messageHandlers.current.open(part), []);
+  const onFork = useCallback((id: string) => messageHandlers.current.fork(id), []), onRevert = useCallback((id: string) => messageHandlers.current.revert(id), []), onOpenFile = useCallback((part: Data) => messageHandlers.current.open(part), []), onRetry = useCallback((text: string) => messageHandlers.current.retry(text), []);
   const turns = useMemo(() => {
-    const result: Array<{ key: string; user: boolean; messages: UiMessage[] }> = [];
+    const result: Array<{ key: string; user: boolean; messages: UiMessage[]; retryText: string }> = [];
+    let lastUserText = "";
     for (const message of messages) {
       const user = message.info.role === "user", last = result.at(-1);
       if (!user && last && !last.user) { if (hasVisibleContent(message)) last.messages.push(message); continue; }
-      result.push({ key: message.info.id, user, messages: hasVisibleContent(message) ? [message] : [] });
+      const visible = hasVisibleContent(message);
+      if (user) {
+        const text = messageText(message);
+        if (text) lastUserText = text;
+      }
+      result.push({ key: message.info.id, user, messages: visible ? [message] : [], retryText: user ? "" : lastUserText });
     }
     return result.filter(turn => turn.messages.length);
   }, [messages]);
@@ -516,7 +521,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
         <select ref={modelSelect} aria-label="모델" className="model-select" title={model ? `${model.providerName} · ${model.name ?? model.id}\n${capability}\n다음 메시지부터 적용` : "사용할 모델을 선택하세요"} value={modelKey} onChange={event => choose(() => { setModelKey(event.target.value); setVariant(""); })}><option value="">모델 선택</option>{modelGroups.map(([label, items]) => <optgroup key={label} label={label}>{items.map(item => <option key={modelKeyOf(item)} value={modelKeyOf(item)}>{item.name ?? item.id}{label === FAVORITE_MODELS ? ` · ${item.providerName}` : ""}</option>)}</optgroup>)}</select>
         {Object.keys(model?.variants ?? {}).length > 0 && <select aria-label="모델 variant·추론 옵션" title="모델 variant·추론 옵션" value={variant} onChange={event => choose(() => setVariant(event.target.value))}><option value="">추론 기본</option>{Object.keys(model?.variants ?? {}).map(name => <option key={name} value={name}>추론 {name}</option>)}</select>}
         <select aria-label="에이전트" title="에이전트" value={agent} onChange={event => choose(() => setAgent(event.target.value))}><option value="">기본 에이전트</option>{wb.agents.filter(item => !item.hidden && ["primary", "all"].includes(item.mode)).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select>
-        <button type="button" className="quiet icon-button" aria-label="모델 검색·즐겨찾기" aria-expanded={modelTools} title="모델 검색·즐겨찾기" onClick={() => setModelTools(open => { if (open) setModelSearch(""); return !open; })}>☆</button>
+        <button type="button" className="quiet icon-button" aria-label="모델 검색·즐겨찾기" aria-expanded={modelTools} title="모델 검색·즐겨찾기" onClick={() => { if (modelTools) setModelSearch(""); setModelTools(!modelTools); }}>☆</button>
       </div>
       {modelTools && <div className="model-search"><input aria-label="모델 검색" placeholder="모델 검색" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /><button type="button" disabled={!modelKey} onClick={() => { const next = favorites.includes(modelKey) ? favorites.filter(key => key !== modelKey) : [...favorites, modelKey]; setFavorites(next); void chrome.storage.local.set({ modelFavorites: next }); }}>{favorites.includes(modelKey) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</button></div>}
       <p className="composer-capability" title={`${capability} · 다음 메시지부터 적용`}>{capability}</p>
@@ -557,15 +562,10 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       {contextRatio >= 0.75 && wb.sessionId && <div className="notice context-pressure" role="status"><span>컨텍스트 사용량 {Math.round(contextRatio * 100)}%</span>{model && !running && <button type="button" onClick={() => void perform(compact)}>컨텍스트 압축</button>}</div>}
       <div className="viewport-wrap">
       <div className="message-viewport" ref={messageViewport} onScroll={event => { if (view !== "chat" || drawer !== null) return; const el = event.currentTarget; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80; followMessages.current = atBottom; setShowJumpToBottom(!atBottom && el.scrollHeight > el.clientHeight + 120); }} aria-label="대화 메시지">
-      {turns.map((turn, turnIndex) => {
-        const previousUser = !turn.user ? turns.slice(0, turnIndex).reverse().find(item => item.user) : undefined;
-        const retryText = previousUser ? previousUser.messages.map(messageText).filter(Boolean).join("\n") : "";
-        const onRetry = retryText ? () => { setDraft(retryText); composer.current?.focus(); } : undefined;
-        return <div key={turn.key} className={`turn ${turn.user ? "user" : "assistant"}`}>
-          {turn.messages.map((message, index) => <MessageCard key={message.info.id} message={message} continued={index > 0} onOpenFile={onOpenFile} onFork={onFork} onRevert={onRevert} onRetry={onRetry} />)}
+      {turns.map(turn => <div key={turn.key} className={`turn ${turn.user ? "user" : "assistant"}`}>
+          {turn.messages.map((message, index) => <MessageCard key={message.info.id} message={message} continued={index > 0} onOpenFile={onOpenFile} onFork={onFork} onRevert={onRevert} retryText={message.info.error ? turn.retryText : undefined} onRetry={onRetry} />)}
           {!turn.user && <TurnCopy messages={turn.messages} />}
-        </div>;
-      })}
+        </div>)}
       {waiting && <p className="waiting muted" role="status">응답을 준비하는 중…</p>}
       {!turns.length && !waiting && <div className={`empty-chat ${start.tone}`}><span className="empty-chat-icon" aria-hidden="true">{start.tone === "problem" ? "!" : start.tone === "waiting" ? "…" : "↗"}</span><h3>{start.title}</h3>{start.body && <p>{start.body}</p>}
         {start.actions && <div className="start-actions">{start.actions.map(action => <button key={action.label} className={action.primary ? "primary" : undefined} onClick={event => action.run(event.currentTarget)}>{action.label}</button>)}</div>}

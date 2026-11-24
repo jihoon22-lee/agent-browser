@@ -56,12 +56,13 @@ it("displays tool execution duration, closes revert confirm on Escape, and offer
     },
     onFork: vi.fn(),
     onRevert: vi.fn(),
+    retryText: "원래 질문",
     onRetry,
   })));
   expect(host.querySelector(".tool-duration")?.textContent).toBe("1.4초");
   const retryButton = buttons().find(button => button.textContent === "수정 후 재전송")!;
   await act(async () => retryButton.click());
-  expect(onRetry).toHaveBeenCalledTimes(1);
+  expect(onRetry).toHaveBeenCalledWith("원래 질문");
 
   await act(async () => root.render(createElement(MessageCard, {
     message: { info: { id: "msg-u", role: "user" }, parts: [{ id: "p-u", type: "text", text: "질문" }] },
