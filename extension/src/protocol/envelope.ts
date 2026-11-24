@@ -21,7 +21,7 @@ export function parseEnvelope(text: string): Envelope {
   }
   switch (obj.type) {
     case "req":
-      if (typeof obj.id === "string" && typeof obj.method === "string" && typeof obj.params === "object" && obj.params !== null) return obj as Req;
+      if (typeof obj.id === "string" && typeof obj.method === "string" && typeof obj.params === "object" && obj.params !== null && !Array.isArray(obj.params)) return obj as Req;
       break;
     case "res":
       if (typeof obj.id === "string" && typeof obj.ok === "boolean") return obj as Res;

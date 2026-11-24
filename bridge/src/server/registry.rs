@@ -110,10 +110,8 @@ impl Registry {
             if out.iter().any(|b| b.client_id == client_id) { continue; }
             out.push(BrowserInfo { client_id: client_id.to_string(), connected: true, selected: g.selected.as_deref() == Some(client_id) });
         }
-        if let Some(sel) = &g.selected {
-            if !out.iter().any(|b| &b.client_id == sel) {
-                out.push(BrowserInfo { client_id: sel.clone(), connected: false, selected: true });
-            }
+        if let Some(sel) = &g.selected && !out.iter().any(|b| &b.client_id == sel) {
+            out.push(BrowserInfo { client_id: sel.clone(), connected: false, selected: true });
         }
         out
     }

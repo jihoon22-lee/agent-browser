@@ -77,6 +77,7 @@ fn main() -> anyhow::Result<()> {
                 return runtime.block_on(manager.attach(&profile,&origin)).map_err(|error| anyhow::anyhow!(error.message));
             }
             if let Command::Runtime { command } = command {
+                let is_start = matches!(command, RuntimeCommand::Start { .. });
                 let mut result = match command {
                     RuntimeCommand::StopAll { .. } => runtime.block_on(manager.stop_all()),
                     RuntimeCommand::Start { profile } => {
@@ -86,7 +87,11 @@ fn main() -> anyhow::Result<()> {
                 }.map_err(|error| anyhow::anyhow!(error.message))?;
                 if let Some(object) = result.as_object_mut() { object.remove("password"); object.remove("username"); }
                 println!("{}",serde_json::to_string_pretty(&result)?);
-                anyhow::ensure!(result["errors"].as_array().is_none_or(|errors| errors.is_empty()) && result["state"] != "error", "One or more runtime operations failed; failed ownership records were retained");
+                if is_start {
+                    anyhow::ensure!(result["state"] != "error", "{}", result["error"].as_str().unwrap_or("Managed runtime failed to start"));
+                } else {
+                    anyhow::ensure!(result["errors"].as_array().is_none_or(|errors| errors.is_empty()), "One or more runtime stop operations failed; failed ownership records were retained");
+                }
                 return Ok(());
             }
             let result = match command {

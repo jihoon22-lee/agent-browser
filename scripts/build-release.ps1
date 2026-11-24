@@ -50,7 +50,7 @@ try {
     Copy-Item -LiteralPath $BridgeExe -Destination (Join-Path $stage 'browser-bridge.exe')
     $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
     if (-not (Test-Path -LiteralPath $compiler)) { throw 'The built-in .NET Framework compiler is unavailable; no dependency was installed.' }
-    $sources=@('NativeIO.cs','Discovery.cs','Jsonc.cs','InstallerEngine.cs','ProfileForm.cs','SetupForm.cs') | ForEach-Object { Join-Path $repo ('installer\' + $_) }
+    $sources=@('NativeIO.cs','Discovery.cs','Jsonc.cs','InstallerEngine.cs','ProfileForm.cs','SetupForm.cs','SetupForm.Flow.cs','SetupHelpers.cs') | ForEach-Object { Join-Path $repo ('installer\' + $_) }
     $guiCache=Join-Path $repo 'target\installer'; $null=New-Item -ItemType Directory -Path $guiCache -Force
     $guiExe=Join-Path $guiCache 'AgentBrowser-Setup.exe'; $guiStamp=Join-Path $guiCache 'build-powershell.json'
     $sourceHash=Get-TextHash ((@((Get-FileSha256 $compiler)) + @($sources | ForEach-Object { Get-FileSha256 $_ })) -join [Environment]::NewLine)

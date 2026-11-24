@@ -6,8 +6,8 @@ import { bridgeUnavailable, friendlyError } from "../src/sidepanel/error-text";
 const samples: Array<[string, string, string]> = [
   ["../bridge/src/runtime/mod.rs", "OpenCode HTTP and browser MCP did not become ready within 60 seconds. Check the executable/version, port, WSL localhost forwarding, directory, and environment.", "60초 안에 준비되지 않았습니다"],
   ["../bridge/src/runtime/mod.rs", "Cannot launch OpenCode; check the executable, working directory, and environment", "OpenCode를 실행하지 못했습니다"],
-  ["../bridge/src/runtime/mod.rs", "OpenCode HTTP is available but browser MCP is not connected; inspect WSL interop and the Bridge executable", "브라우저 MCP가 연결되지 않았습니다"],
-  ["../bridge/src/runtime/mod.rs", "OpenCode HTTP is available but browser MCP initialization did not finish", "브라우저 MCP 준비가 끝나지 않았습니다"],
+  ["../bridge/src/runtime/http.rs", "OpenCode HTTP is available but browser MCP is not connected; inspect WSL interop and the Bridge executable", "브라우저 MCP가 연결되지 않았습니다"],
+  ["../bridge/src/runtime/http.rs", "OpenCode HTTP is available but browser MCP initialization did not finish", "브라우저 MCP 준비가 끝나지 않았습니다"],
   ["../bridge/src/runtime/mod.rs", "The managed runtime needs its browser MCP configuration refreshed (Bridge endpoint or owned WSL keeper). Stop this profile in Options, then start it again. The existing runtime was left running.", "서버를 중지한 뒤 다시 연결하세요"],
   ["../bridge/src/runtime/mod.rs", "Another operation is already managing this profile; wait for it to finish", "다른 작업이 이 실행 환경을 처리하는 중입니다"],
   ["../bridge/src/runtime/mod.rs", "The requested OpenCode port is already occupied; select another port or an external profile", "다른 프로그램이 사용하고 있습니다"],

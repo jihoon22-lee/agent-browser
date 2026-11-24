@@ -598,12 +598,13 @@ async fn a_switch_whose_snapshot_fails_still_requires_one_before_writing() {
     READABLE.store(false, std::sync::atomic::Ordering::SeqCst);
     let mut mcp = mcp;
     let mut seen = Vec::new();
+    type UnreadableHandler = fn(&str, &Value) -> Result<Value, (&'static str, &'static str)>;
     async fn run_with_unreadable(
         mut mcp: Ws,
         ext: &mut Ws,
         tool_name: &'static str,
         args: Value,
-        handler: fn(&str, &Value) -> Result<Value, (&'static str, &'static str)>,
+        handler: UnreadableHandler,
     ) -> (Ws, Value, Vec<String>) {
         let mut methods = Vec::new();
         let mut task = tokio::spawn(async move {

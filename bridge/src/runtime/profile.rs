@@ -33,6 +33,10 @@ pub struct Profile {
 
 pub fn invalid(message: impl Into<String>) -> RpcError { RpcError::new(ErrorCode::InvalidParams, Retry::Never, message) }
 
+pub(crate) fn is_loopback_host(host: Option<&str>) -> bool {
+    matches!(host, Some("127.0.0.1" | "localhost" | "[::1]" | "::1"))
+}
+
 impl Profile {
     pub fn validate(&self) -> Result<(), RpcError> {
         if self.id.is_empty() || self.id.len() > 64 || !self.id.bytes().all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c)) {
@@ -78,7 +82,7 @@ impl Profile {
 
     pub fn external_url(&self) -> Result<reqwest::Url, RpcError> {
         let url = reqwest::Url::parse(self.base_url.as_deref().ok_or_else(|| invalid("An external server URL is required"))?).map_err(|_| invalid("Invalid external server URL"))?;
-        let loopback = matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]" | "::1"));
+        let loopback = is_loopback_host(url.host_str());
         if !matches!(url.scheme(), "http" | "https") || (url.scheme() == "http" && !loopback) || !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
             return Err(invalid("External servers require HTTPS, or loopback HTTP; credentials belong in the authentication fields, not the URL"));
         }

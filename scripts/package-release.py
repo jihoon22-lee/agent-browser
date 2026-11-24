@@ -35,7 +35,7 @@ def main():
         copy(a.bridge,"browser-bridge.exe")
         binary=stage/"browser-bridge.exe";validate_pe(binary.read_bytes())
         if subprocess.check_output([str(binary.resolve()),"--version"],text=True).strip()!="browser-bridge "+version: raise ValueError("Bridge version mismatch")
-        sources=[ROOT/"installer"/name for name in ["NativeIO.cs","Discovery.cs","Jsonc.cs","InstallerEngine.cs","ProfileForm.cs","SetupForm.cs"]]
+        sources=[ROOT/"installer"/name for name in ["NativeIO.cs","Discovery.cs","Jsonc.cs","InstallerEngine.cs","ProfileForm.cs","SetupForm.cs","SetupForm.Flow.cs","SetupHelpers.cs"]]
         compiler=pathlib.Path("/mnt/c/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe")
         cache=ROOT/"target/installer";cache.mkdir(parents=True,exist_ok=True);gui=cache/"AgentBrowser-Setup.exe";stamp=cache/"build.json"
         fingerprint=hashlib.sha256((sha(compiler)+"\n"+"\n".join(sha(source) for source in sources)).encode()).hexdigest()
