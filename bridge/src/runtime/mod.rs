@@ -441,7 +441,7 @@ impl Manager {
                 _ => {}
             }
             if inspection.listener {
-                if !self.overlay_current(&record) { let mut value = info(&profile,&record,"error",false,&self.home); value["error"] = json!("Bridge MCP configuration changed. Stop this profile in Options, then start it again; its existing runtime was left running."); return Ok(value); }
+                if !self.overlay_current(&record) { let mut value = info(&profile,&record,"error",false,&self.home); value["reason"] = json!("OVERLAY_OUTDATED"); value["error"] = json!("Bridge MCP configuration changed. Stop this profile in Options, then start it again; its existing runtime was left running."); return Ok(value); }
                 if let Ok(version) = health(&record.base_url,Some(&record.username),Some(&record.password),true,&self.verified_docs).await {
                     record.version = Some(version);
                     if browser_mcp(&profile,&record).await.is_ok() { return Ok(info(&profile,&record,"ready",false,&self.home)); }
@@ -494,7 +494,16 @@ impl Manager {
         let config = self.store.read()?;
         let ids: Vec<_> = if let Some(id) = id { vec![id.to_string()] } else { config.profiles.keys().cloned().collect() };
         let bridge = crate::mcp::client::probe_authenticated(&self.home,self.port).await;
-        let mut checks = vec![json!({"id":"bridge","status":if bridge {"ok"} else {"warning"},"message":if bridge {format!("Authenticated Bridge {} · 127.0.0.1:{}",env!("CARGO_PKG_VERSION"),self.port)} else {format!("No authenticated Bridge at 127.0.0.1:{}; doctor did not start it",self.port)}}),
+        let bridge_check = if bridge {
+            json!({"id":"bridge","status":"ok","message":format!("Authenticated Bridge {} · 127.0.0.1:{}",env!("CARGO_PKG_VERSION"),self.port)})
+        } else if crate::mcp::client::probe(self.port).await {
+            json!({"id":"bridge","status":"warning","reason":"query_authentication_failed","message":format!("Bridge is listening at 127.0.0.1:{}, but authentication failed; verify data home and pairing credentials",self.port)})
+        } else if matches!(tokio::time::timeout(Duration::from_millis(500), tokio::net::TcpStream::connect(("127.0.0.1", self.port))).await, Ok(Ok(_))) {
+            json!({"id":"bridge","status":"warning","reason":"connection_failed","message":format!("Port 127.0.0.1:{} is occupied by another process (not AgentBrowser Bridge); doctor did not start it",self.port)})
+        } else {
+            json!({"id":"bridge","status":"warning","message":format!("Bridge is not running at 127.0.0.1:{}; doctor did not start it",self.port)})
+        };
+        let mut checks = vec![bridge_check,
             json!({"id":"extension","status":"warning","message":"Check the connected and selected Chrome profile in the extension diagnostics"})];
         for id in ids {
             let profile = self.profile(&id)?;
@@ -890,7 +899,9 @@ async fn health(base: &str, username: Option<&str>, password: Option<&str>, mana
     // The ~825 KB API document only changes with the server version; status polls run every 15 s.
     let key = format!("{}#{version}", base.trim_end_matches('/'));
     if verified.lock().unwrap().contains(&key) { return Ok(version.into()); }
-    let doc = limited_json(request("doc").send().await.map_err(|_| failure("OpenCode v1 API discovery failed"))?,4 * 1024 * 1024).await?;
+    let doc_response = request("doc").timeout(Duration::from_secs(10)).send().await.map_err(|_| failure("OpenCode v1 API discovery failed"))?;
+    if !doc_response.status().is_success() { return Err(failure(format!("OpenCode v1 API discovery returned HTTP {}", doc_response.status().as_u16()))); }
+    let doc = limited_json(doc_response,4 * 1024 * 1024).await?;
     if !["/session","/provider","/event","/mcp"].iter().all(|path| doc["paths"].get(*path).is_some()) { return Err(failure("The server does not expose the required OpenCode v1 APIs")); }
     verified.lock().unwrap().insert(key);
     Ok(version.into())
@@ -1478,5 +1489,47 @@ mod issue8_runtime_tests {
         assert!(doctor["checks"].as_array().unwrap().iter().any(|check|check["id"]=="mcp"&&check["reason"]=="executable_missing"),"{doctor}");
         assert!(!doctor.to_string().contains("private-fixture"));
         assert!(!status.to_string().contains("private-fixture"));
+    }
+
+    #[tokio::test]
+    async fn doc_non_2xx_reports_http_status_and_outdated_overlay_sets_reason() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else { break };
+                tokio::spawn(async move {
+                    let mut bytes = [0; 4096];
+                    let n = stream.read(&mut bytes).await.unwrap();
+                    let req = String::from_utf8_lossy(&bytes[..n]);
+                    let (status, body) = if req.contains("/global/health") {
+                        ("200 OK", json!({"healthy":true,"version":"1.18.29"}).to_string())
+                    } else {
+                        ("503 Service Unavailable", "unavailable".to_string())
+                    };
+                    let resp = format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        let err = health(&format!("http://127.0.0.1:{port}"), None, None, false, &DocCache::default()).await.unwrap_err();
+        server.abort();
+        assert!(err.message.contains("503"), "expected 503 in error: {}", err.message);
+
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::new(home.path().into(), 4317);
+        let profile: Profile = serde_json::from_value(json!({"id":"p1","name":"P1","kind":"windows","directory":home.path(),"executable":home.path().join("absent.exe")})).unwrap();
+        manager.save(profile, false).unwrap();
+        let identity = process::identity(std::process::id()).unwrap();
+        manager.persist(&RuntimeRecord {
+            profile_id: "p1".into(), instance: "inst".into(), base_url: "http://127.0.0.1:4096".into(),
+            username: "opencode".into(), password: "pw".into(), launcher: identity.clone(), server: Some(identity),
+            wsl_owner_file: None, version: None, bridge_port: Some(9999),
+            bridge_executable: Some(std::env::current_exe().unwrap().to_string_lossy().into_owned()), wsl_keeper: None,
+        }).unwrap();
+        let st = manager.status("p1").await.unwrap();
+        assert_eq!(st["state"], "error");
+        assert_eq!(st["reason"], "OVERLAY_OUTDATED");
     }
 }

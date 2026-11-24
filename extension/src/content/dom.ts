@@ -12,6 +12,23 @@ export function composedParent(el: Element): Element | null {
   // A detached anchor/area is its own root and has a URL `host` string.
   return root instanceof ShadowRoot ? root.host : null;
 }
+export function deepActiveElement(doc: Document): Element | null {
+  let active: Element | null = doc.activeElement;
+  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+  return active;
+}
+export function composedClosest(el: Element | null, selector: string): Element | null {
+  for (let node: Element | null = el; node; node = composedParent(node)) {
+    if (node.matches(selector)) return node;
+  }
+  return null;
+}
+export function composedContains(ancestor: Element, target: Element): boolean {
+  for (let node: Element | null = target; node; node = composedParent(node)) {
+    if (node === ancestor) return true;
+  }
+  return false;
+}
 export function isDisabled(el: Element): boolean {
   if (el.matches(':disabled')) return true;
   for (let node: Element | null = el; node; node = composedParent(node))
@@ -52,12 +69,12 @@ export function isPointerTarget(el: Element, cache?: StyleCache): boolean {
   const doc = el.ownerDocument;
   if (!(el instanceof HTMLElement) || el === doc.body || el === doc.documentElement) return false;
   if (styleOf(el, cache).cursor !== "pointer") return false;
-  const parent = el.parentElement;
+  const parent = composedParent(el);
   if (parent && styleOf(parent, cache).cursor === "pointer") return false;
   // A card that holds its own button or link is acted on through that control.
   // Hidden or disabled controls cannot stand in for the card, so it stays listed then.
   if ([...el.querySelectorAll(INTERACTIVE)].some(control => !isDisabled(control) && isRendered(control, { checkLayout: false, cache }))) return false;
-  return !parent?.closest(INTERACTIVE);
+  return !composedClosest(parent, INTERACTIVE);
 }
 
 export function isRendered(el: Element, opts: { checkLayout: boolean; cache?: StyleCache }): boolean {

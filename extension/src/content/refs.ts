@@ -84,6 +84,12 @@ export class RefTable {
     const root = recordRoot(el);
     return root === original && (!root || sameRecord(root)) ? el : undefined;
   }
+  find(el: Element): string | undefined {
+    for (let i = 0; i < this.els.length; i++) {
+      if (this.els[i]?.node.deref() === el) return `s${snapshotToken(this.snapshotId)}f${this.frameId}e${i + 1}`;
+    }
+    return undefined;
+  }
   static parse(ref: string) {
     const m = REF_RE.exec(ref);
     return m ? { snapshotId: parseInt(m[1]!, 36), frameId: Number(m[2]), index: Number(m[3]) } : null;
@@ -117,6 +123,15 @@ export function newTable(snapshotId: number, frameId: number): RefTable {
   tables.push(t);
   if (tables.length > KEEP) tables.shift();
   return t;
+}
+export function findRef(el: Element): string | undefined {
+  const latest = tables.at(-1);
+  if (!latest) return undefined;
+  for (let node: Element | null = el; node; node = composedParent(node)) {
+    const found = latest.find(node);
+    if (found) return found;
+  }
+  return undefined;
 }
 export function resolveRef(ref: string, allowDetached = false, scope: RefScope = 'record'): Element {
   const p = RefTable.parse(ref);

@@ -304,3 +304,19 @@ async fn extension_rpc_cannot_spoof_another_profiles_client_id() {
     let spoof_pause = call(&mut profile_b, "operation.pause", serde_json::json!({"operationId":"op-1","clientId":"profile-a"})).await;
     assert_eq!(err_code(&spoof_pause), Some(ErrorCode::ForbiddenMethod), "{spoof_pause:?}");
 }
+
+#[tokio::test]
+async fn oversized_pre_auth_frame_is_rejected_and_closed() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let (_home, serve, _cfg) = start_test_serve().await;
+    let mut ws = ws_connect(serve.port, "/mcp-proxy", None).await.unwrap();
+    let huge = "x".repeat(20 * 1024);
+    ws.send(Message::text(huge)).await.unwrap();
+    let reply = match ws.next().await.unwrap().unwrap() {
+        Message::Text(t) => agent_browser_bridge::rpc::parse_envelope(&t).unwrap(),
+        other => panic!("expected text error reply, got {other:?}"),
+    };
+    assert_eq!(err_code(&reply), Some(ErrorCode::InvalidParams), "{reply:?}");
+    assert!(next_is_close(&mut ws).await);
+}

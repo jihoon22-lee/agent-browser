@@ -272,6 +272,9 @@ fn open_pairing(state: &ServerState, params: &Value) -> Result<Value, RpcError> 
     Ok(json!({ "open": true, "seconds": seconds, "code": code }))
 }
 
+/// Upper bound for pre-authentication WebSocket text frames (`auth.hello`, `auth.prove`, `pair.request`).
+const PRE_AUTH_MAX_BYTES: usize = 16 * 1024;
+
 /// Mutual HMAC handshake: server proof first, then client proof. Pair only after both.
 async fn authenticate(
     ws: &mut Ws,
@@ -286,6 +289,10 @@ async fn authenticate(
             return None;
         }
     };
+    if first.len() > PRE_AUTH_MAX_BYTES {
+        send_err_and_close(ws, "", ErrorCode::InvalidParams, "pre-authentication message exceeds 16 KiB limit").await;
+        return None;
+    }
     let (id, params) = match parse_envelope(&first) {
         Ok(Envelope::Req { id, method, params, .. }) if method == "auth.hello" => (id, params),
         Ok(Envelope::Req { id, method, params, .. }) if method == "pair.request" => {
@@ -339,6 +346,10 @@ async fn authenticate(
             return None;
         }
     };
+    if text.len() > PRE_AUTH_MAX_BYTES {
+        send_err_and_close(ws, "", ErrorCode::InvalidParams, "pre-authentication message exceeds 16 KiB limit").await;
+        return None;
+    }
     let (id, params) = match parse_envelope(&text) {
         Ok(Envelope::Req { id, method, params, .. }) if method == "auth.prove" => (id, params),
         _ => {

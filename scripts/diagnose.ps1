@@ -6,7 +6,7 @@ function ConvertTo-SafeDiagnostic($Doctor,[string]$Version) {
     $profiles=New-Object 'System.Collections.Generic.Dictionary[string,int]' ([StringComparer]::Ordinal)
     $checks=@()
     $reasons=@('query_timeout','query_authentication_failed','query_failed','invalid_response','registration_missing','connected','disabled','authentication_required','executable_missing','permission_denied','connection_timeout','connection_failed','unknown_status',
-        'WSL_PROCESS_STILL_RUNNING','WSL_PROCESS_STOPPED_KEEPER_UNVERIFIED','WSL_PROBE_TIMEOUT','WSL_LAUNCH_UNAVAILABLE','WSL_START_PENDING','WSL_OWNER_FILE_MISSING','WSL_OWNER_FILE_UNREADABLE','WSL_OWNER_RECORD_INVALID','WSL_OWNER_NONCE_MISMATCH','WSL_KEEPER_UNVERIFIED','WSL_DIRECTORY_UNAVAILABLE','WSL_EXECUTABLE_UNAVAILABLE','WSL_DATA_ACCESS_DENIED','WSL_REQUIRED_TOOL_MISSING','WSL_PROC_ACCESS_DENIED','WSL_WINDOWS_EXECUTION_FAILED','WSL_INTEROP_REGISTRATION_UNAVAILABLE','WSL_PROCESS_OR_KEEPER_UNVERIFIED','WSL_PROBE_RECORD_UNAVAILABLE','WSL_CONTROL_FAILED','WSL_PREREQUISITES_AVAILABLE','PROFILE_OPERATION_IN_PROGRESS')
+        'WSL_PROCESS_STILL_RUNNING','WSL_PROCESS_STOPPED_KEEPER_UNVERIFIED','WSL_PROBE_TIMEOUT','WSL_LAUNCH_UNAVAILABLE','WSL_START_PENDING','WSL_OWNER_FILE_MISSING','WSL_OWNER_FILE_UNREADABLE','WSL_OWNER_RECORD_INVALID','WSL_OWNER_NONCE_MISMATCH','WSL_KEEPER_UNVERIFIED','WSL_DIRECTORY_UNAVAILABLE','WSL_EXECUTABLE_UNAVAILABLE','WSL_DATA_ACCESS_DENIED','WSL_REQUIRED_TOOL_MISSING','WSL_PROC_ACCESS_DENIED','WSL_WINDOWS_EXECUTION_FAILED','WSL_INTEROP_REGISTRATION_UNAVAILABLE','WSL_PROCESS_OR_KEEPER_UNVERIFIED','WSL_PROBE_RECORD_UNAVAILABLE','WSL_CONTROL_FAILED','WSL_PREREQUISITES_AVAILABLE','PROFILE_OPERATION_IN_PROGRESS','OVERLAY_OUTDATED')
     foreach($check in $Doctor.checks) {
         $number=$null
         if($check.profileId) {
@@ -63,12 +63,17 @@ try {
     $report=ConvertTo-SafeDiagnostic $doctor ([string]$state.Version)
     $text=$report | ConvertTo-Json -Depth 8
     $reportPath=Join-Path $state.DataDir 'diagnostic-report.json'
-    $failureCode='DIAG_REPORT_WRITE_FAILED'
-    Write-Utf8Atomic $reportPath $text
     Write-Output $text
-    Write-Output 'Report saved: data\diagnostic-report.json'
+    $saved=$false
+    try {
+        Write-Utf8Atomic $reportPath $text
+        $saved=$true
+    } catch {
+        Write-Output 'DIAG_REPORT_WRITE_FAILED: Could not save data\diagnostic-report.json (report printed above).'
+    }
+    if($saved){Write-Output 'Report saved: data\diagnostic-report.json'}
     Write-Output 'No model request or browser operation was performed.'
-    if(-not $report.ok){exit 1}
+    if(-not $report.ok -or -not $saved){exit 1}
 } catch {
     # Native errors can contain a private command, path, or environment. Do not dump them.
     Write-Output ($failureCode + ': Could not complete diagnostics. No runtime was started or stopped.')

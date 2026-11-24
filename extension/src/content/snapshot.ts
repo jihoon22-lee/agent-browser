@@ -1,4 +1,4 @@
-import { accessibleName, createStyleCache, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
+import { accessibleName, composedClosest, composedContains, composedParent, createStyleCache, deepActiveElement, isDisabled, isInteractive, isPointerTarget, isRendered, roleOf, walkDeep, type NameCache } from "./dom";
 import { newTable } from "./refs";
 import { clipText, safeRange, safeSlice } from "./text";
 import { recordText, recordObservation, type RecordObservation } from './record-context';
@@ -59,7 +59,7 @@ export function stateOf(el: Element): string[] {
   if ((el as HTMLInputElement).required || aria("aria-required") === "true") states.push("required");
   if ((el as HTMLInputElement).readOnly || aria("aria-readonly") === "true") states.push("readonly");
   if (aria("aria-invalid") === "true") states.push("invalid");
-  if (el.ownerDocument.activeElement === el) states.push("focused");
+  if (deepActiveElement(el.ownerDocument) === el) states.push("focused");
   return states;
 }
 
@@ -67,9 +67,9 @@ export function stateOf(el: Element): string[] {
  * whatever markup the site uses. */
 function contextRoot(el: Element, lookAlikes: Element[]): Element | null {
   let best: Element | null = null;
-  for (let parent = el.parentElement; parent && parent !== el.ownerDocument.body; parent = parent.parentElement) {
+  for (let parent = composedParent(el); parent && parent !== el.ownerDocument.body; parent = composedParent(parent)) {
     const ancestor = parent;
-    if (lookAlikes.some(other => other !== el && ancestor.contains(other))) break;
+    if (lookAlikes.some(other => other !== el && composedContains(ancestor, other))) break;
     best = ancestor;
   }
   return best;
@@ -99,8 +99,8 @@ export function renderedText(root: Element, o: { limit: number; skipUndisplayed:
   return text.replace(/\s+/g, " ").trim();
 }
 function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,RecordObservation>, query: string): string {
-  const row = el.closest("tr,li,[role=row],[role=listitem],article");
-  const candidate = row ?? el.parentElement;
+  const row = composedClosest(el, "tr,li,[role=row],[role=listitem],article");
+  const candidate = row ?? composedParent(el);
   if (!candidate || candidate === el.ownerDocument.body || candidate === el.ownerDocument.documentElement) return "";
   let text = rows.get(candidate);
   if (text === undefined) {
@@ -120,10 +120,11 @@ function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,R
 
 /** Up to 300 characters of a matching line, centred on the first match so it is always shown. */
 function aroundMatch(line: string, query: string): string {
-  if (line.length <= 300) return line;
-  const at = Math.max(0, line.toLowerCase().replace(/\s+/g, " ").indexOf(query));
-  const start = Math.max(0, Math.min(at - 100, line.length - 298));
-  return `${start > 0 ? "…" : ""}${safeSlice(line, start, start + 298)}${start + 298 < line.length ? "…" : ""}`;
+  const collapsed = line.replace(/\s+/g, " ").trim();
+  if (collapsed.length <= 300) return collapsed;
+  const at = Math.max(0, collapsed.toLowerCase().indexOf(query));
+  const start = Math.max(0, Math.min(at - 100, collapsed.length - 298));
+  return `${start > 0 ? "…" : ""}${safeSlice(collapsed, start, start + 298)}${start + 298 < collapsed.length ? "…" : ""}`;
 }
 
 export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars: number; offset: number; checkLayout: boolean; maxElements?: number; elementOffset?: number; query?: string }): FrameSnapshot {
@@ -177,7 +178,9 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     if (query) {
       const matches = (field: unknown) => typeof field === "string" && fold(field).includes(query);
       name = accessibleName(el,false,80,names);
-      const shownValue = el instanceof HTMLInputElement && el.type === "password" ? "" : (el as HTMLInputElement).value;
+      const shownValue = el instanceof HTMLInputElement && el.type === "password" ? ""
+        : el instanceof HTMLSelectElement ? [...el.selectedOptions].map(op => op.text).join(" ") || el.value
+        : (el as HTMLInputElement).value;
       if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows, records, query)))) return;
     }
     const index = result.elementsTotal++;
@@ -190,7 +193,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     }
     if (el instanceof HTMLTextAreaElement) e.value = clip(el.value, 512);
     if (el instanceof HTMLSelectElement) {
-      e.value = clip(el.selectedOptions[0]?.text ?? "", 512);
+      e.value = clip(el.multiple ? [...el.selectedOptions].map(op => op.text).join(", ") : (el.selectedOptions[0]?.text ?? ""), 512);
       if (el.options.length > 20) limits.add("element-fields-truncated");
       e.options = [...el.options].slice(0, 20).map(op => clip(op.text, 128));
       while (JSON.stringify(e.options).length > 2048) { e.options.pop(); limits.add("element-fields-truncated"); }

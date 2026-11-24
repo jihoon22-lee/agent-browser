@@ -251,6 +251,12 @@ fn summarize(name: &str, args: &Value) -> String {
         let names: Vec<&str> = keys.iter().filter_map(Value::as_str).take(4).collect();
         if !names.is_empty() { parts.push(format!("modifiers={}", names.join("+"))); }
     }
+    if name == "browser_batch" {
+        if let Some(steps) = args.get("steps").and_then(Value::as_array) {
+            let names: Vec<&str> = steps.iter().filter_map(|step| step["tool"].as_str()).take(6).collect();
+            parts.push(format!("steps={} ({})", steps.len(), names.join(",")));
+        }
+    }
     for key in ["text", "textGone", "option"] {
         if let Some(s) = args.get(key).and_then(Value::as_str) {
             parts.push(format!("{key}({} chars)", s.chars().count()));
@@ -276,8 +282,16 @@ fn without_null_options(name: &str, mut args: Value) -> Value {
 }
 
 pub async fn call_tool_as(state: &ServerState, caller: &Caller, name: &str, args: Value) -> ToolOutcome {
+    let started = std::time::Instant::now();
     let args = without_null_options(name, args);
     let outcome = run(state, caller, name, &args).await;
+    tracing::debug!(
+        tool = name,
+        ok = outcome.ok,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        error_code = ?outcome.error.as_ref().map(|e| e.code),
+        "tool finished"
+    );
     state.timeline.push(TimelineEntry {
         at_ms: now_ms(),
         operation_id: outcome.operation_id.clone(),
@@ -521,6 +535,12 @@ fn finish(state: &ServerState, name: &str, op_id: &str, class: CommandClass, ori
             // A page that cannot be read has nothing unseen to act on: the answer itself is the
             // observation, so a blank or internal tab can still be navigated away from.
             if name=="browser_snapshot" && e.code==ErrorCode::UnsupportedPage {state.ops.observe_target(origin);}
+            // If the extension reports the target tab no longer exists, reconcile the gate immediately
+            // (matching browser_tabs switch) so the operation is not stranded on a dead tab when
+            // Chrome's tab.closed event was missed or delayed.
+            if matches!(e.code, ErrorCode::TabNotFound | ErrorCode::TabClosed) {
+                state.ops.forget_missing_tab(op_id, origin.current_tab);
+            }
             if aborted {
                 let mut details = if e.details.is_object() { e.details.clone() } else { json!({}) };
                 details["abortedAfter"] = Value::Bool(true);
@@ -688,7 +708,9 @@ async fn follow_up_snapshot(state: &ServerState, op_id: &str) -> Result<Value, R
 }
 
 async fn add_follow_up_snapshot(state: &ServerState, name: &str, args: &Value, outcome: &mut ToolOutcome) {
-    let stale_write = !outcome.ok && tools::class_of(name, args) == CommandClass::Write && outcome.executed == Executed::No
+    let stale_write = !outcome.ok && tools::class_of(name, args) == CommandClass::Write
+        && (outcome.executed == Executed::No || name == "browser_batch")
+        && outcome.verified["dialogPending"] != true
         && outcome.error.as_ref().is_some_and(|error| error.code == ErrorCode::StaleElement);
     if !(outcome.ok && wants_snapshot(name, args, outcome)) && !stale_write { return; }
     let Some(op_id) = outcome.operation_id.clone() else { return };
@@ -1407,5 +1429,78 @@ mod issue8_tests {
         let outcome = task.await.unwrap();
         assert!(!outcome.ok);
         assert_eq!(outcome.operation_id, None, "released temporary reservation must not be leaked in failed outcome");
+    }
+
+    #[tokio::test]
+    async fn batch_step2_stale_element_attaches_follow_up_snapshot_and_summarizes_steps() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("A", tx);
+        let op = state.ops.attach(1, "A").unwrap();
+        let task = {
+            let state = state.clone();
+            let id = op.id.clone();
+            tokio::spawn(async move {
+                call_tool(&state, "browser_batch", json!({
+                    "operationId": id,
+                    "steps": [
+                        {"tool":"fill","ref":"s1f0e1","text":"abc"},
+                        {"tool":"click","ref":"s1f0e2"}
+                    ]
+                })).await
+            })
+        };
+        let mut methods = Vec::new();
+        let mut task = task;
+        let outcome = loop {
+            tokio::select! {
+                res = &mut task => break res.unwrap(),
+                msg = rx.recv() => {
+                    let Envelope::Req { id, method, .. } = parse_envelope(&msg.unwrap()).unwrap() else { continue };
+                    methods.push(method.clone());
+                    let reply = match method.as_str() {
+                        "browser.fill" => Envelope::ok(id, json!({"executed": true, "verified": {"value": "abc"}})),
+                        "browser.click" => Envelope::err(id, RpcError::new(ErrorCode::StaleElement, Retry::Safe, "stale")),
+                        "browser.snapshot" => Envelope::ok(id, json!({"tabId": 1, "elements": [], "text": "fresh"})),
+                        other => panic!("unexpected method {other}"),
+                    };
+                    state.registry.handle_response(conn, reply);
+                }
+            }
+        };
+        assert!(!outcome.ok);
+        assert_eq!(outcome.executed, Executed::Yes);
+        assert_eq!(methods, vec!["browser.fill", "browser.click", "browser.snapshot"]);
+        assert_eq!(outcome.data["snapshot"]["text"], "fresh");
+        let last = state.timeline.entries().into_iter().last().unwrap();
+        assert!(last.summary.contains("steps=2 (fill,click)"), "summary: {}", last.summary);
+    }
+
+    #[tokio::test]
+    async fn tab_not_found_on_page_tool_reconciles_operation_gate() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("A", tx);
+        let op = state.ops.attach(10, "A").unwrap();
+        state.ops.add_and_switch_tab(&op.id, 20).unwrap();
+        let task = {
+            let state = state.clone();
+            let id = op.id.clone();
+            tokio::spawn(async move {
+                call_tool(&state, "browser_snapshot", json!({"operationId": id})).await
+            })
+        };
+        let Envelope::Req { id, method, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
+        assert_eq!(method, "browser.snapshot");
+        state.registry.handle_response(conn, Envelope::err(id, RpcError::new(ErrorCode::TabNotFound, Retry::Never, "gone")));
+        let outcome = task.await.unwrap();
+        assert!(!outcome.ok);
+        let active = state.ops.check_active(&op.id).unwrap();
+        assert_eq!(active.current_tab, 10, "gate must fall back to prior tab when current tab vanishes");
+        assert!(active.needs_observation);
     }
 }

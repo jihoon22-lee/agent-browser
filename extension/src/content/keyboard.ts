@@ -1,5 +1,5 @@
 import { ProtocolError } from "../protocol/errors";
-import { accessibleName, isDisabled, isRendered, walkDeep } from "./dom";
+import { accessibleName, composedClosest, deepActiveElement, isDisabled, isRendered, walkDeep } from "./dom";
 import { bindTarget, resolveRef } from "./refs";
 import { clipText } from "./text";
 
@@ -19,11 +19,7 @@ export function keyOf(p: Record<string, unknown>): { key: string; modifiers: str
 const codePointBefore = (value: string, at: number) => Array.from(value.slice(0, at)).at(-1)?.length ?? 1;
 const codePointAt = (value: string, at: number) => Array.from(value.slice(at, at + 2))[0]?.length ?? 1;
 export const INPUT_TEXT = new Set(["text", "search", "email", "url", "tel", "password", "number", "date", "time", "datetime-local", "month", "week"]);
-function activeElement(): Element | null {
-  let active = document.activeElement;
-  while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
-  return active;
-}
+const activeElement = () => deepActiveElement(document);
 function editableValue(target: HTMLElement): target is HTMLInputElement | HTMLTextAreaElement {
   return target instanceof HTMLTextAreaElement || (target instanceof HTMLInputElement && INPUT_TEXT.has(target.type));
 }
@@ -94,7 +90,7 @@ export function preparePress(p: Record<string, unknown>, validate: (element: Ele
 function focusNext(target: HTMLElement, step: 1 | -1) {
   const candidates: HTMLElement[] = [];
   walkDeep(document, el => {
-    if (!(el instanceof HTMLElement) || el.tabIndex < 0 || el.matches(":disabled") || el.closest("[inert]") || !isRendered(el, { checkLayout: document.documentElement.getClientRects().length > 0 })) return;
+    if (!(el instanceof HTMLElement) || el.tabIndex < 0 || el.matches(":disabled") || composedClosest(el, "[inert]") || !isRendered(el, { checkLayout: document.documentElement.getClientRects().length > 0 })) return;
     candidates.push(el);
   });
   // Positive tabindex comes first, then document order (including open roots).
@@ -188,7 +184,7 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
       defaultApplied = before !== target.value; defaultAction = "step-number";
       if (defaultApplied) { target.dispatchEvent(new Event("input", { bubbles: true })); target.dispatchEvent(new Event("change", { bubbles: true })); }
     } else if (key === "Escape") {
-      const dialog = target.closest("dialog[open]") as HTMLDialogElement | null;
+      const dialog = composedClosest(target, "dialog[open]") as HTMLDialogElement | null;
       if (dialog && dialog.dispatchEvent(new Event("cancel", { cancelable: true }))) { dialog.close(); defaultApplied = true; defaultAction = "close-dialog"; }
     }
   }
