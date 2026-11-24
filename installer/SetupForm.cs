@@ -176,7 +176,7 @@ namespace AgentBrowser.Installer {
             LabelAt(done,"Chrome에서 AgentBrowser 아이콘을 눌러 시작하세요.\r\n다음부터는 설치 관리자를 열 필요가 없습니다.",76,62,560,48);
             doneChecks.HorizontalScrollbar=true;Position(done,doneChecks,"DoneChecks",76,118,580,112);doneChecks.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;
             // A check that failed leads straight to its step without leaving a blank gap when one button is hidden.
-            doneActions.FlowDirection=FlowDirection.LeftToRight;doneActions.WrapContents=false;doneActions.Margin=Padding.Empty;doneActions.Padding=Padding.Empty;Position(done,doneActions,"DoneActions",76,242,446,40);
+            doneActions.FlowDirection=FlowDirection.LeftToRight;doneActions.WrapContents=false;doneActions.Margin=Padding.Empty;doneActions.Padding=Padding.Empty;Position(done,doneActions,"DoneActions",76,242,446,40);doneActions.Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right;
             fixChrome.Text="Chrome 연결 단계로";fixChrome.Margin=new Padding(0,0,12,0);Position(doneActions,fixChrome,"FixChrome",0,0,190,34);fixChrome.Visible=false;fixChrome.Click+=delegate{if(EnterConnection())status.Clear();};
             fixRuntime.Text="OpenCode 설정으로";fixRuntime.Margin=Padding.Empty;Position(doneActions,fixRuntime,"FixRuntime",0,0,190,34);fixRuntime.Visible=false;fixRuntime.Click+=async delegate{SetPage(6);status.Clear();await EnterRuntimePage();};
             recheck.Text="다시 확인";Position(done,recheck,"Recheck",536,244,120,34);recheck.Anchor=AnchorStyles.Top|AnchorStyles.Right;recheck.Click+=async delegate{await RunDoneChecks();};
