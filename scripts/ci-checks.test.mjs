@@ -34,6 +34,15 @@ test('examples, remote URLs, and same-page anchors do not become local-file requ
     '[web](https://example.test/path)', '[anchor](#heading)', '[chrome](chrome://extensions)',
     '`[inline example](missing.md)`', '```md', '[fenced example](missing.md)', '```',
     '~~~markdown', '[other fenced example](also-missing.md)', '~~~',
+    '````md', '```bash', '[nested fenced example](nested-missing.md)', '```', '````',
   ].join('\n'));
   assert.deepEqual(await checkMarkdownLinks(root, ['README.md']), []);
+});
+
+test('multi-backtick inline code spans do not swallow following broken links', async t => {
+  const root = await fixture(t);
+  await writeFile(join(root, 'README.md'), 'Use ``a ` b`` and see [broken](missing.md) plus `c`.\n');
+  const failures = await checkMarkdownLinks(root, ['README.md']);
+  assert.equal(failures.length, 1);
+  assert.match(failures[0], /missing\.md/);
 });

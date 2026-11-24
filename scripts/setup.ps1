@@ -10,6 +10,7 @@ param(
     [string]$Distribution,
     [switch]$NoStart,
     [switch]$NoStartup,
+    [switch]$RegisterMissing,
     [switch]$Quiet
 )
 $ErrorActionPreference = 'Stop'
@@ -18,7 +19,8 @@ if (-not $PSBoundParameters.ContainsKey('PackageDir')) { $PackageDir = $PSScript
 . (Join-Path $PSScriptRoot 'installer-common.ps1')
 $manifest = Read-VerifiedPackage $PackageDir
 $root = Assert-InstallRoot $InstallDir
-if ((Get-FullPath $PackageDir) -eq $root) { throw 'Extract the release to a separate directory, then install into the dedicated AgentBrowser directory.' }
+$packageFull = Get-FullPath $PackageDir
+if ($packageFull -eq $root -or $packageFull.StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Extract the release to a separate directory, then install into the dedicated AgentBrowser directory.' }
 $old = Read-InstallState $root
 if ($old -and @($old.Mcps).Count -gt 1) { throw 'This installation has multiple MCP targets. Use AgentBrowser-Setup.exe to update or remove all owned registrations safely.' }
 Assert-OwnedFiles $root $old
@@ -32,13 +34,16 @@ elseif (Test-Path -LiteralPath (Join-Path $dataDir '.agent-browser-data-owner.js
     $installId = $dataOwner.InstallId
 }
 $exeInfo = @($manifest.Files | Where-Object { $_.Path -eq 'browser-bridge.exe' })[0]
-$exeRelative = 'app/' + $manifest.Version + '-' + $exeInfo.Sha256.Substring(0,12) + '/browser-bridge.exe'
+$tag = $manifest.Version + '-' + $exeInfo.Sha256.Substring(0,12)
+$exeRelative = 'app/' + $tag + '/browser-bridge.exe'
+$setupExeRelative = $null
 $owned = [ordered]@{}
 if ($old) { foreach ($file in $old.OwnedFiles) { $owned[$file.Path] = $file.Sha256 } }
 $copies = New-Object 'System.Collections.Generic.List[object]'
 foreach ($file in $manifest.Files) {
     $relative = $file.Path
     if ($relative -eq 'browser-bridge.exe') { $relative = $exeRelative }
+    elseif ($relative -eq 'AgentBrowser-Setup.exe') { $setupExeRelative = 'app/' + $tag + '/AgentBrowser-Setup.exe'; $relative = $setupExeRelative }
     $target = Join-SafePath $root $relative
     if ((Test-Path -LiteralPath $target) -and -not $owned.Contains($relative)) { throw "An unowned file blocks installation: $target" }
     $copies.Add([pscustomobject]@{ Source=(Join-SafePath $PackageDir $file.Path); Target=$target; Relative=$relative; Sha256=$file.Sha256.ToLowerInvariant() })
@@ -46,7 +51,7 @@ foreach ($file in $manifest.Files) {
 }
 $state = [pscustomobject][ordered]@{
     Product=$script:AgentBrowserProduct; SchemaVersion=1; InstallId=$installId; InstallDir=$root; DataDir=$dataDir;
-    Version=$manifest.Version; CurrentExe=(Join-SafePath $root $exeRelative); Port=$Port;
+    Version=$manifest.Version; CurrentExe=(Join-SafePath $root $exeRelative); SetupExe=$(if ($setupExeRelative) { Join-SafePath $root $setupExeRelative } else { $null }); Port=$Port;
     InstalledAt=$(if ($old) { $old.InstalledAt } else { [DateTime]::UtcNow.ToString('o') }); UpdatedAt=[DateTime]::UtcNow.ToString('o');
     Startup=$null; Mcp=$null; OwnedFiles=@()
 }
@@ -86,11 +91,12 @@ if ($OpenCodeConfig) {
     $original = '{}'; $originalHash = $null
     if ($existed) { $original = Read-Utf8Text $settingsPath; $originalHash = Get-FileSha256 $settingsPath }
     $expected = $null; if ($old -and $old.Mcp) { $expected = $old.Mcp.EntryHash }
-    $edit = Edit-BrowserMcp -Text $original -Entry $selectedEntry -ExpectedEntryHash $expected
+    $edit = Edit-BrowserMcp -Text $original -Entry $selectedEntry -ExpectedEntryHash $expected -RegisterMissing:$RegisterMissing
     $backups = @(); if ($old -and $old.Mcp) { $backups = @($old.Mcp.Backups) }
     $backupPath = $null
     if ($edit.Changed -and $existed) { $backupPath = $settingsPath + '.agent-browser-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8) + '.bak'; $backups += $backupPath }
-    $state.Mcp = [pscustomobject]@{ Path=$settingsPath; Kind=$OpenCodeKind; Distribution=$Distribution; EntryHash=$edit.EntryHash; CreatedMcp=($edit.CreatedMcp -or ($old -and $old.Mcp -and $old.Mcp.CreatedMcp)); CreatedFile=((-not $existed) -or ($old -and $old.Mcp -and $old.Mcp.CreatedFile)); Backups=$backups }
+    $retainCreation = ($old -and $old.Mcp -and -not $edit.ReRegistered)
+    $state.Mcp = [pscustomobject]@{ Path=$settingsPath; Kind=$OpenCodeKind; Distribution=$Distribution; EntryHash=$edit.EntryHash; CreatedMcp=($edit.CreatedMcp -or ($retainCreation -and $old.Mcp.CreatedMcp)); CreatedFile=((-not $existed) -or ($retainCreation -and $old.Mcp.CreatedFile)); Backups=$backups }
     $mcpPlan = [pscustomobject]@{ Path=$settingsPath; Existed=$existed; OriginalHash=$originalHash; Edit=$edit; Backup=$backupPath }
 }
 # Owned files the new package no longer ships are removed inside the transaction
@@ -106,13 +112,16 @@ $pruneCandidates = New-Object 'System.Collections.Generic.List[object]'
 if ($old) {
     $versionChanged = (Get-FullPath $old.CurrentExe) -ne (Get-FullPath $state.CurrentExe)
     $keptAppDirs = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $previousExes = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     $null = $keptAppDirs.Add([IO.Path]::GetDirectoryName((Get-FullPath $state.CurrentExe)))
-    $null = $keptAppDirs.Add([IO.Path]::GetDirectoryName((Get-FullPath $old.CurrentExe)))
+    foreach ($prevExe in @($old.CurrentExe, $old.SetupExe)) {
+        if ($prevExe) { $fullPrev = Get-FullPath $prevExe; $null = $previousExes.Add($fullPrev); $null = $keptAppDirs.Add([IO.Path]::GetDirectoryName($fullPrev)) }
+    }
     foreach ($file in $old.OwnedFiles) {
         $relative = ([string]$file.Path).Replace('\','/')
         if ($shipped.Contains($relative)) { continue }
         $target = Join-SafePath $root $file.Path
-        if ($target -eq (Get-FullPath $old.CurrentExe)) { continue }
+        if ($previousExes.Contains($target)) { continue }
         $isApp = $relative.StartsWith('app/', [StringComparison]::OrdinalIgnoreCase)
         if ($isApp) { if (-not $versionChanged -or $keptAppDirs.Contains([IO.Path]::GetDirectoryName($target))) { continue } }
         elseif ($relative.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { continue }
@@ -194,6 +203,10 @@ try {
         $startedNew = -not $running.reused
     }
     $committed = $true
+    try {
+        $regKey = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Software\AgentBrowser\Installations\' + $state.InstallId)
+        try { if ($regKey) { $regKey.SetValue('Path', $root) } } finally { if ($regKey) { $regKey.Dispose() } }
+    } catch { Write-Warning ('Could not register installation location: ' + $_.Exception.Message) }
     # Folders emptied by the cleanup above; user files keep their folder.
     foreach ($pruned in $prunedFiles) {
         try {

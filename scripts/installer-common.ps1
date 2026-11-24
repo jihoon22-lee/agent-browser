@@ -56,7 +56,7 @@ function Get-WslFileTarget([string]$Path) {
     }
     return $null
 }
-function Write-BytesAtomic([string]$Path, [byte[]]$Bytes, [string]$ExpectedSha256='') {
+function Write-BytesAtomic([string]$Path, [byte[]]$Bytes, [string]$ExpectedSha256='', [string]$WslUser='') {
     $parent = [IO.Path]::GetDirectoryName($Path)
     if (-not (Test-Path -LiteralPath $parent)) { $null = New-Item -ItemType Directory -Path $parent -Force }
     Assert-PlainPath $Path
@@ -84,14 +84,18 @@ else
     actual=$(sha256sum -- "$target")
     actual=${actual%% *}
     [ "$actual" = "$expected" ] || { echo 'Settings changed while preparing; no settings were overwritten.' >&2; exit 44; }
-    chown --reference="$target" -- "$temporary"
-    chmod --reference="$target" -- "$temporary"
+    chown --reference="$target" -- "$temporary" 2>/dev/null || true
+    chmod --reference="$target" -- "$temporary" 2>/dev/null || true
 fi
 mv -fT -- "$temporary" "$target"
 '@
             $script = $script.Replace("`r`n", "`n")
             $wsl = Join-Path ([Environment]::GetFolderPath('System')) 'wsl.exe'
-            $null = Invoke-NativeCapture $wsl @('--distribution',$target.Distribution,'--exec','/bin/sh','-c',$script,'agent-browser-write',$target.LinuxPath,$temporary.LinuxPath,$ExpectedSha256.ToLowerInvariant()) ([IO.Path]::GetTempPath()) @{} 15000
+            $wslArgs = New-Object 'System.Collections.Generic.List[string]'
+            $wslArgs.Add('--distribution'); $wslArgs.Add($target.Distribution)
+            if ($WslUser) { $wslArgs.Add('--user'); $wslArgs.Add($WslUser) }
+            foreach ($a in @('--exec','/bin/sh','-c',$script,'agent-browser-write',$target.LinuxPath,$temporary.LinuxPath,$ExpectedSha256.ToLowerInvariant())) { $wslArgs.Add($a) }
+            $null = Invoke-NativeCapture $wsl $wslArgs.ToArray() ([IO.Path]::GetTempPath()) @{} 15000
         } else {
             $actual = if (Test-Path -LiteralPath $Path) { Get-FileSha256 $Path } else { 'missing' }
             if ($actual -ne $ExpectedSha256) { throw 'Settings changed while preparing; no settings were overwritten.' }
@@ -177,10 +181,11 @@ function Get-JsonObjectProperties($Tokens, [int]$Index) {
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $i = $Index + 1; $previousComma = -1
     while ($i -lt $Tokens.Count -and $Tokens[$i].Kind -ne '}') {
-        if ($Tokens[$i].Kind -ne 'string' -or $Tokens[$i + 1].Kind -ne ':') { throw 'Invalid JSON object property.' }
+        if ($i + 2 -ge $Tokens.Count -or $Tokens[$i].Kind -ne 'string' -or $Tokens[$i + 1].Kind -ne ':') { throw 'Invalid JSON object property.' }
         $key = $Tokens[$i].Value
         if (-not $seen.Add($key)) { throw "Duplicate JSON property is ambiguous: $key" }
         $first = $i + 2; $last = Get-JsonValueLast $Tokens $first
+        if ($last + 1 -ge $Tokens.Count) { throw 'Unclosed JSON object.' }
         $comma = -1
         if ($Tokens[$last + 1].Kind -eq ',') { $comma = $last + 1 }
         $properties.Add([pscustomobject]@{ Name=$key; Key=$i; First=$first; Last=$last; BeforeComma=$previousComma; AfterComma=$comma })
@@ -217,7 +222,7 @@ function Remove-JsonProperty([string]$Text, $Tokens, $Property) {
     return $Text.Substring(0, $start) + $middle + $Text.Substring($end)
 }
 function Edit-BrowserMcp {
-    param([string]$Text, $Entry, [string]$ExpectedEntryHash, [switch]$Remove, [switch]$RemoveEmptyMcp)
+    param([string]$Text, $Entry, [string]$ExpectedEntryHash, [switch]$Remove, [switch]$RemoveEmptyMcp, [switch]$RegisterMissing)
     $null = Get-JsonMinified $Text
     $tokens = Get-JsonTokens $Text
     if (-not $tokens.Count -or $tokens[0].Kind -ne '{') { throw 'OpenCode settings must be a JSON object.' }
@@ -234,13 +239,13 @@ function Edit-BrowserMcp {
         $oldValue = $Text.Substring($tokens[$property.First].Start, $tokens[$property.Last].End - $tokens[$property.First].Start)
         $oldHash = Get-TextHash (Get-JsonMinified $oldValue)
         if (-not $ExpectedEntryHash -or $oldHash -ne $ExpectedEntryHash) { throw 'The mcp.browser entry is not owned by this installation or was modified. It was not overwritten.' }
-    } elseif ($ExpectedEntryHash -and -not $Remove) { throw 'The previously registered mcp.browser entry was removed. Refusing to recreate it without an explicit new registration.' }
+    } elseif ($ExpectedEntryHash -and -not $Remove -and -not $RegisterMissing) { throw 'The previously registered mcp.browser entry was removed. Refusing to recreate it without an explicit new registration.' }
     if ($Remove) {
-        if (-not $browser.Count) { return [pscustomobject]@{ Text=$Text; Changed=$false; EntryHash=$null; CreatedMcp=$false } }
+        if (-not $browser.Count) { return [pscustomobject]@{ Text=$Text; Changed=$false; EntryHash=$null; CreatedMcp=$false; ReRegistered=$false } }
         if ($RemoveEmptyMcp -and $entries.Count -eq 1) { $edited = Remove-JsonProperty $Text $tokens $mcp[0] }
         else { $edited = Remove-JsonProperty $Text $tokens $browser[0] }
         $null = Get-JsonMinified $edited
-        return [pscustomobject]@{ Text=$edited; Changed=($edited -ne $Text); EntryHash=$null; CreatedMcp=$false }
+        return [pscustomobject]@{ Text=$edited; Changed=($edited -ne $Text); EntryHash=$null; CreatedMcp=$false; ReRegistered=$false }
     }
     $value = ConvertTo-Json $Entry -Depth 30 -Compress
     if ($browser.Count) {
@@ -249,7 +254,7 @@ function Edit-BrowserMcp {
     } elseif ($mcp.Count) { $edited = Insert-JsonProperty $Text $tokens $mcp[0].First 'browser' $value }
     else { $edited = Insert-JsonProperty $Text $tokens 0 'mcp' ('{"browser":' + $value + '}'); $createdMcp = $true }
     $null = Get-JsonMinified $edited
-    return [pscustomobject]@{ Text=$edited; Changed=($edited -ne $Text); EntryHash=(Get-TextHash (Get-JsonMinified $value)); CreatedMcp=$createdMcp }
+    return [pscustomobject]@{ Text=$edited; Changed=($edited -ne $Text); EntryHash=(Get-TextHash (Get-JsonMinified $value)); CreatedMcp=$createdMcp; ReRegistered=((-not $browser.Count) -and [bool]$ExpectedEntryHash -and [bool]$RegisterMissing) }
 }
 
 function Read-VerifiedPackage([string]$Root) {
@@ -410,6 +415,7 @@ function Get-VerifiedBridgeProcess($State) {
     if ($process.CreationDate) { $created = $process.CreationDate.ToUniversalTime().ToString('o') }
     $role = '(?:^|\s)serve\s+--port\s+' + [regex]::Escape([string]$marker.Port) + '(?:\s|$)'
     if ($actualExe -ne $expectedExe -or -not $process.CommandLine -or $process.CommandLine -notmatch $role -or $created -ne $marker.CreatedAt) { return $null }
+    if (-not (Test-Path -LiteralPath $expectedExe -PathType Leaf) -or (Get-FileSha256 $expectedExe) -ne $known[0].Sha256) { throw 'Recorded Bridge executable is missing or changed; the live process was retained.' }
     return [pscustomobject]@{ Process=$process; Marker=$marker }
 }
 # A serve that an MCP proxy or `browser-bridge.exe start` launched has no marker. It is adopted only when
@@ -501,9 +507,14 @@ function Stop-OwnedBridge($State, $Transaction=$null) {
     # Re-read identity immediately before acting; never kill by image name.
     $again = Get-VerifiedBridgeProcess $State
     if (-not $again) { Remove-StaleBridgeMarker $State $Transaction; return $false }
-    Stop-Process -Id ([int]$again.Marker.Pid) -Force -ErrorAction Stop
+    try { Stop-Process -Id ([int]$again.Marker.Pid) -Force -ErrorAction Stop }
+    catch {
+        if (Get-VerifiedBridgeProcess $State) { throw }
+        Remove-StaleBridgeMarker $State $Transaction
+        return $true
+    }
     for ($i=0; $i -lt 50; $i++) {
-        if (-not (Get-Process -Id ([int]$again.Marker.Pid) -ErrorAction SilentlyContinue)) { return $true }
+        if (-not (Get-VerifiedBridgeProcess $State)) { Remove-StaleBridgeMarker $State $Transaction; return $true }
         Start-Sleep -Milliseconds 100
     }
     throw 'The owned Bridge did not stop within five seconds.'
@@ -599,8 +610,14 @@ function Invoke-NativeCapture([string]$Executable, [string[]]$Arguments, [string
     try {
         $null = $process.Start(); $process.StandardInput.Close()
         $output = $process.StandardOutput.ReadToEndAsync(); $errors = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutMs)) { $process.Kill(); throw 'The command timed out.' }
-        $stdout = $output.GetAwaiter().GetResult(); $stderr = $errors.GetAwaiter().GetResult()
+        if (-not $process.WaitForExit($TimeoutMs)) {
+            try { $process.Kill() } catch { }
+            try { $null = $process.WaitForExit(2000) } catch { }
+            throw 'The command timed out.'
+        }
+        $null = [Threading.Tasks.Task]::WhenAll(@($output, $errors)).Wait(2000)
+        $stdout = if ($output.IsCompleted) { $output.GetAwaiter().GetResult() } else { '' }
+        $stderr = if ($errors.IsCompleted) { $errors.GetAwaiter().GetResult() } else { '' }
         if ($ReturnResult) { return [pscustomobject]@{ ExitCode=$process.ExitCode; Stdout=$stdout.Trim(); Stderr=$stderr.Trim() } }
         if ($process.ExitCode -ne 0) { throw ('Command failed: ' + $stderr.Trim()) }
         return $stdout.Trim()

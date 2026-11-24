@@ -17,4 +17,8 @@ class ExtensionManifestTests(unittest.TestCase):
         for manifest in [{"manifest_version":2,"key":"fixture","version":"0.1.5"},{"manifest_version":3,"version":"0.1.5"}]:
             with self.assertRaises(ValueError):
                 package.validate_extension(manifest,"0.1.5")
+    def test_truncated_pe_raises_value_error(self):
+        for bad in [b"", b"MZ", b"MZ" + b"\x00" * 62, b"MZ" + b"\x00" * 58 + b"\xff\x00\x00\x00"]:
+            with self.assertRaises(ValueError):
+                package.validate_pe(bad)
 if __name__=="__main__": unittest.main()

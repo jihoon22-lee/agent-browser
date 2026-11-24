@@ -395,6 +395,14 @@ namespace AgentBrowser.Installer {
     Assert(result!=0&&!Directory.Exists(root)&&diagnostic.ToString().Contains("different previous and candidate versions"),"same-version managed upgrade did not stop before installation");
    });
    Case("managed directory permissions do not block the selected installation",()=>{string root=Path.Combine(fixture,"managed");Directory.CreateDirectory(root);var acl=Directory.GetAccessControl(root);acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-1-0"),FileSystemRights.Modify,AccessControlType.Allow));Directory.SetAccessControl(root,acl);string before=Directory.GetAccessControl(root).GetSecurityDescriptorSddlForm(AccessControlSections.Access);InstallerEngine.Root(root);Assert(before==Directory.GetAccessControl(root).GetSecurityDescriptorSddlForm(AccessControlSections.Access),"path check changed the directory ACL");});
+   Case("invalid --port argument falls back safely and advanced errors show inside the advanced panel",()=>{
+    using(var form=new SetupForm(new[]{"--no-discover","--port","not-a-number","--install-dir",Path.Combine(fixture,"bad-port")})){
+     Assert(Field<NumericUpDown>(form,"BridgePort").Value==4317,"invalid --port did not fall back to 4317");
+     typeof(SetupForm).GetMethod("AddRegistration",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(form,null);
+     var advStatus=Field<TextBox>(form,"AdvancedStatus");
+     Assert(advStatus!=null&&advStatus.Text.Contains("CLI"),"advanced validation error was not shown inside AdvancedStatus");
+    }
+   });
    if(args.Length>2)Case("local data drive supports a new private installation",()=>{string root=Path.Combine(args[2],"AgentBrowser-Test-"+Guid.NewGuid().ToString("N").Substring(0,8));try{InstallerEngine.Root(root);InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{PackageDir=package,InstallDir=root,Start=false,Startup=false}),CancellationToken.None,s=>{});Assert(InstallerEngine.State(root)!=null,"data drive install failed");Assert(Directory.Exists(Path.Combine(root,"extension")),"extension was not installed");}finally{Uninstall(root);if(Directory.Exists(root))Directory.Delete(root,true);}});
    Console.WriteLine("TOTAL "+passed+" PASS / "+failed+" FAIL");return failed==0?0:1;
   }
