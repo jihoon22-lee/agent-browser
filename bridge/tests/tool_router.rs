@@ -588,25 +588,62 @@ async fn a_switch_whose_snapshot_fails_still_requires_one_before_writing() {
         default_reply(method, p)
     }
     let (_h, serve, cfg) = start_test_serve().await;
-    let seen = fake_extension(serve.port, cfg.token.clone(), unreadable).await;
-    let mut panel = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
-    hello(&mut panel, "extension", &cfg.token, "panel-1").await;
-    let mut mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
-    let op = tool(&mut mcp, "browser_tabs", json!({"action":"attach"})).await["operationId"].as_str().unwrap().to_string();
-    assert!(matches!(call(&mut panel, "operation.pause", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
-    assert!(matches!(call(&mut panel, "operation.resume", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    let mut ext = ws_connect(serve.port, "/extension", Some(EXT)).await.unwrap();
+    hello(&mut ext, "extension", &cfg.token, "cli-1").await;
+    let mcp = mcp_client(serve.port, &cfg.token, "mcp-1").await;
+    let (mcp, attached) = attach_with_socket(mcp, &mut ext, json!({"action":"attach"})).await;
+    let op = attached["operationId"].as_str().unwrap().to_string();
+    assert!(matches!(call(&mut ext, "operation.pause", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
+    assert!(matches!(call(&mut ext, "operation.resume", json!({"operationId":op,"clientId":"cli-1"})).await, Envelope::Res { ok: true, .. }));
     READABLE.store(false, std::sync::atomic::Ordering::SeqCst);
-    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42})).await;
+    let mut mcp = mcp;
+    let mut seen = Vec::new();
+    async fn run_with_unreadable(
+        mut mcp: Ws,
+        ext: &mut Ws,
+        tool_name: &'static str,
+        args: Value,
+        handler: fn(&str, &Value) -> Result<Value, (&'static str, &'static str)>,
+    ) -> (Ws, Value, Vec<String>) {
+        let mut methods = Vec::new();
+        let mut task = tokio::spawn(async move {
+            let out = tool(&mut mcp, tool_name, args).await;
+            (mcp, out)
+        });
+        let (mcp, out) = loop {
+            tokio::select! {
+                done = &mut task => break done.unwrap(),
+                env = recv(ext) => if let Envelope::Req { id, method, params, .. } = env {
+                    methods.push(method.clone());
+                    let reply = match handler(&method, &params) {
+                        Ok(v) => Envelope::ok(id, v),
+                        Err((code, msg)) => Envelope::err(id, agent_browser_bridge::rpc::RpcError::new(
+                            serde_json::from_value(json!(code)).unwrap(),
+                            agent_browser_bridge::rpc::Retry::Safe,
+                            msg,
+                        )),
+                    };
+                    send_raw(ext, &reply.to_text()).await;
+                },
+            }
+        };
+        (mcp, out, methods)
+    }
+    let (next_mcp, switched, m1) = run_with_unreadable(mcp, &mut ext, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42}), unreadable).await;
+    mcp = next_mcp; seen.extend(m1);
     assert_eq!(switched["ok"], true, "{switched}");
     assert_eq!(switched["data"]["snapshotError"]["code"], "FRAME_UNAVAILABLE", "{switched}");
-    let blocked = tool(&mut mcp, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await;
+    let (next_mcp, blocked, m2) = run_with_unreadable(mcp, &mut ext, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"}), unreadable).await;
+    mcp = next_mcp; seen.extend(m2);
     assert_eq!(blocked["error"]["code"], "STALE_ELEMENT", "a switch is not an observation: {blocked}");
     assert!(blocked["error"]["message"].as_str().unwrap().contains("user handled the browser"), "{blocked}");
-    assert!(!seen.lock().unwrap().iter().any(|m| m == "browser.fill"));
+    assert!(!seen.iter().any(|m| m == "browser.fill"));
     READABLE.store(true, std::sync::atomic::Ordering::SeqCst);
-    let switched = tool(&mut mcp, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42})).await;
+    let (next_mcp, switched, _) = run_with_unreadable(mcp, &mut ext, "browser_tabs", json!({"action":"switch","operationId":op,"tabId":42}), unreadable).await;
+    mcp = next_mcp;
     assert!(switched["data"]["snapshot"].is_object(), "{switched}");
-    assert_eq!(tool(&mut mcp, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"})).await["ok"], true, "the snapshot attached to a switch is the observation");
+    let (_mcp, filled, _) = run_with_unreadable(mcp, &mut ext, "browser_fill", json!({"operationId":op,"ref":"s1f0e1","text":"x"}), unreadable).await;
+    assert_eq!(filled["ok"], true, "the snapshot attached to a switch is the observation");
 }
 
 #[tokio::test]

@@ -42,3 +42,9 @@ $removedMcp = Edit-BrowserMcp -Text $inner -Remove -RemoveEmptyMcp -ExpectedEntr
 Assert ($removedMcp.Text.Contains('// keep inside mcp')) 'Comment inside the removed mcp object was lost'
 Assert ((Get-JsonMinified $removedMcp.Text) -eq '{}') 'Empty mcp object was not removed'
 Write-Output 'PASS removal keeps comments inside the removed span'
+
+# -RegisterMissing allows explicit re-registration after user removed mcp.browser.
+Assert-Throws { Edit-BrowserMcp -Text '{}' -Entry $entry -ExpectedEntryHash $edit.EntryHash } 'Missing browser entry recreated without -RegisterMissing'
+$reRegistered = Edit-BrowserMcp -Text '{}' -Entry $entry -ExpectedEntryHash $edit.EntryHash -RegisterMissing
+Assert ((ConvertFrom-Json (Get-JsonMinified $reRegistered.Text)).mcp.browser.enabled -and $reRegistered.ReRegistered) '-RegisterMissing did not re-register browser entry'
+Write-Output 'PASS -RegisterMissing re-registers removed browser entry'

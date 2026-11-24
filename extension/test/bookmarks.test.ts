@@ -26,3 +26,10 @@ it('bounds output and never exposes a truncated URL as an actionable destination
  const result=await readBookmarks(api,{limit:50});expect(JSON.stringify(result).length).toBeLessThan(32000);
  expect(result.entries[0]).toMatchObject({urlOmitted:true,openable:false});expect(result.entries[0]).not.toHaveProperty('url');expect(result.nextOffset).toBeGreaterThan(0);
 });
+it('bounds output by UTF-8 bytes for multibyte titles and ignores NaN offset',async()=>{
+ const api:BookmarkAccess={granted:async()=>true,children:async()=>Array.from({length:30},(_,i)=>node(String(i),'가'.repeat(400),'https://example.test/'+i)),search:vi.fn()};
+ const result=await readBookmarks(api,{limit:50,offset:'bad'});
+ expect(result.offset).toBe(0);
+ expect(result.entries.length).toBeGreaterThan(0);
+ expect(new TextEncoder().encode(JSON.stringify(result.entries)).length).toBeLessThanOrEqual(28500);
+});

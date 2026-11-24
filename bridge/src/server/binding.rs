@@ -11,11 +11,21 @@ use super::router::Caller;
 pub fn same_directory(cwd: &str, directory: &str, wsl: bool) -> bool {
     if directory.is_empty() || cwd.is_empty() { return false; }
     if wsl {
+        let lower = cwd.to_ascii_lowercase();
         let linux = ["\\\\wsl.localhost\\", "\\\\wsl$\\"].iter().find_map(|prefix| {
-            let rest = cwd.strip_prefix(prefix)?; let (_, path) = rest.split_once('\\')?;
-            Some(format!("/{}", path.replace('\\', "/")))
+            if !lower.starts_with(prefix) { return None; }
+            let rest = &cwd[prefix.len()..];
+            if rest.is_empty() { return None; }
+            match rest.split_once('\\') {
+                Some((distro, path)) if !distro.is_empty() => Some(format!("/{}", path.replace('\\', "/"))),
+                None => Some("/".to_string()),
+                _ => None,
+            }
         });
-        if let Some(path) = linux { return path.trim_end_matches('/') == directory.trim_end_matches('/'); }
+        if let Some(path) = linux {
+            fn norm(s: &str) -> &str { let t = s.trim_end_matches('/'); if t.is_empty() { "/" } else { t } }
+            return norm(&path) == norm(directory);
+        }
         // A directory under /mnt/<drive> is a Windows folder: the proxy sees its drive path.
         return crate::runtime::windows_to_wsl(cwd).is_some_and(|path| path.trim_end_matches('/') == directory.trim_end_matches('/'));
     }
@@ -75,6 +85,9 @@ mod tests {
         assert!(!same_directory(r"C:\Users\U\Work2", "/mnt/c/Users/U/Work", true));
         assert!(!same_directory(r"C:\Windows\System32", "/home/u/app", true), "an unmapped WSL cwd never binds");
         assert!(!same_directory("", "/home/u/app", true));
+        assert!(same_directory(r"\\WSL.LOCALHOST\Ubuntu\home\u\app", "/home/u/app", true), "UNC host is case-insensitive");
+        assert!(same_directory(r"\\WSL$\Ubuntu\home\u\app\", "/home/u/app", true), "legacy WSL UNC host is case-insensitive");
+        assert!(same_directory(r"\\wsl.localhost\Ubuntu", "/", true), "WSL distribution root maps to /");
     }
     #[test]
     fn only_the_request_session_may_be_busy() {

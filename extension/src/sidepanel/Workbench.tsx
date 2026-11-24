@@ -65,12 +65,15 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   const drawerTrigger = useRef<HTMLButtonElement | null>(null), drawerClose = useRef<HTMLButtonElement | null>(null);
   const drawerTitle = drawer === "tools" ? "작업 도구" : drawer === "theme" ? "화면 테마" : "실행 설정";
   const openDrawer = (next: "environment" | "tools" | "theme", trigger?: HTMLButtonElement) => { drawerTrigger.current = trigger ?? null; setDrawer(next); onViewChange("chat"); };
-  useEffect(() => { if (drawer) drawerClose.current?.focus(); else drawerTrigger.current?.focus(); }, [drawer]);
+  useEffect(() => {
+    if (drawer) drawerClose.current?.focus();
+    else if (view === "chat") drawerTrigger.current?.focus();
+  }, [drawer]);
   useEffect(() => { if (view !== "chat") setDrawer(null); }, [view]);
   const [sessionSearch, setSessionSearch] = useState(""), [directory, setDirectory] = useState("");
   const [renaming, setRenaming] = useState<{ id: string; place: "list" | "header" } | null>(null);
   const [artifact, setArtifact] = useState<Data>();
-  const [files, setFiles] = useState<string[]>([]), [palette, setPalette] = useState(""), [shell, setShell] = useState("");
+  const [files, setFiles] = useState<string[]>([]), [palette, setPalette] = useState(""), [paletteOpen, setPaletteOpen] = useState(false), [shell, setShell] = useState("");
   const draftCache = useRef(new Map<string, { draft: string; attachments: Data[] }>()), previousDraft = useRef({ key: "", draft: "", attachments: [] as Data[] });
   // Draft text is also kept in chrome.storage.session; a key is written only after its saved text was read.
   const draftRestored = useRef(""), consumedDraft = useRef("");
@@ -134,14 +137,18 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     void chrome.storage.session.get(`draft:${draftKey}`).then(saved => {
       if (!active) return;
       const text = saved[`draft:${draftKey}`];
-      if (typeof text === "string" && !previousDraft.current.draft && previousDraft.current.key === draftKey) setDraft(text);
       draftRestored.current = draftKey;
+      if (typeof text === "string" && !previousDraft.current.draft && previousDraft.current.key === draftKey) setDraft(text);
+      else if (previousDraft.current.key === draftKey && previousDraft.current.draft) storeDraft(draftKey, previousDraft.current.draft);
     }).catch(() => { if (active) draftRestored.current = draftKey; });
     return () => { active = false; };
   }, [draftKey]);
   useEffect(() => {
     const timer = setTimeout(() => storeDraft(draftKey, draft), 300);
-    return () => clearTimeout(timer);
+    const flush = () => storeDraft(draftKey, draft);
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => { clearTimeout(timer); window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", flush); };
   }, [draftKey, draft]);
   // The message box starts at two lines and grows with its text up to the CSS max-height.
   useLayoutEffect(() => {
@@ -167,9 +174,10 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     const selected = preferred ? models.find(item => `${item.providerID}/${item.id}` === preferred) : models.find(item => wb.catalog.default?.[item.providerID] === item.id) ?? models[0];
     if (preferred && !selected && models.length) setNotice("이전 모델은 현재 환경에서 사용할 수 없습니다. 다음 메시지에 사용할 모델을 직접 선택하세요.");
     if (selected) setModelKey(`${selected.providerID}/${selected.id}`); else setModelKey("");
-    setVariant(current?.variant ?? "");
+    const nextVariant = current?.variant ?? "";
+    setVariant(nextVariant && selected?.variants && Object.prototype.hasOwnProperty.call(selected.variants, nextVariant) ? nextVariant : "");
     setAgent(currentSession?.agent ?? lastUser?.agent ?? wb.agents.find(item => !item.hidden && ["primary", "all"].includes(item.mode))?.name ?? "");
-  }, [wb.sessionId, wb.profileId, currentSession?.id, !!wb.state.messages[wb.sessionId], models.length, wb.agents.length]);
+  }, [wb.sessionId, wb.profileId, currentSession?.id, messages.length, models, wb.agents]);
   useEffect(() => {
     stopHandler.current = async operationId => { const current = wb.captureScope(); const known = await wb.abortKnown(operationId); if (!current()) return; setNotice(known ? "브라우저 작업과 연결된 OpenCode 세션을 중단했습니다." : "브라우저 작업을 중단했습니다. 외부 CLI 세션은 식별할 수 없어 종료하지 않았습니다."); };
     return () => { stopHandler.current = async () => {}; };
@@ -233,7 +241,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       if (ui[1] === "new") { let created: Data | undefined; await perform(async () => { created = await createSession(); }); if (!created && current()) setDraft(value => value || draft); }
       if (ui[1] === "sessions") onViewChange("sessions");
       if (ui[1] === "models") { setDrawer(null); modelSelect.current?.focus(); }
-      if (ui[1] === "skills" || ui[1] === "commands") { setPalette(ui[1]); openDrawer("tools"); }
+      if (ui[1] === "skills" || ui[1] === "commands") { setPalette(ui[1]); setPaletteOpen(true); openDrawer("tools"); }
       return;
     }
     if (!wb.sessionId) {
@@ -298,7 +306,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
         attempt.submitted=true;
         await selectedApi.post(path + "/prompt_async", { messageID,system, model: { providerID: model.providerID, modelID: model.id }, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...(draft.trim() ? [{ type: "text", text: draft }] : []), ...attachments] });
       }
-      if (canSubmit()) { wb.watchResponse(); if (previousDraft.current.draft === draft && previousDraft.current.attachments === attachments) { setDraft(""); setAttachments([]); } setNotice(""); await wb.resync(); }
+      if (canSubmit()) { wb.watchResponse(); if (previousDraft.current.draft === draft && previousDraft.current.attachments === attachments) { setDraft(""); setAttachments([]); draftCache.current.delete(attempt.key); void chrome.storage.session?.remove(`draft:${attempt.key}`).catch(() => {}); } setNotice(""); await wb.resync(); }
     } catch (error) {
       // Only explicit admission failures prove the mutation was not accepted.
       // Transport failures and 5xx retain the token until completion or Stop.
@@ -338,7 +346,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     const file = await api().get<Data>("/file/content", { path });
     const part = file.encoding === "base64" ? { type: "file", mime: file.mimeType ?? "application/octet-stream", filename: path.split(/[\\/]/).at(-1), url: `data:${file.mimeType ?? "application/octet-stream"};base64,${file.content}` } : await textFilePart(path, file.content);
     if (!current()) return;
-    setAttachments(previous => [...previous, part]); setDraft(value => replaceMention(value, ""));
+    setAttachments(previous => [...previous, part]); setDraft(value => replaceMention(value, "")); composer.current?.focus();
   }
   async function openArtifact(part: Data) {
     const current = api(), active = wb.captureScope();
@@ -445,7 +453,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
         <select ref={modelSelect} aria-label="모델" className="model-select" title={model ? `${model.providerName} · ${model.name ?? model.id}\n${capability}\n다음 메시지부터 적용` : "사용할 모델을 선택하세요"} value={modelKey} onChange={event => choose(() => { setModelKey(event.target.value); setVariant(""); })}><option value="">모델 선택</option>{modelGroups.map(([label, items]) => <optgroup key={label} label={label}>{items.map(item => <option key={modelKeyOf(item)} value={modelKeyOf(item)}>{item.name ?? item.id}{label === FAVORITE_MODELS ? ` · ${item.providerName}` : ""}</option>)}</optgroup>)}</select>
         {Object.keys(model?.variants ?? {}).length > 0 && <select aria-label="모델 variant·추론 옵션" title="모델 variant·추론 옵션" value={variant} onChange={event => choose(() => setVariant(event.target.value))}><option value="">추론 기본</option>{Object.keys(model?.variants ?? {}).map(name => <option key={name} value={name}>추론 {name}</option>)}</select>}
         <select aria-label="에이전트" title="에이전트" value={agent} onChange={event => choose(() => setAgent(event.target.value))}><option value="">기본 에이전트</option>{wb.agents.filter(item => !item.hidden && ["primary", "all"].includes(item.mode)).map(item => <option key={item.name} value={item.name}>{item.name}</option>)}</select>
-        <button type="button" className="quiet icon-button" aria-label="모델 검색·즐겨찾기" aria-expanded={modelTools} title="모델 검색·즐겨찾기" onClick={() => setModelTools(open => !open)}>☆</button>
+        <button type="button" className="quiet icon-button" aria-label="모델 검색·즐겨찾기" aria-expanded={modelTools} title="모델 검색·즐겨찾기" onClick={() => setModelTools(open => { if (open) setModelSearch(""); return !open; })}>☆</button>
       </div>
       {modelTools && <div className="model-search"><input aria-label="모델 검색" placeholder="모델 검색" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /><button type="button" disabled={!modelKey} onClick={() => { const next = favorites.includes(modelKey) ? favorites.filter(key => key !== modelKey) : [...favorites, modelKey]; setFavorites(next); void chrome.storage.local.set({ modelFavorites: next }); }}>{favorites.includes(modelKey) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</button></div>}
       <p className="composer-capability" title={`${capability} · 다음 메시지부터 적용`}>{capability}</p>
@@ -475,16 +483,28 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       </div>
       <form className="composer" onSubmit={event => { event.preventDefault(); void send(); }}>
         {attachments.length > 0 && <div className="attachments">{attachments.map((part, index) => <span className="chip" key={index}>{part.type === "agent" ? "@" + part.name : part.filename}<button type="button" aria-label={`${part.filename ?? part.name} 첨부 제거`} onClick={() => setAttachments(previous => previous.filter((_, i) => i !== index))}>×</button></span>)}</div>}
-        <textarea ref={composer} aria-label="메시지" value={draft} onChange={event => setDraft(event.target.value)} onCompositionStart={() => { composeActive.current = true; }} onCompositionEnd={() => { composeActive.current = false; }} onKeyDown={event => { if (event.key === "ArrowDown" && !composeActive.current) { const option = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".suggestions button"); if (option) { event.preventDefault(); option.focus(); return; } } if (!composeActive.current && shouldSubmit(event.nativeEvent)) { event.preventDefault(); void send(); } }} placeholder="무엇을 할까요? @참조 · /커맨드 · Shift+Enter 줄바꿈" rows={2} />
-        {mention !== undefined && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성"><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>{wb.agents.filter(item => !item.hidden && item.name.includes(mention)).map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
-        {draft.startsWith("/") && !draft.includes(" ") && <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)].filter(name => name.includes(draft.slice(1))).slice(0, 15).map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>}
+        <textarea ref={composer} aria-label="메시지" value={draft} onChange={event => setDraft(event.target.value)} onCompositionStart={() => { composeActive.current = true; }} onCompositionEnd={() => { composeActive.current = false; }} onBlur={() => { composeActive.current = false; }} onKeyDown={event => { if (event.key === "ArrowDown" && !composeActive.current) { const option = event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".suggestions button"); if (option) { event.preventDefault(); option.focus(); return; } } if (!composeActive.current && shouldSubmit(event.nativeEvent)) { event.preventDefault(); void send(); } }} placeholder="무엇을 할까요? @참조 · /커맨드 · Shift+Enter 줄바꿈" rows={2} />
+        {mention !== undefined && (() => {
+          const query = mention.toLowerCase();
+          const showTab = !query || "현재탭".includes(query) || "current-tab".includes(query);
+          const showSel = !query || "선택영역".includes(query) || "selection".includes(query);
+          const matchedAgents = wb.agents.filter(item => !item.hidden && item.name.toLowerCase().includes(query));
+          if (!showTab && !showSel && !matchedAgents.length && !files.length) return null;
+          return <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성">{showTab && <button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button>}{showSel && <button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>}{matchedAgents.map(item => <button type="button" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); composer.current?.focus(); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>;
+        })()}
+        {mention === undefined && draft.startsWith("/") && !/\s/.test(draft) && (() => {
+          const query = draft.slice(1).toLowerCase();
+          const matched = [...new Set(["new", "sessions", "models", "skills", "commands", "compact", ...wb.commands.map(item => item.name)])].filter(name => name.toLowerCase().includes(query)).slice(0, 15);
+          if (!matched.length) return null;
+          return <div className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{matched.map(name => <button type="button" key={name} onClick={() => { setDraft(`/${name} `); composer.current?.focus(); }}>/{name}</button>)}</div>;
+        })()}
         {modelsPanel}
         <div className="composer-actions"><div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(async () => { const current = wb.captureScope(); const parts = await Promise.all(selectedFiles.map(filePart)); if (!current()) return; setAttachments(previous => [...previous, ...parts]); }); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-send"><TargetPicker chosen={target} onChange={(tabId, closed) => { setTarget(tabId); if (closed) setNotice("선택한 대상 탭이 닫혀 자동으로 돌아갔습니다. 다음 요청은 보낼 때 보고 있는 탭에서 합니다."); }} /><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
           <button type="button" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
             if(stopLock.current)return;
             stopLock.current=true;setStopping(true);
             try {
-            const current=wb.captureScope(),selectedApi=api(),path=sessionPath();
+            const current=wb.captureScope();
             const attempt=submission.current?.key===draftKey?submission.current:undefined;
             if(attempt)attempt.cancelled=true;
             const failures:string[]=[];
@@ -502,7 +522,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
             // request may start as soon as that cancellation releases its lock.
             // Bridge/cleanup/discovery failures still get a direct API attempt.
             if(!(stopped?.ok===true&&stopped.result?.abortSent===true)){
-              try { await selectedApi.post(path+'/abort'); }
+              try { await api().post(sessionPath()+'/abort'); }
               catch(error) { failures.push(error instanceof Error?error.message:String(error)); }
             }
             if(failures.length)throw Error(failures.join(' · '));
@@ -520,7 +540,8 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   const tasksPanel = <details className="workspace-section"><summary>작업·하위 작업·파일 변경</summary><ul>{wb.todos.map((todo, index) => <li key={index}>{todo.status} · {todo.content} <small>{todo.priority}</small></li>)}</ul>{wb.children.map(child => <button key={child.id} onClick={() => void perform(() => selectSession(child))}>{child.title} · 하위 세션 열기</button>)}{wb.diff.map((file, index) => <details key={index}><summary>{file.file ?? file.path ?? "변경 파일"} · +{file.additions ?? "?"} −{file.deletions ?? "?"}</summary><pre>{file.patch ?? (file.before !== undefined ? `--- 이전\n${file.before}\n+++ 이후\n${file.after ?? ""}` : JSON.stringify(file, null, 2))}</pre><button onClick={() => download("diff.json", JSON.stringify(file, null, 2), "application/json")}>변경 내보내기</button></details>)}
       <details><summary>셸 명령</summary><p>선택한 실행 환경의 작업 디렉터리에서 실행합니다. 대화형 터미널·외부 편집기는 기존 CLI를 사용하세요.</p><textarea aria-label="셸 명령" value={shell} onChange={event => setShell(event.target.value)} /><button disabled={!wb.sessionId || !agent || !shell.trim() || running} onClick={() => void perform(async () => { const current = wb.captureScope(); await api().request("POST", sessionPath() + "/shell", { body: { agent, command: shell, ...(model ? { model: { providerID: model.providerID, modelID: model.id } } : {}) }, timeoutMs: 300000 }); if (!current()) return; setShell(""); await wb.resync(); })}>셸 실행</button></details>
     </details>;
-  const commandsPanel = <details className="workspace-section" open={!!palette}><summary onClick={() => setPalette("")}>커맨드·스킬·MCP</summary><input aria-label="커맨드·스킬 검색" placeholder="검색" value={palette === "commands" || palette === "skills" ? "" : palette} onChange={event => setPalette(event.target.value)} /><ul className="command-list">{wb.commands.filter(command => `${command.name} ${command.description ?? ""}`.includes(["commands", "skills"].includes(palette) ? "" : palette)).map(command => <li key={command.name}><button onClick={() => { setDraft(`/${command.name} `); setDrawer(null); composer.current?.focus(); }}>/{command.name}</button><span>{command.source === "mcp" ? "MCP 프롬프트" : command.source === "skill" ? "스킬" : "사용자 커맨드"}</span><p>{command.description}</p>{command.hints?.length > 0 && <small>인수: {command.hints.join(" · ")}</small>}</li>)}{wb.skills.filter(skill => !wb.commands.some(command => command.name === skill.name) && `${skill.name} ${skill.description ?? ""}`.includes(["commands", "skills"].includes(palette) ? "" : palette)).map(skill => <li key={skill.name}><button onClick={() => void perform(async () => { const current = wb.captureScope(); const part = await textFilePart(`${skill.name}-SKILL.md`, `스킬 위치: ${skill.location}\n\n${skill.content}`); if (!current()) return; setAttachments(previous => [...previous, part]); setDraft(`첨부한 ${skill.name} 스킬을 사용해 다음 작업을 수행해줘.\n`); setDrawer(null); composer.current?.focus(); })}>{skill.name} 스킬 첨부</button><p>{skill.description}</p></li>)}</ul><p className="muted">MCP 프롬프트와 실행 가능한 스킬은 서버의 /command 경로를 사용합니다. 그 외 스킬은 정의를 첨부해 기존 에이전트에게 사용을 요청합니다.</p><pre>{JSON.stringify(wb.mcp, null, 2)}</pre></details>;
+  const paletteTerm = (["commands", "skills"].includes(palette) ? "" : palette).toLowerCase();
+  const commandsPanel = <details className="workspace-section" open={paletteOpen} onToggle={event => setPaletteOpen(event.currentTarget.open)}><summary>커맨드·스킬·MCP</summary><input aria-label="커맨드·스킬 검색" placeholder="검색" value={palette === "commands" || palette === "skills" ? "" : palette} onChange={event => setPalette(event.target.value)} /><ul className="command-list">{wb.commands.filter(command => `${command.name} ${command.description ?? ""}`.toLowerCase().includes(paletteTerm)).map(command => <li key={command.name}><button onClick={() => { setDraft(`/${command.name} `); setDrawer(null); composer.current?.focus(); }}>/{command.name}</button><span>{command.source === "mcp" ? "MCP 프롬프트" : command.source === "skill" ? "스킬" : "사용자 커맨드"}</span><p>{command.description}</p>{command.hints?.length > 0 && <small>인수: {command.hints.join(" · ")}</small>}</li>)}{wb.skills.filter(skill => !wb.commands.some(command => command.name === skill.name) && `${skill.name} ${skill.description ?? ""}`.toLowerCase().includes(paletteTerm)).map(skill => <li key={skill.name}><button onClick={() => void perform(async () => { const current = wb.captureScope(); const part = await textFilePart(`${skill.name}-SKILL.md`, `스킬 위치: ${skill.location}\n\n${skill.content}`); if (!current()) return; setAttachments(previous => [...previous, part]); setDraft(`첨부한 ${skill.name} 스킬을 사용해 다음 작업을 수행해줘.\n`); setDrawer(null); composer.current?.focus(); })}>{skill.name} 스킬 첨부</button><p>{skill.description}</p></li>)}</ul><p className="muted">MCP 프롬프트와 실행 가능한 스킬은 서버의 /command 경로를 사용합니다. 그 외 스킬은 정의를 첨부해 기존 에이전트에게 사용을 요청합니다.</p><pre>{JSON.stringify(wb.mcp, null, 2)}</pre></details>;
   return <div className="workbench" aria-label="OpenCode 작업 공간" hidden={view === "browser"}>
     <div className="workspace-summary"><div className="workspace-identity"><button className="control-chip" aria-label="실행 설정" title={`${profileName ?? "실행 환경 선택"} · ${wb.directory || "작업 디렉터리 정보 없음"}`} onClick={event => openDrawer("environment", event.currentTarget)}><strong>{profileName ?? "실행 환경 선택"}</strong><span aria-hidden="true">▾</span></button><span className="connection-line" role="status">{wb.loading ? "실행 환경 준비 중…" : wb.connected ? `OpenCode ${wb.runtime?.version ?? ""} 연결됨` : "OpenCode 연결 대기"}</span></div>
       <div className="workspace-actions"><button className="quiet" onClick={event => openDrawer("tools", event.currentTarget)}>작업 도구</button><button className="quiet" onClick={event => openDrawer("theme", event.currentTarget)} aria-label="화면 테마 선택">테마</button></div></div>

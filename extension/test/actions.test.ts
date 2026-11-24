@@ -556,3 +556,44 @@ it("select on a <select> needs option; an omitted one never falls back to the em
   // An explicitly empty option is still a choice.
   expect(await runAction("select", { ref: refOf("Country"), option: "" })).toMatchObject({ verified: { value: "" } });
 });
+
+describe("Track 1-B action regressions", () => {
+  it("untrusted browser_press observes DOM changes so batch and lateNavigation see them", async () => {
+    document.body.innerHTML = `<input aria-label="Search"><div id="out"></div>`;
+    const input = document.querySelector("input")!;
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") document.getElementById("out")!.textContent = "Updated"; });
+    const result: any = await runAction("press", { ref: refOf("Search"), key: "Enter", generation: 10 });
+    expect(result.verified).toMatchObject({ key: "Enter", domChanged: true, urlChanged: false });
+  });
+
+  it("file upload accepts wildcard */* and strips MIME parameters", async () => {
+    class FakeDataTransfer {
+      list: File[] = [];
+      items = { add: (f: File) => { this.list.push(f); } };
+      get files() { return this.list as unknown as FileList; }
+    }
+    vi.stubGlobal("DataTransfer", FakeDataTransfer);
+    try {
+      document.body.innerHTML = `<input type="file" aria-label="Any" accept="*/*"><input type="file" aria-label="Txt" accept="text/plain">`;
+      for (const el of document.querySelectorAll("input")) {
+        let current: FileList = [] as unknown as FileList;
+        Object.defineProperty(el, "files", { get: () => current, set: (v) => { current = v; }, configurable: true });
+      }
+      const r1: any = await runAction("upload", { ref: refOf("Any"), name: "doc.pdf", mime: "application/pdf", dataUrl: "data:application/pdf;base64,JVBERg==", generation: 10 });
+      expect(r1.verified.files).toEqual(["doc.pdf"]);
+      const r2: any = await runAction("upload", { ref: refOf("Txt"), name: "note.txt", mime: "text/plain; charset=utf-8", dataUrl: "data:text/plain;base64,aGk=", generation: 10 });
+      expect(r2.verified.files).toEqual(["note.txt"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("close-check ignores mutated hidden and submit inputs", async () => {
+    document.body.innerHTML = `<form><input type="hidden" name="csrf" value="a"><input type="submit" value="Save"></form>`;
+    const hidden = document.querySelector<HTMLInputElement>('input[type="hidden"]')!;
+    const submit = document.querySelector<HTMLInputElement>('input[type="submit"]')!;
+    hidden.value = "b";
+    submit.value = "Saving...";
+    await expect(runAction("close-check", {})).resolves.toMatchObject({ executed: false });
+  });
+});

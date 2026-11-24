@@ -203,7 +203,7 @@ impl Manager {
         loop {
             let inspection = match self.inspect(profile,&mut record).await {
                 Ok(value) => value,
-                Err(error) => { self.terminate(profile,&record).await; return Err(error); }
+                Err(error) => { let _ = self.stop_inner(profile).await; return Err(error); }
             };
             if inspection.listener {
                 match health(&record.base_url,Some(&record.username),Some(&record.password),true,&self.verified_docs).await {
@@ -607,7 +607,11 @@ fn wsl_args(profile: &Profile) -> Vec<String> {
 
 fn forward_wsl_env(env: &mut BTreeMap<String, String>) {
     let mut entries: Vec<String> = std::env::var("WSLENV").unwrap_or_default().split(':')
-        .filter(|entry| !entry.is_empty() && !env.contains_key(entry.split('/').next().unwrap_or_default())).map(str::to_string).collect();
+        .filter(|entry| {
+            let name = entry.split('/').next().unwrap_or_default();
+            !entry.is_empty() && !env.keys().any(|k| k.eq_ignore_ascii_case(name))
+        })
+        .map(str::to_string).collect();
     entries.extend(env.keys().map(|key| format!("{key}/u")));
     env.insert("WSLENV".into(), entries.join(":"));
 }

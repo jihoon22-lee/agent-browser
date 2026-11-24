@@ -79,8 +79,19 @@ export async function loadedTab(api: ChromeApi, id: number, act: () => Promise<u
                     (beforeDocument!==undefined && (await api.listFrames(id)).find(f => f.frameId === 0)?.documentId !== beforeDocument);
                 if(!changed && beforeEntry && beforeDocument){
                     const entry=await interruptible(api.historyEntry!(id,beforeDocument).catch(()=>undefined),signal);
-                    if(!entry)throw new ProtocolError('EXECUTION_UNKNOWN','The history entry could not be verified after traversal. Inspect the page before continuing.','unsafe');
-                    changed=entry!==beforeEntry;
+                    if(!entry) {
+                        // Re-check document/URL: a fast cross-document history traversal may have destroyed beforeDocument between listFrames and historyEntry.
+                        const after = await getTab(api, id);
+                        const afterDoc = (await api.listFrames(id).catch(() => [])).find(f => f.frameId === 0)?.documentId;
+                        if (observed || after.status === 'loading' || after.url !== before?.url || (afterDoc !== undefined && afterDoc !== beforeDocument)) {
+                            changed = true;
+                            if (after.status === 'complete') return after;
+                        } else {
+                            throw new ProtocolError('EXECUTION_UNKNOWN','The history entry could not be verified after traversal. Inspect the page before continuing.','unsafe');
+                        }
+                    } else {
+                        changed=entry!==beforeEntry;
+                    }
                 }
                 if (current.status === 'complete' && changed) return current;
                 if(historyTraversal&&!changed&&!initiated&&Date.now()-dispatchedAt>=1500)

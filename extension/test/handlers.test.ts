@@ -1117,4 +1117,65 @@ describe('a page that stops answering', () => {
     expect(outcome().value).toBeDefined();
     expect(w.sent.filter(s => s.msg.kind === 'cmd').every(s => s.msg.params.replyWithinMs === undefined)).toBe(true);
   });
+  it('scoping advanced.clear passes operationId on write so other sessions keep screenshots', async () => {
+    const w = world();
+    const clear = vi.fn();
+    const advanced = { enabled: () => true, clear, pending: () => undefined, recover: async () => {}, race: (_r: any, work: any) => work(), inflight: () => undefined, busy: () => false, reset: () => {}, forgetOperation: () => {}, handle: async () => ({}) } as any;
+    const h = createHandlers(w.api, memorySessionStore(), undefined, undefined, advanced);
+    const ref = await firstRef(h);
+    clear.mockClear();
+    const clicked = await settle(h(request('browser.click', { ref, operationId: 'op-1' })));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(clicked().value).toBeDefined();
+    expect(clear).toHaveBeenCalled();
+    for (const call of clear.mock.calls) expect(call[0]).toBe('op-1');
+  });
+  it('unstarted safe-retry failure releases dedupe claim instead of caching the error', async () => {
+    const w = world(), store = memorySessionStore(), h = createHandlers(w.api, store);
+    const ref = await firstRef(h);
+    const base = w.api.sendToFrame;
+    w.api.sendToFrame = (tab, frame, msg: any) => msg.kind === 'input-state' ? new Promise(() => {}) : base(tab, frame, msg);
+    const first = await settle(h(request('browser.click', { ref, replyWithinMs: 15_000 }, 'retry-safe-id')));
+    await vi.advanceTimersByTimeAsync(13_400);
+    expect(first().error).toMatchObject({ code: 'TIMEOUT', retry: 'safe' });
+    w.api.sendToFrame = base;
+    const second = await settle(h(request('browser.click', { ref, replyWithinMs: 15_000 }, 'retry-safe-id')));
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(second().value).toMatchObject({ executed: true });
+  });
+  it('modal dialog extends onPage deadline past 10s so running request stays alive', async () => {
+    const w = world();
+    let dialogOpen = false;
+    const pendingPromise = deferred<any>();
+    const base = w.api.sendToFrame;
+    w.api.sendToFrame = (tab, frame, msg: any) => msg.method === 'click' ? pendingPromise.promise : base(tab, frame, msg);
+    let inflightWork: Promise<unknown> | undefined;
+    const advanced = {
+      enabled: () => true,
+      clear: () => {},
+      pending: (tabId: number) => dialogOpen && tabId === 1 ? { dialogId: 'd1', type: 'confirm' } : undefined,
+      recover: async () => {},
+      race: (_req: any, work: () => Promise<any>) => {
+        dialogOpen = true;
+        inflightWork = Promise.resolve().then(work);
+        return Promise.resolve({ ok: true, result: { executed: true, verified: { dialogPending: true } } });
+      },
+      inflight: () => inflightWork,
+      busy: () => false,
+      reset: () => {},
+      forgetOperation: () => {},
+      handle: async () => ({}),
+    } as any;
+    const h = createHandlers(w.api, memorySessionStore(), undefined, undefined, advanced);
+    const ref = await firstRef(h);
+    const res = await h(request('browser.click', { ref, operationId: 'op-1' }, 'dlg-req'));
+    expect(res).toMatchObject({ verified: { dialogPending: true } });
+    // Advance well past the 10s PAGE_REPLY_MS while the dialog is still open: running must stay true!
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(h.isRunning(1, 'dlg-req', 'browser.click')).toBe(true);
+    dialogOpen = false;
+    pendingPromise.resolve({ ok: true, result: { executed: true } });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.isRunning(1, 'dlg-req', 'browser.click')).toBe(false);
+  });
 });

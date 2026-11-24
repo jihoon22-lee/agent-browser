@@ -47,7 +47,29 @@ namespace AgentBrowser.Installer {
                 Case("preview concurrency conflict preserves all existing files",()=>{var plan=InstallerEngine.Prepare(options);NativeIO.WriteText(settings,userEdit+"\r\n");Throws(()=>InstallerEngine.Apply(plan,CancellationToken.None,s=>{}),"concurrent edit ignored");Assert(InstallerEngine.State(install).Version==before.Version,"failed update changed version");});
                 Case("native update preserves identity/data/user model/other MCP",()=>{InstallerEngine.Apply(InstallerEngine.Prepare(options),CancellationToken.None,s=>{});var state=InstallerEngine.State(install);Assert(state.Version=="0.1.4-gui-test2"&&state.InstallId==before.InstallId,"identity/version mismatch");Assert(File.Exists(Path.Combine(state.DataDir,"preserved-test.json")),"data lost");Assert(File.ReadAllText(settings).Contains("test/user-changed")&&File.ReadAllText(settings).Contains("\"other\""),"settings lost");});
                 Case("modified installed file blocks uninstall",()=>{string path=Path.Combine(install,"LICENSE"),bytes=File.ReadAllText(path);File.AppendAllText(path,"modified");Throws(()=>InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=install}),"modified file removed");File.WriteAllText(path,bytes,NativeIO.Utf8);});
-                Case("native uninstall only removes owned files and MCP",()=>{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=install}),CancellationToken.None,s=>{});Assert(!File.Exists(Path.Combine(install,InstallerEngine.StateName)),"marker left");Assert(File.Exists(Path.Combine(install,"data","preserved-test.json")),"data removed");string result=File.ReadAllText(settings);Assert(result.Contains("test/user-changed")&&result.Contains("\"other\"")&&!result.Contains("\"browser\""),"bad settings removal");Assert(!File.Exists(Path.Combine(startup,"AgentBrowser.lnk")),"Startup not removed");});
+                Case("native uninstall only removes owned files and MCP",()=>{InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=install}),CancellationToken.None,s=>{});Assert(!File.Exists(Path.Combine(install,InstallerEngine.StateName)),"marker left");Assert(!File.Exists(Path.Combine(install,".agent-browser-install.lock")),"install lock left behind after uninstall");Assert(!Directory.Exists(Path.Combine(install,"extension")),"emptied extension directory left behind after uninstall");Assert(File.Exists(Path.Combine(install,"data","preserved-test.json")),"data removed");string result=File.ReadAllText(settings);Assert(result.Contains("test/user-changed")&&result.Contains("\"other\"")&&!result.Contains("\"browser\""),"bad settings removal");Assert(!File.Exists(Path.Combine(startup,"AgentBrowser.lnk")),"Startup not removed");});
+                Case("uninstall succeeds when a registered WSL config is missing, removes BOM-empty settings and readonly files",()=>{
+                    string extraRoot=Path.Combine(root,"uninstall-edge"),bomSettings=Path.Combine(root,"bom-empty.json");
+                    var extraOpts=new SetupOptions{PackageDir=package1,InstallDir=extraRoot,Start=false,Startup=false,Port=49433};
+                    extraOpts.Registrations.Add(new McpRecord{Path=bomSettings,Kind="windows"});
+                    InstallerEngine.Apply(InstallerEngine.Prepare(extraOpts),CancellationToken.None,s=>{});
+                    // Prepend UTF-8 BOM to the created settings file so empty-object check must tolerate BOM.
+                    byte[] rawBom=new byte[]{0xEF,0xBB,0xBF}.Concat(File.ReadAllBytes(bomSettings)).ToArray();
+                    File.WriteAllBytes(bomSettings,rawBom);
+                    // Mark an owned file ReadOnly to verify DeleteExpected clears it safely.
+                    string roFile=Path.Combine(extraRoot,"LICENSE");
+                    File.SetAttributes(roFile,File.GetAttributes(roFile)|FileAttributes.ReadOnly);
+                    // Add a missing WSL registration pointing to a nonexistent distribution to verify uninstall skips it without calling wsl.exe.
+                    string stateFile=Path.Combine(extraRoot,InstallerEngine.StateName);
+                    var st=InstallerEngine.State(extraRoot);
+                    st.Mcps=st.Mcps.Concat(new[]{new McpRecord{Path=@"\\wsl.localhost\NonExistentDistroForTest\home\user\.config\opencode\opencode.json",Kind="wsl",Distribution="NonExistentDistroForTest",EntryHash=new string('a',64)}}).ToArray();
+                    st.Mcp=null;
+                    File.WriteAllText(stateFile,NativeIO.Json.Serialize(st),NativeIO.Utf8);
+                    InstallerEngine.Apply(InstallerEngine.Prepare(new SetupOptions{Operation="uninstall",InstallDir=extraRoot}),CancellationToken.None,s=>{});
+                    Assert(!File.Exists(bomSettings),"BOM-prefixed empty settings file was not removed");
+                    Assert(!File.Exists(roFile),"ReadOnly owned file was not removed");
+                    Assert(!File.Exists(Path.Combine(extraRoot,".agent-browser-install.lock")),"lock file remained");
+                });
                 Case("mid-transaction cancellation rolls back",()=>{options.Operation="install";options.PackageDir=package1;options.InstallDir=Path.Combine(root,"cancelled-install");options.Registrations.Clear();var cancel=new CancellationTokenSource();int updates=0;Throws(()=>InstallerEngine.Apply(InstallerEngine.Prepare(options),cancel.Token,s=>{if(++updates==3)cancel.Cancel();}),"mid-install cancellation ignored");Assert(!File.Exists(Path.Combine(options.InstallDir,InstallerEngine.StateName)),"cancel committed");Assert(!File.Exists(Path.Combine(options.InstallDir,"LICENSE")),"cancel did not undo files");});
                 Case("failed startup stops its child and leaves data retryable",()=>{
                     string retryRoot=Path.Combine(root,"startup-retry");var tcp=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);tcp.Start();int freePort=((System.Net.IPEndPoint)tcp.LocalEndpoint).Port;tcp.Stop();

@@ -75,7 +75,71 @@ fn invalid(message: impl Into<String>) -> RpcError {
     RpcError::new(ErrorCode::InvalidParams, Retry::Never, message)
 }
 
-/// Hand-rolled check of the parts of the tool schema that matter: required, type, enum, integer range.
+fn validate_value(key: &str, prop: &Value, value: &Value) -> Result<(), RpcError> {
+    match prop["type"].as_str() {
+        Some("string") => {
+            let Some(s) = value.as_str() else { return Err(invalid(format!("`{key}` must be a string"))); };
+            if prop["minLength"].as_u64().is_some_and(|min| (s.chars().count() as u64) < min) {
+                return Err(invalid(format!("`{key}` is too short")));
+            }
+            if prop["maxLength"].as_u64().is_some_and(|max| (s.chars().count() as u64) > max) {
+                return Err(invalid(format!("`{key}` exceeds maximum length")));
+            }
+        }
+        Some("boolean") if !value.is_boolean() => return Err(invalid(format!("`{key}` must be a boolean"))),
+        Some("number") => {
+            let Some(n) = value.as_f64() else { return Err(invalid(format!("`{key}` must be a number"))) };
+            if !n.is_finite()
+                || prop["minimum"].as_f64().is_some_and(|min| n < min)
+                || prop["exclusiveMinimum"].as_f64().is_some_and(|min| n <= min)
+                || prop["maximum"].as_f64().is_some_and(|max| n > max)
+                || prop["exclusiveMaximum"].as_f64().is_some_and(|max| n >= max)
+            {
+                return Err(invalid(format!("`{key}` is out of range")));
+            }
+        }
+        Some("integer") => {
+            let Some(n) = value.as_i64() else { return Err(invalid(format!("`{key}` must be an integer"))) };
+            if prop["minimum"].as_i64().is_some_and(|min| n < min) || prop["maximum"].as_i64().is_some_and(|max| n > max) {
+                return Err(invalid(format!(
+                    "`{key}` must be between {} and {}",
+                    prop["minimum"].as_i64().map_or("-inf".into(), |v| v.to_string()),
+                    prop["maximum"].as_i64().map_or("inf".into(), |v| v.to_string()),
+                )));
+            }
+        }
+        Some("array") => {
+            let Some(items) = value.as_array() else { return Err(invalid(format!("`{key}` must be an array"))); };
+            if prop["minItems"].as_u64().is_some_and(|min| (items.len() as u64) < min) {
+                return Err(invalid(format!("`{key}` has too few items")));
+            }
+            if prop["maxItems"].as_u64().is_some_and(|max| (items.len() as u64) > max) {
+                return Err(invalid(format!("`{key}` has too many items")));
+            }
+            if let Some(item_schema) = prop.get("items").filter(|s| s.is_object()) {
+                for (idx, item) in items.iter().enumerate() {
+                    validate_value(&format!("{key}[{idx}]"), item_schema, item)?;
+                }
+            }
+        }
+        Some("object") => {
+            if !value.is_object() { return Err(invalid(format!("`{key}` must be an object"))); }
+            if prop.get("properties").is_some() || prop.get("required").is_some() {
+                validate(prop, value)?;
+            }
+        }
+        _ => {}
+    }
+    if let Some(allowed) = prop["enum"].as_array() {
+        if !allowed.contains(value) {
+            let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
+            return Err(invalid(format!("`{key}` must be one of: {}", names.join(", "))));
+        }
+    }
+    Ok(())
+}
+
+/// Hand-rolled check of the parts of the tool schema that matter: required, type, enum, integer range, nested object/array, string length.
 pub fn validate(schema: &Value, args: &Value) -> Result<(), RpcError> {
     let obj = args.as_object().ok_or_else(|| invalid("arguments must be an object"))?;
     if let Some(required) = schema["required"].as_array() {
@@ -90,31 +154,7 @@ pub fn validate(schema: &Value, args: &Value) -> Result<(), RpcError> {
         // A null optional field is an omitted one (free models often send them); it is never forwarded.
         if value.is_null() { continue; }
         let Some(prop) = props.and_then(|p| p.get(key)) else { continue };
-        match prop["type"].as_str() {
-            Some("string") if !value.is_string() => return Err(invalid(format!("`{key}` must be a string"))),
-            Some("boolean") if !value.is_boolean() => return Err(invalid(format!("`{key}` must be a boolean"))),
-            Some("number") => {
-                let Some(n)=value.as_f64() else {return Err(invalid(format!("`{key}` must be a number")))};
-                if !n.is_finite() || prop["minimum"].as_f64().is_some_and(|min|n<min) || prop["maximum"].as_f64().is_some_and(|max|n>max) {return Err(invalid(format!("`{key}` is out of range")));}
-            }
-            Some("integer") => {
-                let Some(n) = value.as_i64() else { return Err(invalid(format!("`{key}` must be an integer"))) };
-                if prop["minimum"].as_i64().is_some_and(|min| n < min) || prop["maximum"].as_i64().is_some_and(|max| n > max) {
-                    return Err(invalid(format!(
-                        "`{key}` must be between {} and {}",
-                        prop["minimum"].as_i64().map_or("-inf".into(), |v| v.to_string()),
-                        prop["maximum"].as_i64().map_or("inf".into(), |v| v.to_string()),
-                    )));
-                }
-            }
-            _ => {}
-        }
-        if let Some(allowed) = prop["enum"].as_array() {
-            if !allowed.contains(value) {
-                let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
-                return Err(invalid(format!("`{key}` must be one of: {}", names.join(", "))));
-            }
-        }
+        validate_value(key, prop, value)?;
     }
     Ok(())
 }
@@ -314,6 +354,10 @@ async fn run(state: &ServerState, caller: &Caller, name: &str, args: &Value) -> 
 /// `follow_up=false` skips the attached snapshot and tab list: an implicit attach in front of a
 /// read discards them, and the read itself reads the page.
 async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value, follow_up: bool) -> ToolOutcome {
+    run_with_budget(state, caller, name, args, follow_up, None).await
+}
+
+async fn run_with_budget(state: &ServerState, caller: &Caller, name: &str, args: &Value, follow_up: bool, budget: Option<Duration>) -> ToolOutcome {
     let Some(def) = tools::find(name) else {
         return ToolOutcome::rejected(name, None, invalid(format!("unknown tool `{name}`")));
     };
@@ -354,7 +398,7 @@ async fn run_with(state: &ServerState, caller: &Caller, name: &str, args: &Value
     } else if name == "browser_batch" {
         run_batch(state, caller, args).await
     } else {
-        run_operation_tool(state, caller, name, args, &def.schema).await
+        run_operation_tool(state, caller, name, args, &def.schema, budget).await
     };
     let creates = name == "browser_tabs" && (args["action"] == "attach" || (args["action"] == "new" && args.get("operationId").is_none()));
     if creates && outcome.ok {if let (Some(id),Some(conn))=(outcome.operation_id.as_deref(),caller.connection_id.as_deref()){state.ops.pin_input_connection(id,conn);}}
@@ -380,10 +424,12 @@ fn operation_required(name: &str) -> ToolOutcome {
 /// How long a tool call waits while the user holds the browser; below the MCP reply window.
 pub(crate) const HANDOFF_WAIT: Duration = Duration::from_secs(45);
 
-async fn run_operation_tool(state: &ServerState, caller:&Caller, name: &str, args: &Value, schema: &Value) -> ToolOutcome {
+async fn run_operation_tool(state: &ServerState, caller:&Caller, name: &str, args: &Value, schema: &Value, budget: Option<Duration>) -> ToolOutcome {
     let Some(op_id) = args["operationId"].as_str() else { return operation_required(name) };
     if name=="browser_pointer"&&!state.ops.input_connection_matches(op_id,caller.connection_id.as_deref()) {return ToolOutcome::rejected(name,Some(op_id),RpcError::new(ErrorCode::ForbiddenMethod,Retry::Never,"Visual input must use the MCP connection that attached this request. Start a new panel request after reconnecting."));}
-    if let Err(error) = state.ops.wait_until_resumed(op_id, HANDOFF_WAIT).await { return ToolOutcome::rejected(name, Some(op_id), error); }
+    let started = tokio::time::Instant::now();
+    let handoff_wait = budget.map_or(HANDOFF_WAIT, |limit| HANDOFF_WAIT.min(limit));
+    if let Err(error) = state.ops.wait_until_resumed(op_id, handoff_wait).await { return ToolOutcome::rejected(name, Some(op_id), error); }
     // Forward only what the published schema declares; the gate owns operation, generation and tab.
     let declared = schema["properties"].as_object();
     let mut params: serde_json::Map<String, Value> = args
@@ -398,7 +444,11 @@ async fn run_operation_tool(state: &ServerState, caller:&Caller, name: &str, arg
     if matches!(name,"browser_upload"|"browser_pointer") { if let Some(request) = state.ops.panel_request_of(op_id) { params.insert("panelRequestId".into(), json!(request)); } }
     let class = tools::class_of(name, args);
     let method = format!("browser.{}", name.trim_start_matches("browser_"));
-    let queued = match queue_operation_tool(state, op_id, &method, params, class, timeout_for(name, args)) {
+    let timeout = match budget {
+        Some(limit) => timeout_for(name, args).min(limit.saturating_sub(started.elapsed()).max(Duration::from_millis(500))),
+        None => timeout_for(name, args),
+    };
+    let queued = match queue_operation_tool(state, op_id, &method, params, class, timeout) {
         Ok(queued) => queued,
         Err(error) => return ToolOutcome::rejected(name, Some(op_id), error),
     };
@@ -556,6 +606,8 @@ fn wants_snapshot(name: &str, args: &Value, outcome: &ToolOutcome) -> bool {
 const BATCH_TOOLS: [&str; 4] = ["click", "fill", "select", "press"];
 /// A batch starts no new step after this, so its reply stays well inside the MCP reply window.
 const BATCH_TIME: Duration = Duration::from_secs(20);
+/// Hard cap for the entire batch (steps + handoff waits), leaving headroom for follow-up snapshot inside REPLY_WAIT (60s).
+const BATCH_BUDGET: Duration = Duration::from_secs(45);
 
 /// Each step runs exactly as its own tool would (checks, handoff wait, gate), without follow-up reads.
 /// A step that changed the page ends the batch: later refs may no longer point where the model meant.
@@ -581,24 +633,37 @@ async fn run_batch(state: &ServerState, caller: &Caller, args: &Value) -> ToolOu
     let (mut ran, mut executed, mut stop, mut last) = (vec![], Executed::No, None::<&str>, None::<ToolOutcome>);
     for (index, (name, step_args)) in planned.iter().enumerate() {
         if index > 0 && started.elapsed() > BATCH_TIME { stop = Some("time"); break; }
-        let outcome = Box::pin(run_with(state, caller, name, step_args, false)).await;
+        let remaining = BATCH_BUDGET.saturating_sub(started.elapsed());
+        if index > 0 && remaining < Duration::from_secs(1) { stop = Some("time"); break; }
+        let outcome = Box::pin(run_with_budget(state, caller, name, step_args, false, Some(remaining))).await;
         executed = match (executed, outcome.executed) { (Executed::Unknown, _) | (_, Executed::Unknown) => Executed::Unknown, (Executed::Yes, _) | (_, Executed::Yes) => Executed::Yes, _ => Executed::No };
-        let changed = outcome.verified["urlChanged"] == true || outcome.verified["dialogPending"] == true || outcome.data["currentTab"].is_number()
+        let dialog_pending = outcome.verified["dialogPending"] == true;
+        let changed = outcome.verified["urlChanged"] == true || outcome.data["currentTab"].is_number()
             || (name != "browser_fill" && name != "browser_select" && (outcome.verified["domChanged"] == true || outcome.verified["expectationMet"] == true));
         ran.push(json!({"step": index + 1, "tool": name, "ok": outcome.ok, "executed": outcome.executed, "verified": outcome.verified, "error": outcome.error}));
         let ok = outcome.ok; last = Some(outcome);
         if !ok { stop = Some("failed"); break; }
+        if dialog_pending { stop = Some("dialogPending"); break; }
         if changed { if index + 1 < planned.len() { stop = Some("pageChanged"); } break; }
     }
     let (completed, last) = (ran.len(), last.expect("a batch runs at least one step"));
-    let page_changed = last.ok && (stop == Some("pageChanged") || wants_snapshot(&planned[completed - 1].0, &planned[completed - 1].1, &last));
+    let dialog_pending = stop == Some("dialogPending") || last.verified["dialogPending"] == true;
+    let page_changed = last.ok && !dialog_pending && (stop == Some("pageChanged") || wants_snapshot(&planned[completed - 1].0, &planned[completed - 1].1, &last));
     let mut data = json!({"steps": ran});
+    // Preserve important step data from the terminal step (openedTabs, currentTab, operationTabs, dialog, nextStep, etc.).
+    if let (Some(dst), Some(src)) = (data.as_object_mut(), last.data.as_object()) {
+        for (k, v) in src {
+            if k != "steps" && k != "note" { dst.insert(k.clone(), v.clone()); }
+        }
+    }
     match stop {
+        Some("dialogPending") if completed < planned.len() => data["note"] = json!(format!("Stopped after step {completed}: a dialog opened. Steps {}-{} did not run; handle the dialog with browser_dialog.", completed + 1, planned.len())),
         Some("pageChanged") => data["note"] = json!(format!("Stopped after step {completed}: the page changed. Steps {}-{} did not run; use the returned snapshot.", completed + 1, planned.len())),
         Some("time") => data["note"] = json!(format!("Stopped before step {}: time ran out. Later steps did not run; take browser_snapshot first.", completed + 1)),
         _ => {}
     }
-    let verified = json!({"completed": completed, "total": planned.len(), "pageChanged": page_changed});
+    let mut verified = json!({"completed": completed, "total": planned.len(), "pageChanged": page_changed});
+    if dialog_pending { verified["dialogPending"] = json!(true); }
     if let Some(error) = last.error.filter(|_| stop == Some("failed")) {
         let mut failed = ToolOutcome::failure(NAME, Some(&op_id), last.delivered, error);
         failed.executed = executed; failed.verified = verified; failed.data = data;
@@ -683,7 +748,8 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             Err(e) => delivered_failure(None, e),
         },
         "attach" => {
-            let _selection = state.selection.lock().await;
+            // Read lock blocks browser.use (write lock) during tabs.get, while allowing concurrent request.begin (try_read).
+            let _selection = state.selection.read().await;
             let client = state.registry.selected_client().unwrap_or_default();
             let target=match state.ops.request_target(args["requestId"].as_str(),&client,args["tabId"].as_i64()) {
                 Ok(target)=>target,Err(e)=>return ToolOutcome::rejected(NAME,None,e),
@@ -720,9 +786,10 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             struct Reservation<'a> { state: &'a ServerState, id: Option<String> }
             // A cancelled call never reaches call_tool_as's broadcast, so the release announces itself.
             impl Drop for Reservation<'_> { fn drop(&mut self) { if let Some(id) = &self.id && self.state.ops.release(id).is_ok() { self.state.broadcast_status(); } } }
-            let selection = state.selection.lock().await;
+            let selection = state.selection.read().await;
             let mut reservation = Reservation {state, id:None};
             let new_id;
+            let explicit_op = args["operationId"].as_str().is_some();
             let op_id = if let Some(id) = args["operationId"].as_str() { id } else {
                 let client = state.registry.selected_client().unwrap_or_default();
                 match state.ops.reserve_new(&client,args["requestId"].as_str()) {
@@ -730,6 +797,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                     Err(error) => return ToolOutcome::rejected(NAME,None,error),
                 }
             };
+            let fail_op = explicit_op.then_some(op_id);
             let queued = state.ops.with_checked(op_id, false, |op| {
                 ensure_not_held(op)?;
                 let params = json!({ "url": args["url"].as_str().unwrap_or("about:blank"), "operationId": op.id, "generation": op.generation,
@@ -739,12 +807,12 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
             drop(selection);
             let queued = match queued {
                 Ok(queued) => queued,
-                Err(error) => return ToolOutcome::rejected(NAME, Some(op_id), error),
+                Err(error) => return ToolOutcome::rejected(NAME, fail_op, error),
             };
             let created = queued.wait(timeout_for(NAME, args)).await;
             let tab = match created {
                 Ok(tab) => tab,
-                Err(e) => return delivered_failure(Some(op_id), e),
+                Err(e) => return delivered_failure(fail_op, e),
             };
             let joined = tab["tabId"].as_i64().ok_or_else(|| {
                 RpcError::new(ErrorCode::Internal, Retry::Never, "browser did not report the new tab id").with_details(json!({ "executed": true }))
@@ -758,7 +826,7 @@ async fn run_tabs(state: &ServerState, args: &Value) -> ToolOutcome {
                 Err(mut e) => {
                     // The tab exists even though the operation could not take it.
                     e.details = json!({ "executed": true, "tab": tab });
-                    ToolOutcome::failure(NAME, Some(op_id), true, e)
+                    ToolOutcome::failure(NAME, fail_op, true, e)
                 }
             }
         }
@@ -1228,5 +1296,116 @@ mod issue8_tests {
         assert_eq!(result.data["openedTabs"][0]["adopted"],true);
         assert_eq!(result.data["openedTabs"][1]["adopted"],false);
         assert_eq!(state.ops.current().unwrap().tabs,vec![1,2]);
+    }
+
+    #[test]
+    fn validate_checks_nested_objects_arrays_and_max_length() {
+        let screenshot = tools::find("browser_screenshot").unwrap();
+        assert!(validate(&screenshot.schema, &json!({"scope":"region","region":{}})).is_err(), "empty region misses required fields");
+        assert!(validate(&screenshot.schema, &json!({"scope":"region","region":{"x":0,"y":0,"width":0,"height":10}})).is_err(), "zero width violates exclusiveMinimum");
+        assert!(validate(&screenshot.schema, &json!({"scope":"region","region":{"x":0,"y":0,"width":10,"height":10}})).is_ok());
+
+        let press = tools::find("browser_press").unwrap();
+        assert!(validate(&press.schema, &json!({"key":"a","modifiers":"Control"})).is_err(), "modifiers must be an array");
+        assert!(validate(&press.schema, &json!({"key":"a","modifiers":["Bogus"]})).is_err(), "invalid modifier enum");
+        assert!(validate(&press.schema, &json!({"key":"Enter","modifiers":["Control","Shift","Alt","Meta","Control"]})).is_err(), "too many modifiers");
+        assert!(validate(&press.schema, &json!({"key":"12345678901"})).is_err(), "key exceeds maxLength");
+
+        let snapshot = tools::find("browser_snapshot").unwrap();
+        assert!(validate(&snapshot.schema, &json!({"query":"x".repeat(81)})).is_err(), "query exceeds maxLength");
+    }
+
+    #[tokio::test]
+    async fn batch_propagates_dialog_pending_without_follow_up_snapshot_and_keeps_data() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("A", tx);
+        let op = state.ops.attach(1, "A").unwrap();
+        let task = {
+            let state = state.clone();
+            let id = op.id.clone();
+            tokio::spawn(async move {
+                call_tool(&state, "browser_batch", json!({
+                    "operationId": id,
+                    "steps": [
+                        {"tool":"click","ref":"s1f0e1"},
+                        {"tool":"click","ref":"s1f0e2"}
+                    ]
+                })).await
+            })
+        };
+        let mut methods = Vec::new();
+        let mut task = task;
+        let outcome = loop {
+            tokio::select! {
+                res = &mut task => break res.unwrap(),
+                msg = rx.recv() => {
+                    let Envelope::Req { id, method, .. } = parse_envelope(&msg.unwrap()).unwrap() else { continue };
+                    methods.push(method.clone());
+                    let reply = json!({
+                        "executed": true,
+                        "verified": { "dialogPending": true, "urlChanged": false, "domChanged": false },
+                        "dialog": { "dialogId": "dlg-1", "type": "confirm", "message": "Proceed?" }
+                    });
+                    state.registry.handle_response(conn, Envelope::ok(id, reply));
+                }
+            }
+        };
+        assert_eq!(methods, vec!["browser.click"], "must not fire follow-up snapshot into modal dialog");
+        assert_eq!(outcome.verified["dialogPending"], true, "verified: {}", outcome.verified);
+        assert_eq!(outcome.verified["pageChanged"], false, "verified: {}", outcome.verified);
+        assert_eq!(outcome.data["dialog"]["dialogId"], "dlg-1", "data: {}", outcome.data);
+    }
+
+    #[tokio::test]
+    async fn attach_releases_selection_lock_while_waiting_for_tabs_get() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("A", tx);
+        let task = {
+            let state = state.clone();
+            tokio::spawn(async move { call_tool(&state, "browser_tabs", json!({"action":"attach"})).await })
+        };
+        let Envelope::Req { id, method, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
+        assert_eq!(method, "browser.tabs.get");
+        assert!(state.selection.try_read().is_ok(), "concurrent request.begin (try_read) must not be blocked during browser.tabs.get await");
+        assert!(state.selection.try_write().is_err(), "browser.use (try_write) must stay blocked during browser.tabs.get await");
+        state.registry.handle_response(conn, Envelope::ok(id, json!({"tabId": 10, "windowId": 1, "url": "https://example.test", "attachable": true})));
+        // Drain follow-up snapshot and openTabs
+        let mut task = task;
+        let outcome = loop {
+            tokio::select! {
+                res = &mut task => break res.unwrap(),
+                msg = rx.recv() => {
+                    let Envelope::Req { id, method, .. } = parse_envelope(&msg.unwrap()).unwrap() else { continue };
+                    let reply = if method == "browser.snapshot" { json!({"tabId":10,"elements":[],"text":""}) } else { json!({"tabs":[]}) };
+                    state.registry.handle_response(conn, Envelope::ok(id, reply));
+                }
+            }
+        };
+        assert!(outcome.ok);
+    }
+
+    #[tokio::test]
+    async fn standalone_new_tab_failure_does_not_return_released_operation_id() {
+        use crate::rpc::{Envelope, parse_envelope};
+        let home = tempfile::tempdir().unwrap();
+        let state = std::sync::Arc::new(ServerState::new(home.path().into(), crate::config::load_or_init(home.path()).unwrap()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let conn = state.registry.register("A", tx);
+        let task = {
+            let state = state.clone();
+            tokio::spawn(async move { call_tool(&state, "browser_tabs", json!({"action":"new","url":"https://example.test"})).await })
+        };
+        let Envelope::Req { id, method, .. } = parse_envelope(&rx.recv().await.unwrap()).unwrap() else { panic!() };
+        assert_eq!(method, "browser.tabs.create");
+        state.registry.handle_response(conn, Envelope::err(id, RpcError::new(ErrorCode::Internal, Retry::Never, "boom")));
+        let outcome = task.await.unwrap();
+        assert!(!outcome.ok);
+        assert_eq!(outcome.operation_id, None, "released temporary reservation must not be leaked in failed outcome");
     }
 }

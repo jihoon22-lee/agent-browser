@@ -24,7 +24,7 @@ export function TargetPicker({ chosen, onChange }: { chosen: number | null; onCh
     const events: Array<[chrome.events.Event<any> | undefined, (...args: any[]) => void]> = [
       [chrome.tabs?.onCreated, later], [chrome.tabs?.onUpdated, later], [chrome.tabs?.onRemoved, removed],
       [chrome.tabs?.onAttached, later], [chrome.tabs?.onDetached, later],
-      [chrome.windows?.onCreated, later], [chrome.windows?.onRemoved, later],
+      [chrome.windows?.onCreated, later], [chrome.windows?.onRemoved, later], [chrome.windows?.onFocusChanged, later],
     ];
     load();
     for (const [event, listener] of events) event?.addListener(listener);

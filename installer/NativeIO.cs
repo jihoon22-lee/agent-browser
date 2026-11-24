@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -61,7 +62,11 @@ namespace AgentBrowser.Installer {
             if(code!=0)throw new IOException("Owned Bridge startup failed ("+code+").");
         }
         public void RequireChild(int pid) {
-            using(var process=Process.GetProcessById(pid)) {bool inside;if(!IsProcessInJob(process.Handle,job,out inside))throw Error("Cannot verify startup child ownership");if(!inside||process.HasExited)throw new IOException("Bridge PID does not belong to this startup.");}
+            try {
+                using(var process=Process.GetProcessById(pid)) {bool inside;if(!IsProcessInJob(process.Handle,job,out inside))throw Error("Cannot verify startup child ownership");if(!inside||process.HasExited)throw new IOException("Bridge PID does not belong to this startup.");}
+            } catch(ArgumentException) {
+                throw new IOException("Bridge PID does not belong to this startup.");
+            }
         }
         void StartupLimit(bool killOnClose) {
             // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE remains set until the owner marker is saved.
@@ -135,8 +140,12 @@ namespace AgentBrowser.Installer {
                 // output in another encoding and lose the exit code and the message.
                 using(var stdout=new MemoryStream()) using(var stderr=new MemoryStream()) {
                     Task output=process.StandardOutput.BaseStream.CopyToAsync(stdout), error=process.StandardError.BaseStream.CopyToAsync(stderr);
-                    if(!process.WaitForExit(timeout)) { process.Kill(); process.WaitForExit(); throw new IOException("The selected command did not finish. No unrelated process was stopped."); }
-                    output.Wait(); error.Wait();
+                    if(!process.WaitForExit(timeout)) {
+                        try { process.Kill(); } catch(InvalidOperationException) {} catch(System.ComponentModel.Win32Exception) {}
+                        process.WaitForExit(2000);
+                        throw new IOException("The selected command did not finish. No unrelated process was stopped.");
+                    }
+                    Task.WhenAll(output, error).Wait(2000);
                     return new CommandResult { ExitCode=process.ExitCode, Output=DecodeOutput(stdout.ToArray(),encoding).Trim(), Error=DecodeOutput(stderr.ToArray(),encoding).Trim() };
                 }
             }
@@ -175,8 +184,8 @@ else
     actual=$(sha256sum -- ""$target"")
     actual=${actual%% *}
     [ ""$actual"" = ""$expected"" ] || { echo 'Settings changed while preparing; no settings were overwritten.' >&2; exit 44; }
-    chown --reference=""$target"" -- ""$temporary""
-    chmod --reference=""$target"" -- ""$temporary""
+    chown --reference=""$target"" -- ""$temporary"" 2>/dev/null || true
+    chmod --reference=""$target"" -- ""$temporary"" 2>/dev/null || true
 fi
 mv -fT -- ""$temporary"" ""$target""
 ";
@@ -226,7 +235,11 @@ mv -fT -- ""$temporary"" ""$target""
                 }finally{Marshal.FreeHGlobal(data);}
             }
             public void Publish(string temporary) {
-                File.SetAccessControl(temporary,File.GetAccessControl(path));
+                try { File.SetAccessControl(temporary,File.GetAccessControl(path,AccessControlSections.Access)); }
+                catch(UnauthorizedAccessException) {}
+                catch(IOException) {}
+                catch(InvalidOperationException) {}
+                catch(NotSupportedException) {}
                 string recovery=path+".agent-browser-recovery-"+Guid.NewGuid().ToString("N");
                 Rename(recovery);
                 try {File.Move(temporary,path);}
@@ -269,6 +282,8 @@ fi
                 using(var stream=new FileStream(handle,FileAccess.Read))using(var hash=SHA256.Create()) {
                     string actual=BitConverter.ToString(hash.ComputeHash(stream)).Replace("-","").ToLowerInvariant();
                     if(actual!=expected)throw new IOException("A concurrently changed file was preserved: "+path);
+                    var attrs=File.GetAttributes(path);
+                    if((attrs&FileAttributes.ReadOnly)!=0) { try { File.SetAttributes(path,attrs&~FileAttributes.ReadOnly); } catch(IOException) {} catch(UnauthorizedAccessException) {} }
                     var disposition=new Disposition{DeleteFile=1};
                     if(!SetFileInformationByHandle(handle,4,ref disposition,Marshal.SizeOf(typeof(Disposition))))throw new IOException("Cannot remove verified file: "+path,new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
                 }

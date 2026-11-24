@@ -71,4 +71,28 @@ describe("pinned OpenCode v1 transport", () => {
     expect(await client.findFiles("문서/합성")).toEqual(["문서/합성 자료/", "문서/합성 파일.txt"]);
     expect(new URL(fetcher.mock.calls[1]![0] as string).searchParams.get("path")).toBe("문서/");
   });
+  it("ignores empty or non-JSON SSE keepalive lines without breaking the stream", async () => {
+    const raw = `data:\n\ndata: ping\n\ndata: {"type":"session.idle","properties":{"sessionID":"ses_1"}}\n\n`;
+    const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(new TextEncoder().encode(raw)); c.close(); } });
+    const events: unknown[] = [];
+    for await (const ev of parseSse(stream)) events.push(ev);
+    expect(events).toEqual([{ type: "session.idle", properties: { sessionID: "ses_1" } }]);
+  });
+  it("parses JSON error payloads on SSE failure and normalizes Windows separators in findFiles", async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({ message: "세션 권한 없음" }), { status: 403 }));
+    const client = new OpenCodeV1Client(connection, fetcher, { retryDelayMs: 0 });
+    await expect(client.events(() => {}, () => {}, new AbortController().signal)).rejects.toMatchObject({ status: 403, message: expect.stringContaining("세션 권한 없음") });
+    const fileFetcher = vi.fn(async () => new Response(JSON.stringify(["src\\dir\\", "src\\file.ts"])));
+    expect(await new OpenCodeV1Client(connection, fileFetcher).findFiles("src")).toEqual(["src/dir/", "src/file.ts"]);
+  });
+  it("times out a hung initial SSE connect instead of wedging forever", async () => {
+    const fetcher = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+    }));
+    const controller = new AbortController();
+    const states: boolean[] = [];
+    const client = new OpenCodeV1Client(connection, fetcher, { retryDelayMs: 0, connectTimeoutMs: 25 });
+    await client.events(() => {}, online => { states.push(online); if (!online) controller.abort(); }, controller.signal);
+    expect(states).toEqual([false]);
+  });
 });

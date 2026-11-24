@@ -102,6 +102,10 @@ try {
     if ($lock) { $lock.Dispose(); if (Test-Path -LiteralPath $lockPath) { Remove-Item -LiteralPath $lockPath -Force } }
 }
 if ($committed) {
+    try {
+        $regKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\AgentBrowser\Installations', $true)
+        try { if ($regKey) { $regKey.DeleteSubKey($state.InstallId, $false) } } finally { if ($regKey) { $regKey.Dispose() } }
+    } catch { }
     if ($RemoveData -and (Test-Path -LiteralPath $state.DataDir)) { Remove-Item -LiteralPath $state.DataDir -Recurse -Force }
     $parents = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($file in $state.OwnedFiles) {

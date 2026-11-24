@@ -55,14 +55,27 @@ const OUT_OF_TIME_WRITE = 'No reply before this request ran out of time; the act
 /** Nothing reached the page: the request spent its time waiting (behind another write, or on Chrome). */
 const spent = () => new ProtocolError('TIMEOUT', 'This request ran out of time before it reached the page; nothing was done. Take a new browser_snapshot before trying again.', 'safe', { reason: 'deadline' });
 const unanswered = (e: unknown) => ['page-unresponsive', 'deadline'].includes(String((asError(e).details as { reason?: unknown } | undefined)?.reason));
-/** Rejects when the content script has not replied within `ms`. The reply itself may still arrive later. */
-function answered<T>(work: Promise<T>, ms: number, write: boolean): Promise<T> {
+/** Rejects when the content script has not replied within `ms`. The reply itself may still arrive later.
+ * When `extend` returns true (e.g. a modal dialog is open), the deadline pauses until it clears. */
+function answered<T>(work: Promise<T>, ms: number, write: boolean, extend?: () => boolean): Promise<T> {
     const fair = ms >= FAIR_WAIT_MS, reason = fair ? 'page-unresponsive' : 'deadline';
     return new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => reject(write
-            ? new ProtocolError('EXECUTION_UNKNOWN', fair ? UNRESPONSIVE : OUT_OF_TIME_WRITE, 'unsafe', { reason })
-            : new ProtocolError('TIMEOUT', fair ? UNRESPONSIVE : OUT_OF_TIME, 'safe', { reason })), Math.max(0, ms));
-        work.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+        let done = false;
+        let timer: ReturnType<typeof setTimeout>;
+        const onExpire = () => {
+            if (done) return;
+            if (extend?.()) {
+                timer = setTimeout(onExpire, 1_000);
+                return;
+            }
+            done = true;
+            reject(write
+                ? new ProtocolError('EXECUTION_UNKNOWN', fair ? UNRESPONSIVE : OUT_OF_TIME_WRITE, 'unsafe', { reason })
+                : new ProtocolError('TIMEOUT', fair ? UNRESPONSIVE : OUT_OF_TIME, 'safe', { reason }));
+        };
+        timer = setTimeout(onExpire, Math.max(0, ms));
+        work.then(value => { if (!done) { done = true; clearTimeout(timer); resolve(value); } },
+            error => { if (!done) { done = true; clearTimeout(timer); reject(error); } });
     });
 }
 /** Up to `ms`, cut to what is left before the Bridge stops waiting for this request. */
@@ -81,9 +94,9 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     const frames = frameRouter(api, store), running = new Map<string, Running>();
     /** Every message to a page is bounded: a page blocked by alert/confirm/prompt answers nothing,
      * not even the injection or probe before a command. Once the time is spent it is not started. */
-    const onPage = <T>(run: Running, work: () => Promise<T>, write = false, ms = PAGE_REPLY_MS): Promise<T> => {
+    const onPage = <T>(run: Running, work: () => Promise<T>, write = false, ms = PAGE_REPLY_MS, extend?: () => boolean): Promise<T> => {
         const left = within(run, ms);
-        return left <= 0 ? Promise.reject(spent()) : answered(work(), left, write);
+        return left <= 0 ? Promise.reject(spent()) : answered(work(), left, write, extend);
     };
     const writes=new Map<number,Promise<unknown>>();
     /** A link click may still be committing the next document; read the page it produced. Wait for
@@ -149,14 +162,17 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const own = Math.max(0, Number(params.timeoutMs) || 0, Number(params.settleMs) || 0, Number((params.waitFor as { timeoutMs?: unknown } | undefined)?.timeoutMs) || 0);
         // A write sent without the time to hear back would run unseen; keep it unsent instead.
         if (WRITE.has(run.req.method) && within(run, own + PAGE_REPLY_MS) < FAIR_WAIT_MS) throw spent();
-        if (WRITE.has(run.req.method)) { advanced?.clear(); run.started = true; }
+        if (WRITE.has(run.req.method)) { advanced?.clear(typeof run.req.params.operationId === 'string' ? run.req.params.operationId : undefined); run.started = true; }
         const tabs = tracksTabs ? trackCreatedTabs(api,tabId,frame.frameId,run.controller.signal) : undefined;
         let response: any;
         run.frame=frame;
         try {
             // A page blocked by alert/confirm/prompt never answers. Give up after the request's own wait
             // budget plus 10 seconds, or sooner if the Bridge stops waiting first, and say so.
-            const work=()=>onPage(run, () => api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } }), WRITE.has(run.req.method), own + PAGE_REPLY_MS);
+            // While an advanced modal dialog is tracked on this tab, keep the underlying work alive
+            // so the debugger stays attached until browser_dialog responds.
+            const extendForDialog = WRITE.has(run.req.method) && advanced ? () => !!advanced.pending(tabId) : undefined;
+            const work=()=>onPage(run, () => api.sendToFrame(tabId, frame, { kind: 'cmd', method, params: { ...params, requestId: run.req.id } }), WRITE.has(run.req.method), own + PAGE_REPLY_MS, extendForDialog);
             response = await interruptible(WRITE.has(run.req.method) && advanced ? advanced.race(run.req,work) : work(), run.controller.signal);
         }
         catch (e) {
@@ -522,7 +538,8 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const cancel=()=>controller.abort(run.controller.signal.reason??cancelled());
         run.controller.signal.addEventListener('abort',cancel,{once:true});
         if(run.controller.signal.aborted)cancel();
-        const timer=setTimeout(()=>controller.abort(new ProtocolError('TIMEOUT','The requested page conditions were not met. Inspect the page before another action.',executed?'never':'safe',{executed,expectationMet:false})),expected.timeoutMs);
+        const waitBudget = Math.max(50, within(run, expected.timeoutMs));
+        const timer=setTimeout(()=>controller.abort(new ProtocolError('TIMEOUT','The requested page conditions were not met. Inspect the page before another action.',executed?'never':'safe',{executed,expectationMet:false})),waitBudget);
         const started=Date.now(),keys=CONDITION_KEYS.filter(k=>expected[k]!==undefined),originalDocumentId=original.documentId;
         const staleWait=()=>new ProtocolError('STALE_ELEMENT','The waited-for document changed. Take a fresh snapshot before waiting again.');
         let injected=originalDocumentId;
@@ -576,17 +593,19 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
     }
     async function urlWait(tabId: number, p: Record<string, unknown>, run: Running, prepare: () => Promise<FrameInfo>) {
         const signal = run.controller.signal;
-        let frame: FrameInfo | undefined, finished=false;
+        let frame: FrameInfo | undefined, finished=false, matched=false;
         let resolve!: (r: unknown) => void, reject!: (e: unknown) => void;
         const url = new Promise((r, j) => { resolve = r; reject = j; });
-        const match = (t: chrome.tabs.Tab) => { if (t.url?.includes(String(p.urlIncludes)))
-            resolve({ executed: false, verified: { met: 'urlIncludes' } }); };
+        const match = (t: chrome.tabs.Tab) => { if (t.url?.includes(String(p.urlIncludes))) {
+            matched = true;
+            resolve({ executed: false, verified: { met: 'urlIncludes' } }); } };
         const off = api.onTabUpdated((id, _change, t) => { if (id === tabId)
             match(t); });
         const timer = setTimeout(() => reject(new ProtocolError('TIMEOUT', 'The requested URL condition was not reached.', 'safe')), Math.min(Number(p.timeoutMs ?? 5000), 30000));
         void url.catch(() => { });
         try {
             match(await getTab(api, tabId));
+            if (matched) return await interruptible(url, signal);
             const content = (async () => {
                 if (p.text === undefined && p.textGone === undefined && p.refGone === undefined) return url;
                 frame = await prepare();
@@ -642,8 +661,10 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
                 error = new ProtocolError('EXECUTION_UNKNOWN', 'The action was dispatched but its outcome could not be confirmed. Inspect the page before retrying.', 'unsafe');
             if (run.started && error.code === 'CANCELLED' && !(error.details as any)?.executed && !(error.details as any)?.deliveryKnown)
                 error = new ProtocolError('EXECUTION_UNKNOWN', 'Stopped after dispatch; the action may have happened. Inspect the page before retrying.', 'unsafe');
-            if (claimed)
-                await store.saveResult(req.id, { ok: false, error: error.toRpc() });
+            if (claimed) {
+                if (!run.started && error.retry === 'safe') await store.release(req.id);
+                else await store.saveResult(req.id, { ok: false, error: error.toRpc() });
+            }
             throw error;
         }
         finally {
@@ -672,7 +693,7 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
         const run: Running = { req, controller: new AbortController(), started: false, promise: Promise.resolve(), ...(replyBy === undefined ? {} : { replyBy }) };
         running.set(req.id, run);
         const tabId=Number(req.params.tabId);
-        if(WRITE.has(req.method)&&req.method!=='browser.dialog') {
+        if(WRITE.has(req.method)&&req.method!=='browser.dialog'&&Number.isFinite(tabId)) {
             const previous=writes.get(tabId);run.promise=previous?previous.then(()=>execute(run)):execute(run);
             const tail=run.promise.catch(()=>{});writes.set(tabId,tail);void tail.then(()=>{if(writes.get(tabId)===tail)writes.delete(tabId);});
         } else run.promise = execute(run);

@@ -22,10 +22,19 @@ export function checkCancelled(scope: CommandScope, signal?: AbortSignal): void 
   if (signal?.aborted || isCancelled(scope)) throw cancellationError();
 }
 
+const MAX_REMEMBERED = 500;
+function remember(set: Set<string>, id: string) {
+  set.add(id);
+  if (set.size > MAX_REMEMBERED) {
+    const oldest = set.values().next().value;
+    if (oldest !== undefined) set.delete(oldest);
+  }
+}
+
 export function cancelCommands(scope: CommandScope): void {
-  if (scope.requestId) cancelledRequests.add(scope.requestId);
-  else if (scope.operationId) cancelledOperations.add(scope.operationId);
-  else if (typeof scope.generation === "number") cancelledGeneration = Math.max(cancelledGeneration, scope.generation);
+  if (scope.requestId) remember(cancelledRequests, scope.requestId);
+  if (scope.operationId) remember(cancelledOperations, scope.operationId);
+  if (!scope.requestId && !scope.operationId && typeof scope.generation === "number") cancelledGeneration = Math.max(cancelledGeneration, scope.generation);
   for (const command of running) {
     if (isCancelled(command.scope)) command.controller.abort();
   }

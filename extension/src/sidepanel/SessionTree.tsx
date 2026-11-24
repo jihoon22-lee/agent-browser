@@ -44,7 +44,7 @@ export function SessionTree({ sessions, selectedId, statuses, directory, childIn
     const children = childIndex[session.id], busy = ["busy", "retry"].includes(statuses[session.id]?.type);
     const otherDirectory = session.directory && session.directory !== directory ? session.directory : "";
     return <li key={session.id}><div className={`session-row ${session.id === selectedId ? "selected" : ""}`}>
-      {children?.length ? <button className="tree-toggle" aria-label={`${session.title} 하위 세션 ${open ? "접기" : "펼치기"}`} aria-expanded={open} aria-controls={childId} onClick={() => void toggle(session.id)}>{open ? "⌄" : "›"}</button> : <span className="tree-spacer" aria-hidden="true" />}
+      {children?.length || open ? <button className="tree-toggle" aria-label={`${session.title} 하위 세션 ${open ? "접기" : "펼치기"}`} aria-expanded={open} aria-controls={childId} onClick={() => void toggle(session.id)}>{open ? "⌄" : "›"}</button> : <span className="tree-spacer" aria-hidden="true" />}
       {renamingId === session.id
         ? <div className="session-open renaming"><RenameField initial={session.title} onSubmit={title => { onRenameEnd(); onRename(session, title); }} onCancel={onRenameEnd} /></div>
         : <button className={`session-open ${session.id === selectedId ? "selected" : ""}`} aria-current={session.id === selectedId ? "true" : undefined} title={busy ? "실행 중인 작업에 연결" : session.parentID ? "하위 세션 열기" : "저장된 대화 열기"} onClick={() => onSelect(session)}>

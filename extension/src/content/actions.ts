@@ -272,6 +272,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       walkDeep(document, el => { if (el.matches('input,textarea,select,[contenteditable]')) controls.push(el); });
       const dirty = controls.some(el => {
         if (el instanceof HTMLInputElement) {
+          if (['hidden', 'submit', 'button', 'reset', 'image'].includes(el.type)) return false;
           if (el.type === 'checkbox' || el.type === 'radio') return el.checked !== el.defaultChecked;
           if (el.type === 'file') return (el.files?.length ?? 0) > 0;
           // Let the browser normalize the authored value with the same type and
@@ -336,7 +337,7 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
       if (mode === "hover") {
         // enter events do not bubble: like a pointer arriving from outside, enter each ancestor, outermost first.
         const chain: Element[] = [];
-        for (let node: Element | null = el; node; node = node.parentElement ?? ((node.getRootNode() as ShadowRoot).host ?? null)) chain.unshift(node);
+        for (let node: Element | null = el; node; node = node.parentElement ?? (node.getRootNode() instanceof ShadowRoot ? (node.getRootNode() as ShadowRoot).host : null)) chain.unshift(node);
         for (const type of ["pointerover", "pointerenter", "mouseover", "mouseenter", "pointermove", "mousemove"]) {
           if (!type.endsWith("enter")) { pointer(type, { buttons: 0, detail: 0 }); continue; }
           for (const node of chain) node.dispatchEvent(new (type.startsWith("pointer") && typeof PointerEvent !== "undefined" ? PointerEvent : MouseEvent)(type, {...base,buttons:0,detail:0,bubbles:false,pointerId:1,pointerType:'mouse',isPrimary:true}));
@@ -480,12 +481,17 @@ async function executeAction(method: string, p: P, signal: AbortSignal): Promise
         const answer = await requestTrusted(String(p.requestId ?? ""), "key", {ref:p.ref, key, ...(modifiers.length ? { modifiers } : {}) }).finally(changes.delivered);
         // The browser itself performs the key's default action; nothing is emulated here.
         if (answer.ok) return { executed: true, verified: { key, ...(modifiers.length ? { modifiers } : {}), trusted: true, ...trustedDetails(answer), ...await changes, ...(answer.dialog ? { dialog: answer.dialog } : {}) } };
-        await changes.catch(() => {});
+        // Do not wait 500ms on an undispatched fallback before running the synthetic press.
         assertTrustedFallback(answer, p, signal);
+        const fallbackChanges = observeChanges(p.waitFor ? 0 : 500, signal);
+        void fallbackChanges.catch(() => {});
         const fallback = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
-        return { ...fallback, verified: { ...fallback.verified, trusted: false, trustedReason: answer.ok ? "" : answer.reason } };
+        return { ...fallback, verified: { ...fallback.verified, ...await fallbackChanges, trusted: false, trustedReason: answer.ok ? "" : answer.reason } };
       }
-      return pressKey(p, assertInteractable);
+      const changes = observeChanges(p.waitFor ? 0 : 500, signal);
+      void changes.catch(() => {});
+      const result = pressKey(p, assertInteractable) as { executed: boolean; verified: Record<string, unknown> };
+      return { ...result, verified: { ...result.verified, ...await changes } };
     }
     case "upload": return upload(p, signal);
     case "scroll": return scroll(p);
@@ -511,8 +517,8 @@ function fileInputFor(el: Element): HTMLInputElement | null {
 }
 function accepts(input: HTMLInputElement, name: string, mime: string) {
   const tokens = input.accept.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-  const lower = name.toLowerCase(), type = mime.toLowerCase();
-  return !tokens.length || tokens.some(t => t.startsWith('.') ? lower.endsWith(t) : t.endsWith('/*') ? type.startsWith(t.slice(0, -1)) : t === type);
+  const lower = name.toLowerCase(), type = mime.split(';')[0]!.trim().toLowerCase();
+  return !tokens.length || tokens.some(t => t === '*/*' || (t.startsWith('.') ? lower.endsWith(t) : t.endsWith('/*') ? type.startsWith(t.slice(0, -1)) : t === type));
 }
 /** Puts one attached file (bytes from the background, never a local path) into the input and fires its events. */
 async function upload(p: P, signal: AbortSignal) {

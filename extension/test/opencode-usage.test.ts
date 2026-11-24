@@ -54,4 +54,14 @@ describe("v1 usage accounting", () => {
     // The panel's function is the only one: a second copy here once drifted from it.
     expect(usageModule).not.toHaveProperty("availableModels");
   });
+  it("ignores zero-token in-progress assistant messages and guards missing user parentID", () => {
+    const zero = assistant("msg_zero", "msg_u", 3);
+    (zero.info as AssistantMessage).tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+    const result = computeUsage([user("msg_u", 1), assistant("msg_a", "msg_u", 2), zero], model);
+    expect(result.latest?.total).toBe(914);
+    expect(result.context.tokens).toBe(914);
+    const orphan = assistant("msg_orphan", undefined as unknown as string, 1);
+    delete (orphan.info as Partial<AssistantMessage>).parentID;
+    expect(computeUsage([orphan], model).request).toBeNull();
+  });
 });

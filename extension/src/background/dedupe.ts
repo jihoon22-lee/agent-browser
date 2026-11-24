@@ -23,6 +23,7 @@ export type Binding = {
 export interface SessionStore {
     getResult(id: string): Promise<Entry | undefined>;
     claim(id: string): Promise<Entry | undefined>;
+    release(id: string): Promise<void>;
     markInFlight(id: string): Promise<void>;
     saveResult(id: string, outcome: Outcome): Promise<void>;
     cancel(params: Record<string, unknown>): Promise<void>;
@@ -34,6 +35,8 @@ export interface SessionStore {
 }
 const KEY = 'commandSession';
 const TTL = 10 * 60000;
+const INFLIGHT_TTL = 4 * 60 * 60_000;
+const INFLIGHT_CAP = 500;
 const SNAPSHOT_EPOCH_MS = Date.UTC(2026, 0, 1);
 const LEGACY_SEQUENCE = 1e12;
 type State = {
@@ -61,7 +64,7 @@ function storeOver(read: () => Promise<State | undefined>, write: (s: State) => 
             const now = Date.now();
             let pruned = false;
             for (const [k, v] of Object.entries(s.requests))
-                if (v.state === 'done' && now - v.at > TTL) {
+                if ((v.state === 'done' && now - v.at > TTL) || (v.state === 'inflight' && now - v.at > INFLIGHT_TTL)) {
                     delete s.requests[k]; pruned = true;
                 }
             for (const [k, v] of Object.entries(s.bindings))
@@ -73,9 +76,13 @@ function storeOver(read: () => Promise<State | undefined>, write: (s: State) => 
                     delete s.cancelled[k]; pruned = true;
                 }
             const result = fn(s);
-            // Evict only completed results: an in-flight marker must never be evicted to admit a replay.
+            // Evict completed results above 200; cap orphaned inflight markers only at a high bound so recent interrupted writes are never made replayable.
             const done = Object.entries(s.requests).filter(([, e]) => e.state === 'done').sort((a, b) => b[1].at - a[1].at);
             for (const [k] of done.slice(200)) {
+                delete s.requests[k]; pruned = true;
+            }
+            const inflight = Object.entries(s.requests).filter(([, e]) => e.state === 'inflight').sort((a, b) => b[1].at - a[1].at);
+            for (const [k] of inflight.slice(INFLIGHT_CAP)) {
                 delete s.requests[k]; pruned = true;
             }
             const snaps = Object.entries(s.bindings).sort((a, b) => b[1].at - a[1].at);
@@ -92,6 +99,7 @@ function storeOver(read: () => Promise<State | undefined>, write: (s: State) => 
         getResult: id => transaction(s => s.requests[id], false),
         claim: id => transaction(s => { const previous = s.requests[id]; if (!previous)
             s.requests[id] = { state: 'inflight', at: Date.now() }; return previous; }),
+        release: id => transaction(s => { if (s.requests[id]?.state === 'inflight') delete s.requests[id]; }),
         markInFlight: id => transaction(s => { s.requests[id] = { state: 'inflight', at: Date.now() }; }),
         saveResult: (id, outcome) => transaction(s => { s.requests[id] = { state: 'done', at: Date.now(), outcome }; }),
         cancel: p => transaction(s => {

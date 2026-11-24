@@ -26,3 +26,13 @@ it("notices the saved password is dropped when an external profile becomes anoth
   expect(passwordDropped(original, { kind: "windows", executable: "C:\\o\\opencode.exe" })).toBe(true);
   expect(passwordDropped({ kind: "windows" }, { kind: "external", baseUrl: "https://a.example/" })).toBe(false);
 });
+it("drops hidden fields from other kinds and requires WSL distribution", async () => {
+  const { profilePayload } = await import("../src/options/profile-form");
+  const win = profilePayload({ id: "p1", name: "Win", kind: "windows", directory: "C:\\work", executable: "C:\\opencode.exe", distribution: "Ubuntu", user: "dev", baseUrl: "http://127.0.0.1:4096" });
+  expect(win.distribution).toBeUndefined();
+  expect(win.user).toBeUndefined();
+  expect(win.baseUrl).toBeUndefined();
+  const ext = profilePayload({ id: "p2", name: "Ext", kind: "external", directory: "/work", executable: "/bin/opencode", baseUrl: "http://127.0.0.1:4096" });
+  expect(ext.executable).toBeUndefined();
+  expect(() => profilePayload({ id: "p3", name: "WSL", kind: "wsl", directory: "/work", executable: "/bin/opencode", distribution: "" })).toThrow(/배포판/);
+});

@@ -123,7 +123,9 @@ namespace AgentBrowser.Installer {
             var bytes=File.ReadAllBytes(Path.Combine(root,"browser-bridge.exe"));int offset=bytes.Length>=64?BitConverter.ToInt32(bytes,60):-1;
             if(bytes.Length<128||bytes[0]!=77||bytes[1]!=90||offset<0||offset>bytes.Length-6||BitConverter.ToUInt32(bytes,offset)!=17744||BitConverter.ToUInt16(bytes,offset+4)!=34404) throw new IOException("Bridge is not a Windows x64 executable.");
             var extension=NativeIO.Json.Deserialize<Dictionary<string,object>>(NativeIO.Utf8.GetString(CapturePackageFile(root,m.Files.Single(f=>Same(f.Path.Replace('\\','/'),"extension/manifest.json")))));
-            object version;if(!extension.TryGetValue("version",out version)||!String.Equals(version as string,m.Version,StringComparison.Ordinal))throw new IOException("Extension version does not match the package version.");
+            object mv,key,version;
+            if(!extension.TryGetValue("manifest_version",out mv)||!(mv is int)||(int)mv!=3||!extension.TryGetValue("key",out key)||String.IsNullOrEmpty(key as string))throw new IOException("A keyed Manifest V3 extension is required.");
+            if(!extension.TryGetValue("version",out version)||!String.Equals(version as string,m.Version,StringComparison.Ordinal))throw new IOException("Extension version does not match the package version.");
             return m;
         }
         static void Add(InstallPlan p,string path,byte[] bytes,string user=null,bool trackMissing=false) {
@@ -163,12 +165,12 @@ namespace AgentBrowser.Installer {
             if(uninstall) {
                 p.Summary.Add("제거 대상: "+root+"\r\n버전: "+p.Old.Version+"\r\n페어링·프로필·사용자 데이터는 보존합니다.");
                 foreach(var record in Registrations(p.Old)) {
-                    if(!File.Exists(record.Path)) {Add(p,record.Path,null,record.User,true);continue;}
+                    if(!File.Exists(record.Path)) {if(NativeIO.MapWsl(record.Path)==null) Add(p,record.Path,null,record.User,true);continue;}
                     byte[] original=File.ReadAllBytes(record.Path);var edit=Jsonc.Edit(NativeIO.Utf8.GetString(original),null,record.EntryHash,true,record.CreatedMcp);
                     // Comments are user content too: only remove a whitespace-only empty object.
                     if(edit.Changed) {
                         BackupSettings(p,p.Old.DataDir,record.Path,original);
-                        Add(p,record.Path,record.CreatedFile&&Regex.IsMatch(edit.Text,@"^\s*\{\s*\}\s*$")?null:NativeIO.Utf8.GetBytes(edit.Text),record.User);
+                        Add(p,record.Path,record.CreatedFile&&Regex.IsMatch(edit.Text.TrimStart('\uFEFF'),@"^\s*\{\s*\}\s*$")?null:NativeIO.Utf8.GetBytes(edit.Text),record.User);
                         if(HashOrMissing(record.Path)!=NativeIO.Hash(original))throw new IOException("Settings changed during preview. Preview it again.");
                     }
                     p.Summary.Add("소유한 browser MCP 등록 제거: "+record.Path);
@@ -275,7 +277,7 @@ namespace AgentBrowser.Installer {
         }
         /// Removes obsolete owned files through the transaction, so a later failure restores them.
         /// A file that changed, is in use or cannot be judged stays on disk and in the ownership record.
-        static List<string> PruneObsolete(InstallPlan p,FileTransaction transaction,string root) {
+        static List<string> PruneObsolete(InstallPlan p,FileTransaction transaction,string root,out OwnedFile[] updatedOwned) {
             var removed=new List<string>();var dropped=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             HashSet<string> referenced=null;bool resolved=false;
             foreach(var file in p.Prune) {
@@ -294,7 +296,7 @@ namespace AgentBrowser.Installer {
                 }
                 dropped.Add(file.Path);
             }
-            if(dropped.Count>0) p.Next.OwnedFiles=p.Next.OwnedFiles.Where(f=>!dropped.Contains(f.Path)).ToArray();
+            updatedOwned=dropped.Count>0?p.Next.OwnedFiles.Where(f=>!dropped.Contains(f.Path)).ToArray():p.Next.OwnedFiles;
             return removed;
         }
         static void RemoveEmptiedDirectories(string root,List<string> removed) {
@@ -309,7 +311,12 @@ namespace AgentBrowser.Installer {
         public static string Apply(InstallPlan p,CancellationToken cancel,Action<string> progress) {
             string root=Root(p.Options.InstallDir),lockPath=Path.Combine(root,".agent-browser-install.lock");cancel.ThrowIfCancellationRequested();Directory.CreateDirectory(root);
             bool restartOld=false,newStarted=false;var stoppedProfiles=new List<string>();FileTransaction transaction=null;bool complete=false;var pruned=new List<string>();
-            using(var fileLock=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None)) {
+            FileStream fileLock=null;
+            try {
+                try { fileLock=new FileStream(lockPath,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None); }
+                catch(IOException) { throw new IOException("Another installer is using this folder. Wait for it to finish."); }
+                var originalOwned=p.Next!=null?p.Next.OwnedFiles:null;
+                var originalStartupSha=p.Next!=null&&p.Next.Startup!=null?p.Next.Startup.Sha256:null;
                 try {
                     if(HashOrMissing(Path.Combine(root,StateName))!=p.StateHash) throw new IOException("Installation changed after preview. Preview it again.");
                     Owned(p.Old);
@@ -335,7 +342,9 @@ namespace AgentBrowser.Installer {
                     }
                     int n=0;foreach(var change in p.Changes) {cancel.ThrowIfCancellationRequested();progress("파일 적용 "+(++n)+" / "+p.Changes.Count);transaction.Write(change);}
                     if(p.Next!=null) {
-                        if(p.Old!=null&&p.Prune.Count>0) pruned=PruneObsolete(p,transaction,root);
+                        OwnedFile[] nextOwned=p.Next.OwnedFiles;
+                        if(p.Old!=null&&p.Prune.Count>0) pruned=PruneObsolete(p,transaction,root,out nextOwned);
+                        p.Next.OwnedFiles=nextOwned;
                         if(p.Old!=null&&p.Old.Startup!=null&&(p.Next.Startup==null||!Same(p.Old.Startup.Path,p.Next.Startup.Path))) transaction.Write(new Change{Path=p.Old.Startup.Path,Expected=p.OldStartupHash});
                         if(p.Next.Startup!=null) {var bytes=Shortcut(transaction.Stage,p.Next.SetupExe,root);transaction.Write(new Change{Path=p.Next.Startup.Path,Expected=p.NextStartupHash,Bytes=bytes});p.Next.Startup.Sha256=NativeIO.Hash(bytes);}
                         cancel.ThrowIfCancellationRequested();
@@ -344,7 +353,7 @@ namespace AgentBrowser.Installer {
                     } else transaction.Write(new Change{Path=Path.Combine(p.Old.DataDir,".installer-bridge-process.json"),Expected=HashOrMissing(Path.Combine(p.Old.DataDir,".installer-bridge-process.json"))});
                     cancel.ThrowIfCancellationRequested();
                     complete=true;string warning="";
-                    RemoveEmptiedDirectories(root,pruned);
+                    RemoveEmptiedDirectories(root,p.Next==null?p.Old.OwnedFiles.Select(f=>NativeIO.SafePath(root,f.Path)).ToList():pruned);
                     // Files are committed before starting the new runtime overlay.
                     // A restart failure must not roll back files under a new MCP process.
                     if(p.Next!=null&&p.Options.Start&&stoppedProfiles.Count>0)try{RestartProfiles(p.Next,stoppedProfiles);}
@@ -353,11 +362,17 @@ namespace AgentBrowser.Installer {
                     try {using(var registry=Registry.CurrentUser.CreateSubKey(@"Software\AgentBrowser\Installations")) {if(p.Next==null) registry.DeleteSubKey(p.Old.InstallId,false);else using(var item=registry.CreateSubKey(p.Next.InstallId)) item.SetValue("Path",root);}} catch(Exception) {string registryWarning="\r\n경고: 파일 변경은 완료됐지만 설치 위치 등록 또는 제거가 실패했습니다. 다음 실행에서 폴더를 직접 선택할 수 있습니다.";warning+=registryWarning;progress(registryWarning);}
                     return (p.Next==null?"제거 완료. 페어링·프로필 데이터와 OpenCode 설정의 다른 항목을 보존했습니다.":"설치 완료: "+p.Next.Version+"\r\nChrome 확장 폴더: "+Path.Combine(root,"extension")+"\r\nChrome에서 확장을 로드 또는 새로고침하고 페어링하세요.")+warning;
                 } catch(Exception error) {
+                    if(p.Next!=null&&!complete) {p.Next.OwnedFiles=originalOwned;if(p.Next.Startup!=null)p.Next.Startup.Sha256=originalStartupSha;}
                     if(transaction!=null&&!complete) {
                         try {if(newStarted) BridgeControl.Stop(p.Next);transaction.Rollback();if(restartOld) BridgeControl.Start(p.Old);RestartProfiles(p.Old,stoppedProfiles);transaction.Cleanup();}
                         catch(Exception rollback) {throw new IOException(error.Message+"\r\n일부 복구가 필요합니다. 복구 파일: "+transaction.Stage+"\r\n"+rollback.Message,error);}
                     }
                     throw;
+                }
+            } finally {
+                if(fileLock!=null) {
+                    fileLock.Dispose();
+                    try { if(File.Exists(lockPath)) File.Delete(lockPath); } catch(IOException) {} catch(UnauthorizedAccessException) {}
                 }
             }
         }
@@ -409,8 +424,9 @@ namespace AgentBrowser.Installer {
             string expected=InstallerEngine.Full((string)marker["Executable"]);
             var owned=state.OwnedFiles.Where(f=>InstallerEngine.Same(NativeIO.SafePath(state.InstallDir,f.Path),expected)).ToArray();
             if(owned.Length!=1) throw new IOException("Recorded Bridge executable is not owned.");
-            using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
-                foreach(ManagementObject process in query.Get()) {
+            using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid))
+            using(var results=query.Get()) {
+                foreach(ManagementObject process in results) {
                     // Windows reuses PIDs. A live process with another identity (including a
                     // protected process whose path cannot be read) is not this Bridge: report
                     // "not running" so callers clean up the stale marker. Nothing is stopped.
@@ -435,8 +451,9 @@ namespace AgentBrowser.Installer {
             try {
                 string pidPath=Path.Combine(state.DataDir,"serve.pid");int pid;
                 if(!File.Exists(pidPath)||!Int32.TryParse(File.ReadAllText(pidPath).Trim(),out pid)||pid<=0)return null;
-                using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
-                    foreach(ManagementObject process in query.Get()) using(process) {
+                using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid))
+                using(var results=query.Get()) {
+                    foreach(ManagementObject process in results) using(process) {
                         string path=process["ExecutablePath"] as string,commandLine=process["CommandLine"] as string,creation=process["CreationDate"] as string;
                         string image=InstallerEngine.ProcessImage(path);
                         if(image==null||String.IsNullOrEmpty(commandLine)||String.IsNullOrEmpty(creation))return null;
@@ -480,8 +497,9 @@ namespace AgentBrowser.Installer {
                 }
                 var marker=Marker(state);object markerExe=null;
                 if(marker!=null&&marker.TryGetValue("Executable",out markerExe)&&markerExe is string&&((string)markerExe).Length>0) used.Add(Path.GetDirectoryName(InstallerEngine.Full((string)markerExe)));
-                using(var query=new ManagementObjectSearcher("SELECT ExecutablePath FROM Win32_Process")) {
-                    foreach(ManagementObject process in query.Get()) using(process) {
+                using(var query=new ManagementObjectSearcher("SELECT ExecutablePath FROM Win32_Process"))
+                using(var results=query.Get()) {
+                    foreach(ManagementObject process in results) using(process) {
                         string reported=process["ExecutablePath"] as string;if(String.IsNullOrEmpty(reported)) continue;
                         // An image that cannot be read as a path could be one of ours: keep every executable.
                         string path=InstallerEngine.ProcessImage(reported);if(path==null) return null;
@@ -493,7 +511,11 @@ namespace AgentBrowser.Installer {
         }
         public static bool Stop(InstallState state) {
             var marker=Marker(state);using(var process=Verify(state,marker)) {if(process==null) {var adopted=AdoptRunning(state);if(adopted==null){RemoveStoppedMarker(state,marker);return false;}marker=adopted;}}
-            using(var again=Verify(state,marker)) {if(again==null) {RemoveStoppedMarker(state,marker);return false;}using(var p=Process.GetProcessById(Convert.ToInt32(marker["Pid"]))) {p.Kill();if(!p.WaitForExit(5000)) throw new IOException("Owned Bridge did not stop.");}}
+            using(var again=Verify(state,marker)) {
+                if(again==null) {RemoveStoppedMarker(state,marker);return false;}
+                try { using(var p=Process.GetProcessById(Convert.ToInt32(marker["Pid"]))) { try { p.Kill(); } catch(InvalidOperationException) {} if(!p.WaitForExit(5000)) throw new IOException("Owned Bridge did not stop."); } }
+                catch(ArgumentException) { /* Process exited after verification. */ }
+            }
             RemoveStoppedMarker(state,marker);return true;
         }
         public static void Start(InstallState state) {
@@ -526,8 +548,9 @@ namespace AgentBrowser.Installer {
                 if(adopted!=null)Stop(state);
                 throw;
             }
-            using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid)) {
-                foreach(ManagementObject process in query.Get()) using(process) {
+            using(var query=new ManagementObjectSearcher("SELECT ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId="+pid))
+            using(var results=query.Get()) {
+                foreach(ManagementObject process in results) using(process) {
                     string startedPath=process["ExecutablePath"] as string,startedCommand=process["CommandLine"] as string;
                     if(InstallerEngine.ProcessImage(startedPath)==null||String.IsNullOrEmpty(startedCommand)||!InstallerEngine.Same(InstallerEngine.ProcessImage(startedPath),state.CurrentExe)||!Regex.IsMatch(startedCommand,@"(?:^|\s)serve\s+--port\s+"+state.Port+@"(?:\s|$)")) throw new IOException("Bridge process identity could not be verified.");
                     var marker=new Dictionary<string,object>{{"Product",InstallerEngine.Product},{"InstallId",state.InstallId},{"Pid",pid},{"Executable",state.CurrentExe},{"Port",state.Port},{"CreatedAt",ManagementDateTimeConverter.ToDateTime((string)process["CreationDate"]).ToUniversalTime().ToString("o")}};

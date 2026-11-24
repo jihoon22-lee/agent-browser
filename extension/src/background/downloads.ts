@@ -1,5 +1,5 @@
 import { ProtocolError } from '../protocol/errors';
-import { aborted } from './tabs';
+import { aborted, interruptible } from './tabs';
 export type TrackedDownload={id:number;operationId:string;bound:boolean;at?:number};
 export const downloadSummary=(d:chrome.downloads.DownloadItem)=>({id:d.id,filename:d.filename.split(/[\\/]/).at(-1)??'',state:d.state,complete:d.state==='complete',bytesReceived:d.bytesReceived,totalBytes:d.totalBytes>=0?d.totalBytes:null,error:d.error??null,paused:d.paused,danger:d.danger});
 export function matchingDownload(items:TrackedDownload[],operationId:string,id:number) {
@@ -29,7 +29,7 @@ export function downloads(active:()=>string|undefined,enabled:()=>boolean,live:(
  });
 
  return {
-  observe:(operationId:string|undefined)=>serial(async()=>{const old=(await chrome.storage.session.get(WINDOW))[WINDOW] as {operationId?:string}|undefined;if(operationId&&old?.operationId!==operationId)await chrome.storage.session.set({[WINDOW]:{operationId,at:Date.now()}});}),
+  observe:(operationId:string|undefined)=>serial(async()=>{if(!operationId){await chrome.storage.session.remove?.(WINDOW).catch(()=>chrome.storage.session.set({[WINDOW]:undefined}));return;}const old=(await chrome.storage.session.get(WINDOW))[WINDOW] as {operationId?:string}|undefined;if(old?.operationId!==operationId)await chrome.storage.session.set({[WINDOW]:{operationId,at:Date.now()}});}),
   async list(operationId:string) {await granted();await queue;await reconcile();const items=(await read()).filter(d=>d.operationId===operationId);const result=[];
    for(const item of items){const [d]=await chrome.downloads.search({id:item.id});if(d)result.push({...downloadSummary(d),bound:item.bound});}await granted();return {downloads:result,note:'Unbound items are candidates, not proof of this task completing. Select the matching file in the browser panel.'};},
   bind:(operationId:string,id:number)=>serial(async()=>{await granted();if(!live(operationId))throw new ProtocolError('OPERATION_INVALID','The operation is no longer active.');const items=await read(),item=items.find(d=>d.operationId===operationId&&d.id===id);if(!item)throw new ProtocolError('INVALID_PARAMS','Unknown download candidate.');item.bound=true;await save(items);return {bound:true};}),
@@ -40,7 +40,7 @@ export function downloads(active:()=>string|undefined,enabled:()=>boolean,live:(
    do {aborted(signal);await granted();if(!live(op))throw new ProtocolError('OPERATION_INVALID','The operation ended.');
      const [item]=await chrome.downloads.search({id:Number(p.downloadId)});if(!item)throw new ProtocolError('ELEMENT_NOT_FOUND','Chrome no longer has this download.');
      const data=downloadSummary(item);if(item.paused||!['safe','accepted','allowlistedByPolicy','deepScannedSafe'].includes(item.danger))return {...data,bound:true,userDecisionRequired:true};if(p.action!=='wait'||item.state!=='in_progress')return {...data,bound:true};
-     await new Promise(r=>setTimeout(r,Math.min(250,Math.max(0,deadline-Date.now()))));
+     await interruptible(new Promise(r=>setTimeout(r,Math.min(250,Math.max(0,deadline-Date.now())))),signal);
    }while(Date.now()<deadline);
    aborted(signal);throw new ProtocolError('TIMEOUT','Download is still pending. It was not restarted or cancelled.','safe');
   },

@@ -184,10 +184,11 @@ export class BridgeConnection {
     if (!clientId) { clientId = `cli-${crypto.randomUUID()}`; await this.deps.storage.set("clientId", clientId); }
     const token = await new Promise<string>((resolve, reject) => {
       const ws = new this.deps.WebSocketImpl(url);
-      const deadline = this.later(() => { ws.onclose = null; ws.close(); reject(new ProtocolError("TIMEOUT", "Bridge가 페어링 요청에 응답하지 않았습니다.")); }, RESPONSE_TIMEOUT_MS);
+      // Keep the pairing deadline independent of main-socket clearTimers() so a reconnect/stop cannot silence timeout.
+      const deadline = this.deps.setTimer(() => { ws.onclose = null; ws.close(); reject(new ProtocolError("TIMEOUT", "Bridge가 페어링 요청에 응답하지 않았습니다.")); }, RESPONSE_TIMEOUT_MS);
       ws.onopen = () => { try { ws.send(JSON.stringify(makeReq("pair.request", { clientId, code }))); } catch { ws.close(); } };
       ws.onmessage = (event) => {
-        this.cancelTimer(deadline); ws.onclose = null; ws.close();
+        this.deps.clearTimer(deadline); ws.onclose = null; ws.close();
         let env: Envelope;
         try { env = parseEnvelope(String(event.data)); } catch { reject(new ProtocolError("INTERNAL", "Bridge의 페어링 응답을 읽지 못했습니다.")); return; }
         const granted = env.type === "res" && env.ok ? (env.result as { token?: unknown } | undefined)?.token : undefined;
@@ -196,7 +197,7 @@ export class BridgeConnection {
         reject(new ProtocolError(error?.code ?? "AUTH_FAILED", error?.message ?? "Bridge가 페어링을 거부했습니다."));
       };
       ws.onerror = () => ws.close();
-      ws.onclose = () => { this.cancelTimer(deadline); reject(new ProtocolError("BROWSER_DISCONNECTED", "Bridge에 연결할 수 없습니다. 설치 마법사에서 Bridge를 시작하세요.")); };
+      ws.onclose = () => { this.deps.clearTimer(deadline); reject(new ProtocolError("BROWSER_DISCONNECTED", "Bridge에 연결할 수 없습니다. 설치 마법사에서 Bridge를 시작하세요.")); };
     });
     // A stop or settings change while waiting means the user moved on: never store a late token.
     if (lifecycle !== this.lifecycle) throw new ProtocolError("CANCELLED", "페어링이 중단되었습니다. 다시 시도하세요.");

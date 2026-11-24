@@ -61,7 +61,8 @@ pub struct ServerState {
     pub ops: OperationGate,
     pub timeline: Timeline,
     // Protect selection across attach's asynchronous tab lookup and gate registration.
-    pub selection: tokio::sync::Mutex<()>,
+    // Readers (attach, new, request.begin) may overlap; writers (browser.use) require exclusivity.
+    pub selection: tokio::sync::RwLock<()>,
     pub pairing: StdMutex<Option<PairingWindow>>,
     /// The extension that last asked for pairing, so the installer can show it was loaded.
     pub pair_seen: StdMutex<Option<(String, std::time::Instant)>>,
@@ -82,7 +83,7 @@ impl ServerState {
             // Panel requests that allow it run side by side; everything else runs alone.
             ops: OperationGate::with_limit(4),
             timeline: Timeline::default(),
-            selection: tokio::sync::Mutex::new(()),
+            selection: tokio::sync::RwLock::new(()),
             pairing: StdMutex::new(None),
             pair_seen: StdMutex::new(None),
         }
@@ -430,9 +431,9 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
     use futures_util::{future::{AbortHandle, Abortable}, stream::FuturesUnordered};
     let mut pending = FuturesUnordered::new();
     let mut running = std::collections::HashMap::<String, AbortHandle>::new();
-    // A cancellation may cross an attach reply in flight. Only this connection's
-    // successful attach ID can release that newly created operation, never another one.
-    let mut attached: Option<(String, String)> = None;
+    // A cancellation may cross an attach reply in flight. Track recent created operations per
+    // socket so concurrent attaches do not overwrite one another.
+    let mut attached: Vec<(String, String)> = Vec::new();
     loop {
         tokio::select! {
             biased;
@@ -449,8 +450,8 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
                 if method == "tool.cancel" {
                     if let Some(request) = params["requestId"].as_str() {
                         if let Some(handle) = running.get(request) { handle.abort(); }
-                        if attached.as_ref().is_some_and(|(id, _)| id == request) {
-                            let (_, op) = attached.take().unwrap();
+                        if let Some(pos) = attached.iter().position(|(req_id, _)| req_id == request) {
+                            let (_, op) = attached.remove(pos);
                             abort_created_operation(state, &op);
                         }
                     }
@@ -493,10 +494,17 @@ async fn serve_mcp(ws: &mut Ws, state: &ServerState, caller: &router::Caller) {
                 running.remove(&id);
                 let Ok(outcome) = result else { continue }; // Dropping the router sends request-scoped browser.cancel.
                 let created = outcome.created_operation;
-                if created { attached = outcome.operation_id.clone().map(|op| (id.clone(), op)); }
-                let reply = Envelope::ok(id, serde_json::to_value(outcome).expect("tool outcome serializes"));
+                let created_op = if created { outcome.operation_id.clone() } else { None };
+                if let Some(op) = created_op.as_ref() {
+                    attached.push((id.clone(), op.clone()));
+                    if attached.len() > 64 { attached.remove(0); }
+                }
+                let reply = Envelope::ok(id.clone(), serde_json::to_value(outcome).expect("tool outcome serializes"));
                 if !send(ws, &reply).await {
-                    if created && let Some((_, op)) = attached.take() { abort_created_operation(state, &op); }
+                    if let Some(op) = created_op {
+                        attached.retain(|(req_id, _)| req_id != &id);
+                        abort_created_operation(state, &op);
+                    }
                     break;
                 }
             }
@@ -532,13 +540,14 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
                 match env {
                     Envelope::Res { .. } => state.registry.handle_response(conn, env),
                     Envelope::Req { id, method, params, .. } => {
+                        let auth_client = state.registry.client_id_of(conn);
                         if Role::Extension.allows(&method) && (method.starts_with("profile.") || method.starts_with("runtime.") || method == "doctor.run") {
                             let state = state.clone(); let replies = replies.clone();
-                            tokio::spawn(async move { let reply = extension_request(&state,id,&method,&params).await; let _ = replies.send(reply); });
+                            tokio::spawn(async move { let reply = extension_request(&state,id,&method,&params,auth_client.as_deref()).await; let _ = replies.send(reply); });
                             continue;
                         }
                         let reply = if Role::Extension.allows(&method) {
-                            extension_request(state, id, &method, &params).await
+                            extension_request(state, id, &method, &params, auth_client.as_deref()).await
                         } else {
                             forbidden(id, &method)
                         };
@@ -561,7 +570,7 @@ async fn serve_extension(ws: &mut Ws, mut outbound: tokio::sync::mpsc::Unbounded
     }
 }
 
-async fn extension_request(state: &ServerState, id: String, method: &str, params: &Value) -> Envelope {
+async fn extension_request(state: &ServerState, id: String, method: &str, params: &Value, authenticated_client: Option<&str>) -> Envelope {
     if method.starts_with("profile.") || method.starts_with("runtime.") || method == "doctor.run" {
         let result = management_request(state,method,params).await;
         return match result { Ok(value) => Envelope::ok(id,value), Err(error) => Envelope::err(id,error) };
@@ -574,17 +583,26 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             // Never wait on this socket: attach may need its tabs.get response.
             // End remains independent so Stop can invalidate an in-flight attach.
             let _selection = if method=="request.begin" {
-                match state.selection.try_lock() {
+                match state.selection.try_read() {
                     Ok(lock)=>Some(lock),
-                    Err(_)=>return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Browser selection or attach is in progress.")),
+                    Err(_)=>return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"Browser selection is in progress.")),
                 }
             } else { None };
             let Some(request)=params["requestId"].as_str().filter(|s|!s.is_empty()&&s.len()<=128) else {
                 return Envelope::err(id,RpcError::new(ErrorCode::InvalidParams,Retry::Never,"requestId is required"));
             };
-            let Some(client)=params["clientId"].as_str().filter(|s|!s.is_empty() && (method=="request.end" || Some(*s)==state.registry.selected_client().as_deref())) else {
-                return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
+            let Some(auth_client) = authenticated_client.filter(|s| !s.is_empty()) else {
+                return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "Authenticated browser clientId is missing."));
             };
+            if let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                if claimed != auth_client {
+                    return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
+                }
+            }
+            if method != "request.end" && Some(auth_client) != state.registry.selected_client().as_deref() {
+                return Envelope::err(id,RpcError::new(ErrorCode::BrowserBusy,Retry::Never,"This request's browser is not selected."));
+            }
+            let client = auth_client;
             let scope=match (params["profileId"].as_str(),params["sessionId"].as_str(),params["directory"].as_str()) {
                 (Some(p),Some(s),Some(d)) if !p.is_empty() && p.len()<=128 && !s.is_empty() && s.len()<=128 && !d.is_empty() && d.len()<=4096 =>
                     Some(super::operation::RequestScope{profile:p.into(),session:s.into(),directory:d.into()}),
@@ -603,10 +621,20 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
             }
         },
         "operation.pause" | "operation.resume" => {
-            let (Some(operation_id), Some(client)) = (params["operationId"].as_str(), params["clientId"].as_str()) else {
+            let Some(operation_id) = params["operationId"].as_str() else {
                 return Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "operationId and clientId are required"));
             };
-            let result = if method == "operation.pause" { state.ops.pause(operation_id, client) } else { state.ops.resume(operation_id, client) };
+            let Some(auth_client) = authenticated_client.filter(|s| !s.is_empty()) else {
+                return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "Authenticated browser clientId is missing."));
+            };
+            if let Some(claimed) = params.get("clientId").and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                if claimed != auth_client {
+                    return Envelope::err(id, RpcError::new(ErrorCode::ForbiddenMethod, Retry::Never, "clientId does not match the authenticated browser connection."));
+                }
+            } else if params.get("clientId").is_none() {
+                return Envelope::err(id, RpcError::new(ErrorCode::InvalidParams, Retry::Never, "operationId and clientId are required"));
+            }
+            let result = if method == "operation.pause" { state.ops.pause(operation_id, auth_client) } else { state.ops.resume(operation_id, auth_client) };
             match result {
                 Ok(op) => { state.broadcast_status(); Envelope::ok(id, json!(op)) }
                 Err(error) => Envelope::err(id, error),
@@ -625,7 +653,7 @@ async fn extension_request(state: &ServerState, id: String, method: &str, params
         "browser.use" => match params.get("clientId").and_then(Value::as_str).filter(|c| !c.is_empty()) {
             Some(client_id) => {
                 // Waiting here could block this socket from delivering attach's tabs.get response.
-                let Ok(_selection) = state.selection.try_lock() else {
+                let Ok(_selection) = state.selection.try_write() else {
                     return Envelope::err(id, RpcError::new(ErrorCode::BrowserBusy, Retry::Never,
                         "A browser operation is being attached. Wait for it to finish before selecting a browser."));
                 };
@@ -686,14 +714,14 @@ mod tests {
         let (a, _rx) = tokio::sync::mpsc::unbounded_channel();
         state.registry.register("A", a);
         let params=json!({"requestId":"request-a","clientId":"A","tabId":42});
-        let lock=state.selection.lock().await;
-        let reply=extension_request(&state,"busy".into(),"request.begin",&params).await;
+        let lock=state.selection.write().await;
+        let reply=extension_request(&state,"busy".into(),"request.begin",&params,Some("A")).await;
         assert!(matches!(reply,Envelope::Res{ok:false,..}),"{reply:?}");
         drop(lock);
-        let reply=extension_request(&state,"begin".into(),"request.begin",&params).await;
+        let reply=extension_request(&state,"begin".into(),"request.begin",&params,Some("A")).await;
         assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
-        let _lock=state.selection.lock().await;
-        let reply=extension_request(&state,"stop".into(),"request.end",&params).await;
+        let _lock=state.selection.write().await;
+        let reply=extension_request(&state,"stop".into(),"request.end",&params,Some("A")).await;
         assert!(matches!(reply,Envelope::Res{ok:true,..}),"{reply:?}");
         assert!(state.ops.request_target(Some("request-a"),"A",None).is_err());
     }
@@ -710,7 +738,7 @@ mod tests {
             let (b, _from_b) = tokio::sync::mpsc::unbounded_channel();
             state.registry.register("A", a);
             state.registry.register("B", b);
-            let reply = extension_request(&state, "use".into(), "browser.use", &json!({"clientId":"B"})).await;
+            let reply = extension_request(&state, "use".into(), "browser.use", &json!({"clientId":"B"}), Some("A")).await;
             let Envelope::Res { ok: true, result: Some(result), .. } = reply else { panic!("the selection itself must succeed: {reply:?}") };
             assert_eq!(result["selected"], "B");
             assert_eq!(result["persisted"], saved, "{result}");
@@ -730,7 +758,7 @@ mod tests {
         state.registry.register("B", b);
         let op = state.ops.attach(1, "A").unwrap();
         state.registry.use_browser("B");
-        let reply = extension_request(&state, "stop".into(), "operation.abort", &json!({"operationId":op.id})).await;
+        let reply = extension_request(&state, "stop".into(), "operation.abort", &json!({"operationId":op.id}), Some("B")).await;
         assert!(matches!(reply, Envelope::Res { ok: true, .. }));
         let cancel = parse_envelope(&from_a.recv().await.unwrap()).unwrap();
         assert!(matches!(cancel, Envelope::Req { ref method, ref params, .. } if method == "browser.cancel" && params["operationId"] == op.id));

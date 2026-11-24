@@ -97,6 +97,13 @@ it('closes the browser reservation even when OpenCode abort fails',async()=>{
   await act(async()=>button('응답 중단').click());
   expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({kind:'request-cancel'}));
 });
+it('cancels the browser reservation on 응답 중단 even when OpenCode client is disconnected',async()=>{
+  await render();
+  await draftValue('request');await act(async()=>button('보내기').click());
+  await act(async()=>{for(const listener of [...listeners]) listener({kind:'profiles-changed',profileId:'native',runtime:'stopped'});await new Promise(resolve=>setTimeout(resolve,0));});
+  await act(async()=>button('응답 중단').click());
+  expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(expect.objectContaining({kind:'request-cancel'}));
+});
 it('Stop still owns the earlier request after a premature next submission is rejected',async()=>{
   await render();let saved:any;
   const localGet=chrome.storage.local.get as ReturnType<typeof vi.fn>,getStorage=localGet.getMockImplementation() as ()=>Promise<Record<string,any>>;

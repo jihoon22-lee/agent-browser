@@ -71,7 +71,13 @@ export function useWorkbench() {
       void api.get<Data[]>(`/session/${encodeURIComponent(id)}/children`).then(list => {
         if (revision !== epoch.current || generation !== childGeneration.current || deletedSessions.current.has(id)) return;
         list = list.filter(child => !deletedSessions.current.has(child.id));
-        mergeSessions(list); setChildIndex(previous => previous[id] ? previous : { ...previous, [id]: list });
+        mergeSessions(list);
+        // Merge with any early session.created children instead of letting a single SSE event truncate the full list.
+        setChildIndex(previous => {
+          const existing = previous[id] ?? [];
+          const merged = [...new Map([...list, ...existing].filter(child => !deletedSessions.current.has(child.id)).map(child => [child.id, child])).values()];
+          return { ...previous, [id]: merged };
+        });
       }).catch(() => {
         if (revision === epoch.current && generation === childGeneration.current) childRequested.current.delete(id);
       }).finally(() => {
@@ -214,6 +220,7 @@ export function useWorkbench() {
     let restored = restoreId ?? (id !== currentProfile.current ? recentSessions.current.get(id) : undefined) ?? "";
     if (currentProfile.current && selected.current) recentSessions.current.set(currentProfile.current, selected.current);
     const revision = ++epoch.current; stream.current?.abort(); clearTimeout(refreshTimer.current); syncing.current = false; buffered.current = [];
+    bindings.current.clear();
     clearTimeout(offlineTimer.current); offlineTimer.current = undefined; streamOnline.current = false; if (!automatic) autoRecovered.current = false;
     setLoading(true); setConnected(false); setError(""); setProfileId(id); currentProfile.current = id;
     sessionQuery.current = { search: "", limit: 50 }; sessionListRevision.current++; setKnownSessions({}); setHasMoreSessions(false); setSessionsLoading(false);
@@ -289,29 +296,37 @@ export function useWorkbench() {
   }, [resync, refreshSessions, updateSession, removeSession, invalidateChildren]);
   reconnect.current = connect;
   const selectSession = useCallback(async (session: Data) => {
-    selectionRevision.current++;
+    const rev = ++selectionRevision.current, ep = epoch.current;
     if (session.directory && session.directory !== client.current?.directory) { await connect(currentProfile.current, session.directory, session.id); return; }
     mergeSessions([session]); selected.current = session.id; setSessionId(session.id); setTodos([]); setChildren([]); setDiff([]); setError("");
+    if (rev !== selectionRevision.current || ep !== epoch.current) return;
     await chrome.storage.local.set({ [`recentSession:${currentProfile.current}`]: session.id });
+    if (rev !== selectionRevision.current || ep !== epoch.current) return;
     // Any in-flight resync finishes without committing a different session; then retry.
-    while (syncing.current) await new Promise(resolve => setTimeout(resolve, 20));
+    while (syncing.current) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      if (rev !== selectionRevision.current || ep !== epoch.current) return;
+    }
+    if (rev !== selectionRevision.current || ep !== epoch.current) return;
     await resync();
   }, [connect, resync]);
   useEffect(() => {
-    let active = true;
+    let active = true, loadRevision = 0;
     const load = async (changedId?: string) => {
+      const rev = ++loadRevision;
       try {
-        const result = await bridgeRequest("profile.list"); if (!active) return;
+        const result = await bridgeRequest("profile.list"); if (!active || rev !== loadRevision) return;
         const list = result.profiles ?? []; setProfiles(list); setProfilesLoaded(true);
         const saved = await chrome.storage.local.get("lastProfileId");
+        if (!active || rev !== loadRevision) return;
         const id = list.some((p: Data) => p.id === saved.lastProfileId) ? saved.lastProfileId : result.defaultProfileId;
         if (client.current && !list.some((profile: Data) => profile.id === currentProfile.current)) {
           epoch.current++; stream.current?.abort(); client.current = undefined; selected.current = ""; currentProfile.current = "";
           setConnected(false); setRuntime(undefined); setProfileId(""); setSessionId(""); setSessions([]); setCatalog({ all: [], connected: [], default: {} }); dispatch({ type: "reset" });
         }
         if (changedId && changedId === currentProfile.current && client.current) { await connect(changedId); return; }
-        if (!client.current && id && active) { const recent = await chrome.storage.local.get(`recentSession:${id}`); if (active) await connect(id, undefined, typeof recent[`recentSession:${id}`] === "string" ? recent[`recentSession:${id}`] as string : undefined); }
-      } catch (value) { if (active) fail(value); }
+        if (!client.current && id && active && rev === loadRevision) { const recent = await chrome.storage.local.get(`recentSession:${id}`); if (active && rev === loadRevision) await connect(id, undefined, typeof recent[`recentSession:${id}`] === "string" ? recent[`recentSession:${id}`] as string : undefined); }
+      } catch (value) { if (active && rev === loadRevision) fail(value); }
     };
     void load();
     const listener = (message: Data) => {

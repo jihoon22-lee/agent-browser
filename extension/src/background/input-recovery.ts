@@ -1,7 +1,7 @@
 import { ProtocolError } from '../protocol/errors';
 import type { FrameInfo } from './chrome-api';
 export type InputDocument = {tabId:number;documentId:string;sourceDocumentId?:string};
-type Entry={tabId:number;documentId:string;pending:string[];blocked?:boolean};
+type Entry={tabId:number;documentId:string;pending:string[];blocked?:boolean;superseded?:boolean};
 type Storage={get(key:string):Promise<Record<string,unknown>>;set(value:Record<string,unknown>):Promise<void>};
 const KEY='inputRecovery';
 export const recoveryMessage='An interrupted input left this page in an uncertain state. Inspect and save the page manually, then reload it before automated input. Do not repeat the original action.';
@@ -28,8 +28,32 @@ export function inputRecovery(storage:Storage,frames:(tabId:number)=>Promise<Fra
   capture,
   async current(d){const live=await frames(d.tabId).catch(()=>[]);return live.some(f=>f.frameId===0&&f.documentId===d.documentId)&&(!d.sourceDocumentId||live.some(f=>f.documentId===d.sourceDocumentId));},
   begin:(d,id)=>serial(async()=>{const entries=await read();if(blocked(d,entries))throw failure();if(entries.some(e=>e.tabId===d.tabId&&e.documentId===d.documentId&&e.pending.length))throw new ProtocolError('BROWSER_BUSY','The previous input is still settling.');let entry=entries.find(e=>e.tabId===d.tabId&&e.documentId===d.documentId);if(!entry){entry={tabId:d.tabId,documentId:d.documentId,pending:[]};entries.push(entry);}entry.pending.push(id);await write(entries);active.add(id);}),
-  finish:(d,id,uncertain)=>{if(removedTabs.has(d.tabId)){active.delete(id);return Promise.resolve();}if(uncertain)memoryBlocked.add(key(d));return serial(async()=>{try{if(removedTabs.has(d.tabId))return;const entries=await read();let entry=entries.find(e=>e.tabId===d.tabId&&e.documentId===d.documentId);if(!entry&&uncertain){entry={tabId:d.tabId,documentId:d.documentId,pending:[]};entries.push(entry);}if(entry){entry.pending=entry.pending.filter(p=>p!==id);if(uncertain)entry.blocked=true;}await write(entries.filter(e=>e.blocked||e.pending.length));}finally{active.delete(id);}});},
-  async assertWritable(tabId,allowMissingDocument=false){let d:InputDocument;try{d=await capture(tabId);}catch(error){if(!allowMissingDocument)throw error;await queue;if((await read()).some(e=>e.tabId===tabId)||[...memoryBlocked].some(k=>k.startsWith(`${tabId}:`)))throw failure();return;}await queue;const entries=await read();if(blocked(d,entries))throw failure();if(entries.some(e=>e.tabId===tabId&&e.documentId===d.documentId&&e.pending.length))throw new ProtocolError('BROWSER_BUSY','The previous input is still settling.');},
+  finish:(d,id,uncertain)=>{if(removedTabs.has(d.tabId)){active.delete(id);return Promise.resolve();}if(uncertain)memoryBlocked.add(key(d));return serial(async()=>{try{if(removedTabs.has(d.tabId))return;const entries=await read();let entry=entries.find(e=>e.tabId===d.tabId&&e.documentId===d.documentId);if(!entry&&uncertain){entry={tabId:d.tabId,documentId:d.documentId,pending:[]};entries.push(entry);}if(entry){entry.pending=entry.pending.filter(p=>p!==id);if(uncertain){entry.blocked=true;delete entry.superseded;}}await write(entries.filter(e=>e.blocked||e.pending.length));}finally{active.delete(id);}});},
+  async assertWritable(tabId,allowMissingDocument=false){
+   let d:InputDocument;
+   try{d=await capture(tabId);}
+   catch(error){
+    if(!allowMissingDocument)throw error;
+    await queue;
+    const entries=await read();
+    const hasUnsuperseded=entries.some(e=>e.tabId===tabId&&!e.superseded);
+    const hasUnsupersededMem=[...memoryBlocked].some(k=>{if(!k.startsWith(`${tabId}:`))return false;const docId=k.slice(`${tabId}:`.length);const stored=entries.find(e=>e.tabId===tabId&&e.documentId===docId);return !stored?.superseded;});
+    if(hasUnsuperseded||hasUnsupersededMem)throw failure();
+    return;
+   }
+   await queue;
+   const entries=await read();
+   if(blocked(d,entries))throw failure();
+   if(entries.some(e=>e.tabId===d.tabId&&e.documentId===d.documentId&&e.pending.length))throw new ProtocolError('BROWSER_BUSY','The previous input is still settling.');
+   if(entries.some(e=>e.tabId===tabId&&e.documentId!==d.documentId&&!e.pending.length&&!e.superseded)) {
+    await serial(async()=>{
+     const latest=await read();
+     let changed=false;
+     for(const e of latest)if(e.tabId===tabId&&e.documentId!==d.documentId&&!e.pending.length&&!e.superseded){e.superseded=true;changed=true;}
+     if(changed)await write(latest);
+    }).catch(()=>{});
+   }
+  },
   async status(tabId){const d=await capture(tabId);await queue;const entries=await read();return blocked(d,entries)?{required:true,message:recoveryMessage}:{required:false,pending:entries.some(e=>e.tabId===tabId&&e.documentId===d.documentId&&e.pending.length>0)};},
   removeTab:tabId=>{removedTabs.add(tabId);for(const key of memoryBlocked)if(key.startsWith(`${tabId}:`))memoryBlocked.delete(key);return serial(async()=>{const entries=await read();for(const e of entries)if(e.tabId===tabId){for(const id of e.pending)active.delete(id);memoryBlocked.delete(`${tabId}:${e.documentId}`);}await write(entries.filter(e=>e.tabId!==tabId));});},
  };

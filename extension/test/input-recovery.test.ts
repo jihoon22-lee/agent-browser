@@ -25,3 +25,16 @@ it('goto can bootstrap a clean tab without frames but cannot bypass known uncert
  const f=fixture(),r=inputRecovery(f.storage,f.frames),d=await r.capture(1);const absent=inputRecovery(f.storage,async()=>[]);
  await absent.assertWritable(1,true);await expect(absent.assertWritable(1)).rejects.toThrow();await r.begin(d,'one');await r.finish(d,'one',true);await expect(absent.assertWritable(1,true)).rejects.toThrow();
 });
+it('goto after a verified clean reload is not blocked by an older reloaded document',async()=>{
+ const f=fixture(),r=inputRecovery(f.storage,f.frames),d=await r.capture(1);
+ await r.begin(d,'one');await r.finish(d,'one',true);
+ // User reloads into a clean document and the agent verifies it is writable.
+ f.navigate('reloaded');
+ await r.assertWritable(1);
+ // Later the tab lands on about:blank (no frames); goto should be allowed because the reloaded doc was clean.
+ const noFrames=inputRecovery(f.storage,async()=>[]);
+ await noFrames.assertWritable(1,true);
+ // Returning via BFCache to the original tainted document still blocks.
+ f.navigate('original');
+ await expect(r.assertWritable(1)).rejects.toMatchObject({code:'ELEMENT_NOT_INTERACTABLE'});
+});

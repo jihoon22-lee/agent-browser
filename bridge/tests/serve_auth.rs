@@ -286,3 +286,21 @@ async fn client_proof_binds_role_client_id_and_repair() {
         assert_eq!(err_code(&rejected), Some(ErrorCode::AuthFailed));
     }
 }
+
+#[tokio::test]
+async fn extension_rpc_cannot_spoof_another_profiles_client_id() {
+    let (_home, serve, cfg) = start_test_serve().await;
+    let mut profile_a = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut profile_a, "extension", &cfg.token, "profile-a").await;
+    let mut profile_b = ws_connect(serve.port, "/extension", Some(EXT_ORIGIN)).await.unwrap();
+    hello(&mut profile_b, "extension", &cfg.token, "profile-b").await;
+    // profile-a starts a request; profile-b must not be able to begin/end/pause/resume as profile-a.
+    let begun = call(&mut profile_a, "request.begin", serde_json::json!({"requestId":"r1","clientId":"profile-a","tabId":1})).await;
+    assert!(matches!(begun, Envelope::Res { ok: true, .. }), "{begun:?}");
+    let spoof_end = call(&mut profile_b, "request.end", serde_json::json!({"requestId":"r1","clientId":"profile-a","abort":true})).await;
+    assert_eq!(err_code(&spoof_end), Some(ErrorCode::ForbiddenMethod), "{spoof_end:?}");
+    let spoof_begin = call(&mut profile_b, "request.begin", serde_json::json!({"requestId":"r2","clientId":"profile-a","tabId":2})).await;
+    assert_eq!(err_code(&spoof_begin), Some(ErrorCode::ForbiddenMethod), "{spoof_begin:?}");
+    let spoof_pause = call(&mut profile_b, "operation.pause", serde_json::json!({"operationId":"op-1","clientId":"profile-a"})).await;
+    assert_eq!(err_code(&spoof_pause), Some(ErrorCode::ForbiddenMethod), "{spoof_pause:?}");
+}
