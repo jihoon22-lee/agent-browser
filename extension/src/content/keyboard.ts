@@ -106,8 +106,6 @@ export function pressKey(p: Record<string, unknown>, validate: (element: Element
   const { key, modifiers } = keyOf(p);
   const has = (m: string) => modifiers.includes(m), shiftOnly = modifiers.length === 1 && has("Shift");
   const single = /^[a-zA-Z0-9]$/.test(key);
-  const editableHost = target.closest("[contenteditable]");
-  const rich = target.isContentEditable || (editableHost !== null && editableHost.getAttribute("contenteditable") !== "false");
   const edits = modifiers.length === 0 && (key === "Backspace" || key === "Delete" || key === "Space" || (key === "Enter" && target instanceof HTMLTextAreaElement) || ((key === "ArrowUp" || key === "ArrowDown") && target instanceof HTMLInputElement && target.type === "number"));
   const bound = bindTarget(target);
   const verifyTarget = () => {

@@ -98,7 +98,7 @@ export function renderedText(root: Element, o: { limit: number; skipUndisplayed:
   }
   return text.replace(/\s+/g, " ").trim();
 }
-function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,RecordObservation>, query: string): string {
+function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,RecordObservation>, query: string, inShadow: boolean): string {
   const row = composedClosest(el, "tr,li,[role=row],[role=listitem],article");
   const candidate = row ?? composedParent(el);
   if (!candidate || candidate === el.ownerDocument.body || candidate === el.ownerDocument.documentElement) return "";
@@ -106,12 +106,13 @@ function rowText(el: Element, rows: Map<Element, string>, records: Map<Element,R
   if (text === undefined) {
     // A necessary (not sufficient) match test avoids a tree walk for unrelated cards.
     // Remove whitespace on both sides because block/cell boundaries insert spaces.
-    // Omitted nodes may join separate words, so their presence disables this shortcut.
+    // Omitted nodes or open shadow roots make light-DOM textContent incomplete, so bypass the shortcut then.
     const compact = (value: string) => value.toLowerCase().replace(/\s/g,'');
-    if (!compact(candidate.textContent ?? '').includes(compact(query)) && !candidate.querySelector(SKIP)) {
+    const hasShadow = inShadow || Boolean(candidate.shadowRoot);
+    if (!hasShadow && !compact(candidate.textContent ?? '').includes(compact(query)) && !candidate.querySelector(SKIP)) {
       rows.set(candidate,''); return '';
     }
-    const full = row ? recordObservation(row,records).search : renderedText(candidate);
+    const full = (row || hasShadow) ? recordObservation(candidate,records).search : renderedText(candidate);
     text = row || full.length <= 300 ? clipText(full, 300) : "";
     rows.set(candidate, text);
   }
@@ -171,8 +172,9 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
     if (el.tagName === "CANVAS") limits.add("canvas-content-not-readable");
     if ((el.tagName === "EMBED" || el.tagName === "OBJECT") && /pdf/i.test(el.getAttribute("type") ?? "")) limits.add("embedded-content-not-readable");
     const interactive = isInteractive(el);
-    const pointer = !interactive && el.tagName !== "TABLE" && isPointerTarget(el, styleCache);
-    if ((!interactive && el.tagName !== "TABLE" && !pointer) || !isRendered(el, { checkLayout: o.checkLayout, cache: styleCache })) return;
+    const isTable = el.tagName === "TABLE" || el.matches('[role="table"],[role="grid"]');
+    const pointer = !interactive && !isTable && isPointerTarget(el, styleCache);
+    if ((!interactive && !isTable && !pointer) || !isRendered(el, { checkLayout: o.checkLayout, cache: styleCache })) return;
     // Match only what a snapshot would show: a password value must not become a search oracle.
     let name: string | undefined;
     if (query) {
@@ -181,7 +183,7 @@ export function takeSnapshot(o: { snapshotId: number; frameId: number; maxChars:
       const shownValue = el instanceof HTMLInputElement && el.type === "password" ? ""
         : el instanceof HTMLSelectElement ? [...el.selectedOptions].map(op => op.text).join(" ") || el.value
         : (el as HTMLInputElement).value;
-      if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows, records, query)))) return;
+      if (!(matches(name) || matches(shownValue) || matches((el as HTMLAnchorElement).href) || matches(rowText(el, rows, records, query, inShadow)))) return;
     }
     const index = result.elementsTotal++;
     if (index < offset || elements.length >= max || budgetFull) return;

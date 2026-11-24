@@ -215,8 +215,6 @@ export function createHandlers(api: ChromeApi, store: SessionStore, trusted?: Tr
             if (tracksTabs) run.confirmed = confirmed;
             return run.req.params.waitFor ? confirmed : lateNavigation(tabId, startUrl, confirmed, run.controller.signal).then(withEffect);
         }
-        // Only a click or key press is final once its frame replies; a snapshot still has frames to read.
-        if (tracksTabs) run.confirmed = response.result;
         return run.req.params.waitFor ? response.result : lateNavigation(tabId, startUrl, response.result, run.controller.signal).then(withEffect);
     }
     /** A script may navigate a moment after the click's own observation window closed. Only a
