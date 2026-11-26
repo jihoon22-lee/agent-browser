@@ -14,7 +14,17 @@ export default defineConfig({
         sidepanel: resolve(__dirname, "src/sidepanel/index.html"),
         options: resolve(__dirname, "src/options/index.html"),
       },
-      output: { entryFileNames: "[name].js", chunkFileNames: "chunks/[name]-[hash].js", assetFileNames: "assets/[name][extname]" },
+      output: {
+        entryFileNames: "[name].js",
+        chunkFileNames: "chunks/[name]-[hash].js",
+        assetFileNames: "assets/[name][extname]",
+        manualChunks(id) {
+          if (id.includes("/@a2ui/") || id.includes("/lit") || id.includes("/zod/") || id.includes("/markdown-it/")) {
+            return "a2ui";
+          }
+          return undefined;
+        },
+      },
     },
   },
 });

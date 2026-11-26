@@ -71,7 +71,14 @@ async function walkNpm(name, from) {
   if (npmSeen.has(identity)) return;
   npmSeen.add(identity);
   const files = await licenseFiles(dirname(manifest));
-  if (!files.length) throw new Error('No license text found for ' + identity);
+  if (!files.length) {
+    const fallback = fallbacks[identity];
+    if (!fallback) throw new Error('No license text found for ' + identity);
+    const text = await readFile(join(root, 'scripts', 'licenses', fallback.file), 'utf8');
+    const sha256 = createHash('sha256').update(text).digest('hex');
+    if (sha256 !== fallback.sha256) throw new Error('Vendored license checksum mismatch: ' + fallback.file);
+    files.push({ name: 'LICENSE (upstream fallback)', text, sha256, source: fallback.source });
+  }
   inventory.push({ ecosystem: 'npm', name: pkg.name, version: pkg.version, license: pkg.license ?? 'SEE LICENSE FILE', source: `https://www.npmjs.com/package/${pkg.name}/v/${pkg.version}`, files });
   for (const dependency of Object.keys(pkg.dependencies ?? {})) await walkNpm(dependency, manifest);
 }
