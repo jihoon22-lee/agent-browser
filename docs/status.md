@@ -2,6 +2,21 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.6.0 Windows preview — 게시 완료 (2026-11-27)
+
+[v0.6.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.6.0)(prerelease)를 **2026-11-26 23:54:03 UTC / 2026-11-27 08:54:03 KST**에 게시했다. 주석 태그는 [PR #55](https://github.com/jihoon22-lee/agent-browser/pull/55)의 main 병합 커밋 **`83cb0b6533f627f29eb57741f8f520b6553dfe7d`**를 가리킨다.
+
+- **배포 ZIP:** **4,265,765 bytes / 38 files**, SHA256 **`5e16ffe8ccf9c7cb19bad8d45116eebfd10e884a9f4b85f6ecf65b0b06016ad3`**. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/45853921345)의 Windows 작업이 만든 아티팩트다. PR CI(Linux 13m8s·Windows 24m26s)와 main CI(Linux 13m1s·Windows 25m7s)가 모두 성공했다.
+- **반영 내용 (Phase 1 AI-ful 사이드 패널 리디자인 + Phase 2 공식 `@a2ui/react` 생성형 UI):**
+  - Catppuccin 4개 테마에 AI 토큰(`--ai`, `--ai-surface`, `--accent-soft`, `--warning`)을 확장하고 전 조합 WCAG 4.5:1 대비를 유지하며 세그먼트 탭, 인라인 SVG 아이콘, 스파클 브랜드 마크, 플로팅 카드형 컴포저, 컨텍스트 미니 게이지, 도구 스텝 레일, 추론 미리보기를 적용했다.
+  - 입력란 위 **실시간 작업 상태 독(`LiveActivityDock`)**(추론·도구 실행·재시도·직접 조작 대기, 경과 시간, 작업 탭 바로가기, 접이식 `todo.updated` 진행 바)과 리치 결과 뷰어(`InteractiveTable` 숫자·한국어 통화 정렬/검색/CSV·MD 내보내기, `browser_batch` 단계 미리보기, `ImagePreview` 클릭 확대 라이트박스)를 추가했다.
+  - 고정 버전 `@a2ui/react@0.16.1`, `@a2ui/web_core@0.16.1`, `zod@3.25.76`을 번들링(`chunks/a2ui-*.js`, `eval`/`new Function` 0건)하고, ```` ```a2ui ```` JSON/JSONL 스트리밍 스켈레톤·원문 폴백, 브라우저 커스텀 카탈로그(`StatCard`, `Badge`, `KeyValue`, `DataTable`, `TabLink`, `ProgressBar`), OpenCode v1 액션 회신, **작업 도구 → A2UI 생성형 카드** 토글 및 `SKILL.md` 복사/내보내기, 피싱 방어(비밀번호 입력 차단·비 HTTP(S) URL 제거)를 구현했다.
+  - `scripts/generate-third-party-notices.mjs`에 npm 라이선스 fallback을 추가하고 `@lit-labs/ssr-dom-shim@1.6.0`의 BSD-3-Clause 라이선스를 `scripts/licenses/`에 고정했다(총 186개 제3자 패키지).
+- **로컬 검증(Linux):** `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`(경고 0건), `cargo test --offline --locked --workspace`(전체 통과), 확장 Vitest(**77 파일 / 964 테스트 통과**, 신규 `live-activity-dock`·`rich-result-viewers`·`a2ui` 회귀 포함), 확장 Vite 빌드 + MV3 CSP 검사, `node scripts/ci-checks.mjs`, `tests/install/package_release_test.py`, 합성 Node 회귀, Linux Playwright E2E(**264 통과 / 5 제외**, 신규 W20·W21 포함). Latte/Mocha 및 320px/400px/440px 실제 렌더링 PNG 스크린샷을 육안 확인했다.
+- **로컬 실제 Windows 검증(WSL interop):** `cargo xwin build --release`, 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.6.0`), `scripts/package-release.py`(38 files, 186 third-party packages), `tests/install/package.tests.ps1`(**5/5 통과**).
+- **게시본 검증:** CI 아티팩트에서 `package-manifest.json`(37개 파일 SHA-256 일치, `Version: "0.6.0"`), `extension/manifest.json`(`0.6.0`), 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.6.0`)을 확인했다. 게시 후 GitHub Release에서 ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치(`cmp`) 및 `sha256sum -c`를 확인했다. 병합된 브랜치와 임시 테스트 산출물을 정리했다. 최종 파일은 `release/v0.6.0-main/`.
+- **실행하지 않은 것:** 실제 외부 유료/무료 LLM 모델의 라이브 A2UI 생성 호출(합성 OpenCode v1 서버 및 스트리밍 fixture로 검증).
+
 ## v0.5.5 Windows preview — 게시 완료 (2026-11-24)
 
 [v0.5.5](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.5.5)(prerelease)를 **2026-11-24 09:48:25 UTC / 18:48:25 KST**에 게시했다. 주석 태그는 [PR #54](https://github.com/jihoon22-lee/agent-browser/pull/54)의 main 병합 커밋 **`249157ef46b5bd70532215c6df4e0b7e8c3c28f7`**를 가리킨다.
