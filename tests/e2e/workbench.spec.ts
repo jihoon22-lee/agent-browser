@@ -460,3 +460,171 @@ test("W19 a tab of a popup-type window chosen in the panel becomes the request's
     expect(prompt?.body?.system).toContain(`The captured tab is ${tabId}`);
   } finally { await world.adminPage.evaluate(id => (globalThis as any).chrome.windows.remove(id), popup.id).catch(() => {}); }
 });
+
+test("W20 live activity dock, inline todos, interactive extracted table, and screenshot lightbox work with valid contrast", async ({}, info) => {
+  const id = await createSession();
+  api.state.statuses[id] = { type: "busy" };
+  api.emit("session.status", { sessionID: id, status: { type: "busy" } });
+  api.emit("todo.updated", {
+    sessionID: id,
+    todos: [
+      { content: "검색어 입력 완료", status: "completed", priority: "high" },
+      { content: "결과 표 추출 및 정리", status: "in_progress", priority: "high" },
+      { content: "최종 비교 카드 작성", status: "pending", priority: "medium" },
+    ],
+  });
+  const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAADklEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  const extractOut = JSON.stringify({
+    ok: true,
+    tool: "browser_extract",
+    data: {
+      header: ["항목", "가격", "평점"],
+      rows: [
+        ["노트북 B", "1,450,000원", "4.7"],
+        ["노트북 A", "980,000원", "4.9"],
+        ["노트북 C", "1,190,000원", "4.5"],
+      ],
+      markdown: "| 항목 | 가격 | 평점 |\n| --- | --- | --- |\n| 노트북 B | 1,450,000원 | 4.7 |",
+    },
+  });
+  api.saveMessage({
+    info: { id: `msg_live_${id}`, sessionID: id, role: "assistant", time: { created: Date.now() - 2000 } },
+    parts: [
+      { id: `prt_reason_${id}`, sessionID: id, messageID: `msg_live_${id}`, type: "reasoning", text: "페이지의 표 구조를 파악한 뒤 가격순으로 정리합니다." },
+      { id: `prt_batch_${id}`, sessionID: id, messageID: `msg_live_${id}`, type: "tool", tool: "browser_browser_batch", state: { status: "completed", time: { start: 1000, end: 1450 }, input: { steps: [{ tool: "fill", text: "노트북" }, { tool: "click", ref: "e4" }] }, output: JSON.stringify({ ok: true, tool: "browser_batch", data: { completedSteps: 2 } }) } },
+      { id: `prt_extract_${id}`, sessionID: id, messageID: `msg_live_${id}`, type: "tool", tool: "browser_browser_extract", state: { status: "completed", time: { start: 1500, end: 1920 }, input: { kind: "table" }, output: extractOut, attachments: [{ id: "att-shot", type: "file", mime: "image/png", filename: "capture.png", url: png }] } },
+      { id: `prt_run_${id}`, sessionID: id, messageID: `msg_live_${id}`, type: "tool", tool: "browser_browser_wait", state: { status: "running", input: { text: "로딩 완료" } } },
+    ],
+  });
+
+  // Live activity dock shows running tool + inline todo bar.
+  const dock = panel.locator(".live-dock");
+  await expect(dock).toContainText("조건 대기 실행 중");
+  await expect(dock).toContainText("할 일 1/3");
+  await dock.locator(".live-todos-toggle").click();
+  await expect(dock.locator(".live-todos-list > li")).toHaveCount(3);
+
+  // Open the extracted table tool card, sort by 가격, and filter.
+  const extractCard = panel.locator("details.tool-card", { hasText: "내용 추출" });
+  await extractCard.locator(":scope > summary").click();
+  await expect(extractCard.locator(".rich-table-card")).toBeVisible();
+  await extractCard.getByRole("button", { name: "가격" }).click();
+  await expect(extractCard.locator(".rich-table tbody tr").first()).toContainText("노트북 A");
+  await extractCard.getByRole("searchbox", { name: "표 검색" }).fill("노트북 C");
+  await expect(extractCard.locator(".rich-table tbody tr")).toHaveCount(1);
+
+  // Screenshot thumbnail opens lightbox and closes on Escape.
+  await extractCard.getByRole("button", { name: "capture.png 크게 보기" }).click();
+  await expect(panel.getByRole("dialog", { name: "capture.png 확대 미리보기" })).toBeVisible();
+  await panel.keyboard.press("Escape");
+  await expect(panel.getByRole("dialog")).toHaveCount(0);
+
+  // Clear filter for clean visual snapshot and verify contrast.
+  await extractCard.getByRole("searchbox", { name: "표 검색" }).fill("");
+  const contrast = await renderedContrast();
+  expect(contrast.failures).toEqual([]);
+
+  const shot = info.outputPath("phase1-live-rich.png");
+  await panel.screenshot({ path: shot });
+  await info.attach("phase1-live-rich", { path: shot, contentType: "image/png" });
+});
+
+test("W21 @a2ui/react streams skeleton, renders custom & basic catalog, enforces security, and dispatches actions", async ({}, info) => {
+  const id = await createSession();
+  const messageID = `msg_a2ui_${id}`, partID = `prt_a2ui_${id}`;
+
+  // 1. Streaming unclosed a2ui fence shows shimmer skeleton without crashing.
+  api.saveMessage({
+    info: { id: messageID, sessionID: id, role: "assistant", time: { created: Date.now() } },
+    parts: [{ id: partID, sessionID: id, messageID, type: "text", text: "비교 카드를 준비했습니다.\n\n```a2ui\n{\"version\":\"1.0\",\"createSurface\":{\"surfaceId\":\"cmp\"" }],
+  });
+  await expect(panel.locator(".a2ui-streaming")).toBeVisible();
+
+  // 2. Complete A2UI v1.0 surface with custom catalog + standard Button + phishing password test.
+  const payload = {
+    version: "1.0",
+    createSurface: {
+      surfaceId: "cmp",
+      catalogId: "https://agent-browser.local/catalogs/v1",
+      components: [
+        { id: "root", component: "Column", children: ["heading", "stats", "kv", "prog", "pw", "tbl", "btn"] },
+        { id: "heading", component: "Text", text: "### 검색 결과 대시보드" },
+        { id: "stats", component: "Row", children: ["s1", "s2"] },
+        { id: "s1", component: "StatCard", label: "추출 건수", value: { "@path": "/total" }, delta: "+2건", tone: "ai" },
+        { id: "s2", component: "StatCard", label: "최저가", value: "980,000원", tone: "accent" },
+        { id: "kv", component: "KeyValue", items: [{ label: "기준 탭", value: "상품 검색", mono: false }, { label: "필터", value: "평점 4.5+", mono: true }] },
+        { id: "prog", component: "ProgressBar", label: "조건 충족도", value: 85, max: 100, tone: "success" },
+        { id: "pw", component: "TextField", label: "메모", variant: "obscured", value: { "@path": "/note" } },
+        {
+          id: "tbl",
+          component: "DataTable",
+          title: "후보 비교",
+          columns: ["모델", "가격"],
+          rows: [["노트북 A", "980,000원"], ["노트북 B", "1,290,000원"]],
+          searchable: false,
+          selectable: true,
+          actionLabel: "선택 모델 상세 열기",
+          onSelectAction: { event: { name: "open_selected", context: { from: "dashboard" } } },
+        },
+        { id: "btn", component: "Button", child: "btnLabel", variant: "primary", action: { event: { name: "confirm_top", context: { choice: "노트북 A" } } } },
+        { id: "btnLabel", component: "Text", text: "1순위 항목 진행" },
+      ],
+      dataModel: { total: "12건", note: "가성비 우선" },
+    },
+  };
+
+  api.saveMessage({
+    info: { id: messageID, sessionID: id, role: "assistant", time: { created: Date.now(), completed: Date.now() } },
+    parts: [{ id: partID, sessionID: id, messageID, type: "text", text: `비교 카드를 준비했습니다.\n\n\`\`\`a2ui\n${JSON.stringify(payload)}\n\`\`\`` }],
+  });
+
+  const shell = panel.locator(".a2ui-shell").first();
+  await expect(shell).toBeVisible();
+  await expect(shell).toContainText("AI 생성 UI");
+  await expect(shell).toContainText("12건");
+  await expect(shell).toContainText("980,000원");
+  await expect(shell).toContainText("85%");
+  // Security guardrail warning for downgraded obscured password field.
+  await expect(shell.locator(".a2ui-warning-note")).toContainText("비밀번호 입력 형식은 일반 텍스트 입력으로 전환");
+
+  // Verify layout & contrast across Latte 440px, Mocha 440px, and Mocha 320px.
+  for (const [theme, width] of [["latte", 440], ["mocha", 440], ["mocha", 320]] as const) {
+    await panel.setViewportSize({ width, height: 900 });
+    await panel.getByRole("button", { name: "화면 테마 선택" }).click();
+    await panel.getByRole("combobox", { name: "테마", exact: true }).selectOption(theme);
+    await panel.getByRole("button", { name: "대화로 돌아가기", exact: true }).click();
+    await expect(panel.locator("html")).toHaveAttribute("data-resolved-theme", theme);
+    const contrast = await renderedContrast();
+    expect(contrast.failures, `a2ui ${theme}/${width}`).toEqual([]);
+    const overflow = await panel.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+    expect(overflow, `a2ui overflow ${theme}/${width}`).toBeLessThanOrEqual(1);
+    const shot = info.outputPath(`a2ui-${theme}-${width}.png`);
+    await panel.screenshot({ path: shot });
+    await info.attach(`a2ui-${theme}-${width}`, { path: shot, contentType: "image/png" });
+  }
+
+  // Click DataTable row checkbox & action button -> structured action message sent to OpenCode!
+  await panel.setViewportSize({ width: 440, height: 900 });
+  const beforeReqs = api.state.requests.filter(r => r.path === `/session/${id}/prompt_async`).length;
+  await shell.locator('tbody input[type="checkbox"]').first().check();
+  await shell.getByRole("button", { name: "선택 모델 상세 열기" }).click();
+  await expect.poll(() => api.state.requests.filter(r => r.path === `/session/${id}/prompt_async`).length).toBe(beforeReqs + 1);
+  const actionReq = api.state.requests.findLast(r => r.path === `/session/${id}/prompt_async`)!;
+  expect(actionReq.body.parts[0].text).toContain("[A2UI 액션: open_selected]");
+  expect(actionReq.body.parts[0].text).toContain("노트북 A");
+  expect(actionReq.body.system).toContain("Interactive A2UI cards are enabled");
+  await expect(shell.locator(".a2ui-action-sent")).toContainText("전송됨 · open_selected");
+
+  // Disabling A2UI in 작업 도구 removes A2UI system prompt and falls back to raw code block.
+  await panel.getByRole("button", { name: "작업 도구", exact: true }).click();
+  await panel.getByText("A2UI 생성형 카드", { exact: true }).click();
+  await panel.locator(".a2ui-toggle-label input[type=checkbox]").uncheck();
+  await panel.getByRole("button", { name: "대화로 돌아가기", exact: true }).click();
+  await expect(panel.locator(".a2ui-shell")).toHaveCount(0);
+  const beforePlain = api.state.requests.filter(r => r.path === `/session/${id}/prompt_async`).length;
+  await panel.getByRole("textbox", { name: "메시지", exact: true }).fill("일반 텍스트로만 답해줘");
+  await panel.getByRole("button", { name: "보내기", exact: true }).click();
+  await expect.poll(() => api.state.requests.filter(r => r.path === `/session/${id}/prompt_async`).length).toBe(beforePlain + 1);
+  const plainReq = api.state.requests.findLast(r => r.path === `/session/${id}/prompt_async`)!;
+  expect(plainReq.body.system).not.toContain("Interactive A2UI cards are enabled");
+});

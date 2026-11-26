@@ -1,5 +1,6 @@
 import { Fragment, memo, useMemo, type ReactNode } from "react";
 import { CopyButton } from "./CopyButton";
+import { A2uiCard, type A2uiActionEvent } from "./a2ui/A2uiCard";
 export function safeLink(url: string): string | undefined {
   try { const parsed = new URL(url); return ["https:", "http:", "mailto:"].includes(parsed.protocol) ? parsed.href : undefined; } catch { return undefined; }
 }
@@ -37,7 +38,19 @@ function isTableSeparator(line: string): boolean {
   const cells = parseTableRow(line);
   return cells.length > 0 && cells.every(cell => /^:?-{1,}:?$/.test(cell));
 }
-export const SafeMarkdown = memo(function SafeMarkdown({ text }: { text: string }) {
+function PlainA2uiMarkdown({ markdown }: { markdown: string }) {
+  return <SafeMarkdown text={markdown} />;
+}
+
+export const SafeMarkdown = memo(function SafeMarkdown({
+  text,
+  enableA2ui = false,
+  onA2uiAction,
+}: {
+  text: string;
+  enableA2ui?: boolean;
+  onA2uiAction?: (action: A2uiActionEvent) => void;
+}) {
   const blocks = useMemo(() => {
     const lines = text.replaceAll("\r\n", "\n").split("\n"), out: ReactNode[] = [];
     for (let i = 0; i < lines.length; i++) {
@@ -45,7 +58,24 @@ export const SafeMarkdown = memo(function SafeMarkdown({ text }: { text: string 
       if (line.startsWith("```")) {
         const start = i;
         const code: string[] = [], language = line.slice(3).trim();
-        while (++i < lines.length && !lines[i]!.startsWith("```")) code.push(lines[i]!);
+        let closed = false;
+        while (++i < lines.length) {
+          if (lines[i]!.startsWith("```")) { closed = true; break; }
+          code.push(lines[i]!);
+        }
+        const normalizedLang = language.toLowerCase();
+        if (enableA2ui && (normalizedLang === "a2ui" || normalizedLang === "a2ui-jsonl")) {
+          out.push(
+            <A2uiCard
+              key={`a2ui-${start}`}
+              source={code.join("\n")}
+              streaming={!closed}
+              markdownRenderer={PlainA2uiMarkdown}
+              onAction={onA2uiAction}
+            />,
+          );
+          continue;
+        }
         out.push(<div className="code-block" key={`code-${start}`}><div><span>{language}</span><CopyButton text={code.join("\n")} label="코드 복사" /></div><pre><code>{code.join("\n")}</code></pre></div>); continue;
       }
       if (!line.trim()) continue;
@@ -77,6 +107,6 @@ export const SafeMarkdown = memo(function SafeMarkdown({ text }: { text: string 
       out.push(<p key={i}>{inline(line)}</p>);
     }
     return out;
-  }, [text]);
+  }, [text, enableA2ui, onA2uiAction]);
   return <div className="markdown">{blocks}</div>;
 });
