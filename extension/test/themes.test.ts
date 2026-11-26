@@ -5,11 +5,12 @@ function ratio(a: string, b: string) {
 }
 it.each(THEMES)("keeps final %s text, focus and control tokens readable on every surface", theme => {
   const tokens = themeTokens(theme);
-  for (const background of ["--base", "--canvas", "--raised", "--hover", "--bubble"] as const) {
-    for (const foreground of ["--text", "--muted", "--accent", "--danger", "--success"] as const) expect(ratio(tokens[foreground], tokens[background]), `${theme} ${foreground}/${background}`).toBeGreaterThanOrEqual(4.5);
+  for (const background of ["--base", "--canvas", "--raised", "--hover", "--bubble", "--ai-surface", "--accent-soft"] as const) {
+    for (const foreground of ["--text", "--muted", "--accent", "--ai", "--danger", "--warning", "--success"] as const) expect(ratio(tokens[foreground], tokens[background]), `${theme} ${foreground}/${background}`).toBeGreaterThanOrEqual(4.5);
     for (const foreground of ["--control-border", "--focus"] as const) expect(ratio(tokens[foreground], tokens[background]), `${theme} ${foreground}/${background}`).toBeGreaterThanOrEqual(3);
   }
   expect(ratio(tokens["--accent-on"], tokens["--accent"])).toBeGreaterThanOrEqual(4.5);
+  expect(ratio(tokens["--ai-on"], tokens["--ai"])).toBeGreaterThanOrEqual(4.5);
   expect(ratio(tokens["--danger-on"], tokens["--danger"])).toBeGreaterThanOrEqual(4.5);
 });
 it("migrates saved light/dark preferences and follows system appearance only in system mode", () => {

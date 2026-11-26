@@ -17,8 +17,10 @@ function readable(color: string, text: string, backgrounds: string[], minimum: n
 }
 type ThemeTokenMap = {
   "--base": string; "--canvas": string; "--surface": string; "--raised": string; "--hover": string; "--bubble": string;
+  "--ai-surface": string; "--accent-soft": string;
   "--text": string; "--muted": string; "--line": string; "--control-border": string;
-  "--accent": string; "--accent-on": string; "--danger": string; "--danger-on": string;
+  "--accent": string; "--accent-on": string; "--ai": string; "--ai-on": string;
+  "--danger": string; "--danger-on": string; "--warning": string;
   "--success": string; "--focus": string;
 };
 const tokenCache = new Map<Theme, ThemeTokenMap>();
@@ -27,16 +29,24 @@ export function themeTokens(theme: Theme): ThemeTokenMap {
   if (cached) return cached;
   const flavor = palette[theme], colors = flavor.colors;
   const base = colors.base.hex, canvas = colors.mantle.hex, raised = flavor.dark ? colors.surface0.hex : colors.base.hex, hover = flavor.dark ? colors.surface0.hex : colors.crust.hex;
-  // User bubbles are tinted toward the accent so turns stay distinguishable without borders.
+  // User bubbles and AI surfaces are opaque mixes so text contrast stays deterministic across themes.
   const bubble = mix(base, colors.blue.hex, flavor.dark ? .16 : .12);
-  const backgrounds = [base, canvas, raised, hover, bubble], text = colors.text.hex;
-  const accent = readable(colors.blue.hex, text, backgrounds, 4.5), danger = readable(colors.red.hex, text, backgrounds, 4.5);
+  const aiSurface = mix(base, colors.mauve.hex, flavor.dark ? .13 : .09);
+  const accentSoft = mix(base, colors.sapphire.hex, flavor.dark ? .14 : .1);
+  const backgrounds = [base, canvas, raised, hover, bubble, aiSurface, accentSoft], text = colors.text.hex;
+  const accent = readable(colors.blue.hex, text, backgrounds, 4.5);
+  const ai = readable(colors.mauve.hex, text, backgrounds, 4.5);
+  const danger = readable(colors.red.hex, text, backgrounds, 4.5);
+  const warning = readable(colors.peach.hex, text, backgrounds, 4.5);
   const tokens: ThemeTokenMap = {
     "--base": base, "--canvas": canvas, "--surface": base, "--raised": raised, "--hover": hover, "--bubble": bubble,
+    "--ai-surface": aiSurface, "--accent-soft": accentSoft,
     "--text": text, "--muted": readable(colors.subtext1.hex, text, backgrounds, 4.5),
     "--line": colors.surface1.hex, "--control-border": readable(colors.overlay2.hex, text, backgrounds, 3),
     "--accent": accent, "--accent-on": flavor.dark ? colors.crust.hex : base,
+    "--ai": ai, "--ai-on": flavor.dark ? colors.crust.hex : base,
     "--danger": danger, "--danger-on": flavor.dark ? colors.crust.hex : base,
+    "--warning": warning,
     "--success": readable(colors.green.hex, text, backgrounds, 4.5),
     "--focus": readable(colors.mauve.hex, text, backgrounds, 3),
   };

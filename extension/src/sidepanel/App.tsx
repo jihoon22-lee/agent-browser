@@ -7,6 +7,7 @@ import { Workbench, type WorkspaceView } from "./Workbench";
 import { ErrorNotice } from "./ErrorNotice";
 import { friendlyError } from "./error-text";
 import { outcomeLabel, toolLabel } from "./tool-names";
+import { SettingsIcon, StopIcon } from "./Icons";
 
 function errorText(error: unknown): string {
   if (error && typeof error === "object") {
@@ -140,8 +141,8 @@ export function App() {
 
   return <main className="app-shell">
     <header className="app-header">
-      <div className="brand"><svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M3 9h18M9 9v12" /></svg><div><h1>AgentBrowser</h1><div className={`connection ${connected ? "online" : "offline"}`} role="status"><span className="dot" />{connectionLabel(state.conn)}</div></div></div>
-      <div className="header-actions"><button className="quiet" onClick={() => void chrome.runtime.openOptionsPage()}>설정</button>{(op || state.stopping) && <button className="stop" aria-label="브라우저 작업 중단" disabled={!connected || !op || state.stopping} onClick={() => void stop()}>{state.stopping ? "중단 중…" : "중단"}</button>}</div>
+      <div className="brand"><svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5" /><path d="M3 9h18M9 9v12" /><path className="brand-spark" d="M16 12.2l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2z" /></svg><div><h1>AgentBrowser</h1><div className={`connection ${connected ? "online" : "offline"}`} role="status"><span className="dot" />{connectionLabel(state.conn)}</div></div></div>
+      <div className="header-actions"><button className="quiet icon-text-btn" onClick={() => void chrome.runtime.openOptionsPage()}><SettingsIcon size={13} />설정</button>{(op || state.stopping) && <button className="stop icon-text-btn" aria-label="브라우저 작업 중단" disabled={!connected || !op || state.stopping} onClick={() => void stop()}><StopIcon size={11} />{state.stopping ? "중단 중…" : "중단"}</button>}</div>
     </header>
     {(state.conn.detail || state.error || state.stopped || (view !== "browser" && (advancedNotice.recovery || advancedNotice.dialog))) && <div className="global-notices">
       {state.conn.detail && <p className="muted" title={state.conn.detail}>{friendlyError(state.conn.detail).text}</p>}
@@ -156,7 +157,7 @@ export function App() {
       const next = event.key === "Home" ? 0 : event.key === "End" ? 2 : (position + (event.key === "ArrowRight" ? 1 : 2)) % 3;
       event.preventDefault(); setView(views[next]!); event.currentTarget.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
     }}>
-      {([["chat", "대화"], ["sessions", "세션"], ["browser", "브라우저"]] as const).map(([id, label]) => <button key={id} id={`tab-${id}`} role="tab" aria-controls={`view-${id}`} aria-selected={view === id} tabIndex={view === id ? 0 : -1} onClick={() => setView(id)}>{label}</button>)}
+      {([["chat", "대화"], ["sessions", "세션"], ["browser", "브라우저"]] as const).map(([id, label]) => <button key={id} id={`tab-${id}`} role="tab" aria-controls={`view-${id}`} aria-selected={view === id} tabIndex={view === id ? 0 : -1} data-ops={id === "browser" && state.operations.length > 0 ? String(state.operations.length) : undefined} onClick={() => setView(id)}>{label}</button>)}
     </nav>
     <div className="app-content">
     <Workbench operation={op} operations={state.operations} stopHandler={stopHandler} view={view} onViewChange={setView} conn={state.conn} />
