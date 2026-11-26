@@ -16,11 +16,20 @@ import { OpenCodeApiError } from '../agents/opencode-v1/client';
 import type { ConnStatus } from "../background/bridge-connection";
 import { ErrorNotice } from "./ErrorNotice";
 import { CopyButton } from "./CopyButton";
+import { LiveActivityDock } from "./LiveActivityDock";
+import { AttachIcon, SelectionIcon, SendIcon, SparkleIcon, StopIcon, TabIcon } from "./Icons";
+import { formatA2uiActionMessage, type A2uiActionEvent } from "./a2ui/A2uiCard";
+import { A2UI_SKILL_MARKDOWN, A2UI_SYSTEM_PROMPT } from "./a2ui/skill";
 
 export type WorkspaceView = "chat" | "sessions" | "browser";
 const FAVORITE_MODELS = "★ 즐겨찾기";
 // Read-only starting points: they fill the composer and are never sent without the user.
-const EXAMPLES = ["지금 보는 페이지를 요약해줘", "이 페이지의 표를 Markdown으로 정리해줘", "이 페이지에서 입력해야 할 항목을 알려줘"];
+const EXAMPLES = [
+  "지금 보는 페이지를 요약해줘",
+  "이 페이지의 표를 Markdown으로 정리해줘",
+  "이 페이지에서 입력해야 할 항목을 알려줘",
+  "현재 페이지의 핵심 정보를 A2UI 대시보드와 비교 표로 정리해줘",
+];
 const BUILTIN_COMMANDS: Record<string, string> = {
   new: "새 대화 시작",
   sessions: "세션 목록 보기",
@@ -80,7 +89,9 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   const [draft, setDraft] = useState(""), [attachments, setAttachments] = useState<Data[]>([]), [sending, setSending] = useState(false), [notice, setNotice] = useState("");
   const [modelKey, setModelKey] = useState(""), [agent, setAgent] = useState(""), [variant, setVariant] = useState(""), [modelSearch, setModelSearch] = useState(""), [modelTools, setModelTools] = useState(false);
   const [browserFeatures,setBrowserFeatures]=useState({advanced:false,trusted:false});
-  useEffect(()=>{let live=true;const update=()=>void chrome.storage.local.get(['advancedBrowser','trustedInput']).then(s=>{if(live)setBrowserFeatures({advanced:s.advancedBrowser===true,trusted:s.trustedInput===true});}).catch(()=>{});const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{if(area==='local'&&(changes.advancedBrowser||changes.trustedInput))update();};update();chrome.storage.onChanged?.addListener(changed);return()=>{live=false;chrome.storage.onChanged?.removeListener(changed);};},[]);
+  const [a2uiEnabled,setA2uiEnabled]=useState(true);
+  useEffect(()=>{let live=true;const update=()=>void chrome.storage.local.get(['advancedBrowser','trustedInput','a2uiEnabled']).then(s=>{if(live){setBrowserFeatures({advanced:s.advancedBrowser===true,trusted:s.trustedInput===true});setA2uiEnabled(s.a2uiEnabled!==false);}}).catch(()=>{});const changed=(changes:Record<string,chrome.storage.StorageChange>,area:string)=>{if(area==='local'&&(changes.advancedBrowser||changes.trustedInput||changes.a2uiEnabled))update();};update();chrome.storage.onChanged?.addListener(changed);return()=>{live=false;chrome.storage.onChanged?.removeListener(changed);};},[]);
+  const toggleA2ui = (enabled: boolean) => { setA2uiEnabled(enabled); void chrome.storage.local?.set?.({ a2uiEnabled: enabled }).catch(() => {}); };
   const [favorites, setFavorites] = useState<string[]>([]);
   const { theme, chooseTheme } = useTheme();
   const [drawer, setDrawer] = useState<"environment" | "tools" | "theme" | null>(null);
@@ -254,10 +265,13 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   async function selectSession(session: Data) { const selection = wb.selectSession(session), current = wb.captureScope(); await selection; if (current()) { onViewChange("chat"); setDrawer(null); } }
   async function selectParent() { if (!currentSession?.parentID) return; const current = wb.captureScope(), parent = wb.knownSessions[currentSession.parentID] ?? await api().get<Data>(`/session/${encodeURIComponent(currentSession.parentID)}`); if (current() && parent?.id) await selectSession(parent); }
   async function compact() { const current = wb.captureScope(); if (!model) throw new Error("압축에 사용할 모델을 선택하세요."); await api().request("POST", sessionPath() + "/summarize", { body: { providerID: model.providerID, modelID: model.id, auto: false }, timeoutMs: 300000 }); if (current()) await wb.resync(); }
-  async function send() {
-    if (sendLock.current || (!draft.trim() && !attachments.length)) return;
+  async function send(overrideText?: string) {
+    const isOverride = typeof overrideText === "string";
+    const textToSend = isOverride ? overrideText : draft;
+    const filesToSend = isOverride ? [] : attachments;
+    if (sendLock.current || (!textToSend.trim() && !filesToSend.length)) return;
     const current = wb.captureScope();
-    const ui = /^\/(new|sessions|models|skills|commands)\s*$/.exec(draft.trim());
+    const ui = isOverride ? null : /^\/(new|sessions|models|skills|commands)\s*$/.exec(textToSend.trim());
     if (ui) {
       // Cleared before it runs: /new changes the session, and the command must not stay behind as the old session's draft.
       setDraft(""); previousDraft.current = { ...previousDraft.current, draft: "" };
@@ -272,7 +286,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       if (creating.current) return;
       creating.current = true; setSending(true);
       let created: Data | undefined;
-      try { await perform(async () => { created = await createSession({ draft, attachments }); }); }
+      try { await perform(async () => { created = await createSession({ draft: textToSend, attachments: filesToSend }); }); }
       finally { creating.current = false; if (current()) setSending(false); }
       if (created && typeof created.id === "string") { autoSend.current = created.id; setAutoTick(tick => tick + 1); }
       return;
@@ -296,6 +310,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       const targetPromise=resolveRequestTarget(target);targetPromise.catch(()=>{});
       const selectedApi=api(),path=sessionPath(),messageID="msg_"+crypto.randomUUID().replaceAll("-", "");
       const scope={profileId:wb.profileId,directory:wb.directory,sessionId:wb.sessionId};
+      const command = isOverride ? null : /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(textToSend.trim());
       const prepare=async()=>{
         const target=await targetPromise;
         if(!canSubmit())throw Error('요청 전송이 취소되었거나 선택한 세션이 바뀌었습니다.');
@@ -304,7 +319,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
         setRequestHeld(true);
         // The files attached to this message are the only ones browser_upload may use, and only for this request.
         // Filtered here too: one runtime message must stay well under Chrome's message size limit.
-        const uploadable=selectAttachments(attachments.filter(a=>a.type==='file'&&typeof a.url==='string'&&a.url.startsWith('data:')).map(a=>({name:a.filename,mime:a.mime,dataUrl:a.url})));
+        const uploadable=selectAttachments(filesToSend.filter(a=>a.type==='file'&&typeof a.url==='string'&&a.url.startsWith('data:')).map(a=>({name:a.filename,mime:a.mime,dataUrl:a.url})));
         const response=await chrome.runtime.sendMessage({kind:'request-prepare',lease:{...scope,messageId:messageID,requestId,vision:requestModelCapability(models,modelKey,command?wb.commands.find(item=>item.name===command[1]):undefined)},target,files:uploadable.accepted,skippedFiles:uploadable.skipped,
           ...(operation&&wb.operationOwner(operation.id)===wb.sessionId?{previousOperationId:operation.id}:{})});
         if(!response?.ok)throw Error(response?.error?.message??'요청의 작업 탭을 고정하지 못했습니다.');
@@ -312,25 +327,25 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
         setRequestHeld(true);
         return response.result.system as string;
       };
-      const command = /^\/([^\s]+)(?:\s+([\s\S]*))?$/.exec(draft.trim());
       if (command) {
         if (command[1] === "compact") await compact();
         else {
           if (!wb.commands.some(item => item.name === command[1])) throw new Error("서버에 등록되지 않은 커맨드입니다. /commands에서 확인하세요.");
-          if (attachments.some(part => part.type !== "file")) throw new Error("사용자 커맨드에는 파일 첨부만 전달할 수 있습니다. 에이전트 참조는 일반 메시지로 보내세요.");
+          if (filesToSend.some(part => part.type !== "file")) throw new Error("사용자 커맨드에는 파일 첨부만 전달할 수 있습니다. 에이전트 참조는 일반 메시지로 보내세요.");
           const system=await prepare();
           const context=await textFilePart('browser-request.txt',system);
           if(!canSubmit()){await discard();throw Error('요청 전송을 취소했습니다.');}
           attempt.submitted=true;
-          await selectedApi.request("POST", path + "/command", { body: { messageID, command: command[1], arguments: command[2] ?? "", model: modelKey, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...attachments,context] }, timeoutMs: 300000 });
+          await selectedApi.request("POST", path + "/command", { body: { messageID, command: command[1], arguments: command[2] ?? "", model: modelKey, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...filesToSend,context] }, timeoutMs: 300000 });
         }
       } else {
-        const system=await prepare();
+        const baseSystem=await prepare();
+        const system = a2uiEnabled ? `${baseSystem}\n\n${A2UI_SYSTEM_PROMPT}` : baseSystem;
         if(!canSubmit()){await discard();throw Error('요청 전송을 취소했습니다.');}
         attempt.submitted=true;
-        await selectedApi.post(path + "/prompt_async", { messageID,system, model: { providerID: model.providerID, modelID: model.id }, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...(draft.trim() ? [{ type: "text", text: draft }] : []), ...attachments] });
+        await selectedApi.post(path + "/prompt_async", { messageID,system, model: { providerID: model.providerID, modelID: model.id }, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}), parts: [...(textToSend.trim() ? [{ type: "text", text: textToSend }] : []), ...filesToSend] });
       }
-      if (canSubmit()) { wb.watchResponse(); if (previousDraft.current.draft === draft && previousDraft.current.attachments === attachments) { setDraft(""); setAttachments([]); draftCache.current.delete(attempt.key); void chrome.storage.session?.remove(`draft:${attempt.key}`).catch(() => {}); } setNotice(""); await wb.resync(); }
+      if (canSubmit()) { wb.watchResponse(); if (!isOverride && previousDraft.current.draft === draft && previousDraft.current.attachments === attachments) { setDraft(""); setAttachments([]); draftCache.current.delete(attempt.key); void chrome.storage.session?.remove(`draft:${attempt.key}`).catch(() => {}); } setNotice(""); await wb.resync(); }
     } catch (error) {
       // Only explicit admission failures prove the mutation was not accepted.
       // Transport failures and 5xx retain the token until completion or Stop.
@@ -404,15 +419,35 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     await perform(async () => { const current = api(), active = wb.captureScope(); const done = await respondOnce(responding.current, request.id, () => current.get<Data[]>("/permission"), () => current.post(`/permission/${encodeURIComponent(request.id)}/reply`, { reply })); if (!active()) return; setNotice(done ? "권한 응답을 전달했습니다." : "이 권한 요청은 다른 곳에서 이미 처리되었습니다."); await wb.resync(); });
   }
   // Stable handlers let memoized message cards skip re-rendering while the user types or a reply streams.
-  const messageHandlers = useRef({ fork: (_: string) => {}, revert: (_: string) => {}, open: (_: Data) => {}, retry: (_: string) => {} });
+  const messageHandlers = useRef({ fork: (_: string) => {}, revert: (_: string) => {}, open: (_: Data) => {}, retry: (_: string) => {}, a2uiAction: (_: A2uiActionEvent) => {} });
   messageHandlers.current = {
     fork: messageID => void perform(() => forkSession(messageID)),
     // MessageCard has already asked for confirmation inside the message.
     revert: messageID => void perform(async () => { await api().post(sessionPath() + "/revert", { messageID }); await wb.resync(); }),
     open: part => void perform(() => openArtifact(part)),
     retry: text => { setDraft(text); composer.current?.focus(); },
+    a2uiAction: action => {
+      const formatted = formatA2uiActionMessage(action);
+      if (!wb.connected || !wb.sessionId || !model) {
+        setNotice("세션과 모델이 연결된 상태에서 A2UI 액션을 전송할 수 있습니다.");
+        return;
+      }
+      if (running || sendLock.current) {
+        setDraft(formatted);
+        composer.current?.focus();
+        setNotice("응답이 진행 중입니다. 완료 후 보낼 수 있도록 입력란에 채웠습니다.");
+        return;
+      }
+      void send(formatted);
+    },
   };
-  const onFork = useCallback((id: string) => messageHandlers.current.fork(id), []), onRevert = useCallback((id: string) => messageHandlers.current.revert(id), []), onOpenFile = useCallback((part: Data) => messageHandlers.current.open(part), []), onRetry = useCallback((text: string) => messageHandlers.current.retry(text), []);
+  const onFork = useCallback((id: string) => messageHandlers.current.fork(id), []), onRevert = useCallback((id: string) => messageHandlers.current.revert(id), []), onOpenFile = useCallback((part: Data) => messageHandlers.current.open(part), []), onRetry = useCallback((text: string) => messageHandlers.current.retry(text), []), onA2uiAction = useCallback((action: A2uiActionEvent) => messageHandlers.current.a2uiAction(action), []);
+  const focusTab = useCallback((tabId: number) => {
+    void chrome.tabs?.get?.(tabId).then(tab => {
+      if (tab.windowId !== undefined) void chrome.windows?.update?.(tab.windowId, { focused: true }).catch(() => {});
+      return chrome.tabs.update(tabId, { active: true });
+    }).catch(() => {});
+  }, []);
   const turns = useMemo(() => {
     const result: Array<{ key: string; user: boolean; messages: UiMessage[]; retryText: string }> = [];
     let lastUserText = "";
@@ -552,6 +587,12 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
   const conversationPanel = <section className="conversation" aria-label="대화" hidden={drawer !== null}><div className="section-heading">{renaming?.place === "header" && currentSession?.id === renaming.id
         ? <RenameField initial={currentSession.title ?? ""} onSubmit={title => { setRenaming(null); void perform(() => renameSession(currentSession, title)); }} onCancel={() => setRenaming(null)} />
         : <h2 title={currentSession?.title}>{currentSession?.title ?? "새 대화"}</h2>}
+        {usage.context.tokens !== null && usage.context.limit && wb.sessionId && (
+          <button type="button" className="quiet context-mini-pill" title={`컨텍스트 약 ${Math.round(contextRatio * 100)}% (${usage.context.tokens.toLocaleString()} / ${usage.context.limit.toLocaleString()})`} onClick={event => openDrawer("tools", event.currentTarget)}>
+            <span className="context-mini-bar" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.round(contextRatio * 100))}%` }} /></span>
+            <span>{Math.round(contextRatio * 100)}%</span>
+          </button>
+        )}
         <span className={`status-pill ${running ? "busy" : ""}`} role="status">{sessionStatus?.type === "busy" ? "응답 중" : sessionStatus?.type === "retry" ? `재시도 ${sessionStatus.attempt ?? ""}` : wb.sessionId ? "대기" : "세션 없음"}</span>
         {currentSession?.id && <SessionMenu label="현재 세션 작업" actions={sessionActions(currentSession, "header")} />}</div>
       {currentSession?.parentID && <div className="session-breadcrumb"><button className="quiet" onClick={() => void perform(selectParent)}>상위 세션으로</button><span>{wb.knownSessions[currentSession.parentID]?.title ?? "하위 작업 대화"}</span></div>}
@@ -563,11 +604,11 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       <div className="viewport-wrap">
       <div className="message-viewport" ref={messageViewport} onScroll={event => { if (view !== "chat" || drawer !== null) return; const el = event.currentTarget; const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80; followMessages.current = atBottom; setShowJumpToBottom(!atBottom && el.scrollHeight > el.clientHeight + 120); }} aria-label="대화 메시지">
       {turns.map(turn => <div key={turn.key} className={`turn ${turn.user ? "user" : "assistant"}`}>
-          {turn.messages.map((message, index) => <MessageCard key={message.info.id} message={message} continued={index > 0} onOpenFile={onOpenFile} onFork={onFork} onRevert={onRevert} retryText={message.info.error ? turn.retryText : undefined} onRetry={onRetry} />)}
+          {turn.messages.map((message, index) => <MessageCard key={message.info.id} message={message} continued={index > 0} enableA2ui={a2uiEnabled} onOpenFile={onOpenFile} onFork={onFork} onRevert={onRevert} onA2uiAction={onA2uiAction} retryText={message.info.error ? turn.retryText : undefined} onRetry={onRetry} />)}
           {!turn.user && <TurnCopy messages={turn.messages} />}
         </div>)}
-      {waiting && <p className="waiting muted" role="status">응답을 준비하는 중…</p>}
-      {!turns.length && !waiting && <div className={`empty-chat ${start.tone}`}><span className="empty-chat-icon" aria-hidden="true">{start.tone === "problem" ? "!" : start.tone === "waiting" ? "…" : "↗"}</span><h3>{start.title}</h3>{start.body && <p>{start.body}</p>}
+      {waiting && <p className="waiting muted" role="status"><SparkleIcon size={13} /> 응답을 준비하는 중…</p>}
+      {!turns.length && !waiting && <div className={`empty-chat ${start.tone}`}><span className="empty-chat-icon" aria-hidden="true">{start.tone === "problem" ? "!" : start.tone === "waiting" ? "…" : <SparkleIcon size={22} />}</span><h3>{start.title}</h3>{start.body && <p>{start.body}</p>}
         {start.actions && <div className="start-actions">{start.actions.map(action => <button key={action.label} className={action.primary ? "primary" : undefined} onClick={event => action.run(event.currentTarget)}>{action.label}</button>)}</div>}
         {stage === "ready" && <><div className="example-prompts" aria-label="요청 예시">{EXAMPLES.map(text => <button key={text} type="button" onClick={() => { setDraft(text); composer.current?.focus(); }}>{text}</button>)}</div>{!wb.sessionId && <button className="primary" disabled={!wb.connected} onClick={() => void perform(async () => { await createSession(); })}>새 대화 시작</button>}</>}</div>}
       {questions.map(request => <QuestionCard key={request.id} request={request} onReply={replyQuestion} />)}{permissions.map(request => <PermissionCard key={request.id} request={request} onReply={replyPermission} />)}
@@ -575,6 +616,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       </div>
       {showJumpToBottom && <button type="button" className="jump-to-bottom" onClick={() => { followMessages.current = true; setShowJumpToBottom(false); if (messageViewport.current) messageViewport.current.scrollTop = messageViewport.current.scrollHeight; }}>↓ 최신 메시지로</button>}
       </div>
+      <LiveActivityDock messages={messages} sessionStatus={sessionStatus} operation={heldOperation ?? operation} todos={wb.todos} onFocusTab={heldOperation ? focusTab : undefined} />
       <form className={dragOver ? "composer drag-over" : "composer"} onSubmit={event => { event.preventDefault(); void send(); }}
         onDragOver={event => { if (event.dataTransfer?.types?.includes("Files")) { event.preventDefault(); setDragOver(true); } }}
         onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false); }}
@@ -601,8 +643,8 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
         {mentionSuggestions && <div id="composer-mention-list" className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="참조 자동완성">{mentionSuggestions.showTab && <button type="button" role="option" onClick={() => void perform(() => addBrowserReference("current-tab"))}>@현재탭 · 브라우저 관찰</button>}{mentionSuggestions.showSel && <button type="button" role="option" onClick={() => void perform(() => addBrowserReference("selection"))}>@선택영역 · 브라우저 관찰</button>}{mentionSuggestions.matchedAgents.map(item => <button type="button" role="option" key={item.name} onClick={() => { setAttachments(previous => [...previous, { type: "agent", name: item.name }]); setDraft(value => replaceMention(value, "")); composer.current?.focus(); }}>@{item.name} · 에이전트</button>)}{files.map(path => <button type="button" role="option" key={path} onClick={() => void perform(() => addRemoteFile(path))}>@{path} · 서버 파일</button>)}</div>}
         {commandSuggestions && <div id="composer-command-list" className="suggestions" onKeyDown={suggestionKeys} role="listbox" aria-label="명령 자동완성">{commandSuggestions.map(item => <button type="button" role="option" key={item.name} onClick={() => { setDraft(`/${item.name} `); composer.current?.focus(); }}><span>/{item.name}</span>{item.description && <small className="suggestion-desc">{item.description}</small>}</button>)}</div>}
         {modelsPanel}
-        <div className="composer-actions"><div className="composer-tools"><label className="attach-button">파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(() => addFiles(selectedFiles)); }} /></label><button type="button" onClick={() => void perform(() => addBrowserReference("current-tab"))}>현재 탭</button><button type="button" onClick={() => void perform(() => addBrowserReference("selection"))}>선택 영역</button></div><div className="composer-send"><TargetPicker chosen={target} onChange={(tabId, closed) => { setTarget(tabId); if (closed) setNotice("선택한 대상 탭이 닫혀 자동으로 돌아갔습니다. 다음 요청은 보낼 때 보고 있는 탭에서 합니다."); }} /><button className="primary" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}>{sending ? "전송 중…" : "보내기"}</button>
-          <button type="button" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
+        <div className="composer-actions"><div className="composer-tools"><label className="attach-button icon-text-btn"><AttachIcon size={11} />파일·이미지<input type="file" multiple onChange={event => { const selectedFiles = [...(event.target.files ?? [])]; event.target.value = ""; void perform(() => addFiles(selectedFiles)); }} /></label><button type="button" className="icon-text-btn" onClick={() => void perform(() => addBrowserReference("current-tab"))}><TabIcon size={11} />현재 탭</button><button type="button" className="icon-text-btn" onClick={() => void perform(() => addBrowserReference("selection"))}><SelectionIcon size={11} />선택 영역</button></div><div className="composer-send"><TargetPicker chosen={target} onChange={(tabId, closed) => { setTarget(tabId); if (closed) setNotice("선택한 대상 탭이 닫혀 자동으로 돌아갔습니다. 다음 요청은 보낼 때 보고 있는 탭에서 합니다."); }} /><button className="primary icon-text-btn" disabled={!wb.connected || !wb.profiles.length || sending || running || (!draft.trim() && !attachments.length)}><SendIcon size={11} />{sending ? "전송 중…" : "보내기"}</button>
+          <button type="button" className="icon-text-btn" hidden={!running && !sending && !requestHeld} disabled={stopping || !wb.sessionId || (!running && !sending && !requestHeld)} onClick={() => void perform(async () => {
             if(stopLock.current)return;
             stopLock.current=true;setStopping(true);
             try {
@@ -630,7 +672,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
             if(failures.length)throw Error(failures.join(' · '));
             if (!current()) return; setRequestHeld(false); setNotice("중단을 요청했습니다. 이미 제출된 웹사이트 요청은 취소되지 않습니다."); await wb.resync();
             } finally { stopLock.current=false;setStopping(false); }
-          })}>응답 중단</button>
+          })}><StopIcon size={10} />응답 중단</button>
           {heldOperation && <button type="button" disabled={handoffBusy} onClick={() => void perform(async () => {
             setHandoffBusy(true);
             try { await bridgeRequest(heldOperation.paused ? "operation.resume" : "operation.pause", { operationId: heldOperation.id, clientId: ownClient }); }
@@ -647,6 +689,15 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     </details>;
   const paletteTerm = (["commands", "skills"].includes(palette) ? "" : palette).toLowerCase();
   const commandsPanel = <details className="workspace-section" open={paletteOpen} onToggle={event => setPaletteOpen(event.currentTarget.open)}><summary>커맨드·스킬·MCP</summary><input aria-label="커맨드·스킬 검색" placeholder="검색" value={palette === "commands" || palette === "skills" ? "" : palette} onChange={event => setPalette(event.target.value)} /><ul className="command-list">{wb.commands.filter(command => `${command.name} ${command.description ?? ""}`.toLowerCase().includes(paletteTerm)).map(command => <li key={command.name}><button onClick={() => { setDraft(`/${command.name} `); setDrawer(null); composer.current?.focus(); }}>/{command.name}</button><span>{command.source === "mcp" ? "MCP 프롬프트" : command.source === "skill" ? "스킬" : "사용자 커맨드"}</span><p>{command.description}</p>{command.hints?.length > 0 && <small>인수: {command.hints.join(" · ")}</small>}</li>)}{wb.skills.filter(skill => !wb.commands.some(command => command.name === skill.name) && `${skill.name} ${skill.description ?? ""}`.toLowerCase().includes(paletteTerm)).map(skill => <li key={skill.name}><button onClick={() => void perform(async () => { const current = wb.captureScope(); const part = await textFilePart(`${skill.name}-SKILL.md`, `스킬 위치: ${skill.location}\n\n${skill.content}`); if (!current()) return; setAttachments(previous => [...previous, part]); setDraft(`첨부한 ${skill.name} 스킬을 사용해 다음 작업을 수행해줘.\n`); setDrawer(null); composer.current?.focus(); })}>{skill.name} 스킬 첨부</button><p>{skill.description}</p></li>)}</ul><p className="muted">MCP 프롬프트와 실행 가능한 스킬은 서버의 /command 경로를 사용합니다. 그 외 스킬은 정의를 첨부해 기존 에이전트에게 사용을 요청합니다.</p><pre>{JSON.stringify(wb.mcp, null, 2)}</pre></details>;
+  const a2uiPanel = <details className="workspace-section"><summary>A2UI 생성형 카드</summary>
+    <label className="choice a2ui-toggle-label"><input type="checkbox" checked={a2uiEnabled} onChange={event => toggleA2ui(event.target.checked)} /><span>에이전트가 비교 카드·대시보드·표·입력 폼을 채팅 안에 인터랙티브 카드로 생성하도록 허용</span></label>
+    <p className="muted">켜져 있으면 패널 요청에 경량 A2UI v1.0 가이드를 함께 전달하며, 카드의 버튼·폼 제출은 현재 대화에 구조화 메시지로 회신됩니다. 비밀번호 입력과 권한 승인 모방은 차단됩니다.</p>
+    <div className="toolbar">
+      <CopyButton text={A2UI_SKILL_MARKDOWN} label="A2UI 스킬 복사" />
+      <button type="button" onClick={() => download("SKILL.md", A2UI_SKILL_MARKDOWN, "text/markdown")}>SKILL.md 내보내기</button>
+      <button type="button" onClick={() => { setDraft("현재 페이지의 핵심 정보를 A2UI 대시보드와 비교 표로 정리해줘"); setDrawer(null); composer.current?.focus(); }}>예시 요청 채우기</button>
+    </div>
+  </details>;
   return <div className="workbench" aria-label="OpenCode 작업 공간" hidden={view === "browser"}>
     <div className="workspace-summary"><div className="workspace-identity"><button className="control-chip" aria-label="실행 설정" title={`${profileName ?? "실행 환경 선택"} · ${wb.directory || "작업 디렉터리 정보 없음"}`} onClick={event => openDrawer("environment", event.currentTarget)}><strong>{profileName ?? "실행 환경 선택"}</strong><span aria-hidden="true">▾</span></button><span className="connection-line" role="status">{wb.loading ? "실행 환경 준비 중…" : wb.connected ? `OpenCode ${wb.runtime?.version ?? ""} 연결됨` : "OpenCode 연결 대기"}</span></div>
       <div className="workspace-actions"><button className="quiet" onClick={event => openDrawer("tools", event.currentTarget)}>작업 도구</button><button className="quiet" onClick={event => openDrawer("theme", event.currentTarget)} aria-label="화면 테마 선택">테마</button></div></div>
@@ -656,7 +707,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       <aside className="control-panel view-scroll" aria-label={`${drawerTitle} 패널`} hidden={drawer === null} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setDrawer(null); } }}>
         <div className="drawer-heading"><h2>{drawerTitle}</h2><button ref={drawerClose} className="quiet" onClick={() => setDrawer(null)}>대화로 돌아가기</button></div>
         <div hidden={drawer !== "environment"}>{environmentPanel}</div>
-        <div hidden={drawer !== "tools"}>{usagePanel}{tasksPanel}{commandsPanel}</div>
+        <div hidden={drawer !== "tools"}>{a2uiPanel}{usagePanel}{tasksPanel}{commandsPanel}</div>
         <div className="theme-panel" hidden={drawer !== "theme"}><p className="muted">화면 밝기와 취향에 맞는 색을 선택하세요.</p><label>테마<select aria-label="테마" value={theme} onChange={event => chooseTheme(event.target.value)}>{(["system", ...THEMES] as const).map(name => <option key={name} value={name}>{themeNames[name]}</option>)}</select></label><div className="theme-grid">{THEMES.map(name => { const colors = themeTokens(name); return <button key={name} className="theme-card" aria-pressed={theme === name} onClick={() => chooseTheme(name)}><span className="theme-preview" style={{ background: colors["--canvas"] }} aria-hidden="true"><span style={{ background: colors["--surface"], borderColor: colors["--control-border"] }}><i style={{ background: colors["--accent"] }} /><i style={{ background: colors["--text"] }} /><i style={{ background: colors["--muted"] }} /></span></span><strong>{themeNames[name].split(" · ")[0]}</strong><small>{themeNames[name].split(" · ")[1]}</small></button>; })}</div><p className="theme-credit">Catppuccin 색상 · MIT License</p></div>
       </aside>
     </div>
