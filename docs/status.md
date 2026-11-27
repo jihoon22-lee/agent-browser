@@ -2,6 +2,20 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.6.1 Windows preview — 게시 완료 (2026-11-27)
+
+[v0.6.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.6.1)(prerelease)를 **2026-11-27 01:23:30 UTC / 10:23:30 KST**에 게시했다. 주석 태그는 [PR #56](https://github.com/jihoon22-lee/agent-browser/pull/56)의 main 병합 커밋 **`8745872d1fde9cabb1888bf8afb8f2129dce7b48`**를 가리킨다.
+
+- **배포 ZIP:** **4,276,657 bytes / 38 files**, SHA256 **`4d645731f64adc89afa0f1840147a0322b3495659410c5e76913d5e58cb0eea4`**. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/45920219875)의 Windows 작업이 만든 아티팩트다. PR CI(Linux 11m59s·Windows 21m16s)와 main CI(Linux 12m17s·Windows 20m24s)가 모두 성공했다.
+- **반영 내용 (`v0.6.0` 실사용 A2UI `Validation` 렌더링 오류 해결 + 상세 코드 리뷰 핫픽스):**
+  - **A2UI LLM 호환성 및 렌더링 복구:** `parser.ts`에서 LLM이 자주 생성하는 `Card`의 `children`/`title`(단일 `child` + `Column` 래퍼 자동 변환), 중첩 인라인 컴포넌트 트리 평탄화, `children: { explicitList }` v0.8 구문, 하이픈 포함 ID(`stat-1` 등 → UAX #31 식별자로 일관 치환), `Button.label`, `Text.variant: "h1"~"h3"`, `Row`/`Column` CSS 여분 속성(`gap`/`padding`/`alignment`/`distribution`), `DataTable` 객체 배열 행, `TextField`/`CheckBox`/`Slider` 필수 기본값 누락, `version: "v1.0"` 등을 자동 정규화하도록 보강했다. `A2UI_SYSTEM_PROMPT`와 `SKILL.md`에 `catalogId`가 조회(fetch)용 URL이 아닌 식별자임을 명시하고 전체 컴포넌트 스키마·예시를 완결형으로 내장했다. `A2uiCard.tsx`에 유효 컴포넌트 격리 복구와 `A2uiErrorBoundary` 키 리셋을 추가했다.
+  - **A2UI 보안·액션·안정성:** `Image`를 커스텀 `SafeImageComponent`로 교체해 원격 `http(s)` 이미지의 `<img>` 자동 로드를 차단(안전 링크 표시, 인라인 래스터 `data:image/*;base64`만 라이트박스, `data:image/svg+xml` 차단)하고, `TextField`를 라이트 DOM `SafeTextFieldComponent`로 교체·v0.9 `safeV09Catalog`에서 `Video`/`AudioPlayer`를 제거했다. Zod 검증 전 컬렉션 상한(표 열 30·행 200·KV 50·하위 100)을 강제했다. `MessageProcessor` 생성·정리를 `useEffect` 내부로 이동하고, `onA2uiAction` 결과를 `sent`/`drafted`/`blocked`로 구분하며, `DataTable.onSelectAction.event.context` 내 `@path` 바인딩과 들여쓰기된 ```` ```a2ui ```` 펜스를 지원한다.
+  - **리치 뷰어 및 `LiveActivityDock`:** `InteractiveTable`의 검색 필터링 상태 선택 건수·내보내기·액션 전달을 현재 표시 행으로 한정하고 헤더 전체 선택 및 행 축소 시 만료 인덱스 정리를 추가했다. `ImagePreview` 라이트박스의 `Escape` 캡처 전파 차단 및 포커스 복원, `LiveActivityDock` 세션 전환 시 할 일 펼침 초기화·`waiting` 경과 시간 표시·`document.hidden` 타이머 갱신 생략을 반영했다.
+- **로컬 검증(Linux):** `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`(경고 0건), `cargo test --offline --locked --workspace`(전체 통과), 확장 Vitest(**77 파일 / 971 테스트 통과**, LLM 비정형 페이로드·보안·필터 선택·타이머 회귀 포함), 확장 Vite 빌드 + MV3 CSP 검사(`eval`/`new Function` 0건), `node --test scripts/ci-checks.test.mjs`(4/4), `python3 tests/install/package_release_test.py`(4/4), `node scripts/ci-checks.mjs`, Linux Playwright `workbench.spec.ts` W01–W21(**21/21 통과**). 갱신된 W21 Latte/Mocha 440px/320px 스크린샷을 육안 확인했다(원격 이미지 링크 카드·라이트 DOM `TextField`·헤더 전체 선택 포함).
+- **로컬 실제 Windows 검증(WSL interop):** `cargo xwin build --offline --locked --release --target x86_64-pc-windows-msvc`, 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.6.1`), `node scripts/generate-third-party-notices.mjs`(186 packages), `scripts/package-release.py`(38 files). 전체 Windows Chrome E2E 및 PowerShell 5.1 설치/패키징 스위트는 PR CI 및 main CI의 Windows 잡에서 통과했다.
+- **게시본 검증:** CI 아티팩트에서 `package-manifest.json`(37개 파일 SHA-256 일치, `Version: "0.6.1"`), `extension/manifest.json`(`0.6.1`), 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.6.1`)을 확인했다. 게시 후 GitHub Release에서 ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치(`cmp`) 및 `sha256sum -c`를 확인했다. 병합된 브랜치(`fix/v0.6.1-review`)와 임시 검증 폴더를 정리했다. 최종 파일은 `release/v0.6.1-main/`.
+- **실행하지 않은 것:** 사내 실환경 LLM 모델의 라이브 A2UI 생성 호출(비정형 LLM 출력 패턴 조합 회귀 테스트 및 합성 OpenCode v1 E2E로 검증).
+
 ## v0.6.0 Windows preview — 게시 완료 (2026-11-27)
 
 [v0.6.0](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.6.0)(prerelease)를 **2026-11-26 23:54:03 UTC / 2026-11-27 08:54:03 KST**에 게시했다. 주석 태그는 [PR #55](https://github.com/jihoon22-lee/agent-browser/pull/55)의 main 병합 커밋 **`83cb0b6533f627f29eb57741f8f520b6553dfe7d`**를 가리킨다.
