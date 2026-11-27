@@ -58,17 +58,64 @@ describe("InteractiveTable", () => {
     await act(async () => actionBtn.click());
     expect(onRowAction).toHaveBeenCalledWith([["모델 C", "89,000원"]], ["이름", "가격"]);
   });
+
+  it("scopes selection actions to visible filtered rows, supports select-all, and prunes stale indices", async () => {
+    const onRowAction = vi.fn();
+    const renderTable = (rows: string[][]) =>
+      createElement(InteractiveTable, {
+        columns: ["이름", "가격"],
+        rows,
+        selectable: true,
+        actionLabel: "전송",
+        onRowAction,
+      });
+
+    await act(async () => root.render(renderTable([["A", "10"], ["B", "20"], ["C", "30"]])));
+
+    // Select all visible rows via header checkbox.
+    const selectAll = host.querySelector<HTMLInputElement>('thead input[type="checkbox"]')!;
+    await act(async () => selectAll.click());
+    expect(host.textContent).toContain("선택 3행 CSV");
+
+    // Filter to only row "B" -> visible selection count and dispatched rows must exclude hidden A and C.
+    const search = host.querySelector<HTMLInputElement>(".rich-table-search")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "B");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(host.textContent).toContain("선택 1행 CSV");
+    const sendBtn = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "전송")!;
+    await act(async () => sendBtn.click());
+    expect(onRowAction).toHaveBeenCalledWith([["B", "20"]], ["이름", "가격"]);
+
+    // Shrink rows to 1 item and clear filter -> stale indices (1, 2) are pruned.
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => root.render(renderTable([["A", "10"]])));
+    expect(host.textContent).toContain("선택 1행 CSV");
+  });
 });
 
 describe("ImagePreview lightbox", () => {
-  it("opens on click and closes on Escape", async () => {
+  it("opens on click, stops Escape propagation, and restores focus to trigger", async () => {
     const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-    await act(async () => root.render(createElement(ImagePreview, { src: png, alt: "캡처 화면", downloadName: "capture.png" })));
-    expect(host.querySelector('[role="dialog"]')).toBeNull();
-    await act(async () => host.querySelector<HTMLButtonElement>(".image-thumb-trigger")!.click());
-    expect(host.querySelector('[role="dialog"]')).not.toBeNull();
-    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); });
-    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    const parentEsc = vi.fn();
+    window.addEventListener("keydown", parentEsc);
+    try {
+      await act(async () => root.render(createElement(ImagePreview, { src: png, alt: "캡처 화면", downloadName: "capture.png" })));
+      expect(host.querySelector('[role="dialog"]')).toBeNull();
+      const trigger = host.querySelector<HTMLButtonElement>(".image-thumb-trigger")!;
+      await act(async () => trigger.click());
+      expect(host.querySelector('[role="dialog"]')).not.toBeNull();
+      await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true })); });
+      expect(host.querySelector('[role="dialog"]')).toBeNull();
+      expect(parentEsc).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(trigger);
+    } finally {
+      window.removeEventListener("keydown", parentEsc);
+    }
   });
 });
 

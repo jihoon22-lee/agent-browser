@@ -106,12 +106,14 @@ function formatElapsed(ms: number): string {
 }
 
 export function LiveActivityDock({
+  sessionId,
   messages,
   sessionStatus,
   operation,
   todos,
   onFocusTab,
 }: {
+  sessionId?: string;
   messages: UiMessage[];
   sessionStatus: Data | undefined;
   operation: Operation | null;
@@ -121,14 +123,39 @@ export function LiveActivityDock({
   const phase = useMemo(() => deriveLivePhase(messages, sessionStatus, operation), [messages, sessionStatus, operation]);
   const [todosOpen, setTodosOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-
   const active = phase.kind !== "idle";
+  const [activeSince, setActiveSince] = useState<number | undefined>(() => (active ? Date.now() : undefined));
+
   useEffect(() => {
-    if (!active) return;
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [active]);
+    setTodosOpen(false);
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (!active) {
+      setActiveSince(undefined);
+      return;
+    }
+    const started = Date.now();
+    setActiveSince(started);
+    setNow(started);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      setNow(Date.now());
+    };
+    const id = setInterval(tick, 1000);
+    const onVisibility = () => {
+      if (!document.hidden) setNow(Date.now());
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      clearInterval(id);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }, [active, sessionId]);
 
   const todoStats = useMemo(() => {
     const total = todos.length;
@@ -139,7 +166,8 @@ export function LiveActivityDock({
 
   if (!active && !todoStats.total) return null;
 
-  const elapsed = active && phase.startedAt ? formatElapsed(Math.max(0, now - phase.startedAt)) : "";
+  const startedAt = phase.startedAt ?? activeSince;
+  const elapsed = active && startedAt ? formatElapsed(Math.max(0, now - startedAt)) : "";
 
   return (
     <div className="live-dock" aria-label="실시간 작업 상태">

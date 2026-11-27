@@ -104,4 +104,28 @@ describe("LiveActivityDock", () => {
     await act(async () => toggle.click());
     expect(host.querySelectorAll(".live-todos-list > li")).toHaveLength(3);
   });
+
+  it("resets todosOpen on sessionId change and tracks elapsed time during waiting", async () => {
+    vi.useFakeTimers();
+    try {
+      const todos = [{ content: "할 일 1", status: "in_progress" }];
+      await act(async () =>
+        root.render(createElement(LiveActivityDock, { sessionId: "s1", messages: [], sessionStatus: { type: "busy" }, operation: null, todos })),
+      );
+      expect(host.querySelector(".live-elapsed")?.textContent).toBe("0초");
+
+      await act(async () => { vi.advanceTimersByTime(2000); });
+      expect(host.querySelector(".live-elapsed")?.textContent).toBe("2초");
+
+      // Expand todos in s1, then switch to s2 -> todosOpen must collapse.
+      await act(async () => host.querySelector<HTMLButtonElement>(".live-todos-toggle")!.click());
+      expect(host.querySelector(".live-todos-list")).not.toBeNull();
+      await act(async () =>
+        root.render(createElement(LiveActivityDock, { sessionId: "s2", messages: [], sessionStatus: { type: "busy" }, operation: null, todos })),
+      );
+      expect(host.querySelector(".live-todos-list")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
