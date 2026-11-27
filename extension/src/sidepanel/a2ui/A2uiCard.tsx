@@ -1,11 +1,61 @@
 import { Component, memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { A2uiSurface, MarkdownComponentContext, type ReactCatalogComponent } from "@a2ui/react";
-import { MessageProcessor, type ActionPayload, type SurfaceModel } from "@a2ui/web_core";
+import { MessageProcessor, type ActionPayload, type ProcessableMessage, type SurfaceModel } from "@a2ui/web_core";
 import { injectBasicCatalogStyles } from "@a2ui/web_core/catalogs/basic/v1";
 import { A2UI_CATALOGS } from "./catalog";
 import { parseA2uiBlock } from "./parser";
 import { CopyButton } from "../CopyButton";
 import { SparkleIcon } from "../Icons";
+
+/**
+ * If an atomic createSurface failed because a single component still failed strict schema validation,
+ * isolate and omit only the invalid component(s) so the rest of the card renders cleanly.
+ */
+function isolateValidComponents(messages: ProcessableMessage[]): ProcessableMessage[] | null {
+  let changed = false;
+  const recovered: ProcessableMessage[] = [];
+  for (const msg of messages) {
+    const rec = msg as Record<string, unknown>;
+    const cs = rec.createSurface as Record<string, unknown> | undefined;
+    if (!cs || !Array.isArray(cs.components) || cs.components.length === 0) {
+      recovered.push(msg);
+      continue;
+    }
+    const validComps: Record<string, unknown>[] = [];
+    for (const comp of cs.components) {
+      if (!comp || typeof comp !== "object") continue;
+      const probe = new MessageProcessor(A2UI_CATALOGS, undefined, { version: "v1.0", reportErrorsOnly: true });
+      try {
+        const probeErrs = probe.processMessagesWithErrors([
+          {
+            version: rec.version ?? "1.0",
+            createSurface: {
+              surfaceId: "_probe",
+              catalogId: cs.catalogId,
+              components: [comp],
+            },
+          } as unknown as ProcessableMessage,
+        ]);
+        if (probeErrs.length === 0) {
+          validComps.push(comp as Record<string, unknown>);
+        } else {
+          changed = true;
+        }
+      } finally {
+        probe.dispose();
+      }
+    }
+    if (validComps.length > 0 && validComps.some(c => c.id === "root")) {
+      recovered.push({
+        ...rec,
+        createSurface: { ...cs, components: validComps },
+      } as unknown as ProcessableMessage);
+    } else {
+      return null;
+    }
+  }
+  return changed ? recovered : null;
+}
 
 export type A2uiActionEvent = {
   name: string;
@@ -14,6 +64,8 @@ export type A2uiActionEvent = {
   context: Record<string, unknown>;
   userMessage?: string;
 };
+
+export type A2uiActionResult = "sent" | "drafted" | "blocked";
 
 /** Formats an A2UI user interaction into a clean structured message sent back to OpenCode. */
 export function formatA2uiActionMessage(action: A2uiActionEvent): string {
@@ -48,6 +100,12 @@ function ensureStyles() {
   }
 }
 
+type ProcessedState = {
+  ready: boolean;
+  surfaces: SurfaceModel<ReactCatalogComponent>[];
+  errors: string[];
+};
+
 export const A2uiCard = memo(function A2uiCard({
   source,
   streaming,
@@ -57,10 +115,11 @@ export const A2uiCard = memo(function A2uiCard({
   source: string;
   streaming?: boolean;
   markdownRenderer: React.ComponentType<{ markdown: string }>;
-  onAction?: (action: A2uiActionEvent) => void;
+  onAction?: (action: A2uiActionEvent) => A2uiActionResult | void;
 }) {
   const [showSource, setShowSource] = useState(false);
-  const [lastAction, setLastAction] = useState<string>("");
+  const [lastAction, setLastAction] = useState<{ name: string; status: "sent" | "drafted" } | null>(null);
+  const [processed, setProcessed] = useState<ProcessedState>({ ready: false, surfaces: [], errors: [] });
   const actionRef = useRef(onAction);
   actionRef.current = onAction;
 
@@ -68,8 +127,12 @@ export const A2uiCard = memo(function A2uiCard({
 
   const parsed = useMemo(() => (streaming ? null : parseA2uiBlock(source)), [source, streaming]);
 
-  const processed = useMemo(() => {
-    if (!parsed || !parsed.ok) return null;
+  // Create and dispose MessageProcessor strictly inside useEffect so abandoned concurrent renders never leak processors.
+  useEffect(() => {
+    if (!parsed || !parsed.ok) {
+      setProcessed({ ready: true, surfaces: [], errors: [] });
+      return;
+    }
     const errors: string[] = [];
     const processor = new MessageProcessor(
       A2UI_CATALOGS,
@@ -81,8 +144,10 @@ export const A2uiCard = memo(function A2uiCard({
           context: payload.context ?? {},
           userMessage: payload.userMessage,
         };
-        setLastAction(event.name);
-        actionRef.current?.(event);
+        const result = actionRef.current?.(event);
+        if (result === "blocked") setLastAction(null);
+        else if (result === "drafted") setLastAction({ name: event.name, status: "drafted" });
+        else setLastAction({ name: event.name, status: "sent" });
       },
       {
         version: "v1.0",
@@ -98,14 +163,25 @@ export const A2uiCard = memo(function A2uiCard({
       const msg = (err as { error?: { message?: string } })?.error?.message;
       if (msg) errors.push(msg);
     }
-    const surfaces = Array.from(processor.model.surfacesMap.values()) as SurfaceModel<ReactCatalogComponent>[];
-    return { processor, surfaces, errors: [...new Set(errors)] };
-  }, [parsed]);
+    let allSurfaces = Array.from(processor.model.surfacesMap.values()) as SurfaceModel<ReactCatalogComponent>[];
+    let renderable = allSurfaces.filter(surface => Boolean(surface.componentsModel.get("root")));
 
-  useEffect(() => {
-    const p = processed?.processor;
-    return () => { p?.dispose(); };
-  }, [processed]);
+    // Resilient fallback: if one malformed component rolled back createSurface, retry with only valid components.
+    if (renderable.length === 0 && errors.length > 0) {
+      const salvaged = isolateValidComponents(parsed.messages);
+      if (salvaged) {
+        processor.processMessagesWithErrors(salvaged);
+        allSurfaces = Array.from(processor.model.surfacesMap.values()) as SurfaceModel<ReactCatalogComponent>[];
+        renderable = allSurfaces.filter(surface => Boolean(surface.componentsModel.get("root")));
+      }
+    }
+
+    if (allSurfaces.length > 0 && renderable.length === 0) {
+      errors.push("A2UI 서피스에 root 컴포넌트가 없어 원문으로 표시합니다.");
+    }
+    setProcessed({ ready: true, surfaces: renderable, errors: [...new Set(errors)] });
+    return () => { processor.dispose(); };
+  }, [parsed]);
 
   if (streaming) {
     return (
@@ -137,8 +213,18 @@ export const A2uiCard = memo(function A2uiCard({
   if (!parsed || !parsed.ok) {
     return rawFallback(parsed?.error ?? "A2UI 카드를 해석하지 못했습니다.");
   }
-  if (!processed || processed.surfaces.length === 0) {
-    return rawFallback(processed?.errors[0] || "표시할 A2UI 서피스가 없습니다.");
+  if (!processed.ready) {
+    return (
+      <section className="a2ui-shell a2ui-streaming" aria-label="AI 생성 UI 준비 중">
+        <header className="a2ui-shell-header">
+          <span className="a2ui-shell-badge"><SparkleIcon size={12} /> AI 생성 UI</span>
+          <span className="muted">렌더링 중…</span>
+        </header>
+      </section>
+    );
+  }
+  if (processed.surfaces.length === 0) {
+    return rawFallback(processed.errors[0] || "표시할 A2UI 서피스가 없습니다.");
   }
 
   return (
@@ -148,7 +234,11 @@ export const A2uiCard = memo(function A2uiCard({
           <SparkleIcon size={12} /> AI 생성 UI
         </span>
         <div className="a2ui-shell-tools">
-          {lastAction && <span className="a2ui-action-sent" role="status">전송됨 · {lastAction}</span>}
+          {lastAction && (
+            <span className={lastAction.status === "sent" ? "a2ui-action-sent" : "a2ui-action-drafted"} role="status">
+              {lastAction.status === "sent" ? `전송됨 · ${lastAction.name}` : `입력란에 채움 · ${lastAction.name}`}
+            </span>
+          )}
           <button
             type="button"
             className="quiet a2ui-source-toggle"
@@ -168,7 +258,7 @@ export const A2uiCard = memo(function A2uiCard({
           <pre><code>{source}</code></pre>
         </div>
       ) : (
-        <A2uiErrorBoundary fallback={rawFallback("A2UI 컴포넌트 렌더링 중 오류가 발생했습니다.")}>
+        <A2uiErrorBoundary key={source} fallback={rawFallback("A2UI 컴포넌트 렌더링 중 오류가 발생했습니다.")}>
           <MarkdownComponentContext.Provider value={markdownRenderer}>
             <div className="a2ui-surface-host">
               {processed.surfaces.map(surface => (

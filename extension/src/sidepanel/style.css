@@ -289,6 +289,7 @@ code, pre { font-family: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regul
 .a2ui-shell-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700; color: var(--ai); }
 .a2ui-shell-tools { display: inline-flex; align-items: center; gap: 6px; }
 .a2ui-action-sent { font-size: 11px; color: var(--success); font-weight: 600; }
+.a2ui-action-drafted { font-size: 11px; color: var(--warning); font-weight: 600; }
 .a2ui-source-toggle { min-height: 24px; padding: 2px 7px; font-size: 11px; }
 .a2ui-warning-note, .a2ui-fallback-note { margin: 0; padding: 6px 10px; font-size: 11px; color: var(--warning); background: var(--canvas); border-bottom: 1px solid var(--line); }
 .a2ui-surface-host { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -331,6 +332,10 @@ code, pre { font-family: "Cascadia Code", "Consolas", ui-monospace, SFMono-Regul
 .a2ui-progress.tone-success .a2ui-progress-fill { background: var(--success); }
 .a2ui-progress.tone-warning .a2ui-progress-fill { background: var(--warning); }
 .a2ui-progress.tone-danger .a2ui-progress-fill { background: var(--danger); }
+.a2ui-shell .a2ui-field { display: flex; flex-direction: column; gap: 4px; margin: 0; font-size: 12px; font-weight: 600; color: var(--text); }
+.a2ui-field-label { font-size: 11.5px; color: var(--text); font-weight: 600; }
+.a2ui-shell .a2ui-field-input { margin-top: 0; padding: 6px 9px; border: 1px solid var(--control-border); border-radius: 8px; background: var(--base); color: var(--text); font-size: 12.5px; line-height: 1.45; }
+.a2ui-field-error { color: var(--danger); font-size: 11px; font-weight: 500; }
 .a2ui-toggle-label { display: flex !important; align-items: flex-start; gap: 8px; font-weight: 500 !important; }
 .a2ui-toggle-label input { margin-top: 3px; accent-color: var(--ai); }
 

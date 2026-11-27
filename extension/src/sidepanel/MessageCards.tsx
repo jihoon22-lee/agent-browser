@@ -5,7 +5,7 @@ import { toolLabel } from "./tool-names";
 import { CopyButton } from "./CopyButton";
 import { AlertIcon, CheckIcon, SparkleIcon, StepsIcon } from "./Icons";
 import { ImagePreview, InteractiveTable } from "./RichResultViewers";
-import type { A2uiActionEvent } from "./a2ui/A2uiCard";
+import type { A2uiActionEvent, A2uiActionResult } from "./a2ui/A2uiCard";
 
 export function QuestionCard({ request, onReply }: { request: Data; onReply: (request: Data, answers?: string[][]) => Promise<void> }) {
   const [answers, setAnswers] = useState<string[][]>(() => request.questions.map(() => []));
@@ -108,7 +108,7 @@ function toolHint(input: unknown): string {
 const hasText = (part: Data) => typeof part.text === "string" && part.text.trim() !== "" && !part.synthetic && !part.ignored;
 function renderPart(
   part: Data,
-  options: { user: boolean; enableA2ui?: boolean; onOpenFile?: (part: Data) => void; onA2uiAction?: (action: A2uiActionEvent) => void },
+  options: { user: boolean; enableA2ui?: boolean; onOpenFile?: (part: Data) => void; onA2uiAction?: (action: A2uiActionEvent) => A2uiActionResult | void },
 ): ReactNode {
   switch (part.type) {
     case "text": return hasText(part) ? <SafeMarkdown text={part.text} enableA2ui={!options.user && options.enableA2ui !== false} onA2uiAction={options.onA2uiAction} /> : null;
@@ -142,7 +142,7 @@ export function hasVisibleContent(message: UiMessage): boolean {
 }
 export const messageText = (message: UiMessage) => message.parts.filter(part => part.type === "text" && !part.synthetic && !part.ignored).map(part => String(part.text ?? "")).join("\n");
 const time = (message: UiMessage) => message.info.time?.created ? new Date(message.info.time.created).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "";
-type CardProps = { message: UiMessage; continued?: boolean; enableA2ui?: boolean; onFork: (messageID: string) => void; onRevert: (messageID: string) => void; onOpenFile?: (part: Data) => void; onA2uiAction?: (action: A2uiActionEvent) => void; retryText?: string; onRetry?: (text: string) => void };
+type CardProps = { message: UiMessage; continued?: boolean; enableA2ui?: boolean; onFork: (messageID: string) => void; onRevert: (messageID: string) => void; onOpenFile?: (part: Data) => void; onA2uiAction?: (action: A2uiActionEvent) => A2uiActionResult | void; retryText?: string; onRetry?: (text: string) => void };
 /** Assistant steps of one reply share a header (`continued`); fork and revert belong to the user's prompt. */
 export const MessageCard = memo(function MessageCard({ message, continued, enableA2ui = true, onFork, onRevert, onOpenFile, onA2uiAction, retryText, onRetry }: CardProps) {
   const user = message.info.role === "user";

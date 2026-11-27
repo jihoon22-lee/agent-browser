@@ -1,5 +1,28 @@
 # 변경 기록
 
+## [0.6.1] - 2026-11-27
+
+실사용 중 보고된 A2UI `Validation` 렌더링 실패 문제와 `v0.6.0` 상세 코드 리뷰 항목을 모두 해결한 핫픽스입니다.
+
+- **A2UI LLM 호환성 대폭 개선 (`Validation` 오류 해소):**
+  - LLM이 자주 출력하는 `Card`의 `children`/`title` 사용(단일 `child` + `Column` 래퍼로 자동 변환), 중첩 인라인 컴포넌트 트리(평탄화), `children: { explicitList }` v0.8 구문, 하이픈 포함 컴포넌트 ID(`stat-1` 등 → UAX #31 식별자로 일관 치환), `Button.label` 단축 구문, `Text.variant: "h1"~"h3"`(Markdown 제목 변환), `Row`/`Column`의 CSS 여분 속성(`gap`/`padding`/`alignment` 등), `DataTable` 객체 배열 행, `TextField`/`CheckBox`/`Slider` 필수 기본값 누락, `version: "v1.0"` 등을 `parser.ts`에서 자동 정규화합니다.
+  - 시스템 프롬프트(`A2UI_SYSTEM_PROMPT`)와 `SKILL.md`에 v1.0 필수 규칙과 최소 완성 예시를 명시해 첫 응답부터 정확한 구조를 생성하도록 개선했습니다.
+  - 일부 컴포넌트가 스키마 검증에 실패해도 전체 카드가 원문 폴백으로 무너지지 않도록 유효 컴포넌트 격리 복구와 에러 바운더리 키 리셋을 적용했습니다.
+- **A2UI 보안 강화 (원격 이미지 유출 차단·피싱 방지·DoS 완화):**
+  - `Image` 컴포넌트를 커스텀 안전 컴포넌트(`SafeImageComponent`)로 교체해 원격 `http(s)` 이미지 URL을 `<img>`로 자동 로드하지 않고 클릭 가능한 안전 링크로만 표시하며, 인라인 래스터 이미지(`data:image/(png|jpeg|webp|gif);base64`)만 확대 미리보기(`ImagePreview`)로 렌더링합니다. `data:image/svg+xml`은 차단합니다.
+  - `TextField` 컴포넌트를 라이트 DOM 안전 컴포넌트(`SafeTextFieldComponent`)로 교체하고 v0.9 카탈로그(`safeV09Catalog`)에서도 `Video`/`AudioPlayer`를 제거·`Image`/`TextField`를 교체해, 동적 바인딩이나 v0.9 별칭(`usageHint`/`textFieldType`/`type`)을 통한 비밀번호 입력 우회를 원천 차단했습니다.
+  - `parser.ts`에서 Zod 검증 이전에 표 열(30개)·행(200행), KeyValue 항목(50개), 하위 컴포넌트(100개) 수 상한을 강제해 과대 컬렉션 검증 메모리 소모 위험을 완화했습니다.
+- **A2UI 렌더링·액션 정확도 및 React 19 안정성:**
+  - `MessageProcessor` 생성·정리를 `useEffect` 내부로 이동해 React 19 동시성·StrictMode 환경에서 프로세서 누수를 방지했습니다.
+  - `onA2uiAction`이 `"sent" | "drafted" | "blocked"` 결과를 반환하도록 연결해, 차단되거나 입력란에 임시 채워진 액션이 `전송됨`으로 오표시되지 않도록 수정했습니다.
+  - `DataTable`의 `onSelectAction.event.context` 내 `{"@path": "..."}` 동적 바인딩을 데이터 모델에서 해석하도록 수정했습니다.
+  - LLM이 최상위 컴포넌트 ID를 `"root"`가 아닌 단일 ID로 출력한 경우 `"root"`로 자동 정규화하고, 렌더링 가능한 `"root"`가 없는 서피스는 빈 상자 대신 원문 폴백으로 표시합니다.
+  - 들여쓰기된 ```` ```a2ui ```` 펜스 블록도 정상 파싱되도록 `SafeMarkdown`을 보완했습니다.
+- **리치 뷰어 및 실시간 상태 독 UX:**
+  - `InteractiveTable`에서 검색 필터가 적용된 상태의 선택 건수·CSV/Markdown 내보내기·액션 전달을 현재 표시된 행으로 한정하고, 헤더 전체 선택 체크박스 및 행 축소 시 만료 인덱스 정리를 추가했습니다.
+  - `ImagePreview` 라이트박스가 `Escape` 키 전파를 캡처 단계에서 차단하고 닫힐 때 원래 썸네일 버튼으로 포커스를 복원합니다.
+  - `LiveActivityDock`에서 세션 전환 시 할 일 펼침 상태를 초기화하고, 첫 응답 대기(`waiting`) 단계부터 경과 시간을 표시하며, 문서가 숨겨진 동안(`document.hidden`) 불필요한 1초 타이머 갱신을 생략합니다.
+
 ## [0.6.0] - 2026-11-26
 
 사이드 패널 UI/UX를 전면 고도화하고 공식 `@a2ui/react` SDK 기반의 생성형 UI 카드를 도입했습니다.

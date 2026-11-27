@@ -1,6 +1,6 @@
 import { Fragment, memo, useMemo, type ReactNode } from "react";
 import { CopyButton } from "./CopyButton";
-import { A2uiCard, type A2uiActionEvent } from "./a2ui/A2uiCard";
+import { A2uiCard, type A2uiActionEvent, type A2uiActionResult } from "./a2ui/A2uiCard";
 export function safeLink(url: string): string | undefined {
   try { const parsed = new URL(url); return ["https:", "http:", "mailto:"].includes(parsed.protocol) ? parsed.href : undefined; } catch { return undefined; }
 }
@@ -49,18 +49,19 @@ export const SafeMarkdown = memo(function SafeMarkdown({
 }: {
   text: string;
   enableA2ui?: boolean;
-  onA2uiAction?: (action: A2uiActionEvent) => void;
+  onA2uiAction?: (action: A2uiActionEvent) => A2uiActionResult | void;
 }) {
   const blocks = useMemo(() => {
     const lines = text.replaceAll("\r\n", "\n").split("\n"), out: ReactNode[] = [];
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i]!;
-      if (line.startsWith("```")) {
+      const fenceOpen = /^\s*```(.*)$/.exec(line);
+      if (fenceOpen) {
         const start = i;
-        const code: string[] = [], language = line.slice(3).trim();
+        const code: string[] = [], language = fenceOpen[1]!.trim();
         let closed = false;
         while (++i < lines.length) {
-          if (lines[i]!.startsWith("```")) { closed = true; break; }
+          if (/^\s*```\s*$/.test(lines[i]!)) { closed = true; break; }
           code.push(lines[i]!);
         }
         const normalizedLang = language.toLowerCase();

@@ -18,7 +18,7 @@ import { ErrorNotice } from "./ErrorNotice";
 import { CopyButton } from "./CopyButton";
 import { LiveActivityDock } from "./LiveActivityDock";
 import { AttachIcon, SelectionIcon, SendIcon, SparkleIcon, StopIcon, TabIcon } from "./Icons";
-import { formatA2uiActionMessage, type A2uiActionEvent } from "./a2ui/A2uiCard";
+import { formatA2uiActionMessage, type A2uiActionEvent, type A2uiActionResult } from "./a2ui/A2uiCard";
 import { A2UI_SKILL_MARKDOWN, A2UI_SYSTEM_PROMPT } from "./a2ui/skill";
 
 export type WorkspaceView = "chat" | "sessions" | "browser";
@@ -419,7 +419,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
     await perform(async () => { const current = api(), active = wb.captureScope(); const done = await respondOnce(responding.current, request.id, () => current.get<Data[]>("/permission"), () => current.post(`/permission/${encodeURIComponent(request.id)}/reply`, { reply })); if (!active()) return; setNotice(done ? "권한 응답을 전달했습니다." : "이 권한 요청은 다른 곳에서 이미 처리되었습니다."); await wb.resync(); });
   }
   // Stable handlers let memoized message cards skip re-rendering while the user types or a reply streams.
-  const messageHandlers = useRef({ fork: (_: string) => {}, revert: (_: string) => {}, open: (_: Data) => {}, retry: (_: string) => {}, a2uiAction: (_: A2uiActionEvent) => {} });
+  const messageHandlers = useRef({ fork: (_: string) => {}, revert: (_: string) => {}, open: (_: Data) => {}, retry: (_: string) => {}, a2uiAction: (_: A2uiActionEvent): A2uiActionResult => "blocked" });
   messageHandlers.current = {
     fork: messageID => void perform(() => forkSession(messageID)),
     // MessageCard has already asked for confirmation inside the message.
@@ -430,18 +430,19 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       const formatted = formatA2uiActionMessage(action);
       if (!wb.connected || !wb.sessionId || !model) {
         setNotice("세션과 모델이 연결된 상태에서 A2UI 액션을 전송할 수 있습니다.");
-        return;
+        return "blocked";
       }
       if (running || sendLock.current) {
         setDraft(formatted);
         composer.current?.focus();
         setNotice("응답이 진행 중입니다. 완료 후 보낼 수 있도록 입력란에 채웠습니다.");
-        return;
+        return "drafted";
       }
       void send(formatted);
+      return "sent";
     },
   };
-  const onFork = useCallback((id: string) => messageHandlers.current.fork(id), []), onRevert = useCallback((id: string) => messageHandlers.current.revert(id), []), onOpenFile = useCallback((part: Data) => messageHandlers.current.open(part), []), onRetry = useCallback((text: string) => messageHandlers.current.retry(text), []), onA2uiAction = useCallback((action: A2uiActionEvent) => messageHandlers.current.a2uiAction(action), []);
+  const onFork = useCallback((id: string) => messageHandlers.current.fork(id), []), onRevert = useCallback((id: string) => messageHandlers.current.revert(id), []), onOpenFile = useCallback((part: Data) => messageHandlers.current.open(part), []), onRetry = useCallback((text: string) => messageHandlers.current.retry(text), []), onA2uiAction = useCallback((action: A2uiActionEvent): A2uiActionResult => messageHandlers.current.a2uiAction(action), []);
   const focusTab = useCallback((tabId: number) => {
     void chrome.tabs?.get?.(tabId).then(tab => {
       if (tab.windowId !== undefined) void chrome.windows?.update?.(tab.windowId, { focused: true }).catch(() => {});
@@ -616,7 +617,7 @@ export function Workbench({ operation: oldest, operations, stopHandler, view, on
       </div>
       {showJumpToBottom && <button type="button" className="jump-to-bottom" onClick={() => { followMessages.current = true; setShowJumpToBottom(false); if (messageViewport.current) messageViewport.current.scrollTop = messageViewport.current.scrollHeight; }}>↓ 최신 메시지로</button>}
       </div>
-      <LiveActivityDock messages={messages} sessionStatus={sessionStatus} operation={heldOperation ?? operation} todos={wb.todos} onFocusTab={heldOperation ? focusTab : undefined} />
+      <LiveActivityDock sessionId={wb.sessionId} messages={messages} sessionStatus={sessionStatus} operation={heldOperation ?? operation} todos={wb.todos} onFocusTab={heldOperation ? focusTab : undefined} />
       <form className={dragOver ? "composer drag-over" : "composer"} onSubmit={event => { event.preventDefault(); void send(); }}
         onDragOver={event => { if (event.dataTransfer?.types?.includes("Files")) { event.preventDefault(); setDragOver(true); } }}
         onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false); }}
