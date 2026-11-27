@@ -146,6 +146,8 @@ const COMPONENT_TYPE_ALIASES: Record<string, { target: string; preset?: Record<s
 };
 
 const CUSTOM_COMPONENT_NAMES = new Set(["StatCard", "Badge", "KeyValue", "DataTable", "TabLink", "ProgressBar"]);
+const FORM_INPUT_COMPONENTS = new Set(["TextField", "CheckBox", "ChoicePicker", "Slider", "DateTimeInput"]);
+const FORBIDDEN_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
 const CHECKABLE_COMPONENTS = new Set(["Button", "TextField", "CheckBox", "ChoicePicker", "Slider", "DateTimeInput"]);
 const STRICT_ALLOWED_KEYS: Record<string, Set<string>> = {
   Text: new Set(["text", "variant", "weight"]),
@@ -1039,6 +1041,146 @@ function sanitizeComponents(
   return deduped;
 }
 
+function extractBindingPath(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  const raw = typeof value["@path"] === "string" ? value["@path"] : typeof value.path === "string" ? value.path : "";
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+}
+
+function setDataModelPath(root: Record<string, unknown>, path: string, initialValue: unknown): void {
+  const segments = path.replace(/^\/+/, "").split("/").filter(Boolean);
+  if (segments.length === 0 || segments.some(seg => FORBIDDEN_PATH_SEGMENTS.has(seg))) return;
+  let cursor: Record<string, unknown> = root;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const seg = segments[i]!;
+    const existing = cursor[seg];
+    if (isRecord(existing)) {
+      const cloned = { ...existing };
+      cursor[seg] = cloned;
+      cursor = cloned;
+    } else if (existing === undefined) {
+      const next: Record<string, unknown> = {};
+      cursor[seg] = next;
+      cursor = next;
+    } else {
+      return;
+    }
+  }
+  const leaf = segments.at(-1)!;
+  if (cursor[leaf] === undefined) {
+    cursor[leaf] = initialValue;
+  }
+}
+
+/**
+ * Automatically wires static-literal form inputs (`TextField`, `CheckBox`, `ChoicePicker`,
+ * `Slider`, `DateTimeInput`) to `dataModel` via `{"@path": ...}` so user edits always stay
+ * interactive and flow into action payloads even when an LLM forgot `@path` bindings.
+ */
+function autoBindFormInputs(
+  components: unknown[],
+  initialDataModel: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  const records = components.filter(isRecord);
+  const unboundInputs: Record<string, unknown>[] = [];
+  const boundPaths = new Set<string>();
+
+  for (const comp of records) {
+    if (typeof comp.component !== "string" || !FORM_INPUT_COMPONENTS.has(comp.component)) continue;
+    const existingPath = extractBindingPath(comp.value);
+    if (existingPath) {
+      boundPaths.add(existingPath);
+    } else if (!isDynamicExpr(comp.value)) {
+      unboundInputs.push(comp);
+    }
+  }
+  if (unboundInputs.length === 0) return initialDataModel;
+
+  // Collect orphan @path references declared in Button/DataTable action contexts.
+  const actionPathMeta = new Map<string, Set<string>>();
+  const actionPathOrder: string[] = [];
+  const collectActionCtx = (action: unknown) => {
+    if (!isRecord(action) || !isRecord(action.event) || !isRecord(action.event.context)) return;
+    for (const [ctxKey, ctxVal] of Object.entries(action.event.context)) {
+      const p = extractBindingPath(ctxVal);
+      if (!p || boundPaths.has(p)) continue;
+      if (!actionPathMeta.has(p)) {
+        actionPathMeta.set(p, new Set());
+        actionPathOrder.push(p);
+      }
+      actionPathMeta.get(p)!.add(ctxKey.toLowerCase());
+    }
+  };
+  for (const comp of records) {
+    if (comp.component === "Button") collectActionCtx(comp.action);
+    if (comp.component === "DataTable") collectActionCtx(comp.onSelectAction);
+  }
+
+  const usedPaths = new Set<string>(boundPaths);
+  const assigned = new Map<Record<string, unknown>, string>();
+
+  // Pass 1: Match unbound input IDs against orphan action path leaf segments or context keys.
+  for (const comp of unboundInputs) {
+    const idLower = typeof comp.id === "string" ? comp.id.toLowerCase() : "";
+    if (!idLower) continue;
+    const matched = actionPathOrder.find(p => {
+      if (usedPaths.has(p)) return false;
+      const leaf = p.split("/").filter(Boolean).at(-1)?.toLowerCase() ?? "";
+      if (leaf === idLower) return true;
+      return actionPathMeta.get(p)?.has(idLower) ?? false;
+    });
+    if (matched) {
+      assigned.set(comp, matched);
+      usedPaths.add(matched);
+    }
+  }
+
+  // Pass 2: Pair remaining unbound inputs with remaining orphan action paths in order, else `/_form/<id>`.
+  const fallbackBindings: Array<{ key: string; path: string }> = [];
+  for (const comp of unboundInputs) {
+    if (assigned.has(comp)) continue;
+    const nextOrphan = actionPathOrder.find(p => !usedPaths.has(p));
+    if (nextOrphan) {
+      assigned.set(comp, nextOrphan);
+      usedPaths.add(nextOrphan);
+    } else {
+      const safeKey = typeof comp.id === "string" && comp.id ? comp.id : `field_${assigned.size + 1}`;
+      const fallbackPath = `/_form/${safeKey}`;
+      assigned.set(comp, fallbackPath);
+      usedPaths.add(fallbackPath);
+      fallbackBindings.push({ key: safeKey, path: fallbackPath });
+    }
+  }
+
+  const dataModel: Record<string, unknown> = initialDataModel ? { ...initialDataModel } : {};
+  for (const comp of unboundInputs) {
+    const boundPath = assigned.get(comp);
+    if (!boundPath) continue;
+    setDataModelPath(dataModel, boundPath, comp.value);
+    comp.value = { "@path": boundPath };
+  }
+
+  // If a Button has an empty/omitted context and the surface has unreferenced fallback form fields, attach them.
+  if (fallbackBindings.length > 0) {
+    for (const comp of records) {
+      if (comp.component !== "Button" || !isRecord(comp.action) || !isRecord(comp.action.event)) continue;
+      const ev = comp.action.event;
+      const existingCtx = isRecord(ev.context) ? ev.context : undefined;
+      if (!existingCtx || Object.keys(existingCtx).length === 0) {
+        const nextCtx: Record<string, unknown> = {};
+        for (const item of fallbackBindings) {
+          nextCtx[item.key] = { "@path": item.path };
+        }
+        ev.context = nextCtx;
+      }
+    }
+  }
+
+  return dataModel;
+}
+
 function normalizeVersion(raw: unknown): string {
   if (typeof raw === "number") return raw >= 1 ? "1.0" : `v${raw}`;
   if (typeof raw !== "string" || !raw.trim()) return "1.0";
@@ -1132,7 +1274,11 @@ function normalizeMessage(
         : undefined;
     if (rawCompList && rawCompList.length > 0) {
       const sanitized = sanitizeComponents(rawCompList, warnings, true, idReg, preferredRoot);
-      if (sanitized.length > 0) cs.components = sanitized;
+      if (sanitized.length > 0) {
+        cs.components = sanitized;
+        const boundDataModel = autoBindFormInputs(sanitized, isRecord(cs.dataModel) ? cs.dataModel : undefined);
+        if (boundDataModel) cs.dataModel = boundDataModel;
+      }
     }
     return { version, createSurface: cs } as unknown as ProcessableMessage;
   }

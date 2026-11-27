@@ -185,6 +185,80 @@ describe("parseA2uiBlock", () => {
     const applyBtn = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent?.includes("이대로 적용"));
     expect(applyBtn).toBeDefined();
   });
+
+  it("auto-binds static-literal form inputs to orphan action @paths and empty button contexts", async () => {
+    const onAction = vi.fn(() => "sent" as const);
+    // Mirrors real-world DeepSeek output: literal ChoicePicker + literal TextField, while Button references @paths.
+    const unboundFormPayload = JSON.stringify({
+      version: "1.0",
+      createSurface: {
+        surfaceId: "search_note_form",
+        catalogId: AGENT_BROWSER_CATALOG_ID,
+        components: [
+          { id: "root", component: "Column", children: ["card"] },
+          { id: "card", component: "Card", child: "col" },
+          { id: "col", component: "Column", children: ["pick", "memo", "submit_btn"] },
+          {
+            id: "pick",
+            component: "ChoicePicker",
+            label: "대상 항목",
+            variant: "mutuallyExclusive",
+            options: [{ label: "검색어 입력", value: "query" }, { label: "분류 선택", value: "category" }],
+            value: ["query"],
+          },
+          { id: "memo", component: "TextField", label: "메모", value: "", placeholder: "메모 입력", variant: "longText" },
+          {
+            id: "submit_btn",
+            component: "Button",
+            child: "submit_txt",
+            variant: "primary",
+            action: { event: { name: "submit_note", context: { item: { "@path": "/selected" }, memo: { "@path": "/memo" } } } },
+          },
+          { id: "submit_txt", component: "Text", text: "메모 제출" },
+        ],
+        dataModel: {},
+      },
+    });
+
+    const parsed = parseA2uiBlock(unboundFormPayload);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      const cs = (parsed.messages[0] as any).createSurface;
+      expect(cs.dataModel).toEqual({ selected: ["query"], memo: "" });
+      const pick = cs.components.find((c: any) => c.id === "pick");
+      const memo = cs.components.find((c: any) => c.id === "memo");
+      expect(pick.value).toEqual({ "@path": "/selected" });
+      expect(memo.value).toEqual({ "@path": "/memo" });
+    }
+
+    await act(async () => root.render(createElement(A2uiCard, { source: unboundFormPayload, markdownRenderer: plainMd, onAction })));
+    const ta = host.querySelector<HTMLTextAreaElement>(".a2ui-field-input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "자동 바인딩 메모");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(ta.value).toBe("자동 바인딩 메모");
+
+    // Also verify a Button with omitted context receives fallback `/_form/<id>` bindings.
+    const noCtxPayload = parseA2uiBlock(JSON.stringify({
+      version: "1.0",
+      createSurface: {
+        surfaceId: "no_ctx",
+        components: [
+          { id: "root", component: "Column", children: ["note", "go"] },
+          { id: "note", component: "TextField", label: "메모", value: "기본값" },
+          { id: "go", component: "Button", label: "확인", action: { event: { name: "confirm" } } },
+        ],
+      },
+    }));
+    expect(noCtxPayload.ok).toBe(true);
+    if (noCtxPayload.ok) {
+      const cs = (noCtxPayload.messages[0] as any).createSurface;
+      expect(cs.dataModel).toEqual({ _form: { note: "기본값" } });
+      const goBtn = cs.components.find((c: any) => c.id === "go");
+      expect(goBtn.action.event.context).toEqual({ note: { "@path": "/_form/note" } });
+    }
+  });
 });
 
 describe("A2uiCard & SafeMarkdown integration", () => {
