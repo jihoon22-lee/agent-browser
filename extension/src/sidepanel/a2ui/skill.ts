@@ -8,16 +8,14 @@ import { AGENT_BROWSER_CATALOG_ID } from "./parser";
  */
 export const A2UI_SYSTEM_PROMPT = [
   "Interactive A2UI cards are enabled in this side panel.",
-  `When a dashboard summary, comparison table, structured metadata, or interactive form is clearer than plain text, include a \`\`\`a2ui fenced block with flat A2UI v1.0 JSON (catalogId: "${AGENT_BROWSER_CATALOG_ID}").`,
+  `When a dashboard summary, comparison table, structured metadata, or interactive form is clearer than plain text, include a \`\`\`a2ui fenced block with flat A2UI v1.0 JSON using catalogId "${AGENT_BROWSER_CATALOG_ID}" (URI identifier only — do NOT fetch this URL; the complete component schema is defined below).`,
   'Example: {"version":"1.0","createSurface":{"surfaceId":"s1","catalogId":"https://agent-browser.local/catalogs/v1","components":[{"id":"root","component":"Column","children":["title","stats","tbl","btn"]},{"id":"title","component":"Text","text":"### 요약"},{"id":"stats","component":"Row","children":["s1","s2"]},{"id":"s1","component":"StatCard","label":"항목","value":"12건","tone":"ai"},{"id":"s2","component":"StatCard","label":"상태","value":"정상","tone":"success"},{"id":"tbl","component":"DataTable","columns":["이름","값"],"rows":[["A","100"]]},{"id":"btn","component":"Button","child":"btn_txt","variant":"primary","action":{"event":{"name":"apply"}}},{"id":"btn_txt","component":"Text","text":"적용"}],"dataModel":{}}}',
-  "Strict v1.0 schema rules:",
-  "- Use flat components[] with a root component (id: \"root\"). Component IDs MUST use letters, digits, and underscores only (NO hyphens like stat-1).",
-  "- Column/Row/List use `children: [\"id1\", \"id2\"]` (array of string IDs, NOT nested objects). Do NOT add extra CSS keys like gap/padding/style.",
-  "- Card takes a SINGLE `child: \"col_id\"` (NOT `children` or `title`); wrap multiple items in a Column first.",
-  "- Button takes `child: \"text_id\"` referencing a Text component (NOT `label`), `variant`: \"default\"|\"primary\"|\"borderless\", and `action: { event: { name, context? } }`.",
-  "- Text uses Markdown in `text` (e.g. \"### 제목\") and optional `variant`: \"body\"|\"caption\" (NOT h1/h2).",
-  "- Form inputs: TextField(label,value,placeholder?,variant?), CheckBox(label,value), ChoicePicker(options:[{label,value}],value:[]), Slider(label?,min?,max,value), DateTimeInput(label?,value).",
-  "- Custom widgets: StatCard(label,value,delta?,caption?,tone?), Badge(text,tone?), KeyValue(items:[{label,value,mono?}]), DataTable(title?,columns,rows,searchable?,selectable?,actionLabel?,onSelectAction?), TabLink(title,tabId?,url?,subtitle?), ProgressBar(label,value,max?,caption?,tone?). Valid tone: neutral|accent|ai|success|warning|danger.",
+  "Complete self-contained v1.0 schema:",
+  "- Put all components in a flat components[] array with an entry id:\"root\". Component IDs MUST use letters, digits, and underscores only (NO hyphens like stat-1).",
+  "- Containers: Column(children:string[],justify?,align?), Row(children:string[],justify?,align?), List(children:string[],direction?), Card(child:string — single ID only, NOT children/title; wrap multiple items in Column), Tabs(tabs:[{title,child}]), Modal(trigger:string,content:string), Divider(axis?:\"horizontal\"|\"vertical\"). Do NOT add extra CSS keys like gap/padding/style.",
+  "- Content & Actions: Text(text:Markdown string,variant?:\"body\"|\"caption\" — NOT h1/h2), Button(child:string referencing a Text component — NOT label,variant?:\"default\"|\"primary\"|\"borderless\",action:{event:{name,context?}}), Image(url,description?), Icon(name).",
+  "- Form inputs (bind with {\"@path\":\"/field\"} + dataModel): TextField(label,value,placeholder?,variant?:\"shortText\"|\"longText\"|\"number\"), CheckBox(label,value:boolean), ChoicePicker(label?,options:[{label,value}],value:string[],variant?:\"mutuallyExclusive\"|\"multipleSelection\"), Slider(label?,min?,max,value), DateTimeInput(label?,value,enableDate?,enableTime?).",
+  "- Custom widgets: StatCard(label,value,delta?,caption?,tone?), Badge(text,tone?), KeyValue(items:[{label,value,mono?}]), DataTable(title?,columns:string[],rows:string[][],searchable?,selectable?,actionLabel?,onSelectAction?:{event:{name,context?}}), TabLink(title,tabId?,url?,subtitle?), ProgressBar(label,value:number,max?,caption?,tone?). Valid tone: neutral|accent|ai|success|warning|danger.",
   "- Keep layouts compact for 320-440px width (max 2 items in Row), never ask for passwords/secrets, never mimic permission dialogs, and include a concise text summary outside the block.",
 ].join("\n");
 
@@ -30,6 +28,8 @@ description: Render rich interactive A2UI v1.0 cards, dashboards, sortable table
 # AgentBrowser A2UI Generative UI Skill
 
 When responding inside the AgentBrowser Chrome side panel, you can emit interactive **A2UI v1.0** surfaces inside a fenced \`\`\`a2ui code block.
+
+> **Note:** \`${AGENT_BROWSER_CATALOG_ID}\` is a protocol URI identifier only (not a reachable HTTP endpoint — do not fetch it). The complete schema is documented below.
 
 ## Envelope Format (Single-Message v1.0)
 
