@@ -547,13 +547,14 @@ test("W21 @a2ui/react streams skeleton, renders custom & basic catalog, enforces
       surfaceId: "cmp",
       catalogId: "https://agent-browser.local/catalogs/v1",
       components: [
-        { id: "root", component: "Column", children: ["heading", "stats", "kv", "prog", "pw", "tbl", "btn"] },
+        { id: "root", component: "Column", children: ["heading", "stats", "kv", "prog", "img", "pw", "tbl", "btn"] },
         { id: "heading", component: "Text", text: "### 검색 결과 대시보드" },
         { id: "stats", component: "Row", children: ["s1", "s2"] },
         { id: "s1", component: "StatCard", label: "추출 건수", value: { "@path": "/total" }, delta: "+2건", tone: "ai" },
         { id: "s2", component: "StatCard", label: "최저가", value: "980,000원", tone: "accent" },
         { id: "kv", component: "KeyValue", items: [{ label: "기준 탭", value: "상품 검색", mono: false }, { label: "필터", value: "평점 4.5+", mono: true }] },
         { id: "prog", component: "ProgressBar", label: "조건 충족도", value: 85, max: 100, tone: "success" },
+        { id: "img", component: "Image", url: "https://example.test/chart.png", description: "가격 추이 차트" },
         { id: "pw", component: "TextField", label: "메모", variant: "obscured", value: { "@path": "/note" } },
         {
           id: "tbl",
@@ -584,8 +585,12 @@ test("W21 @a2ui/react streams skeleton, renders custom & basic catalog, enforces
   await expect(shell).toContainText("12건");
   await expect(shell).toContainText("980,000원");
   await expect(shell).toContainText("85%");
-  // Security guardrail warning for downgraded obscured password field.
+  // Security guardrail warning for downgraded obscured password field + remote image stays a link (0 <img> auto-fetch).
   await expect(shell.locator(".a2ui-warning-note")).toContainText("비밀번호 입력 형식은 일반 텍스트 입력으로 전환");
+  await expect(shell.locator("img")).toHaveCount(0);
+  await expect(shell.locator('a[href="https://example.test/chart.png"]')).toContainText("가격 추이 차트");
+  await expect(shell.locator('input[type="password"]')).toHaveCount(0);
+  await expect(shell.locator('.a2ui-field-input[type="text"]')).toHaveValue("가성비 우선");
 
   // Verify layout & contrast across Latte 440px, Mocha 440px, and Mocha 320px.
   for (const [theme, width] of [["latte", 440], ["mocha", 440], ["mocha", 320]] as const) {

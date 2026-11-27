@@ -24,3 +24,8 @@ it("parses unclosed long markdown links in linear time without backtracking and 
   const italic = renderToStaticMarkup(createElement(SafeMarkdown, { text: "*hello \\* world*" }));
   expect(italic).toContain("<em>hello \\* world</em>");
 });
+it("parses indented fenced code blocks cleanly", () => {
+  const html = renderToStaticMarkup(createElement(SafeMarkdown, { text: "  ```json\n  {\"ok\":true}\n  ```" }));
+  expect(html).toContain("code-block");
+  expect(html).toContain("&quot;ok&quot;:true");
+});

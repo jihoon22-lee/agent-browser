@@ -1,6 +1,7 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { AGENT_BROWSER_CATALOG_ID, parseA2uiBlock } from "../src/sidepanel/a2ui/parser";
+import { safeV09Catalog } from "../src/sidepanel/a2ui/catalog";
 import { A2uiCard, formatA2uiActionMessage } from "../src/sidepanel/a2ui/A2uiCard";
 import { SafeMarkdown } from "../src/sidepanel/SafeMarkdown";
 
@@ -66,6 +67,123 @@ describe("parseA2uiBlock", () => {
     expect(parseA2uiBlock("").ok).toBe(false);
     expect(parseA2uiBlock("{broken json").ok).toBe(false);
     expect(parseA2uiBlock("x".repeat(130_000)).ok).toBe(false);
+  });
+
+  it("blocks password aliases, dynamic variant bindings, svg data urls, and enforces collection caps", () => {
+    const bigCols = Array.from({ length: 35 }, (_, i) => `C${i}`);
+    const bigRows = Array.from({ length: 210 }, (_, i) => [`R${i}`, `${i}`]);
+    const bigKv = Array.from({ length: 55 }, (_, i) => ({ label: `K${i}`, value: `V${i}` }));
+    const parsed = parseA2uiBlock(JSON.stringify({
+      version: "1.0",
+      createSurface: {
+        surfaceId: "hardened",
+        components: [
+          { id: "main", component: "Column", children: ["tf1", "tf2", "svgImg", "tbl", "kv"] },
+          { id: "tf1", component: "TextField", label: "비밀", variant: { "@path": "/v" }, textFieldType: "obscured" },
+          { id: "tf2", component: "TextField", label: "암호", type: "password", usageHint: "obscured" },
+          { id: "svgImg", component: "Image", url: "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", description: "svg" },
+          { id: "tbl", component: "DataTable", columns: bigCols, rows: bigRows },
+          { id: "kv", component: "KeyValue", items: bigKv },
+        ],
+      },
+    }));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      const comps = (parsed.messages[0] as any).createSurface.components;
+      // Single non-root top-level component "main" is normalized to "root".
+      expect(comps[0].id).toBe("root");
+      expect(comps[1].variant).toBe("shortText");
+      expect(comps[1].textFieldType).toBeUndefined();
+      expect(comps[2].type).toBeUndefined();
+      expect(comps[2].usageHint).toBeUndefined();
+      expect(comps[3].url).toBe("");
+      expect(comps[4].columns).toHaveLength(30);
+      expect(comps[4].rows).toHaveLength(200);
+      expect(comps[5].items).toHaveLength(50);
+      expect(parsed.warnings.some(w => w.includes("비밀번호"))).toBe(true);
+      expect(parsed.warnings.some(w => w.includes("URL"))).toBe(true);
+      expect(parsed.warnings.some(w => w.includes("상한"))).toBe(true);
+    }
+  });
+
+  it("repairs real-world LLM mistakes (Card.children, nested inline trees, kebab-case IDs, Button.label, strict extra keys, object DataTable rows)", async () => {
+    const onAction = vi.fn(() => "sent" as const);
+    // Deliberately combines the exact patterns LLMs produce that broke strict A2UI v1.0 validation in v0.6.0:
+    // - version: "v1.0", extra createSurface.title
+    // - kebab-case IDs (page-card, stat-1, compare-tbl, apply-btn) failing UAX #31
+    // - Card with title + children[] containing BOTH string IDs and inline nested component objects
+    // - Row with extra CSS prop gap: 8 and alignment: "flex-start", distribution: "space-between"
+    // - Text with variant: "h2" and v0.8 literalString wrapper
+    // - StatCard with numeric value (12) and tone: "info"
+    // - DataTable with headers + array-of-object rows
+    // - Button with label (no child), variant: "secondary", and shorthand action { name, context: { empty: null, keep: "yes" } }
+    // - TextField missing required value
+    // - Icon with unknown name "sparkles"
+    const messyLlmPayload = JSON.stringify({
+      version: "v1.0",
+      createSurface: {
+        surfaceId: "summary-card",
+        title: "extra ignored field",
+        catalogId: "unknown-llm-catalog",
+        components: [
+          {
+            id: "page-card",
+            component: "Card",
+            title: "페이지 요약 카드",
+            children: [
+              { id: "hdr-1", component: "Text", text: { literalString: "핵심 지표" }, variant: "h2" },
+              {
+                id: "stats-row",
+                component: "Row",
+                gap: 8,
+                distribution: "space-between",
+                alignment: "flex-start",
+                children: {
+                  explicitList: [
+                    { id: "stat-1", component: "StatCard", label: "항목 수", value: 12, tone: "info" },
+                    { id: "badge-1", component: "Badge", label: "정상", tone: "green" },
+                  ],
+                },
+              },
+              { id: "ic-1", component: "Icon", name: "sparkles", size: 16 },
+              { id: "kv-1", component: "KeyValue", items: { 대상: "사내 포털", 개수: 3 } },
+              {
+                id: "compare-tbl",
+                component: "DataTable",
+                headers: ["항목", "점수"],
+                rows: [{ 항목: "후보 A", 점수: 95 }, { 항목: "후보 B", 점수: 88 }],
+              },
+              { id: "memo-field", component: "TextField", label: "메모", placeholder: "입력하세요" },
+              {
+                id: "apply-btn",
+                component: "Button",
+                label: "이대로 적용",
+                variant: "secondary",
+                action: { name: "apply_summary", context: { empty: null, keep: "yes" } },
+              },
+            ],
+          },
+        ],
+        dataModel: {},
+      },
+    });
+
+    await act(async () => root.render(createElement(A2uiCard, { source: messyLlmPayload, markdownRenderer: plainMd, onAction })));
+
+    // Must render the full UI card with ZERO fallback!
+    expect(host.querySelector(".a2ui-fallback")).toBeNull();
+    expect(host.textContent).toContain("페이지 요약 카드");
+    expect(host.textContent).toContain("핵심 지표");
+    expect(host.textContent).toContain("12");
+    expect(host.textContent).toContain("정상");
+    expect(host.textContent).toContain("사내 포털");
+    expect(host.textContent).toContain("후보 A");
+    expect(host.textContent).toContain("95");
+    expect(host.querySelector<HTMLInputElement>(".a2ui-field-input")?.placeholder).toBe("입력하세요");
+
+    // Verify Button synthesized child renders and dispatches normalized action cleanly.
+    const applyBtn = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent?.includes("이대로 적용"));
+    expect(applyBtn).toBeDefined();
   });
 });
 
@@ -158,5 +276,105 @@ describe("A2uiCard & SafeMarkdown integration", () => {
     });
     expect(msg).toContain("[A2UI 액션: apply_filter]");
     expect(msg).toContain('"category": "laptop"');
+  });
+
+  it("hardens Image (no remote img fetch), TextField (no password + two-way binding), and safeV09Catalog", async () => {
+    expect(safeV09Catalog.components.has("Video")).toBe(false);
+    expect(safeV09Catalog.components.has("AudioPlayer")).toBe(false);
+    expect(safeV09Catalog.components.has("Image")).toBe(true);
+    expect(safeV09Catalog.components.has("TextField")).toBe(true);
+
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const onAction = vi.fn(() => "sent" as const);
+    const payload = JSON.stringify({
+      version: "1.0",
+      createSurface: {
+        surfaceId: "sec",
+        catalogId: AGENT_BROWSER_CATALOG_ID,
+        components: [
+          { id: "root", component: "Column", children: ["remoteImg", "inlineImg", "note", "tbl"] },
+          { id: "remoteImg", component: "Image", url: "https://tracker.example/pixel.png", description: "원격 이미지" },
+          { id: "inlineImg", component: "Image", url: png, description: "인라인 캡처" },
+          { id: "note", component: "TextField", label: "메모", variant: "obscured", value: { "@path": "/note" } },
+          {
+            id: "tbl",
+            component: "DataTable",
+            columns: ["항목"],
+            rows: [["1번"]],
+            selectable: true,
+            actionLabel: "적용",
+            onSelectAction: { event: { name: "apply_note", context: { note: { "@path": "/note" } } } },
+          },
+        ],
+        dataModel: { note: "초기값" },
+      },
+    });
+
+    await act(async () => root.render(createElement(A2uiCard, { source: payload, markdownRenderer: plainMd, onAction })));
+
+    // Remote image renders as link only; only the inline base64 PNG uses <img>.
+    const imgs = [...host.querySelectorAll("img")];
+    expect(imgs).toHaveLength(1);
+    expect(imgs[0]!.src).toContain("data:image/png;base64,");
+    const remoteLink = host.querySelector<HTMLAnchorElement>('a[href="https://tracker.example/pixel.png"]');
+    expect(remoteLink).not.toBeNull();
+    expect(remoteLink!.textContent).toContain("원격 이미지");
+
+    // TextField never renders type="password" and updates dataModel via two-way binding.
+    expect(host.querySelector('input[type="password"]')).toBeNull();
+    const input = host.querySelector<HTMLInputElement>(".a2ui-field-input")!;
+    expect(input.type).toBe("text");
+    expect(input.value).toBe("초기값");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "수정된 메모");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // DataTable resolves {"@path": "/note"} inside onSelectAction.event.context.
+    await act(async () => host.querySelector<HTMLInputElement>('tbody input[type="checkbox"]')!.click());
+    const btn = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "적용")!;
+    await act(async () => btn.click());
+    expect(onAction).toHaveBeenCalledWith(expect.objectContaining({
+      name: "apply_note",
+      context: expect.objectContaining({ note: "수정된 메모", count: 1 }),
+    }));
+  });
+
+  it("reflects drafted and blocked action outcomes accurately and falls back when root is missing", async () => {
+    const basePayload = JSON.stringify({
+      version: "1.0",
+      createSurface: {
+        surfaceId: "act-res",
+        components: [
+          { id: "root", component: "DataTable", columns: ["항목"], rows: [["A"]], selectable: true, actionLabel: "실행", onSelectAction: { event: { name: "run_it" } } },
+        ],
+      },
+    });
+
+    // Blocked outcome must NOT claim "전송됨".
+    await act(async () => root.render(createElement(A2uiCard, { source: basePayload, markdownRenderer: plainMd, onAction: () => "blocked" as const })));
+    await act(async () => host.querySelector<HTMLInputElement>('tbody input[type="checkbox"]')!.click());
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "실행")!.click());
+    expect(host.querySelector(".a2ui-action-sent")).toBeNull();
+    expect(host.querySelector(".a2ui-action-drafted")).toBeNull();
+
+    // Drafted outcome shows "입력란에 채움 · run_it".
+    await act(async () => root.render(createElement(A2uiCard, { source: basePayload, markdownRenderer: plainMd, onAction: () => "drafted" as const })));
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "실행")!.click());
+    expect(host.querySelector(".a2ui-action-drafted")?.textContent).toContain("입력란에 채움 · run_it");
+
+    // Surface with two disjoint non-root components cannot auto-pick a single root and falls back cleanly.
+    const noRoot = JSON.stringify({
+      version: "1.0",
+      createSurface: {
+        surfaceId: "noroot",
+        components: [
+          { id: "a", component: "Text", text: "하나" },
+          { id: "b", component: "Text", text: "둘" },
+        ],
+      },
+    });
+    await act(async () => root.render(createElement(A2uiCard, { source: noRoot, markdownRenderer: plainMd })));
+    expect(host.querySelector(".a2ui-fallback")).not.toBeNull();
   });
 });
