@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { createComponentImplementation, useA2uiSurface, type ReactCatalogComponent } from "@a2ui/react";
 import { Catalog, type ComponentApi } from "@a2ui/web_core";
@@ -83,8 +84,15 @@ function buildSafeTextFieldComponent<Api extends ComponentApi>(api: Api): ReactC
       validationErrors?: string[];
     };
     const variant = p.variant === "longText" ? "longText" : p.variant === "number" ? "number" : "shortText";
-    const value = p.value ?? "";
-    const handleChange = (next: string) => { p.setValue?.(next); };
+    const [localValue, setLocalValue] = useState(p.value ?? "");
+    useEffect(() => {
+      setLocalValue(p.value ?? "");
+    }, [p.value]);
+    const value = p.setValue ? (p.value ?? "") : localValue;
+    const handleChange = (next: string) => {
+      if (p.setValue) p.setValue(next);
+      else setLocalValue(next);
+    };
     return (
       <label className="a2ui-field">
         {p.label && <span className="a2ui-field-label">{p.label}</span>}
