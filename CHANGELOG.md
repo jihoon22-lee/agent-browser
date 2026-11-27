@@ -1,5 +1,14 @@
 # 변경 기록
 
+## [0.6.2] - 2026-11-27
+
+실제 LLM 라이브 검증(`opencode/deepseek-v4.1-flash-free`)에서 발견된 A2UI 폼 입력 바인딩 누락 문제를 보완한 패치입니다.
+
+- **A2UI 폼 입력 자동 바인딩 및 입력 안정화:**
+  - LLM이 `TextField`/`ChoicePicker`/`CheckBox`/`Slider`/`DateTimeInput`의 `value`에 `{"@path": ...}` 대신 정적 리터럴(`""`, `["query"]` 등)을 출력하더라도, `parser.ts`가 버튼/표 액션 `context`의 미연결 `@path`(또는 `/_form/<id>`)와 `dataModel` 초기값을 자동 연결해 사용자 입력이 항상 동작하고 제출 페이로드에 반영되도록 개선했습니다.
+  - 버튼 `action.event.context`가 비어 있는 폼에서는 자동 연결된 입력 필드를 제출 컨텍스트에 자동으로 포함합니다.
+  - `SafeTextFieldComponent`에 로컬 상태 폴백을 추가해 바인딩이 없는 `TextField`에서도 키 입력이 무시되지 않도록 보강했습니다.
+
 ## [0.6.1] - 2026-11-27
 
 실사용 중 보고된 A2UI `Validation` 렌더링 실패 문제와 `v0.6.0` 상세 코드 리뷰 항목을 모두 해결한 핫픽스입니다.
