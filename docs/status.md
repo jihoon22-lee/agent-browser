@@ -2,6 +2,20 @@
 
 v0.2.0 이전의 작업·검증 기록은 Git 이력(`git log -p -- docs/status.md`)과 각 Release·PR 본문에 있다. 이 문서는 현재 배포, 최근 변경, 미해결 조사만 유지한다.
 
+## v0.6.2 Windows preview — 게시 완료 (2026-11-27)
+
+[v0.6.2](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.6.2)(prerelease)를 **2026-11-27 02:57:10 UTC / 11:57:10 KST**에 게시했다. 주석 태그는 [PR #57](https://github.com/jihoon22-lee/agent-browser/pull/57)의 main 병합 커밋 **`550f864e074cbd1680f41cbe7b49951751dceec9`**를 가리킨다.
+
+- **배포 ZIP:** **4,276,936 bytes / 38 files**, SHA256 **`bb03ae98cb68b39633aff637949687e2e0abc294b93b554e03b6eee4ef685b08`**. ZIP은 [배포 커밋 main CI](https://github.com/jihoon22-lee/agent-browser/actions/runs/45927582393)의 Windows 작업이 만든 아티팩트다. PR CI(Linux 11m26s·Windows 22m38s)와 main CI(Windows 24m28s, Linux는 1차 `B10` 90초 타임아웃 재실행 후 11m47s 통과)가 모두 성공했다.
+- **반영 내용 (실제 LLM 라이브 검증 기반 A2UI 폼 자동 바인딩 패치):**
+  - `parser.ts`에 `autoBindFormInputs`를 추가해 LLM이 `TextField`/`ChoicePicker`/`CheckBox`/`Slider`/`DateTimeInput`의 `value`에 `{"@path": ...}` 대신 정적 리터럴(`""`, `["query"]` 등)을 출력하더라도 버튼/표 액션 `context`의 미연결 `@path`(또는 `/_form/<id>`)와 `dataModel` 초기값을 자동 연결하고, 빈 버튼 `context`에도 자동 연결 필드를 포함하도록 보강했다.
+  - `SafeTextFieldComponent`(`catalog.tsx`)에 로컬 상태 폴백을 추가해 바인딩이 없는 `TextField`에서도 키 입력이 무시되지 않도록 수정했다.
+- **실제 OpenCode 라이브 검증 (격리 `OPENCODE_CONFIG`, OpenCode `1.19.6`, Zen 무료 모델 2종):**
+  - `v0.6.1` 기준 `opencode/big-pickle`·`opencode/deepseek-v4.1-flash-free` 모두 실제 `search.html` 탭 대시보드/비교 표 및 `Card` 폼 생성(4/4, Validation 폴백 0건, 콘솔 오류 0건) 및 버튼 제출을 확인했고, 이 과정에서 `deepseek`의 정적 리터럴 폼 입력 바인딩 누락을 발견했다.
+  - `v0.6.2` 보완 후 `opencode/deepseek-v4.1-flash-free` 라이브 재검증에서 정적 리터럴 `ChoicePicker`(`["검색어"]`) + `TextField` 메모(`"실검증 테스트 메모"`)가 자동 바인딩되어 `[A2UI 액션: submit_form]`(`{"selected": "검색어", "memo": "실검증 테스트 메모"}`)으로 정확히 전송되는 것을 스크린샷 육안 확인까지 완료했다.
+- **로컬 검증(Linux + 실제 Windows interop):** `cargo clippy --offline --locked --workspace --all-targets -- -D warnings`, `cargo test --offline --locked --workspace -- --test-threads=4`(전체 통과), 확장 Vitest(**77 파일 / 972 테스트 통과**), 확장 빌드 + MV3 CSP(`eval`/`new Function` 0건), `node scripts/ci-checks.mjs`, Playwright `workbench.spec.ts` W21 통과, `cargo xwin build --release` + 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.6.2`).
+- **게시본 검증 및 정리:** CI 아티팩트에서 `package-manifest.json`(37개 파일 SHA-256 일치, `Version: "0.6.2"`), `extension/manifest.json`(`0.6.2`), 실제 Windows `browser-bridge.exe --version`(`browser-bridge 0.6.2`)을 확인했다. 게시 후 GitHub Release에서 ZIP과 `SHA256SUMS`를 다시 내려받아 CI 아티팩트와 바이트 일치(`cmp`) 및 `sha256sum -c`를 확인했다. 병합된 브랜치(`fix/v0.6.2-form-autobind`), 임시 스크래치 스크립트·스크린샷·Playwright 로컬 산출물·Windows 임시 검증 폴더를 모두 정리했다. 최종 파일은 `release/v0.6.2-main/`.
+
 ## v0.6.1 Windows preview — 게시 완료 (2026-11-27)
 
 [v0.6.1](https://github.com/jihoon22-lee/agent-browser/releases/tag/v0.6.1)(prerelease)를 **2026-11-27 01:23:30 UTC / 10:23:30 KST**에 게시했다. 주석 태그는 [PR #56](https://github.com/jihoon22-lee/agent-browser/pull/56)의 main 병합 커밋 **`8745872d1fde9cabb1888bf8afb8f2129dce7b48`**를 가리킨다.
